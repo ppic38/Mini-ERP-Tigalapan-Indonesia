@@ -26,7 +26,7 @@ import type {
   WarehouseReceipt,
 } from "./types";
 import type { ParsedMrpImport } from "./parseImport";
-import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaMaklonRow, ItemSellingPriceRow, KerahMansetSettingRow, SupplierRow, VendorProduksiMasterRow } from "./masterData";
+import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, SupplierRow, VendorProduksiMasterRow } from "./masterData";
 import { localDateString } from "./derive";
 import * as rawActions from "./actions";
 
@@ -224,6 +224,12 @@ export type FlowState = {
    *  `parseMrpImportFile` (konversi qty pcs mentah dari kolom Excel KERAH/MANSET jadi kg sungguhan
    *  saat import MRP kategori WANGKI MYNO) & PO Approval (estimasi nominal Rp, PURELY DISPLAY). */
   kerahMansetSettings: KerahMansetSettingRow[];
+  /** Master Data "Harga RIB" (harga RIB per kg per supplier + warna, migration 0037) -- dipakai PO
+   *  Approval untuk estimasi Rp RIB lewat `hargaRibRateInfo` (lib/mrp/derive.ts), PURELY DISPLAY. */
+  hargaRib: HargaRibRow[];
+  /** Master Data "Harga Kerah/Manset per Supplier" (migration 0038) -- sumber utama estimasi Rp
+   *  Kerah/Manset di PO Approval lewat `hargaKerahMansetRateInfo` (lib/mrp/derive.ts). */
+  hargaKerahManset: HargaKerahMansetRow[];
   /** Kategori & kapasitas produksi PER MINGGU asli tiap vendor produksi (dari spreadsheet
    *  Procurement, lihat migration 0019_vendor_kapasitas_asli.sql) -- sumber utama untuk
    *  `vendorProduksiRows` (derive.ts) & kolom "Qty vs Kapasitas" di portal vendor
@@ -356,6 +362,12 @@ type FlowActions = {
   updateEkspedisiRateRow: (id: string, patch: Partial<EkspedisiRateRow>) => Promise<void>;
   deleteEkspedisiRateRow: (id: string) => Promise<void>;
   updateKerahMansetSetting: (kind: "KERAH" | "MANSET", patch: Partial<Pick<KerahMansetSettingRow, "kgPerPcs" | "hargaPerKg">>) => Promise<void>;
+  addHargaRibRow: () => Promise<void>;
+  updateHargaRibRow: (id: string, patch: Partial<HargaRibRow>) => Promise<void>;
+  deleteHargaRibRow: (id: string) => Promise<void>;
+  addHargaKerahMansetRow: () => Promise<void>;
+  updateHargaKerahMansetRow: (id: string, patch: Partial<HargaKerahMansetRow>) => Promise<void>;
+  deleteHargaKerahMansetRow: (id: string) => Promise<void>;
 
   setMaterialPoEntity: (poId: string, entitas: string) => Promise<void>;
   setMaterialPoColorEntity: (poId: string, warna: string, lengan: Lengan, entitas: string) => Promise<void>;
@@ -475,6 +487,8 @@ const emptyState: FlowState = {
   ekspedisiRates: [],
   itemSellingPrices: [],
   kerahMansetSettings: [],
+  hargaRib: [],
+  hargaKerahManset: [],
   vendorProduksiList: [],
   hydrated: false,
   busy: false,
@@ -1172,6 +1186,62 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   },
   replaceHargaKain: async (rows) => {
     await actions.replaceHargaKainAction(rows);
+    backgroundRefresh();
+  },
+  addHargaRibRow: async () => {
+    await actions.addHargaRibRowAction();
+    backgroundRefresh();
+  },
+  updateHargaRibRow: async (id, patch) => {
+    const previous = get().hargaRib;
+    set({ hargaRib: previous.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+    try {
+      await actions.updateHargaRibRowAction(id, patch);
+    } catch (err) {
+      set({ hargaRib: previous });
+      window.alert("Gagal menyimpan harga RIB -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  deleteHargaRibRow: async (id) => {
+    const previous = get().hargaRib;
+    set({ hargaRib: previous.filter((r) => r.id !== id) });
+    try {
+      await actions.deleteHargaRibRowAction(id);
+    } catch (err) {
+      set({ hargaRib: previous });
+      window.alert("Gagal menghapus baris harga RIB -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  addHargaKerahMansetRow: async () => {
+    await actions.addHargaKerahMansetRowAction();
+    backgroundRefresh();
+  },
+  updateHargaKerahMansetRow: async (id, patch) => {
+    const previous = get().hargaKerahManset;
+    set({ hargaKerahManset: previous.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+    try {
+      await actions.updateHargaKerahMansetRowAction(id, patch);
+    } catch (err) {
+      set({ hargaKerahManset: previous });
+      window.alert("Gagal menyimpan harga Kerah/Manset -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  deleteHargaKerahMansetRow: async (id) => {
+    const previous = get().hargaKerahManset;
+    set({ hargaKerahManset: previous.filter((r) => r.id !== id) });
+    try {
+      await actions.deleteHargaKerahMansetRowAction(id);
+    } catch (err) {
+      set({ hargaKerahManset: previous });
+      window.alert("Gagal menghapus baris harga Kerah/Manset -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
     backgroundRefresh();
   },
   addHargaKainPksRow: async () => {

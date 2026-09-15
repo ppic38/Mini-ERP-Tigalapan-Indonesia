@@ -15,6 +15,8 @@ import {
   formatPcs,
   formatRupiah,
   hargaKainRate,
+  hargaKerahMansetRateInfo,
+  hargaRibRateInfo,
   maklonPoBadgeWithApproval,
   maklonPoDeliveryProgress,
   maklonPoInvoiceLockedBy,
@@ -69,9 +71,9 @@ export default function PoApprovalPage() {
   const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
   const supplierList = useMrpStore((s) => s.supplierList);
   const vendorProduksiList = useMrpStore((s) => s.vendorProduksiList);
+  const hargaRib = useMrpStore((s) => s.hargaRib);
+  const hargaKerahManset = useMrpStore((s) => s.hargaKerahManset);
   const kerahMansetSettings = useMrpStore((s) => s.kerahMansetSettings);
-  const kerahHargaPerKg = kerahMansetSettings.find((s) => s.kind === "KERAH")?.hargaPerKg ?? 0;
-  const mansetHargaPerKg = kerahMansetSettings.find((s) => s.kind === "MANSET")?.hargaPerKg ?? 0;
 
   const [selectedId, setSelectedId] = useState<string>("");
   const [drillVendor, setDrillVendor] = useState<string | null>(null);
@@ -394,7 +396,9 @@ export default function PoApprovalPage() {
               const showKerahManset = materialGroups.some((g) => g.totalKerahKg > 0 || g.totalMansetKg > 0);
               // + 2 kolom "Est. Kerah (Rp)"/"Est. Manset (Rp)" (PURELY DISPLAY, tidak mengubah nilai
               // PO Bahan aktual) -- gated kondisi SAMA seperti kolom kg (showKerahManset).
-              const cols = showKerahManset ? "1fr 50px 60px 60px 60px 90px 90px 1fr" : "1fr 50px 60px 1fr";
+              // Kolom "Est. Rib (Rp)" (Master Data Harga RIB, migration 0037) SELALU tampil -- rib
+              // ada di semua kategori, bukan cuma WANGKI MYNO.
+              const cols = showKerahManset ? "1fr 50px 60px 60px 60px 90px 90px 90px 1fr" : "1fr 50px 60px 90px 1fr";
               return (
                 <>
                   <div
@@ -406,6 +410,7 @@ export default function PoApprovalPage() {
                     <span className="text-right">Rib kg</span>
                     {showKerahManset && <span className="text-right">Kerah kg</span>}
                     {showKerahManset && <span className="text-right">Manset kg</span>}
+                    <span className="text-right">Est. Rib (Rp)</span>
                     {showKerahManset && <span className="text-right">Est. Kerah (Rp)</span>}
                     {showKerahManset && <span className="text-right">Est. Manset (Rp)</span>}
                     <span>Vendor material</span>
@@ -429,6 +434,13 @@ export default function PoApprovalPage() {
                     // apa pun, TIDAK memblokir apa pun.
                     const kerahLooksUnconverted = g.totalRoll > 0 && g.totalKerahKg / g.totalRoll > 10;
                     const mansetLooksUnconverted = g.totalRoll > 0 && g.totalMansetKg / g.totalRoll > 10;
+                    // Harga RIB/kg dari Master Data Harga RIB -- supplier terpilih dulu, lalu acuan
+                    // KNITTO (lihat hargaRibRateInfo). Belum pilih supplier pun tetap dapat estimasi.
+                    const ribRate = hargaRibRateInfo(hargaRib, g.supplier, g.warna);
+                    // Harga Kerah/Manset per kg -- Master Data per Supplier (migration 0038), fallback
+                    // KNITTO lalu harga global lama (lihat hargaKerahMansetRateInfo).
+                    const kerahRate = hargaKerahMansetRateInfo(hargaKerahManset, kerahMansetSettings, g.supplier, "KERAH");
+                    const mansetRate = hargaKerahMansetRateInfo(hargaKerahManset, kerahMansetSettings, g.supplier, "MANSET");
                     return (
                       <div key={g.warna} className="grid gap-x-3 items-center border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0" style={{ gridTemplateColumns: cols }}>
                         <span>{g.warna}</span>
@@ -448,8 +460,32 @@ export default function PoApprovalPage() {
                         )}
                         {/* Estimasi Rp (kg terkonversi x harga/kg dari Master Data Kerah/Manset) -- PURELY
                             DISPLAY, tidak mengubah total_biaya/nilai PO Bahan aktual manapun. */}
-                        {showKerahManset && <span className="text-right font-mono">{formatRupiah(g.totalKerahKg * kerahHargaPerKg)}</span>}
-                        {showKerahManset && <span className="text-right font-mono">{formatRupiah(g.totalMansetKg * mansetHargaPerKg)}</span>}
+                        <span
+                          className="text-right font-mono"
+                          title={
+                            ribRate
+                              ? `Rib ${g.totalRibKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kg x ${formatRupiah(ribRate.rate)}/kg (Master Data Harga RIB, ${ribRate.sourceSupplier}${ribRate.viaReference ? " — acuan, supplier ini belum punya harga RIB sendiri" : ""})`
+                              : `Belum ada harga RIB untuk warna ${g.warna} di Master Data Harga RIB.`
+                          }
+                        >
+                          {ribRate ? formatRupiah(g.totalRibKg * ribRate.rate) : "—"}
+                        </span>
+                        {showKerahManset && (
+                          <span
+                            className="text-right font-mono"
+                            title={`Kerah ${g.totalKerahKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kg x ${formatRupiah(kerahRate.rate)}/kg (${kerahRate.sourceLabel}${kerahRate.viaFallback ? " — acuan, supplier ini belum punya harga Kerah sendiri" : ""})`}
+                          >
+                            {formatRupiah(g.totalKerahKg * kerahRate.rate)}
+                          </span>
+                        )}
+                        {showKerahManset && (
+                          <span
+                            className="text-right font-mono"
+                            title={`Manset ${g.totalMansetKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kg x ${formatRupiah(mansetRate.rate)}/kg (${mansetRate.sourceLabel}${mansetRate.viaFallback ? " — acuan, supplier ini belum punya harga Manset sendiri" : ""})`}
+                          >
+                            {formatRupiah(g.totalMansetKg * mansetRate.rate)}
+                          </span>
+                        )}
                         <select
                           value={g.supplier ?? ""}
                           onChange={(e) => {
@@ -469,7 +505,7 @@ export default function PoApprovalPage() {
                           ))}
                         </select>
                         {optionsForWarna.length === 0 && (
-                          <div className={(showKerahManset ? "col-span-8" : "col-span-4") + " -mt-1.5 pb-0.5 font-sans text-[10.5px] font-medium text-warning-fg"}>
+                          <div className={(showKerahManset ? "col-span-9" : "col-span-5") + " -mt-1.5 pb-0.5 font-sans text-[10.5px] font-medium text-warning-fg"}>
                             ⚠ Belum ada supplier dengan harga untuk warna {g.warna} di Master Data Harga Kain.
                           </div>
                         )}

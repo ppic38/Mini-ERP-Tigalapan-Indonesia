@@ -72,7 +72,7 @@ export function KerahMansetSettingsPanel() {
   return (
     <DataTable
       title="Kerah/Manset"
-      subtitle="Parameter konversi qty pcs -> kg + harga/kg untuk kebutuhan Kerah & Manset kategori WANGKI MYNO — dipakai untuk mengonversi angka di kolom Excel KERAH/MANSET saat import MRP baru, dan estimasi nominal Kerah/Manset di PO Approval. TIDAK mengubah nilai PO Bahan otomatis (tetap masuk manual lewat Add Buy di Paying Voucher)."
+      subtitle="Parameter konversi qty pcs -> kg untuk kebutuhan Kerah & Manset kategori WANGKI MYNO — dipakai untuk mengonversi angka di kolom Excel KERAH/MANSET saat import MRP baru. Harga per kg di sini hanya CADANGAN untuk estimasi Rp di PO Approval kalau tabel Harga Kerah/Manset per Supplier di bawah tidak punya baris supplier itu maupun KNITTO. TIDAK mengubah nilai PO Bahan otomatis (tetap masuk manual lewat Add Buy di Paying Voucher)."
       columns={columns}
       rows={rows}
       keyOf={(r) => r.kind}

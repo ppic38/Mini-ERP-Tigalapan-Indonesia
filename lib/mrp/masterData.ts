@@ -94,6 +94,31 @@ export type ItemSellingPriceRow = {
  *  mengubah nilai PO Bahan aktual). */
 export type KerahMansetSettingRow = { kind: "KERAH" | "MANSET"; kgPerPcs: number; hargaPerKg: number };
 
+/** Master Data "Harga RIB" (migration 0037) -- harga RIB per kg, per supplier + warna (bentuk sama
+ *  seperti HargaKainRow tanpa `kategori`). Di-seed dari price list KNITTO; supplier lain yang belum
+ *  punya baris sendiri memakai harga KNITTO untuk warna yang sama (lihat `hargaRibRateInfo` di
+ *  lib/mrp/derive.ts). Dipakai LIVE untuk kolom "Est. Rib (Rp)" di PO Approval (PURELY DISPLAY,
+ *  tidak mengubah nilai PO Bahan aktual). */
+export type HargaRibRow = {
+  id: string;
+  kodeSupplier: string;
+  namaSupplier: string;
+  warna: string;
+  hargaPerKg: number;
+};
+
+/** Master Data "Harga Kerah/Manset per Supplier" (migration 0038) -- harga per kg Kerah & Manset per
+ *  supplier (satu baris per supplier, 2 kolom harga). Sumber UTAMA estimasi Rp Kerah/Manset di PO
+ *  Approval lewat `hargaKerahMansetRateInfo` (lib/mrp/derive.ts): supplier sendiri -> KNITTO ->
+ *  harga global `KerahMansetSettingRow.hargaPerKg`. Konversi pcs->kg TETAP di KerahMansetSettingRow. */
+export type HargaKerahMansetRow = {
+  id: string;
+  kodeSupplier: string;
+  namaSupplier: string;
+  hargaKerahPerKg: number;
+  hargaMansetPerKg: number;
+};
+
 /** Revisi 2026-09-06: data ASLI vendor produksi dari spreadsheet Procurement (kategori & kapasitas
  *  produksi PER MINGGU) -- sumbernya kolom `kategori`/`base_capacity` di tabel `vendors_produksi`
  *  (lihat migration 0019_vendor_kapasitas_asli.sql). Nama sengaja BEDA dari `VendorProduksiRow` di

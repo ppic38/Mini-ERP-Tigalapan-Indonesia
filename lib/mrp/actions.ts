@@ -4043,7 +4043,7 @@ export async function getFlowSnapshotAction() {
   const session = await requireSession();
   const snapshot = await getFlowSnapshot();
   if (session.vendorId && session.internalRoles.length === 0) {
-    return { ...snapshot, hargaMaklon: [], hargaKain: [], hargaKainPks: [], itemSellingPrices: [] };
+    return { ...snapshot, hargaMaklon: [], hargaKain: [], hargaKainPks: [], hargaRib: [], hargaKerahManset: [], itemSellingPrices: [] };
   }
   return snapshot;
 }
@@ -4053,7 +4053,7 @@ export async function getFlowSnapshotAction() {
 // dipakai halaman Master Data (add/update/delete satu baris) & tombol "Import dari Google
 // Sheets" (replaceX -- ganti SELURUH tabel, bukan merge, persis perilaku lama).
 // =========================================================================
-import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaMaklonRow, KerahMansetSettingRow, SupplierRow } from "./masterData";
+import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, KerahMansetSettingRow, SupplierRow } from "./masterData";
 
 async function requireMasterDataRole() {
   const session = await requireSession();
@@ -4140,6 +4140,52 @@ export async function replaceHargaKainAction(rows: HargaKainRow[]): Promise<void
   if (rows.length === 0) return;
   const ids = await Promise.all(rows.map(() => nextReadableId("HKAIN")));
   const { error } = await db.from("harga_kain").insert(rows.map((r, i) => ({ id: ids[i], kode_supplier: r.kodeSupplier, nama_supplier: r.namaSupplier, kategori: r.kategori, warna: r.warna, harga_per_kg: r.hargaPerKg })));
+  if (error) throw new Error(error.message);
+}
+
+// Master Data "Harga RIB" (per supplier + warna, migration 0037) -- pola sama seperti Harga Kain.
+export async function addHargaRibRowAction(): Promise<void> {
+  await requireMasterDataRole();
+  const id = await nextReadableId("HRIB");
+  const { error } = await supabaseServer().from("harga_rib").insert({ id, kode_supplier: "", nama_supplier: "", warna: "", harga_per_kg: 0 });
+  if (error) throw new Error(error.message);
+}
+export async function updateHargaRibRowAction(id: string, patch: Partial<HargaRibRow>): Promise<void> {
+  await requireMasterDataRole();
+  const p: Record<string, unknown> = {};
+  if (patch.kodeSupplier !== undefined) p.kode_supplier = patch.kodeSupplier;
+  if (patch.namaSupplier !== undefined) p.nama_supplier = patch.namaSupplier;
+  if (patch.warna !== undefined) p.warna = patch.warna;
+  if (patch.hargaPerKg !== undefined) p.harga_per_kg = patch.hargaPerKg;
+  const { error } = await supabaseServer().from("harga_rib").update(p).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+export async function deleteHargaRibRowAction(id: string): Promise<void> {
+  await requireMasterDataRole();
+  const { error } = await supabaseServer().from("harga_rib").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+// Master Data "Harga Kerah/Manset per Supplier" (migration 0038) -- satu baris per supplier.
+export async function addHargaKerahMansetRowAction(): Promise<void> {
+  await requireMasterDataRole();
+  const id = await nextReadableId("HKM");
+  const { error } = await supabaseServer().from("harga_kerah_manset").insert({ id, kode_supplier: "", nama_supplier: "", harga_kerah_per_kg: 0, harga_manset_per_kg: 0 });
+  if (error) throw new Error(error.message);
+}
+export async function updateHargaKerahMansetRowAction(id: string, patch: Partial<HargaKerahMansetRow>): Promise<void> {
+  await requireMasterDataRole();
+  const p: Record<string, unknown> = {};
+  if (patch.kodeSupplier !== undefined) p.kode_supplier = patch.kodeSupplier;
+  if (patch.namaSupplier !== undefined) p.nama_supplier = patch.namaSupplier;
+  if (patch.hargaKerahPerKg !== undefined) p.harga_kerah_per_kg = patch.hargaKerahPerKg;
+  if (patch.hargaMansetPerKg !== undefined) p.harga_manset_per_kg = patch.hargaMansetPerKg;
+  const { error } = await supabaseServer().from("harga_kerah_manset").update(p).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+export async function deleteHargaKerahMansetRowAction(id: string): Promise<void> {
+  await requireMasterDataRole();
+  const { error } = await supabaseServer().from("harga_kerah_manset").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
 

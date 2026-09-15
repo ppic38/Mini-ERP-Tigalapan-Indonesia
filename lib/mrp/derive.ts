@@ -1,6 +1,6 @@
 import { MATERIAL_RATE_PER_ROLL, ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "./seed";
 import type { MrpDetail, PpicApprovalStatus } from "./store";
-import type { EkspedisiRateRow, HargaKainPksRow, HargaKainRow, HargaMaklonRow, ItemSellingPriceRow, SupplierRow, VendorProduksiMasterRow } from "./masterData";
+import type { EkspedisiRateRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, SupplierRow, VendorProduksiMasterRow } from "./masterData";
 import type { AduanPolaRow, ColorBreakdown, DeliveryItemKind, DeliveryKoli, Lengan, LenganGroup, MaklonInvoice, MaklonPO, MaterialPO, MaterialRow, Mrp, ProductionBatch, ProductionGroupMeta, ProductionResult, ProductionResultKind, ProductionYieldResolution, RawMaterialInvoice, ShippableKind, Usia, VendorDepositEntry, VendorInvoice, VendorInvoiceLine, WarehouseReceipt } from "./types";
 
 export function formatRupiah(n: number) {
@@ -222,6 +222,51 @@ export function hargaKainRateInfo(hargaKain: HargaKainRow[], hargaKainPks: Harga
 
 export function hargaKainRate(hargaKain: HargaKainRow[], hargaKainPks: HargaKainPksRow[], supplierName: string, warna: string, totalKg: number): number {
   return hargaKainRateInfo(hargaKain, hargaKainPks, supplierName, warna, totalKg).rate;
+}
+
+// Owner (2026-09-15): harga RIB supplier lain "samakan saja dengan punya KNITTO" -- supplier yang
+// belum punya baris sendiri di Master Data Harga RIB memakai baris KNITTO untuk warna yang sama.
+const HARGA_RIB_REFERENCE_SUPPLIER = "KNITTO";
+
+export type RibRateInfo = { rate: number; sourceSupplier: string; viaReference: boolean };
+
+/** Cari harga RIB per kg untuk supplier+warna (Master Data Harga RIB, migration 0037): baris milik
+ *  supplier itu sendiri dulu, lalu baris KNITTO (acuan) untuk warna yang sama, lalu ulangi untuk
+ *  warna dasar varian (KID/RIB/TUNIK + alias, lihat baseWarnaForKainFallback). `null` kalau warna
+ *  itu sama sekali tidak ada -- SENGAJA tidak ada angka fallback flat, supaya estimasi Rp tidak
+ *  tampil seolah-olah valid. */
+export function hargaRibRateInfo(hargaRib: HargaRibRow[], supplierName: string | null | undefined, warna: string): RibRateInfo | null {
+  const byWarna = hargaRib.filter((r) => normKey(r.warna) === normKey(warna));
+  if (supplierName) {
+    const own = byWarna.find((r) => normKey(r.namaSupplier) === normKey(supplierName) || normKey(r.kodeSupplier) === normKey(supplierName));
+    if (own) return { rate: own.hargaPerKg, sourceSupplier: own.namaSupplier || own.kodeSupplier, viaReference: false };
+  }
+  const reference = byWarna.find((r) => normKey(r.kodeSupplier) === HARGA_RIB_REFERENCE_SUPPLIER || normKey(r.namaSupplier) === HARGA_RIB_REFERENCE_SUPPLIER);
+  if (reference) return { rate: reference.hargaPerKg, sourceSupplier: reference.namaSupplier || reference.kodeSupplier, viaReference: true };
+  const baseWarna = baseWarnaForKainFallback(warna);
+  if (baseWarna) return hargaRibRateInfo(hargaRib, supplierName, baseWarna);
+  return null;
+}
+
+export type KerahMansetRateInfo = { rate: number; sourceLabel: string; viaFallback: boolean };
+
+/** Cari harga Kerah/Manset per kg (Master Data Harga Kerah/Manset per Supplier, migration 0038):
+ *  baris supplier itu sendiri, lalu baris KNITTO (acuan, sama seperti Harga RIB), lalu harga GLOBAL
+ *  lama di Master Data Kerah/Manset (`kerah_manset_settings.harga_per_kg`, migration 0036). */
+export function hargaKerahMansetRateInfo(
+  rows: HargaKerahMansetRow[],
+  settings: KerahMansetSettingRow[],
+  supplierName: string | null | undefined,
+  kind: "KERAH" | "MANSET"
+): KerahMansetRateInfo {
+  const pick = (r: HargaKerahMansetRow) => (kind === "KERAH" ? r.hargaKerahPerKg : r.hargaMansetPerKg);
+  if (supplierName) {
+    const own = rows.find((r) => normKey(r.namaSupplier) === normKey(supplierName) || normKey(r.kodeSupplier) === normKey(supplierName));
+    if (own) return { rate: pick(own), sourceLabel: own.namaSupplier || own.kodeSupplier, viaFallback: false };
+  }
+  const reference = rows.find((r) => normKey(r.kodeSupplier) === HARGA_RIB_REFERENCE_SUPPLIER || normKey(r.namaSupplier) === HARGA_RIB_REFERENCE_SUPPLIER);
+  if (reference) return { rate: pick(reference), sourceLabel: reference.namaSupplier || reference.kodeSupplier, viaFallback: true };
+  return { rate: settings.find((s) => s.kind === kind)?.hargaPerKg ?? 0, sourceLabel: "harga global Kerah/Manset", viaFallback: true };
 }
 
 function lenganAbbr(lengan: Lengan): string {
