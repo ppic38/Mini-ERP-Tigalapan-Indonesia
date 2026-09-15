@@ -68,7 +68,7 @@ export default function ModuleSelectPage() {
       style={{ background: "linear-gradient(160deg, #000000 0%, #050912 30%, #0A1B3D 62%, var(--accent-blue) 100%)" }}
     >
       <div className="mb-8 text-center">
-        <div className="font-sans text-[13px] font-semibold text-white/60">ERP Tigalapan Indonesia</div>
+        <div className="font-sans text-[13px] font-semibold text-white/60">Tigalapan Indonesia</div>
         <div className="mt-1.5 font-heading text-[26px] font-bold text-white">Pilih Modul</div>
         <div className="mt-1 font-sans text-[12.5px] text-white/70">Pilih modul yang ingin Anda akses.</div>
       </div>

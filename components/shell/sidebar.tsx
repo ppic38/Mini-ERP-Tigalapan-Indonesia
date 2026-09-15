@@ -56,7 +56,7 @@ export function Sidebar({
   return (
     <div className="flex w-[212px] flex-none flex-col bg-surface-nav">
       <div className="flex h-[52px] items-center gap-[9px] border-b border-white/8 px-4">
-        <span className="font-heading text-[13px] font-bold leading-tight tracking-tight text-white">ERP Tigalapan Indonesia</span>
+        <span className="font-heading text-[13px] font-bold leading-tight tracking-tight text-white">Tigalapan Indonesia</span>
       </div>
       <div className="flex flex-col gap-0.5 p-2.5">
         {items.map((item) => {

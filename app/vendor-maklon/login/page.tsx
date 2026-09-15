@@ -54,7 +54,7 @@ export default function VendorLoginPage() {
           <span className="flex h-[64px] w-[64px] items-center justify-center rounded-lg bg-accent-orange-bg">
             <Building2 size={28} strokeWidth={1.75} className="text-accent-orange" />
           </span>
-          <div className="mt-3.5 font-sans text-[13px] font-semibold text-text-muted">ERP Tigalapan Indonesia</div>
+          <div className="mt-3.5 font-sans text-[13px] font-semibold text-text-muted">Tigalapan Indonesia</div>
           <div className="mt-1 font-heading text-xl font-bold text-text-primary">Login Vendor Produksi</div>
           <div className="mt-1 font-sans text-xs text-text-muted">Ketik nama vendor Anda lalu masukkan password.</div>
 

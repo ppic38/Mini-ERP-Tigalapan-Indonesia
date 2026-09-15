@@ -25,7 +25,7 @@ export default function GateToGatePage() {
       {/* Top navbar */}
       <div className="flex h-[52px] flex-none items-center gap-[14px] bg-surface-nav px-[22px]">
         <span className="rounded-[5px] bg-accent-blue" style={{ width: 22, height: 22 }} />
-        <span className="font-sans text-[13px] font-bold text-white">ERP Tigalapan Indonesia</span>
+        <span className="font-sans text-[13px] font-bold text-white">Tigalapan Indonesia</span>
         <span className="h-5 w-px bg-white/16" />
         <span className="font-sans text-[12.5px] font-medium text-[#9FB0C0]">Gate-to-Gate · simulasi data dummy</span>
         <span className="ml-auto flex items-center gap-3">
