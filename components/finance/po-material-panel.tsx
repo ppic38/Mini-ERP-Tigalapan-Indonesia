@@ -1,0 +1,492 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { StatusPill } from "@/components/ui/status-pill";
+import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { useMrpStore } from "@/lib/mrp/store";
+import {
+  formatPcs,
+  formatRupiah,
+  hargaKainRateInfo,
+  maklonFeeForColorLine,
+  materialPoFullStatus,
+  materialPoFullStatusBadge,
+  mrpDetailFor,
+} from "@/lib/mrp/derive";
+import { countPendingMaterialPoForMrp, pendingMarker } from "@/lib/shell/badges";
+import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import type { ColorBreakdown, MaterialPO } from "@/lib/mrp/types";
+import type { MrpDetail } from "@/lib/mrp/store";
+
+/** Item 3 (feedback batch 2026-09-10, owner: "bisa ada juga untuk penggunaan rib serta harga di
+ *  warna itu kalau ada kalau tidak ada berarti kosong"): rib (kg) dijumlah dari materialRows MRP
+ *  ini yang cocok warna+lengan -- sumber SAMA seperti "Rib kg" di halaman PO Approval Procurement
+ *  (materialGroupsByWarna, app/procurement/po-approval/page.tsx), cuma di-scope ke 1 warna/lengan
+ *  di sini (bukan digabung semua lengan). Digeneralisasi (BAGIAN 2, Req 20) supaya field mana yang
+ *  dijumlah bisa dipilih pemanggil -- dipakai juga untuk Kerah/Manset kg. */
+function materialKgForColor(field: "ribKg" | "kerahKg" | "mansetKg", poId: string, c: ColorBreakdown, mrpDetails: MrpDetail[]): number {
+  const detail = mrpDetailFor(poId, mrpDetails);
+  if (!detail) return 0;
+  return detail.materialRows.filter((m) => m.warna === c.warna && m.lengan === c.lengan).reduce((s, m) => s + m[field], 0);
+}
+
+function ribKgForColor(poId: string, c: ColorBreakdown, mrpDetails: MrpDetail[]): number {
+  return materialKgForColor("ribKg", poId, c, mrpDetails);
+}
+
+function kerahKgForColor(poId: string, c: ColorBreakdown, mrpDetails: MrpDetail[]): number {
+  return materialKgForColor("kerahKg", poId, c, mrpDetails);
+}
+
+function mansetKgForColor(poId: string, c: ColorBreakdown, mrpDetails: MrpDetail[]): number {
+  return materialKgForColor("mansetKg", poId, c, mrpDetails);
+}
+
+/** Item BAGIAN 2 (Req 20) — Kerah/Manset kg cuma ditampilkan kalau ADA warna di PO ini yang
+ *  benar-benar punya nilai (kategori "WANGKI MYNO"). */
+function poHasKerahManset(po: MaterialPO, mrpDetails: MrpDetail[]): boolean {
+  return po.colorBreakdown.some((c) => kerahKgForColor(po.mrpId, c, mrpDetails) > 0 || mansetKgForColor(po.mrpId, c, mrpDetails) > 0);
+}
+
+/** Harga/kg PER WARNA -- pakai hargaKainRateInfo yang sama dengan badge "Standar"/"PKS"/"Estimasi"
+ *  di halaman Procurement, tapi di sini nilainya cuma ditampilkan kalau BENAR ada harga tercatat
+ *  di Master Data (Standar/PKS) -- source "Estimasi" (fallback flat, tidak ada data harga sama
+ *  sekali untuk supplier+warna ini) ditampilkan kosong ("—"), bukan angka tebakan. */
+function hargaPerKgForColor(supplier: string, c: ColorBreakdown, hargaKain: Parameters<typeof hargaKainRateInfo>[0], hargaKainPks: Parameters<typeof hargaKainRateInfo>[1]): number | null {
+  const kg = c.rollCount * ROLL_KG_ESTIMATE;
+  const info = hargaKainRateInfo(hargaKain, hargaKainPks, supplier, c.warna, kg);
+  return info.source === "Estimasi" ? null : info.rate;
+}
+
+/** Panel "PO Material" — konten diekstrak dari halaman lama /finance/po-material,
+ *  sekarang dipakai sebagai satu sub-tab di halaman gabungan /finance/po-approval. */
+export function PoMaterialPanel() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  const mrpDetails = useMrpStore((s) => s.mrpDetails);
+  const materialPOs = useMrpStore((s) => s.materialPOs);
+  const maklonPOs = useMrpStore((s) => s.maklonPOs);
+  // Dipakai buat status gabungan (materialPoFullStatus) — BUKAN po.status mentah, yang cuma
+  // pernah diisi "WAITING_INVOICE" saat PO dibuat dan tidak pernah di-update lagi (lihat
+  // sendPoToFinance di lib/mrp/store.ts). Sebelumnya kolom Status di sini pakai po.status mentah
+  // itu langsung, jadi PO Material yang sudah lunas/delivery/selesai di halaman Procurement tetap
+  // kelihatan "WAITING INVOICE" selamanya di sini — status modul Procurement benar, tapi yang
+  // "dilempar" ke Finance tidak pernah berubah. Sekarang pakai fungsi status gabungan yang sama
+  // dengan Procurement (material-tracking, po-approval).
+  const invoices = useMrpStore((s) => s.invoices);
+  const productionBatches = useMrpStore((s) => s.productionBatches);
+  const productionResults = useMrpStore((s) => s.productionResults);
+  const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
+  const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
+  // Dulu ada konstanta ENTITIES lokal terpisah di sini (["PT Garmen Nusantara", "PT Adikarya"])
+  // yang TIDAK SINKRON dengan ENTITAS_LIST di lib/mrp/seed.ts (daftar entitas berbeda!) — sekarang
+  // keduanya pakai entitasList di store sebagai satu-satunya sumber (lihat Master Data > Finance).
+  const entitasList = useMrpStore((s) => s.entitasList);
+  const setMaterialPoEntity = useMrpStore((s) => s.setMaterialPoEntity);
+  const setMaterialPoColorEntity = useMrpStore((s) => s.setMaterialPoColorEntity);
+  const approveVendorMaterialPos = useMrpStore((s) => s.approveVendorMaterialPos);
+  // Item 3: sumber harga/kg per warna (rib dari mrpDetails.materialRows di atas).
+  const hargaKain = useMrpStore((s) => s.hargaKain);
+  const hargaKainPks = useMrpStore((s) => s.hargaKainPks);
+
+  const [selectedMrpId, setSelectedMrpId] = useState<string>("");
+  // `colorBreakdown[].entitas` di database SELALU sudah terisi default (entitas pertama secara
+  // alfabet) sejak MRP diimport/PO dikirim ke Finance — kalau dropdown di bawah langsung
+  // menampilkan c.entitas apa adanya, Finance tidak pernah benar-benar "memilih", cuma menyetujui
+  // nilai default yang sudah kepasang duluan. Supaya Finance WAJIB klik pilih sendiri di layar
+  // ini (tanpa mengubah default di sistem lain yang mengandalkan entitas selalu terisi — Laporan
+  // HPP, split PO per entitas, dst), dropdown di bawah SENGAJA ditampilkan kosong sampai Finance
+  // benar-benar meng-klik salah satu opsinya di SINI — dilacak lewat set client-side ini, bukan
+  // field baru di database. Reload halaman = balik nampak kosong lagi (belum "disentuh" ulang),
+  // itu trade-off yang disengaja dari pendekatan "cuma di layar approval Finance, bukan di data").
+  const [touchedEntitas, setTouchedEntitas] = useState<Set<string>>(new Set());
+  function colorEntitasKey(poId: string, warna: string, lengan: string) {
+    return `${poId}|${warna}|${lengan}`;
+  }
+  // Filter "cuma tampilkan PO multi entitas" untuk daftar pending di bawah — lihat poIsMultiEntitas.
+  const [onlyMultiEntitas, setOnlyMultiEntitas] = useState(false);
+
+  // Entitas sekarang disimpan PER WARNA (po.colorBreakdown[].entitas) — bukan cuma per PO — jadi
+  // "sudah pilih entitas" dicek langsung dari data itu (bukan state lokal terpisah yang gampang
+  // desync). Satu PO bisa gabung sampai puluhan warna (dari supplier+vendor produksi yang sama),
+  // dan tiap warna BISA beda entitas — lihat dropdown per-baris di bawah. setMaterialPoEntity
+  // (dropdown di header PO) tetap ada sebagai cara cepat "set semua warna PO ini ke entitas X
+  // sekaligus", baru warna yang perlu beda di-override satu-satu lewat dropdown per-baris —
+  // splitMaterialPoByEntitas otomatis memecah PO jadi beberapa PO approved terpisah per entitas
+  // begitu approve, jadi tidak perlu approve manual per grup entitas.
+  // "Sudah punya entitas" sekarang berarti "sudah di-KLIK Finance di layar ini" (touchedEntitas),
+  // bukan cuma "field-nya kebetulan sudah terisi default" — lihat catatan di touchedEntitas.
+  function poHasAllEntitas(po: MaterialPO) {
+    return po.colorBreakdown.every((c) => !!c.entitas && touchedEntitas.has(colorEntitasKey(po.id, c.warna, c.lengan)));
+  }
+  function poBulkEntitasValue(po: MaterialPO) {
+    // JANGAN filter dulu sebelum cek distinctness — kalau di-filter Boolean duluan, warna yang
+    // BELUM dipilih entitasnya (undefined) jadi tidak ikut dihitung, jadi dropdown bulk bisa
+    // salah nunjuk "sudah terisi 1 entitas" padahal masih ada warna lain yang kosong.
+    if (!po.colorBreakdown.every((c) => touchedEntitas.has(colorEntitasKey(po.id, c.warna, c.lengan)))) return "";
+    const distinct = new Set(po.colorBreakdown.map((c) => c.entitas ?? ""));
+    if (distinct.size !== 1) return "";
+    const only = Array.from(distinct)[0];
+    return only || "";
+  }
+
+  const openPOs = materialPOs.filter((po) => po.status !== "CANCELLED");
+  const pending = openPOs.filter((po) => !po.approved);
+  const approved = openPOs.filter((po) => po.approved);
+
+  const pendingMrpIds = Array.from(new Set(pending.map((p) => p.mrpId)));
+  const selectable = mrpDetails.filter((d) => pendingMrpIds.includes(d.mrp.id));
+
+  useEffect(() => {
+    if (mounted && (!selectedMrpId || !pendingMrpIds.includes(selectedMrpId))) {
+      setSelectedMrpId(pendingMrpIds[0] ?? "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted, pendingMrpIds.join(",")]);
+
+  if (!mounted) return null;
+
+  // PO dianggap "multi entitas" kalau warna2-nya BENAR sudah dipecah ke >1 entitas berbeda (bukan
+  // cuma karena belum dipilih Finance) — cuma relevan untuk PO yang masih pending, karena
+  // splitMaterialPoByEntitas otomatis memecah PO jadi 1-entitas-per-PO begitu di-approve.
+  function poIsMultiEntitas(po: MaterialPO): boolean {
+    return new Set(po.colorBreakdown.map((c) => c.entitas).filter(Boolean)).size > 1;
+  }
+
+  const detail = mrpDetails.find((d) => d.mrp.id === selectedMrpId);
+  const scopedPendingAll = pending.filter((p) => p.mrpId === selectedMrpId);
+  const withoutEntity = scopedPendingAll.filter((p) => !poHasAllEntitas(p)).length;
+  const multiEntitasCount = scopedPendingAll.filter(poIsMultiEntitas).length;
+  const scopedPending = onlyMultiEntitas ? scopedPendingAll.filter(poIsMultiEntitas) : scopedPendingAll;
+
+  const grouped = new Map<string, MaterialPO[]>();
+  for (const po of scopedPending) {
+    const arr = grouped.get(po.vendorProduksi) ?? [];
+    arr.push(po);
+    grouped.set(po.vendorProduksi, arr);
+  }
+
+  function chooseEntityBulk(poId: string, entitas: string) {
+    if (!entitas) return;
+    setMaterialPoEntity(poId, entitas);
+    const po = openPOs.find((p) => p.id === poId);
+    if (po) {
+      setTouchedEntitas((prev) => {
+        const next = new Set(prev);
+        for (const c of po.colorBreakdown) next.add(colorEntitasKey(poId, c.warna, c.lengan));
+        return next;
+      });
+    }
+  }
+
+  function chooseEntityForColor(poId: string, warna: string, lengan: MaterialPO["lengan"], entitas: string) {
+    if (!entitas) return;
+    setMaterialPoColorEntity(poId, warna, lengan, entitas);
+    setTouchedEntitas((prev) => new Set(prev).add(colorEntitasKey(poId, warna, lengan)));
+  }
+
+  // Item 10.3: "Approve semua PO MRP ini" -- loop approveVendorMaterialPos per vendor dari MRP
+  // terpilih (BUKAN approveAllMaterialPos(), yang approve SEMUA MRP di seluruh app).
+  function approveAllForMrp() {
+    for (const vendor of grouped.keys()) approveVendorMaterialPos(selectedMrpId, vendor);
+  }
+
+  const approvedColumns: ColumnDef<MaterialPO>[] = [
+    { key: "noPo", label: "No PO", default: true, render: (p) => <span className="font-mono font-medium">{p.id}</span> },
+    { key: "vendor", label: "Supplier / vendor", default: true, render: (p) => `${p.supplier} → ${VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi}` },
+    { key: "roll", label: "Roll", default: true, align: "right", render: (p) => p.rollCount + " roll" },
+    { key: "nilai", label: "Nilai", default: true, align: "right", render: (p) => formatRupiah(p.amount) },
+    {
+      key: "status",
+      label: "Status",
+      default: true,
+      render: (p) => {
+        const badge = materialPoFullStatusBadge(materialPoFullStatus(p, invoices, productionBatches, productionResults, mrpDetails, deliveryKolis, vendorInvoices, maklonPOs));
+        return <StatusPill tone={badge.tone}>{badge.label}</StatusPill>;
+      },
+    },
+  ];
+
+  return (
+    <>
+      {entitasList.length === 0 && (
+        <div className="rounded-lg border border-[#F0DFC2] bg-warning-bg px-5 py-3 font-sans text-[11.5px] leading-[1.5] text-warning-fg">
+          Belum ada daftar entitas — dropdown &quot;pilih entitas&quot; di bawah masih kosong sampai diisi dulu. Buka{" "}
+          <Link href="/finance/master-data" className="font-semibold underline">
+            Master Data → Entitas
+          </Link>{" "}
+          untuk menambahkan (bisa manual atau import dari Google Sheets).
+        </div>
+      )}
+      <div className="flex items-center gap-3 rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
+        <div>
+          <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">No MRP (menunggu approval)</div>
+          <select
+            value={selectedMrpId}
+            onChange={(e) => {
+              setSelectedMrpId(e.target.value);
+            }}
+            className="mt-1 rounded-md border border-[#DDE4EB] px-[11px] py-[9px] font-sans text-[12.5px] font-medium text-text-primary"
+          >
+            <option value="">— pilih MRP —</option>
+            {selectable.map((d) => (
+              <option key={d.mrp.id} value={d.mrp.id}>
+                {d.mrp.id} · {formatPcs(d.mrp.qty)} pcs{pendingMarker(countPendingMaterialPoForMrp(d.mrp.id, materialPOs), "PO belum di-approve")}
+              </option>
+            ))}
+          </select>
+        </div>
+        {withoutEntity > 0 && <StatusPill tone="warning">{withoutEntity} PO belum pilih entitas</StatusPill>}
+        {multiEntitasCount > 0 && (
+          <button
+            onClick={() => setOnlyMultiEntitas((v) => !v)}
+            title="Filter cuma PO yang warna-nya sudah kepecah ke lebih dari 1 entitas"
+            className={
+              "rounded-md border px-2.5 py-[6px] font-sans text-[11px] font-semibold " +
+              (onlyMultiEntitas ? "border-transparent bg-rework-bg text-rework-fg" : "border-[#CBD5DF] bg-white text-action-primary")
+            }
+          >
+            {onlyMultiEntitas ? "✕ " : ""}Multi Entitas ({multiEntitasCount})
+          </button>
+        )}
+        {scopedPending.length > 0 && (
+          <button
+            onClick={approveAllForMrp}
+            disabled={withoutEntity > 0}
+            title={withoutEntity > 0 ? `${withoutEntity} PO di MRP ini belum pilih entitas -- lengkapi dulu` : undefined}
+            className="ml-auto rounded-md bg-success px-3.5 py-[9px] font-sans text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Approve semua PO MRP ini ({scopedPending.length})
+          </button>
+        )}
+      </div>
+
+      {withoutEntity > 0 && (
+        <div className="rounded-lg border border-[#F0DFC2] bg-warning-bg px-5 py-3 font-sans text-[11.5px] leading-[1.5] text-warning-fg">
+          PO belum bisa di-approve, entitas belum lengkap: {scopedPendingAll.filter((p) => !poHasAllEntitas(p)).map((p) => p.id).join(", ")}
+        </div>
+      )}
+
+      {!detail && (
+        <div className="rounded-lg border border-border-subtle bg-surface-card px-5 py-8 text-center font-sans text-xs text-text-muted">
+          Tidak ada PO material menunggu approval saat ini.
+        </div>
+      )}
+
+      {detail && (
+        <div className="overflow-hidden rounded-lg border border-border-subtle bg-[#EEF1F5]">
+          {Array.from(grouped.entries()).map(([vendor, pos]) => {
+            const vendorWithoutEntity = pos.filter((p) => !poHasAllEntitas(p));
+            const vendorMaterialTotal = pos.reduce((a, p) => a + p.amount, 0);
+            const vendorMaklonTotal = pos.reduce((a, p) => a + p.colorBreakdown.reduce((s, c) => s + maklonFeeForColorLine(p, c, maklonPOs, mrpDetails), 0), 0);
+            const vendorRollTotal = pos.reduce((a, p) => a + p.rollCount, 0);
+
+            return (
+              <div key={vendor} className="border-b border-border-subtle last:border-b-0">
+                <div className="flex items-center gap-2.5 bg-[#DEE4EC] px-5 py-[11px] font-sans text-[11px] font-semibold text-text-primary">
+                  <span>→ {VENDOR_PRODUKSI[vendor]?.name ?? vendor}</span>
+                  <button
+                    onClick={() => approveVendorMaterialPos(selectedMrpId, vendor)}
+                    disabled={vendorWithoutEntity.length > 0}
+                    title={vendorWithoutEntity.length > 0 ? `${vendorWithoutEntity.length} PO vendor ini belum pilih entitas -- lengkapi dulu` : undefined}
+                    className="ml-auto rounded-md bg-success px-2.5 py-[6px] font-sans text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Approve semua PO vendor ini ({pos.length})
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-2.5 px-3.5 py-3">
+                  {pos.map((po) => {
+                    const poMaklonTotal = po.colorBreakdown.reduce((a, c) => a + maklonFeeForColorLine(po, c, maklonPOs, mrpDetails), 0);
+                    const hasEntity = poHasAllEntitas(po);
+                    const bulkValue = poBulkEntitasValue(po);
+                    const showKerahManset = poHasKerahManset(po, mrpDetails);
+                    const gridColsClass = showKerahManset ? "grid-cols-9" : "grid-cols-7";
+                    return (
+                      // Tiap PO jadi kartu putih tersendiri (border + shadow) di atas latar abu
+                      // vendor-group — supaya jelas terlihat sebagai unit terpisah, tidak
+                      // menyatu dengan PO di atas/bawahnya seperti sebelumnya.
+                      <div key={po.id} className="overflow-hidden rounded-md border border-[#D8DEE6] bg-white shadow-[0_1px_3px_rgba(11,19,27,.06)]">
+                        <div className="grid items-center gap-2 px-4 py-[11px]" style={{ gridTemplateColumns: "110px 1fr 90px 120px 170px" }}>
+                          <span className="font-mono font-medium text-xs text-[#31414F]">{po.id}</span>
+                          <span className="flex items-center gap-1.5 font-sans text-xs text-[#31414F]">
+                            {po.supplier}
+                            {poIsMultiEntitas(po) && <StatusPill tone="rework">MULTI ENTITAS</StatusPill>}
+                          </span>
+                          <span className="text-right font-mono text-xs">{po.rollCount} roll</span>
+                          <span className="text-right font-mono text-xs">{formatRupiah(po.amount)}</span>
+                          <select
+                            value={bulkValue}
+                            onChange={(e) => chooseEntityBulk(po.id, e.target.value)}
+                            title="Set entitas untuk SEMUA warna di PO ini sekaligus — warna yang perlu beda bisa di-override satu-satu di tabel di bawah"
+                            className={
+                              "rounded-md border-2 px-2 py-[5px] font-sans text-[11px] font-medium text-text-primary " +
+                              (hasEntity ? "border-accent-blue" : "border-accent-blue/50")
+                            }
+                          >
+                            <option value="">{po.colorBreakdown.some((c) => c.entitas) ? "— multi entitas —" : "— pilih entitas (semua warna) —"}</option>
+                            {entitasList.map((e) => (
+                              <option key={e.id} value={e.nama}>
+                                {e.nama}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="mx-4 mb-3 overflow-hidden rounded-md border border-[#F1F4F7]">
+                          <div className={`grid ${gridColsClass} gap-2 bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted`}>
+                            <span>Warna / lengan</span>
+                            <span className="text-right">Roll</span>
+                            <span className="text-right">Rib (kg)</span>
+                            {showKerahManset && <span className="text-right">Kerah (kg)</span>}
+                            {showKerahManset && <span className="text-right">Manset (kg)</span>}
+                            <span className="text-right">Harga/Kg</span>
+                            <span className="text-right">Nilai material</span>
+                            <span className="text-right">Biaya maklon</span>
+                            <span>Entitas</span>
+                          </div>
+                          {po.colorBreakdown.map((c, i) => {
+                            const hargaPerKg = hargaPerKgForColor(po.supplier, c, hargaKain, hargaKainPks);
+                            return (
+                            <div key={i} className={`grid ${gridColsClass} items-center gap-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]`}>
+                              <span>
+                                {c.warna} · {c.lengan}
+                              </span>
+                              <span className="text-right font-mono">{c.rollCount}</span>
+                              <span className="text-right font-mono">{ribKgForColor(po.mrpId, c, mrpDetails).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>
+                              {showKerahManset && (
+                                <span className="text-right font-mono">{kerahKgForColor(po.mrpId, c, mrpDetails).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>
+                              )}
+                              {showKerahManset && (
+                                <span className="text-right font-mono">{mansetKgForColor(po.mrpId, c, mrpDetails).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>
+                              )}
+                              <span className="text-right font-mono">{hargaPerKg != null ? formatRupiah(hargaPerKg) : "—"}</span>
+                              <span className="text-right font-mono">{formatRupiah((po.amount / po.rollCount) * c.rollCount)}</span>
+                              <span className="text-right font-mono">{formatRupiah(maklonFeeForColorLine(po, c, maklonPOs, mrpDetails))}</span>
+                              <select
+                                value={touchedEntitas.has(colorEntitasKey(po.id, c.warna, c.lengan)) ? c.entitas ?? "" : ""}
+                                onChange={(e) => chooseEntityForColor(po.id, c.warna, c.lengan, e.target.value)}
+                                className={
+                                  "rounded-md border px-1.5 py-1 font-sans text-[10.5px] font-medium text-text-primary " +
+                                  (touchedEntitas.has(colorEntitasKey(po.id, c.warna, c.lengan)) ? "border-accent-blue/60" : "border-warning")
+                                }
+                              >
+                                <option value="">— pilih —</option>
+                                {entitasList.map((e) => (
+                                  <option key={e.id} value={e.nama}>
+                                    {e.nama}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            );
+                          })}
+                          <div className={`grid ${gridColsClass} gap-2 border-t-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[11.5px] font-semibold text-info-fg`}>
+                            <span>Subtotal PO {po.id}</span>
+                            <span className="text-right font-mono">{po.rollCount} roll</span>
+                            <span />
+                            {showKerahManset && <span />}
+                            {showKerahManset && <span />}
+                            <span />
+                            <span className="text-right font-mono">{formatRupiah(po.amount)}</span>
+                            <span className="text-right font-mono">{formatRupiah(poMaklonTotal)}</span>
+                            <span />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-4 bg-[#DEE4EC] px-5 py-[10px] font-sans text-[11px] font-semibold text-text-primary">
+                  <span>Total vendor {VENDOR_PRODUKSI[vendor]?.name ?? vendor}:</span>
+                  <span>Roll: {vendorRollTotal}</span>
+                  <span>Material: {formatRupiah(vendorMaterialTotal)}</span>
+                  <span>Maklon: {formatRupiah(vendorMaklonTotal)}</span>
+                  <span>Total: {formatRupiah(vendorMaterialTotal + vendorMaklonTotal)}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <DataTable
+        title="PO Material disetujui"
+        columns={approvedColumns}
+        rows={approved}
+        keyOf={(p) => p.id}
+        firstColumnLabel="No. MRP"
+        firstColumnRender={(p) => <span className="font-mono">{p.mrpId}</span>}
+        filterDefs={[
+          { label: "No MRP", options: Array.from(new Set(approved.map((p) => p.mrpId))), test: (p, v) => p.mrpId === v },
+          { label: "No PO", options: Array.from(new Set(approved.map((p) => p.id))), test: (p, v) => p.id === v },
+          {
+            label: "Status",
+            options: Array.from(
+              new Set(approved.map((p) => materialPoFullStatusBadge(materialPoFullStatus(p, invoices, productionBatches, productionResults, mrpDetails, deliveryKolis, vendorInvoices, maklonPOs)).label))
+            ),
+            test: (p, v) => materialPoFullStatusBadge(materialPoFullStatus(p, invoices, productionBatches, productionResults, mrpDetails, deliveryKolis, vendorInvoices, maklonPOs)).label === v,
+          },
+        ]}
+        emptyText="Belum ada PO material disetujui."
+        // Item revisi 2026-09-06: klik baris untuk lihat rincian per warna/lengan (roll dari
+        // totalan, estimasi nilai & biaya maklon) -- sama pola dengan PPIC/SCM & kartu detail yang
+        // sudah ada di bagian "pending" di atas, sekarang dibuat sama untuk PO yang sudah approved.
+        renderExpanded={(p) => {
+          const showKerahManset = poHasKerahManset(p, mrpDetails);
+          const gridColsClass = showKerahManset ? "grid-cols-9" : "grid-cols-7";
+          return (
+          <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
+            <div className={`grid ${gridColsClass} gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted`}>
+              <span>Warna / lengan</span>
+              <span className="text-right">Roll</span>
+              <span className="text-right">Rib (kg)</span>
+              {showKerahManset && <span className="text-right">Kerah (kg)</span>}
+              {showKerahManset && <span className="text-right">Manset (kg)</span>}
+              <span className="text-right">Harga/Kg</span>
+              <span className="text-right">Nilai material (estimasi)</span>
+              <span className="text-right">Biaya maklon (estimasi)</span>
+              <span>Entitas</span>
+            </div>
+            {p.colorBreakdown.map((c, i) => {
+              const hargaPerKg = hargaPerKgForColor(p.supplier, c, hargaKain, hargaKainPks);
+              return (
+              <div key={i} className={`grid ${gridColsClass} items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]`}>
+                <span className="font-medium">
+                  {c.warna} · {c.lengan}
+                </span>
+                <span className="text-right font-mono">{c.rollCount}</span>
+                <span className="text-right font-mono">{ribKgForColor(p.mrpId, c, mrpDetails).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>
+                {showKerahManset && (
+                  <span className="text-right font-mono">{kerahKgForColor(p.mrpId, c, mrpDetails).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>
+                )}
+                {showKerahManset && (
+                  <span className="text-right font-mono">{mansetKgForColor(p.mrpId, c, mrpDetails).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>
+                )}
+                <span className="text-right font-mono">{hargaPerKg != null ? formatRupiah(hargaPerKg) : "—"}</span>
+                <span className="text-right font-mono">{formatRupiah(p.rollCount > 0 ? (p.amount / p.rollCount) * c.rollCount : 0)}</span>
+                <span className="text-right font-mono">{formatRupiah(maklonFeeForColorLine(p, c, maklonPOs, mrpDetails))}</span>
+                <span>{c.entitas ?? "—"}</span>
+              </div>
+              );
+            })}
+            <div className={`grid ${gridColsClass} gap-x-2 border-t-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[11.5px] font-semibold text-info-fg`}>
+              <span>Subtotal PO {p.id}</span>
+              <span className="text-right font-mono">{p.rollCount} roll</span>
+              <span />
+              {showKerahManset && <span />}
+              {showKerahManset && <span />}
+              <span />
+              <span className="text-right font-mono">{formatRupiah(p.amount)}</span>
+              <span className="text-right font-mono">{formatRupiah(p.colorBreakdown.reduce((a, c) => a + maklonFeeForColorLine(p, c, maklonPOs, mrpDetails), 0))}</span>
+              <span />
+            </div>
+          </div>
+          );
+        }}
+      />
+    </>
+  );
+}

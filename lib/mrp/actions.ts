@@ -1,0 +1,4270 @@
+"use server";
+
+// Server Actions untuk alur inti MRP -> PO -> Invoice -> Produksi -> Delivery -> Invoice Vendor.
+//
+// POLA YANG DIPAKAI DI SETIAP ACTION (lihat catatan keamanan di proxy.ts & docs Next.js
+// guides/server-actions.md#security -- proxy TIDAK cukup untuk melindungi Server Function):
+//   1. requireSession() / requireInternalRole() / requireVendorSession() di baris PALING AWAL.
+//   2. Kalau perlu data lintas-entitas untuk kalkulasi (status turunan, target produksi, dst),
+//      fetch snapshot penuh lewat getFlowSnapshot() dan pakai fungsi murni dari derive.ts APA
+//      ADANYA (tidak ditulis ulang) -- persis logika yang dulu jalan di lib/mrp/store.ts, cuma
+//      sumber datanya sekarang snapshot Supabase, bukan state Zustand in-memory.
+//   3. Generate id (kalau perlu) lewat nextReadableId() SEBELUM langkah 2/4 (async, harus di luar
+//      bagian yang meniru logika sinkron lama).
+//   4. Tulis HANYA baris yang benar-benar berubah balik ke Supabase (bukan full-table resync).
+//
+// Business logic di sini mengikuti PERSIS lib/mrp/store.ts (dibaca penuh saat migrasi) -- lihat
+// komentar di masing-masing fungsi kalau ada penyesuaian dari bentuk aslinya.
+
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { requireSession, requireInternalRole, requireAnyInternalRole } from "../auth/session";
+import { supabaseServer } from "../supabase/server";
+import { nextReadableId, nextPoDisplayId } from "./repo/ids";
+import { getFlowSnapshot } from "./repo/snapshot";
+import {
+  localDateString,
+  maklonAmountForLenganBuckets,
+  maklonAmountForVendor,
+  materialAmountForPo,
+  materialClaimsList,
+  materialPoFullStatus,
+  splitMaterialPoByEntitas,
+  advanceMaklonToDeliveryIfFullyDone,
+  reassignAduanRowsVendor,
+  cuttingSizesForGroup,
+  actualCutSizesForGroup,
+  reworkQtyForGroup,
+  wasteQtyForGroup,
+  cumulativeSizeQtyForGroup,
+  weightVariance,
+  movableRollCountForInvoiceColor,
+  warnaLenganGroupsWithFg,
+  reworkSizeAllowed,
+  rollRemainingBySizeForMrp,
+  resiGroupInvoiceLines,
+  warehouseReceivableGroups,
+} from "./derive";
+import { ENTITAS_LIST, VENDOR_PRODUKSI } from "./seed";
+import type { ParsedMrpImport } from "./parseImport";
+import type { MrpDetail } from "./store";
+import type {
+  AddBuyItem,
+  AduanPolaRow,
+  ColorBreakdown,
+  ColorEntry,
+  DeliveryKoliItem,
+  Lengan,
+  MaklonPO,
+  MaterialPO,
+  MaterialRow,
+  Notification,
+  NotificationAudience,
+  ProductionBatch,
+  ProductionResult,
+  RawMaterialInvoice,
+  RollReceipt,
+  Usia,
+  VendorInvoiceAdjustmentKind,
+} from "./types";
+
+function today() {
+  return localDateString(new Date());
+}
+function nowIso() {
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${localDateString(d)} ${hh}:${mm}`;
+}
+/** Jam saja ("HH:mm") -- persis helper now() lama di lib/mrp/store.ts, dipakai utk field
+ *  `time` notifikasi & cancelledLines (lihat catatan tipe kolom di migrasi 0004). */
+function nowClock() {
+  const d = new Date();
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+
+async function requireVendorSession(): Promise<string> {
+  const session = await requireSession();
+  if (!session.vendorId) throw new Error("Forbidden: aksi ini hanya untuk vendor produksi.");
+  return session.vendorId;
+}
+
+async function insertNotification(n: Omit<Notification, "id"> & { id?: string }) {
+  const id = n.id ?? (await nextReadableId("NTF"));
+  const { error } = await supabaseServer()
+    .from("notifications")
+    .insert({ id, text: n.text, time: n.time, audience: n.audience, vendor_id: n.vendorId ?? null, read: n.read });
+  if (error) throw new Error(`Gagal menyimpan notifikasi: ${error.message}`);
+}
+
+function notif(text: string, audience: NotificationAudience[], vendorId?: string): Omit<Notification, "id"> {
+  return { text, time: nowClock(), audience, vendorId, read: false };
+}
+
+/** Sama seperti checkPoApproved di lib/mrp/store.ts lama -- kalau semua PO material & maklon
+ *  milik satu MRP sudah approved/cancelled, catat tanggal PO Approved (sekali saja). */
+async function checkPoApproved(mrpId: string) {
+  const db = supabaseServer();
+  const [materialRes, maklonRes, mrpRes] = await Promise.all([
+    db.from("material_pos").select("approved,status").eq("mrp_id", mrpId),
+    db.from("maklon_pos").select("approved").eq("mrp_id", mrpId),
+    db.from("mrp").select("po_approved_at").eq("id", mrpId).single(),
+  ]);
+  if (materialRes.error || maklonRes.error || mrpRes.error) return;
+  const materialDone = (materialRes.data ?? []).every((p) => p.approved || p.status === "CANCELLED");
+  const maklonDone = (maklonRes.data ?? []).every((p) => p.approved);
+  if (materialDone && maklonDone && !mrpRes.data?.po_approved_at) {
+    await db.from("mrp").update({ po_approved_at: today() }).eq("id", mrpId);
+  }
+}
+
+// =========================================================================
+// MRP / import / approval
+// =========================================================================
+
+// PERFORMA (2026-09-06): dulu 9 round-trip Supabase BERURUTAN (generate id, cek entitas, insert
+// mrp, insert lengan_groups, insert size-nya, insert aduan_pola_rows, insert size-nya, insert
+// material_rows, kirim notifikasi) -- di project ini biaya SATU round-trip saja terukur
+// 300-700ms (region Supabase jauh dari region default Vercel, lihat vercel.json), jadi 9
+// berurutan gampang jadi beberapa detik. Sekarang dipisah jadi 3 "gelombang" sesuai foreign key
+// yang BENAR-BENAR wajib berurutan (mrp harus ada duluan sebelum lengan_groups, dan lengan_groups
+// harus ada duluan sebelum aduan_pola_rows/material_rows -- keduanya referensi lengan_group_id,
+// lihat supabase/migrations/0001_init.sql) -- semua yang TIDAK punya hubungan foreign key
+// langsung dijalankan paralel dalam gelombang yang sama.
+export async function importMrpAction(parsed: ParsedMrpImport, customId?: string): Promise<string> {
+  await requireInternalRole(await requireSession(), "ppic");
+  const db = supabaseServer();
+
+  // Gelombang 1: generate id (kalau belum dikasih customId) & cek entitas default -- 2 query yang
+  // sama sekali tidak saling bergantung.
+  const [id, entitasRows] = await Promise.all([
+    customId?.trim() ? Promise.resolve(customId.trim()) : nextReadableId("MRP"),
+    db.from("entitas").select("nama").order("nama").limit(1).then((r) => r.data),
+  ]);
+  const idMap = new Map<string, string>();
+  const lenganGroups = parsed.lenganGroups.map((g) => {
+    const newId = id + "-" + g.id;
+    idMap.set(g.id, newId);
+    return { ...g, id: newId };
+  });
+  const aduanRows = parsed.aduanRows.map((a, i) => ({ ...a, id: id + "-ad-" + i, lenganGroupId: idMap.get(a.lenganGroupId) ?? a.lenganGroupId }));
+  const defaultEntitas = entitasRows?.[0]?.nama ?? ENTITAS_LIST[0];
+  const materialRows = parsed.materialRows.map((m) => ({ ...m, id: id + "-" + m.id, lenganGroupId: idMap.get(m.lenganGroupId) ?? m.lenganGroupId, entitas: defaultEntitas }));
+
+  // Gelombang 2: insert mrp -- WAJIB selesai duluan (lengan_groups.mrp_id references mrp(id)).
+  const { error: mrpErr } = await db.from("mrp").insert({
+    id,
+    kategori: parsed.kategori,
+    warna: parsed.warna,
+    target_date: "-",
+    live: true,
+    qty: parsed.qty,
+    is_fob: parsed.isFob ?? false,
+    ppic_approval: "WAITING_PPIC_APPROVAL",
+    po_sent: false,
+    created_at: today(),
+    ppic_submitted_at: today(),
+  });
+  if (mrpErr) throw new Error(`Gagal membuat MRP: ${mrpErr.message}`);
+
+  // Gelombang 3: insert lengan_groups -- WAJIB selesai duluan (aduan_pola_rows.lengan_group_id
+  // DAN material_rows.lengan_group_id sama-sama references lengan_groups(id)).
+  if (lenganGroups.length > 0) {
+    await db.from("lengan_groups").insert(
+      lenganGroups.map((g) => ({
+        id: g.id,
+        mrp_id: id,
+        warna: g.warna,
+        lengan: g.lengan,
+        total_qty: g.totalQty,
+        rib_kg: g.ribKg,
+        kerah_kg: g.kerahKg,
+        manset_kg: g.mansetKg,
+        roll_estimate: g.rollEstimate,
+        vendor_default: g.vendorDefault,
+      }))
+    );
+  }
+
+  // Gelombang 4: lengan_group_sizes, aduan_pola_rows(+size-nya), material_rows, dan notifikasi --
+  // KEEMPATNYA cuma butuh lengan_groups (gelombang 3) sudah ada, TIDAK saling butuh satu sama
+  // lain, jadi paralel penuh.
+  await Promise.all([
+    (async () => {
+      const sizeRows = lenganGroups.flatMap((g) => g.sizes.map((s) => ({ lengan_group_id: g.id, size: s.size, qty: s.qty })));
+      if (sizeRows.length > 0) await db.from("lengan_group_sizes").insert(sizeRows);
+    })(),
+    (async () => {
+      if (aduanRows.length === 0) return;
+      await db.from("aduan_pola_rows").insert(
+        aduanRows.map((a) => ({ id: a.id, lengan_group_id: a.lenganGroupId, mrp_id: id, warna: a.warna, lengan: a.lengan, kode: a.kode, qty_roll: a.qtyRoll, qty: a.qty, vendor: a.vendor, rib_allocated_roll: a.ribAllocatedRoll ?? null }))
+      );
+      const aduanSizeRows = aduanRows.flatMap((a) => a.sizes.map((s) => ({ aduan_row_id: a.id, size: s.size, qty: s.qty })));
+      if (aduanSizeRows.length > 0) await db.from("aduan_pola_sizes").insert(aduanSizeRows);
+    })(),
+    (async () => {
+      if (materialRows.length === 0) return;
+      await db.from("material_rows").insert(
+        materialRows.map((m) => ({
+          id: m.id,
+          lengan_group_id: m.lenganGroupId,
+          mrp_id: id,
+          warna: m.warna,
+          lengan: m.lengan,
+          qty_roll: m.qtyRoll,
+          rib_kg: m.ribKg,
+          kerah_kg: m.kerahKg,
+          manset_kg: m.mansetKg,
+          supplier: m.supplier,
+          entitas: m.entitas,
+        }))
+      );
+    })(),
+    insertNotification(notif(`MRP ${id} diajukan PPIC — menunggu approval SCM sebelum diproses Procurement`, ["scm"])),
+  ]);
+
+  return id;
+}
+
+export async function approvePpicMrpAction(mrpId: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "scm");
+  const db = supabaseServer();
+  const { error } = await db.from("mrp").update({ ppic_approval: "PPIC_APPROVED", ppic_approved_at: today() }).eq("id", mrpId);
+  if (error) throw new Error(error.message);
+  await insertNotification(notif(`MRP ${mrpId} disetujui SCM — siap diproses Procurement`, ["ppic", "procurement"]));
+}
+
+/** Terima array materialRowIds (bukan satu id) -- 1 warna bisa punya beberapa baris (per lengan),
+ *  dan dulu dipanggil sekali per baris lewat `.forEach()` di UI (page.tsx), masing-masing dengan
+ *  refresh() snapshot penuhnya sendiri-sendiri -- selain lambat (N round-trip buat 1 klik), juga
+ *  race condition (beberapa refresh() saling susul-menyusul, urutan selesainya tidak terjamin).
+ *  Sekarang 1 UPDATE untuk semua baris sekaligus, 1 refresh() saja. */
+export async function assignMaterialSupplierAction(mrpId: string, materialRowIds: string[], supplier: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  if (materialRowIds.length === 0) return;
+  const { error } = await supabaseServer().from("material_rows").update({ supplier }).in("id", materialRowIds).eq("mrp_id", mrpId);
+  if (error) throw new Error(error.message);
+}
+
+export async function assignMaterialEntitasAction(mrpId: string, materialRowId: string, entitas: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const { error } = await supabaseServer().from("material_rows").update({ entitas }).eq("id", materialRowId).eq("mrp_id", mrpId);
+  if (error) throw new Error(error.message);
+}
+
+export async function switchAduanVendorAction(mrpId: string, aduanId: string, toVendor: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const { error } = await supabaseServer().from("aduan_pola_rows").update({ vendor: toVendor }).eq("id", aduanId).eq("mrp_id", mrpId);
+  if (error) throw new Error(error.message);
+}
+
+export async function rejectPpicMrpAction(mrpId: string, reason: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "scm");
+  const db = supabaseServer();
+  const { error } = await db.from("mrp").update({ ppic_approval: "REJECTED", ppic_rejection_note: reason }).eq("id", mrpId);
+  if (error) throw new Error(error.message);
+  await insertNotification(notif(`MRP ${mrpId} DITOLAK SCM — alasan: ${reason}. Cek kembali datanya lalu impor ulang kalau perlu.`, ["ppic"]));
+}
+
+// =========================================================================
+// PO generation / approval
+// =========================================================================
+
+// PERFORMA (2026-09-06): return value ditambahkan supaya store.ts bisa patch materialPOs/maklonPOs
+// SEKETIKA dari hasil insert yang sebenarnya (bukan menebak/optimistic -- PO baru ini memang BENAR
+// sudah tersimpan di titik return ini), tanpa perlu menunggu backgroundRefresh (snapshot penuh)
+// juga selesai sebelum baris PO baru kelihatan di layar Procurement. Beda dari action lain yang
+// membuat record baru (bookInvoice dkk) -- di sini SEMUA field yang dibutuhkan MaterialPO/MaklonPO
+// sudah 100% diketahui begitu insert sukses (tidak ada nilai turunan lain yang baru dihitung
+// trigger/RPC di server), jadi aman dikembalikan apa adanya.
+export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPOs: MaterialPO[]; maklonPOs: MaklonPO[] }> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const db = supabaseServer();
+  // Targeted (bukan getFlowSnapshot() penuh): aduanRows/materialRows di-scope ke mrpId ini saja;
+  // hargaMaklon/hargaKain/hargaKainPks/entitasList tabel lookup GLOBAL kecil, tetap di-fetch
+  // penuh tapi cuma tabel-tabel itu (bukan 32 tabel seluruh app).
+  const [aduanRows, materialRowsRes, hargaMaklonRes, harga, entitasRes] = await Promise.all([
+    fetchAduanRowsForMrp(db, mrpId),
+    db.from("material_rows").select("*").eq("mrp_id", mrpId),
+    db.from("harga_maklon").select("*"),
+    fetchHargaTables(db),
+    db.from("entitas").select("*"),
+  ]);
+  if (aduanRows.length === 0) throw new Error("MRP tidak ditemukan.");
+  const materialRows: MaterialRow[] = (materialRowsRes.data ?? []).map((r) => ({
+    id: r.id,
+    lenganGroupId: r.lengan_group_id,
+    warna: r.warna,
+    lengan: r.lengan,
+    qtyRoll: Number(r.qty_roll),
+    ribKg: Number(r.rib_kg),
+    kerahKg: Number(r.kerah_kg),
+    mansetKg: Number(r.manset_kg),
+    supplier: r.supplier,
+    entitas: r.entitas ?? undefined,
+  }));
+  const hargaMaklon: HargaMaklonRow[] = (hargaMaklonRes.data ?? []).map((r) => ({
+    id: r.id,
+    kodeVendor: r.kode_vendor,
+    namaVendor: r.nama_vendor,
+    tipeLengan: r.tipe_lengan,
+    jenisHarga: r.jenis_harga,
+    kapasitasMin: r.kapasitas_min ?? undefined,
+    kapasitasMax: r.kapasitas_max ?? undefined,
+    harga: Number(r.harga),
+  }));
+  const entitasList: EntitasRow[] = (entitasRes.data ?? []).map((r) => ({ id: r.id, nama: r.nama }));
+
+  const vendorRows = new Map<string, typeof aduanRows>();
+  for (const a of aduanRows) vendorRows.set(a.vendor, [...(vendorRows.get(a.vendor) ?? []), a]);
+
+  const pairTotals = new Map<string, { vendor: string; supplier: string; rolls: number; colorMap: Map<string, ColorBreakdown> }>();
+  const defaultEntitas = entitasList[0]?.nama ?? ENTITAS_LIST[0];
+  for (const a of aduanRows) {
+    const mr = materialRows.find((m) => m.lenganGroupId === a.lenganGroupId);
+    const supplier = mr?.supplier;
+    if (!supplier) continue;
+    const key = a.vendor + "|" + supplier;
+    const cur = pairTotals.get(key) ?? { vendor: a.vendor, supplier, rolls: 0, colorMap: new Map<string, ColorBreakdown>() };
+    cur.rolls += a.qtyRoll;
+    const colorKey = a.warna + "|" + a.lengan;
+    const cc = cur.colorMap.get(colorKey) ?? { warna: a.warna, lengan: a.lengan, rollCount: 0, entitas: mr!.entitas ?? defaultEntitas };
+    cc.rollCount += a.qtyRoll;
+    cur.colorMap.set(colorKey, cc);
+    pairTotals.set(key, cur);
+  }
+
+  // PERFORMA: dulu 2 batch id generation terpisah (Promise.all maklonPoIds, BARU SETELAH itu
+  // selesai, Promise.all materialPoIds) -- 2 round-trip berurutan padahal keduanya sama sekali
+  // tidak saling bergantung (satu dari vendorRows, satu dari pairTotals, keduanya sudah dihitung
+  // murni di atas tanpa I/O). Digabung jadi SATU Promise.all -- aman karena setiap panggilan
+  // nextPoDisplayId (lib/mrp/repo/ids.ts, item 2026-09-13 "format ID PO deskriptif") sudah
+  // menargetkan kombinasi (mrpId, vendor) / (mrpId, vendor, supplier) yang BERBEDA-BEDA per entry
+  // (vendorEntries/pairEntries hasil grouping di atas, tidak pernah ada kombinasi yang sama 2x
+  // dalam 1 batch ini), jadi tidak ada 2 candidate ID yang sama-sama "diperebutkan" secara
+  // paralel -- pengecekan tabrakan per candidate (loop suffix -2/-3) tetap independen aman.
+  const vendorEntries = Array.from(vendorRows.entries());
+  const pairEntries = Array.from(pairTotals.values());
+  const [maklonPoIds, materialPoIds] = await Promise.all([
+    Promise.all(vendorEntries.map(([vendor]) => nextPoDisplayId("maklon_pos", "PO-MKL", [mrpId, vendor]))),
+    Promise.all(pairEntries.map((p) => nextPoDisplayId("material_pos", "PO-SUP", [mrpId, p.vendor, p.supplier]))),
+  ]);
+  // Field2 di bawah (cancelledLines/invoicedByColor/availableRolls/invoicedRolls/status/approved/
+  // daysSincePO) sengaja LANGSUNG diisi bentuk final MaklonPO/MaterialPO (bukan cuma kolom yang
+  // dikirim ke database) -- dipakai bareng untuk payload insert MAUPUN return value ke store.ts.
+  const maklonPOs: MaklonPO[] = vendorEntries.map(([vendor, rows], idx) => ({
+    id: maklonPoIds[idx],
+    mrpId,
+    vendorProduksi: vendor,
+    qty: rows.reduce((s, r) => s + r.qty, 0),
+    amount: maklonAmountForVendor(hargaMaklon, vendor, rows),
+    entity: "Tigalapan Indonesia",
+    status: "FULL_WAITING_MATERIAL" as const,
+    approved: false,
+    cancelledLines: [],
+  }));
+  const materialPOs: MaterialPO[] = pairEntries.map((p, idx) => {
+    const colorBreakdown = Array.from(p.colorMap.values());
+    const entitasCounts = new Map<string, number>();
+    for (const c of colorBreakdown) entitasCounts.set(c.entitas ?? defaultEntitas, (entitasCounts.get(c.entitas ?? defaultEntitas) ?? 0) + c.rollCount);
+    const majorityEntitas = Array.from(entitasCounts.entries()).sort((a2, b2) => b2[1] - a2[1])[0]?.[0] ?? defaultEntitas;
+    return {
+      id: materialPoIds[idx],
+      mrpId,
+      vendorProduksi: p.vendor,
+      supplier: p.supplier,
+      warna: colorBreakdown.length === 1 ? colorBreakdown[0].warna : colorBreakdown.map((c) => c.warna).join(", "),
+      lengan: colorBreakdown[0].lengan,
+      colorBreakdown,
+      invoicedByColor: {},
+      rollCount: p.rolls,
+      availableRolls: p.rolls,
+      invoicedRolls: 0,
+      amount: materialAmountForPo(harga.hargaKain, harga.hargaKainPks, p.supplier, colorBreakdown),
+      entity: majorityEntitas,
+      status: "WAITING_INVOICE",
+      approved: false,
+      daysSincePO: 0,
+    };
+  });
+
+  // PERFORMA: maklon_pos & material_pos independen satu sama lain (tabel beda, tidak ada FK
+  // antar keduanya) -- dulu ditulis berurutan (await, await), sekarang paralel. Insert
+  // material_po_color_breakdown TETAP menunggu material_pos selesai lebih dulu (FK
+  // material_po_id -- baris breakdown butuh PO induknya sudah ada di database).
+  await Promise.all([
+    maklonPOs.length > 0
+      ? db.from("maklon_pos").insert(
+          maklonPOs.map((p) => ({ id: p.id, mrp_id: p.mrpId, vendor_produksi: p.vendorProduksi, qty: p.qty, amount: p.amount, entity: p.entity, status: p.status, approved: p.approved }))
+        )
+      : Promise.resolve(),
+    (async () => {
+      if (materialPOs.length === 0) return;
+      await db.from("material_pos").insert(
+        materialPOs.map((p) => ({
+          id: p.id,
+          mrp_id: p.mrpId,
+          vendor_produksi: p.vendorProduksi,
+          supplier: p.supplier,
+          warna: p.warna,
+          lengan: p.lengan,
+          roll_count: p.rollCount,
+          available_rolls: p.rollCount,
+          invoiced_rolls: 0,
+          amount: p.amount,
+          entity: p.entity,
+          status: "WAITING_INVOICE",
+          approved: false,
+          days_since_po: 0,
+        }))
+      );
+      await db.from("material_po_color_breakdown").insert(
+        materialPOs.flatMap((p) => p.colorBreakdown.map((c) => ({ material_po_id: p.id, warna: c.warna, lengan: c.lengan, roll_count: c.rollCount, entitas: c.entitas ?? null })))
+      );
+    })(),
+  ]);
+
+  // PERFORMA: update mrp.po_sent & notifikasi juga independen satu sama lain -- paralel.
+  await Promise.all([
+    db.from("mrp").update({ po_sent: true, po_sent_at: today() }).eq("id", mrpId),
+    insertNotification(notif(`PO untuk ${mrpId} dikirim ke Finance — ${materialPOs.length} PO material, ${maklonPOs.length} PO maklon`, ["finance"])),
+  ]);
+
+  return { materialPOs, maklonPOs };
+}
+
+/** Fetch SATU MaterialPO by id (+colorBreakdown & invoicedByColor-nya) -- targeted 3-tabel query
+ *  paralel, bukan getFlowSnapshot() penuh (32 tabel). Pemetaan kolom persis
+ *  lib/mrp/repo/snapshot.ts (dibaca ulang saat menulis ini) supaya bentuk objeknya identik dengan
+ *  yang dulu dari snapshot -- caller-nya (splitMaterialPoByEntitas dkk, semua fungsi murni di
+ *  derive.ts) tidak berubah sama sekali. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapMaterialPoRow(p: any, colorRows: any[], invoicedRows: any[]): MaterialPO {
+  const colorBreakdown: ColorBreakdown[] = colorRows.map((c) => ({
+    warna: c.warna,
+    lengan: c.lengan,
+    rollCount: Number(c.roll_count),
+    entitas: c.entitas ?? undefined,
+  }));
+  const invoicedByColor: Record<string, number> = {};
+  for (const row of invoicedRows) invoicedByColor[row.color_key] = Number(row.invoiced_rolls);
+  return {
+    id: p.id,
+    mrpId: p.mrp_id,
+    vendorProduksi: p.vendor_produksi,
+    supplier: p.supplier,
+    warna: p.warna,
+    lengan: p.lengan,
+    colorBreakdown,
+    invoicedByColor,
+    rollCount: Number(p.roll_count),
+    availableRolls: Number(p.available_rolls),
+    invoicedRolls: Number(p.invoiced_rolls),
+    amount: Number(p.amount),
+    entity: p.entity ?? "",
+    status: p.status,
+    approved: p.approved,
+    daysSincePO: p.days_since_po,
+  };
+}
+
+async function fetchOneMaterialPo(db: SupabaseClient, id: string): Promise<MaterialPO | undefined> {
+  const [poRes, colorRes, invoicedRes] = await Promise.all([
+    db.from("material_pos").select("*").eq("id", id).maybeSingle(),
+    db.from("material_po_color_breakdown").select("*").eq("material_po_id", id),
+    db.from("material_po_invoiced_by_color").select("*").eq("material_po_id", id),
+  ]);
+  if (!poRes.data) return undefined;
+  return mapMaterialPoRow(poRes.data, colorRes.data ?? [], invoicedRes.data ?? []);
+}
+
+/** Fetch materialPOs yang cocok filter (mis. belum approved & belum cancelled, untuk 1
+ *  mrp+vendor atau seluruh app) -- 3 query (bukan getFlowSnapshot() 32-tabel): baris PO yang
+ *  match `whereApproved`/`whereMrpVendor`, LALU color-breakdown/invoiced-by-color-nya di-scope
+ *  ke id PO yang ketemu itu saja (`.in("material_po_id", ids)`). Dipakai
+ *  approveAllMaterialPosAction (seluruh app) & approveVendorMaterialPosAction (1 mrp+vendor). */
+async function fetchUnapprovedMaterialPos(db: SupabaseClient, scope: { mrpId: string; vendorProduksi: string } | undefined): Promise<MaterialPO[]> {
+  let q = db.from("material_pos").select("*").eq("approved", false).neq("status", "CANCELLED");
+  if (scope) q = q.eq("mrp_id", scope.mrpId).eq("vendor_produksi", scope.vendorProduksi);
+  const poRes = await q;
+  const rows = poRes.data ?? [];
+  if (rows.length === 0) return [];
+  const ids = rows.map((r) => r.id);
+  const [colorRes, invoicedRes] = await Promise.all([
+    db.from("material_po_color_breakdown").select("*").in("material_po_id", ids),
+    db.from("material_po_invoiced_by_color").select("*").in("material_po_id", ids),
+  ]);
+  const colorByPo = new Map<string, typeof colorRes.data>();
+  for (const c of colorRes.data ?? []) colorByPo.set(c.material_po_id, [...(colorByPo.get(c.material_po_id) ?? []), c]);
+  const invoicedByPo = new Map<string, typeof invoicedRes.data>();
+  for (const i of invoicedRes.data ?? []) invoicedByPo.set(i.material_po_id, [...(invoicedByPo.get(i.material_po_id) ?? []), i]);
+  return rows.map((p) => mapMaterialPoRow(p, colorByPo.get(p.id) ?? [], invoicedByPo.get(p.id) ?? []));
+}
+
+export async function approveMaterialPoAction(id: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "finance");
+  const db = supabaseServer();
+  const po = await fetchOneMaterialPo(db, id);
+  if (!po) return;
+
+  const entitasOrder = Array.from(new Set(po.colorBreakdown.map((c) => c.entitas ?? po.entity)));
+  const newIds = await Promise.all(
+    entitasOrder.slice(1).map((entitas) => nextPoDisplayId("material_pos", "PO-SUP", [po.mrpId, po.vendorProduksi, po.supplier, entitas]))
+  );
+  const parts = splitMaterialPoByEntitas(po, newIds).map((p) => ({ ...p, approved: true }));
+
+  await writeMaterialPoSplit(db, id, parts);
+  await checkPoApproved(po.mrpId);
+}
+
+/** Dipakai approveMaterialPoAction: kalau splitMaterialPoByEntitas menghasilkan >1 PO baru,
+ *  hapus PO lama & insert semua bagian hasil split (dengan children color_breakdown +
+ *  invoiced_by_color-nya) -- kalau cuma 1 bagian (tidak ke-split), cukup UPDATE approved=true. */
+async function writeMaterialPoSplit(db: ReturnType<typeof supabaseServer>, originalId: string, parts: MaterialPO[]) {
+  if (parts.length === 1 && parts[0].id === originalId) {
+    await db.from("material_pos").update({ approved: true }).eq("id", originalId);
+    return;
+  }
+  await db.from("material_pos").delete().eq("id", originalId);
+  await db.from("material_pos").insert(
+    parts.map((p) => ({
+      id: p.id,
+      mrp_id: p.mrpId,
+      vendor_produksi: p.vendorProduksi,
+      supplier: p.supplier,
+      warna: p.warna,
+      lengan: p.lengan,
+      roll_count: p.rollCount,
+      available_rolls: p.availableRolls,
+      invoiced_rolls: p.invoicedRolls,
+      amount: p.amount,
+      entity: p.entity,
+      status: p.status,
+      approved: p.approved,
+      days_since_po: p.daysSincePO,
+    }))
+  );
+  await db.from("material_po_color_breakdown").insert(
+    parts.flatMap((p) => p.colorBreakdown.map((c) => ({ material_po_id: p.id, warna: c.warna, lengan: c.lengan, roll_count: c.rollCount, entitas: c.entitas ?? null })))
+  );
+  const invoicedRows = parts.flatMap((p) => Object.entries(p.invoicedByColor).map(([colorKey, rolls]) => ({ material_po_id: p.id, color_key: colorKey, invoiced_rolls: rolls })));
+  if (invoicedRows.length > 0) await db.from("material_po_invoiced_by_color").insert(invoicedRows);
+}
+
+export async function approveMaklonPoAction(id: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "finance");
+  const db = supabaseServer();
+  const { data: po, error } = await db.from("maklon_pos").select("id,mrp_id,vendor_produksi").eq("id", id).single();
+  if (error || !po) return;
+  // Approve HANYA mengubah `approved` -- status FULL/PARTIAL_WAITING_MATERIAL dipertahankan
+  // apa adanya (lihat komentar asli di lib/mrp/store.ts, bug lama pernah overwrite ke PARTIAL).
+  await db.from("maklon_pos").update({ approved: true }).eq("id", id);
+  await insertNotification(notif(`PO Produksi ${po.id} untuk ${po.mrp_id} telah disetujui Finance — cek menu PO Produksi Saya`, ["vendorMaklon"], po.vendor_produksi));
+  await checkPoApproved(po.mrp_id);
+}
+
+// =========================================================================
+// Invoicing (raw material)
+// =========================================================================
+
+export async function bookInvoiceAction(
+  poId: string,
+  input: { colorEntries: ColorEntry[]; addBuys: AddBuyItem[]; diskon: number; kodeTransaksi: string; noInvoiceVendor: string; buktiPvDataUrl?: string; buktiPvFileName?: string }
+): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const db = supabaseServer();
+  const { data: po, error: poErr } = await db.from("material_pos").select("*").eq("id", poId).single();
+  if (poErr || !po) throw new Error("PO material tidak ditemukan.");
+
+  const qtyReady = input.colorEntries.reduce((a, c) => a + c.rolls.length, 0);
+  const materialTotal = input.colorEntries.reduce((a, c) => a + c.hargaPerRoll * c.rolls.reduce((s, w) => s + w, 0), 0);
+  const addBuyTotal = input.addBuys.reduce((a, b) => a + b.totalHarga, 0);
+  const totalBiaya = materialTotal + addBuyTotal - input.diskon;
+  const invoiceId = await nextReadableId("INV");
+
+  const { error: insErr } = await db.from("raw_material_invoices").insert({
+    id: invoiceId,
+    po_id: poId,
+    mrp_id: po.mrp_id,
+    vendor_produksi: po.vendor_produksi,
+    supplier: po.supplier,
+    qty_ready: qtyReady,
+    diskon: input.diskon,
+    total_biaya: totalBiaya,
+    kode_transaksi: input.kodeTransaksi,
+    no_invoice_vendor: input.noInvoiceVendor,
+    entity: po.entity,
+    status: "INVOICED",
+    destination_vendor: po.vendor_produksi,
+    booked_at: today(),
+    bukti_pv_storage_path: input.buktiPvDataUrl ?? null,
+    bukti_pv_file_name: input.buktiPvFileName ?? null,
+  });
+  if (insErr) throw new Error(`Gagal booking invoice: ${insErr.message}`);
+
+  for (const c of input.colorEntries) {
+    const colorId = `${invoiceId}-${c.warna}-${c.lengan}`;
+    await db.from("raw_material_invoice_colors").insert({ id: colorId, invoice_id: invoiceId, warna: c.warna, lengan: c.lengan, harga_per_roll: c.hargaPerRoll });
+    if (c.rolls.length > 0) {
+      // Item revisi 2026-09-08 (owner: "Belum ada input kode lot per rollnya"): kode lot sekarang
+      // diinput Procurement DI SINI (paying-voucher-wizard.tsx, ColorEntry.lots -- paralel index
+      // ke rolls) alih-alih di-generate random nanti di Good Receive vendor (lihat catatan di
+      // markRollArrivedAction & receiving/page.tsx).
+      await db
+        .from("raw_material_invoice_rolls")
+        .insert(c.rolls.map((grossKg, idx) => ({ invoice_color_id: colorId, roll_index: idx, gross_kg: grossKg, code_lot: c.lots?.[idx]?.trim() || null })));
+    }
+  }
+  if (input.addBuys.length > 0) {
+    await db
+      .from("raw_material_invoice_addbuys")
+      .insert(input.addBuys.map((b) => ({ id: b.id, invoice_id: invoiceId, item: b.item, warna: b.warna || null, berat_kg: b.beratKg, harga_per_kg: b.hargaPerKg ?? null, total_harga: b.totalHarga, remark: b.remark || null })));
+  }
+
+  const invoicedByColor: Record<string, number> = {};
+  for (const c of input.colorEntries) {
+    const key = `${c.warna}|${c.lengan}`;
+    invoicedByColor[key] = c.rolls.length;
+  }
+  const { data: existingInvoiced } = await db.from("material_po_invoiced_by_color").select("color_key,invoiced_rolls").eq("material_po_id", poId);
+  for (const [colorKey, addRolls] of Object.entries(invoicedByColor)) {
+    const prior = existingInvoiced?.find((r) => r.color_key === colorKey)?.invoiced_rolls ?? 0;
+    await db.from("material_po_invoiced_by_color").upsert({ material_po_id: poId, color_key: colorKey, invoiced_rolls: prior + addRolls });
+  }
+  const newInvoicedRolls = Number(po.invoiced_rolls) + qtyReady;
+  await db
+    .from("material_pos")
+    .update({ invoiced_rolls: newInvoicedRolls, status: newInvoicedRolls >= Number(po.roll_count) ? "INVOICE" : po.status })
+    .eq("id", poId);
+
+  // Kunci alokasi roll Aduan Pola per warna (rib_allocated_roll) -- persis logika asli.
+  const rollsByWarna = new Map<string, number>();
+  for (const c of input.colorEntries) rollsByWarna.set(c.warna, (rollsByWarna.get(c.warna) ?? 0) + c.rolls.length);
+  const { data: aduanRows } = await db.from("aduan_pola_rows").select("id,warna,qty_roll,rib_allocated_roll").eq("mrp_id", po.mrp_id);
+  if (aduanRows) {
+    for (const [warna, rollQty] of rollsByWarna.entries()) {
+      let remainingQty = rollQty;
+      for (const a of aduanRows) {
+        if (remainingQty <= 0 || a.warna !== warna) continue;
+        const avail = Number(a.qty_roll) - Number(a.rib_allocated_roll ?? 0);
+        if (avail <= 0) continue;
+        const use = Math.min(avail, remainingQty);
+        remainingQty -= use;
+        await db.from("aduan_pola_rows").update({ rib_allocated_roll: Number(a.rib_allocated_roll ?? 0) + use }).eq("id", a.id);
+      }
+    }
+  }
+
+  const { data: mrpRow } = await db.from("mrp").select("first_invoice_at").eq("id", po.mrp_id).single();
+  if (mrpRow && !mrpRow.first_invoice_at) await db.from("mrp").update({ first_invoice_at: today() }).eq("id", po.mrp_id);
+}
+
+export async function transferMaterialAction(
+  items: { invoiceId: string; warna: string; lengan: Lengan; qty: number }[],
+  toVendor: string,
+  deliveryDate: string
+): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const db = supabaseServer();
+  const snapshot = await getFlowSnapshot();
+
+  // Item 2 (feedback batch 2026-09-10, owner: "Buat agar procurement bisa memindahkan warna saja
+  // juga"): dulu 1 item = {invoiceId, qty} lalu semua colorEntries invoice itu di-consume greedy
+  // berurutan (array order) sampai qty habis -- tidak ada cara pilih warna tertentu. Sekarang
+  // 1 item = {invoiceId, warna, lengan, qty} -- dikelompokkan per invoice dulu (1 invoice bisa
+  // punya beberapa baris warna diminta pindah sekaligus), lalu per invoice HANYA colorEntry yang
+  // diminta yang diproses (bukan lagi seluruh colorEntries invoice itu).
+  const byInvoice = new Map<string, { warna: string; lengan: Lengan; qty: number }[]>();
+  for (const it of items) {
+    if (it.qty <= 0) continue;
+    const arr = byInvoice.get(it.invoiceId) ?? [];
+    arr.push({ warna: it.warna, lengan: it.lengan, qty: it.qty });
+    byInvoice.set(it.invoiceId, arr);
+  }
+
+  for (const [invoiceId, colorRequests] of byInvoice) {
+    const inv = snapshot.invoices.find((i) => i.id === invoiceId);
+    if (!inv) continue;
+    const fromVendor = inv.destinationVendor;
+    if (fromVendor === toVendor) continue;
+    // Item 1 (feedback batch 2026-09-04): transfer sekarang dibolehkan sampai tahap PRODUCTION
+    // (dulu diblokir dari PRODUCTION ke atas) -- batas baru cuma begitu material sudah masuk
+    // FINISH_GOOD (barang jadi, bukan roll lagi) ke atas. UI (Material Tracking) sudah menyaring
+    // ini dari daftar yang bisa dipilih, dicek lagi di sini sebagai jaring pengaman kalau ada yang
+    // lolos.
+    const po = snapshot.materialPOs.find((p) => p.id === inv.poId);
+    if (po) {
+      const status = materialPoFullStatus(po, snapshot.invoices, snapshot.productionBatches, snapshot.productionResults, snapshot.mrpDetails, snapshot.deliveryKolis, snapshot.vendorInvoices, snapshot.maklonPOs);
+      if (["FINISH_GOOD", "DELIVERED_FROM_VENDOR", "SELESAI"].includes(status)) continue;
+    }
+
+    const movedColorEntries: ColorEntry[] = [];
+    const keptColorEntries: ColorEntry[] = [];
+    // Item 1.4: roll_index ASLI (di DB) yang benar-benar ikut pindah per warna|lengan -- BUKAN
+    // lagi selalu 0..N-1 seperti dulu (dulu moved SELALU N roll pertama), karena sekarang roll
+    // yang movableIdx-nya bisa "berlubang" (mis. index 0 dipakai batch, yang movable 1 & 2).
+    // Dipakai di bawah untuk DELETE by-index yang benar (bukan asumsi range kontigu).
+    const movedIdxByColor = new Map<string, number[]>();
+    for (const c of inv.colorEntries) {
+      const req = colorRequests.find((r) => r.warna === c.warna && r.lengan === c.lengan);
+      const key = c.warna + "|" + c.lengan;
+      if (!req) {
+        keptColorEntries.push(c);
+        continue;
+      }
+      // Item 1.4: karena transfer sekarang dibolehkan SAMPAI tahap PRODUCTION, roll yang code_roll-
+      // nya SUDAH dipakai suatu ProductionBatch (sudah benar-benar dipotong) tidak boleh ikut
+      // pindah -- clamp ke movableRollCountForInvoiceColor (exclusion logic sama seperti
+      // availableCodeRollsForColor).
+      const movableCap = movableRollCountForInvoiceColor(inv, snapshot.productionBatches, c.warna, c.lengan);
+      const takeCount = Math.max(0, Math.min(req.qty, c.rolls.length, movableCap));
+      if (takeCount <= 0) {
+        keptColorEntries.push(c);
+        continue;
+      }
+      const receipts = inv.rollReceipts[key] ?? [];
+      const usedCodeRolls = new Set(
+        snapshot.productionBatches
+          .filter((b) => b.mrpId === inv.mrpId && b.vendorProduksi === fromVendor && b.warna === c.warna && b.lengan === c.lengan && b.codeRoll)
+          .map((b) => b.codeRoll!)
+      );
+      // Pilih index roll yang MOVABLE saja (code_roll belum dipakai batch manapun) -- bukan lagi
+      // sekadar "N roll pertama" seperti dulu, supaya roll yang sudah dipotong tidak pernah ikut
+      // kepilih walau ada roll movable di belakangnya.
+      const movableIdx: number[] = [];
+      for (let idx = 0; idx < c.rolls.length; idx++) {
+        const cr = receipts[idx]?.codeRoll;
+        if (cr && usedCodeRolls.has(cr)) continue;
+        movableIdx.push(idx);
+      }
+      const takeIdx = new Set(movableIdx.slice(0, takeCount));
+      const movedRolls: number[] = [];
+      const keptRolls: number[] = [];
+      for (let idx = 0; idx < c.rolls.length; idx++) {
+        if (takeIdx.has(idx)) movedRolls.push(c.rolls[idx]);
+        else keptRolls.push(c.rolls[idx]);
+      }
+      if (movedRolls.length > 0) {
+        movedColorEntries.push({ ...c, rolls: movedRolls });
+        movedIdxByColor.set(key, Array.from(takeIdx).sort((a, b) => a - b));
+      }
+      if (keptRolls.length > 0) keptColorEntries.push({ ...c, rolls: keptRolls });
+    }
+    const actualMoved = movedColorEntries.reduce((s, c) => s + c.rolls.length, 0);
+    if (actualMoved <= 0) continue;
+
+    const detail = snapshot.mrpDetails.find((d) => d.mrp.id === inv.mrpId);
+    let pcsMoved = 0;
+    const pcsMovedByLengan = new Map<Lengan, number>();
+    let nextAduanRows = detail?.aduanRows ?? [];
+    for (const c of movedColorEntries) {
+      if (!detail) continue;
+      const rows = detail.aduanRows.filter((a) => a.vendor === fromVendor && a.warna === c.warna && a.lengan === c.lengan);
+      const totalRolls = rows.reduce((s, a) => s + a.qtyRoll, 0);
+      const totalQty = rows.reduce((s, a) => s + a.qty, 0);
+      if (totalRolls > 0) {
+        const moved = Math.round(totalQty * (c.rolls.length / totalRolls));
+        pcsMoved += moved;
+        pcsMovedByLengan.set(c.lengan, (pcsMovedByLengan.get(c.lengan) ?? 0) + moved);
+      }
+      const splitCount = nextAduanRows.filter((a) => a.vendor === fromVendor && a.warna === c.warna && a.lengan === c.lengan).length;
+      const newAduanIds = await Promise.all(Array.from({ length: splitCount }).map(() => nextReadableId("AD")));
+      nextAduanRows = reassignAduanRowsVendor(nextAduanRows, fromVendor, toVendor, c.warna, c.lengan, c.rolls.length, newAduanIds);
+    }
+
+    // Tulis balik baris aduan pola yang berubah (vendor pindah, atau row baru hasil split).
+    if (detail) {
+      const before = new Map(detail.aduanRows.map((a) => [a.id, a]));
+      for (const a of nextAduanRows) {
+        const prev = before.get(a.id);
+        if (!prev) {
+          await db.from("aduan_pola_rows").insert({ id: a.id, lengan_group_id: a.lenganGroupId, mrp_id: inv.mrpId, warna: a.warna, lengan: a.lengan, kode: a.kode, qty_roll: a.qtyRoll, qty: a.qty, vendor: a.vendor, rib_allocated_roll: a.ribAllocatedRoll ?? null });
+          if (a.sizes.length > 0) await db.from("aduan_pola_sizes").insert(a.sizes.map((s) => ({ aduan_row_id: a.id, size: s.size, qty: s.qty })));
+        } else if (prev.vendor !== a.vendor || prev.qtyRoll !== a.qtyRoll || prev.qty !== a.qty) {
+          await db.from("aduan_pola_rows").update({ vendor: a.vendor, qty_roll: a.qtyRoll, qty: a.qty }).eq("id", a.id);
+        }
+      }
+    }
+
+    if (keptColorEntries.length === 0) {
+      // BUG lama: baris raw_material_invoice_rolls di-DELETE tanpa pernah di-insert ulang —
+      // invoice yang sama tetap dipakai (cuma destination_vendor-nya diganti), jadi gross_kg tiap
+      // roll (dari invoice supplier asli) semestinya TIDAK berubah sama sekali saat material
+      // dipindah antar vendor produksi. Akibatnya colorEntries[].rolls invoice ini jadi kosong
+      // selamanya di Good Receive vendor tujuan ("BEIGE 24S · PANJANG (0 roll)" walau qty_ready-nya
+      // tetap 4) — tidak ada apa-apa lagi yang bisa ditimbang/di-cutting untuk warna itu. Yang
+      // benar: RESET saja kolom-kolom hasil timbang vendor SEBELUMNYA (net_kg, code_roll/lot,
+      // status klaim) supaya vendor baru menimbang ulang dari awal, tapi roll_index & gross_kg
+      // (data invoice asli dari supplier) tetap dipertahankan.
+      // Item 1.5: cabang ini (SELURUH roll invoice ikut pindah) cuma bisa kejadian kalau
+      // movableCount di atas mencakup semua roll invoice ini -- artinya TIDAK ADA roll di invoice
+      // ini yang sudah dipakai batch (kalau ada, moveQty di-clamp jadi lebih kecil dari qtyReady,
+      // sehingga keptColorEntries pasti tidak kosong). Jadi RESET total di sini tetap benar/aman.
+      await db
+        .from("raw_material_invoice_rolls")
+        .update({
+          net_kg: null,
+          received_at: null,
+          code_roll: null,
+          // code_lot SENGAJA TIDAK direset (item revisi 2026-09-08) -- sejak kode lot diinput
+          // Procurement saat Paying Voucher (data lot fisik dari supplier), bukan lagi vendor
+          // produksi saat Good Receive, kode lot TIDAK terikat ke vendor produksi mana pun --
+          // pindah vendor tidak mengubah roll fisik/lot aslinya, jadi tidak perlu direset.
+          claim_resolved_note: null,
+          claim_resolved_at: null,
+          claim_retur_note: null,
+          claim_retur_requested_at: null,
+          weigh_confirmed_at: null,
+          claim_photo_at: null,
+        })
+        .in("invoice_color_id", inv.colorEntries.map((c) => `${inv.id}-${c.warna}-${c.lengan}`));
+      await db.from("raw_material_invoice_addbuys").update({ received_at: null }).eq("invoice_id", inv.id);
+      await db
+        .from("raw_material_invoices")
+        .update({ destination_vendor: toVendor, status: "DELIVERY", delivered_at: deliveryDate, received_at: null, production_start: null, production_end: null })
+        .eq("id", inv.id);
+    } else {
+      const keptCount = keptColorEntries.reduce((a, c) => a + c.rolls.length, 0);
+      await db.from("raw_material_invoices").update({ qty_ready: keptCount }).eq("id", inv.id);
+      for (const c of movedColorEntries) {
+        const colorId = `${inv.id}-${c.warna}-${c.lengan}`;
+        // Item 1.4: pakai roll_index ASLI yang benar-benar dipindah (movedIdxByColor), BUKAN
+        // asumsi "N roll pertama" -- roll yang sudah dipakai batch bisa membuat movable index
+        // berlubang (mis. 1,2 dipindah, 0 tetap karena sudah dipotong).
+        const movedIdx = movedIdxByColor.get(c.warna + "|" + c.lengan) ?? [];
+        await db.from("raw_material_invoice_rolls").delete().eq("invoice_color_id", colorId).in("roll_index", movedIdx);
+        // Sisa roll yang TIDAK ikut pindah kehilangan kontinuitas roll_index (dulu mis. 2,3,4,5
+        // setelah 0,1 dihapus) -- geser ulang ke 0..N-1 supaya tetap kompatibel dengan cara
+        // receiveRawMaterialRollAction mengacu roll_index sebagai posisi array di UI.
+        const { data: remainingRolls } = await db.from("raw_material_invoice_rolls").select("id,roll_index").eq("invoice_color_id", colorId).order("roll_index", { ascending: true });
+        for (let i = 0; i < (remainingRolls ?? []).length; i++) {
+          const r = remainingRolls![i];
+          if (r.roll_index !== i) await db.from("raw_material_invoice_rolls").update({ roll_index: i }).eq("id", r.id);
+        }
+      }
+      const newInvoiceId = await nextReadableId("INV");
+      await db.from("raw_material_invoices").insert({
+        id: newInvoiceId,
+        po_id: inv.poId,
+        mrp_id: inv.mrpId,
+        vendor_produksi: inv.vendorProduksi,
+        supplier: inv.supplier,
+        qty_ready: actualMoved,
+        diskon: 0,
+        total_biaya: inv.totalBiaya,
+        kode_transaksi: inv.kodeTransaksi,
+        no_invoice_vendor: inv.noInvoiceVendor,
+        entity: inv.entity,
+        status: "DELIVERY",
+        destination_vendor: toVendor,
+        booked_at: today(),
+        delivered_at: deliveryDate,
+      });
+      for (const c of movedColorEntries) {
+        const colorId = `${newInvoiceId}-${c.warna}-${c.lengan}`;
+        await db.from("raw_material_invoice_colors").insert({ id: colorId, invoice_id: newInvoiceId, warna: c.warna, lengan: c.lengan, harga_per_roll: c.hargaPerRoll });
+        await db.from("raw_material_invoice_rolls").insert(c.rolls.map((grossKg, idx) => ({ invoice_color_id: colorId, roll_index: idx, gross_kg: grossKg })));
+      }
+    }
+
+    if (pcsMoved > 0) {
+      const fromMaklon = snapshot.maklonPOs.find((m) => m.mrpId === inv.mrpId && m.vendorProduksi === fromVendor);
+      if (fromMaklon) {
+        const newQty = Math.max(0, fromMaklon.qty - pcsMoved);
+        await db.from("maklon_pos").update({ qty: newQty, amount: fromMaklon.qty > 0 ? Math.round((fromMaklon.amount / fromMaklon.qty) * newQty) : 0 }).eq("id", fromMaklon.id);
+        await db.from("maklon_po_cancelled_lines").insert({ maklon_po_id: fromMaklon.id, note: `Material dipindahkan ke vendor lain`, rolls: actualMoved, pcs: pcsMoved, from_vendor: "Procurement", time: nowClock() });
+      }
+      const toMaklon = snapshot.maklonPOs.find((m) => m.mrpId === inv.mrpId && m.vendorProduksi === toVendor);
+      if (toMaklon) {
+        const newQty = toMaklon.qty + pcsMoved;
+        await db.from("maklon_pos").update({ qty: newQty, amount: toMaklon.qty > 0 ? Math.round((toMaklon.amount / toMaklon.qty) * newQty) : pcsMoved * 7000 }).eq("id", toMaklon.id);
+        await db.from("maklon_po_cancelled_lines").insert({ maklon_po_id: toMaklon.id, note: `Material diterima dari vendor lain`, rolls: actualMoved, pcs: pcsMoved, from_vendor: "Procurement", time: nowClock() });
+      } else {
+        const newMaklonId = await nextPoDisplayId("maklon_pos", "PO-MKL", [inv.mrpId, toVendor]);
+        await db.from("maklon_pos").insert({
+          id: newMaklonId,
+          mrp_id: inv.mrpId,
+          vendor_produksi: toVendor,
+          qty: pcsMoved,
+          amount: maklonAmountForLenganBuckets(snapshot.hargaMaklon, toVendor, Array.from(pcsMovedByLengan.entries()).map(([lengan, q]) => ({ lengan, qty: q }))),
+          entity: "Tigalapan Indonesia",
+          status: "PARTIAL_WAITING_MATERIAL",
+          approved: true,
+        });
+        await db.from("maklon_po_cancelled_lines").insert({ maklon_po_id: newMaklonId, note: `Material diterima dari vendor lain`, rolls: actualMoved, pcs: pcsMoved, from_vendor: "Procurement", time: nowClock() });
+      }
+    }
+
+    await insertNotification(notif(`${actualMoved} roll (${pcsMoved} pcs) material ${inv.mrpId} dipindahkan antar vendor`, ["procurement", "finance"]));
+    await insertNotification(notif(`PO Produksi Anda berkurang ${pcsMoved} pcs — sebagian material dipindahkan ke vendor lain`, ["vendorMaklon"], fromVendor));
+    await insertNotification(notif(`PO Produksi Anda bertambah ${pcsMoved} pcs — menerima material dipindahkan dari vendor lain`, ["vendorMaklon"], toVendor));
+  }
+}
+
+const MAKLON_PO_ACTIVE_STATUSES: MaklonPO["status"][] = ["FULL_WAITING_MATERIAL", "PARTIAL_WAITING_MATERIAL", "PRODUCTION", "PARTIAL_PRODUCTION"];
+
+/** Vendor produksi tiba-tiba berhenti mid-produksi (kasus jarang tapi nyata) -- pindahkan SISA
+ *  pekerjaan 1 PO Produksi (mrpId+fromVendor) penuh ke vendor lain: bahan mentah yang belum
+ *  disentuh produksi (lewat transferMaterialAction yang sudah ada, TIDAK ditulis ulang) DAN roll
+ *  yang sudah di-Resting/Cutting tapi belum jadi Finish Good (reassign
+ *  ProductionBatch.vendorProduksi -- lihat plan "Vendor Produksi berhenti mid-produksi").
+ *
+ *  Finish Good yang SUDAH ada (roll sudah "Tutup Roll", atau grup sudah fgConfirmedAt) TETAP di
+ *  vendor lama -- tidak disentuh sama sekali, tetap bisa dikirim/ditagih seperti biasa lewat
+ *  sistem. Vendor lama otomatis jadi "read-only" untuk produksi BARU begitu ProductionBatch/
+ *  aduan_pola_rows-nya pindah, karena SEMUA query tab Cutting/Finish Good vendor (cutWarnaLenganGroups
+ *  dkk, lib/mrp/derive.ts) selalu difilter by vendorProduksi -- TIDAK perlu flag "locked" baru sama
+ *  sekali. Reject/yield/FG per grup (groupKey = mrpId|warna|lengan, TANPA vendor) juga otomatis
+ *  tetap benar menjumlah kontribusi vendor lama (yang sudah closed) + vendor baru.
+ *
+ *  Vendor B (penerima) dapat tarif maklon PENUH untuk pcs yang dia selesaikan (keputusan user) --
+ *  vendor A TIDAK dapat kompensasi apa pun dari sistem untuk roll yang sudah sempat dia potong. */
+export async function withdrawVendorProductionAction(mrpId: string, fromVendor: string, toVendor: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  if (fromVendor === toVendor) throw new Error("Vendor tujuan harus berbeda dari vendor asal.");
+  const db = supabaseServer();
+  // BUG FIX (2026-09-11, sama akar dengan fix dropdown vendor code di UI): teks notifikasi/catatan
+  // audit di bawah dulu embed KODE vendor mentah (mis. "GI-01") -- disamakan dengan pola
+  // VENDOR_PRODUKSI[id]?.name ?? id yang dipakai di seluruh tampilan lain.
+  const fromVendorName = VENDOR_PRODUKSI[fromVendor]?.name ?? fromVendor;
+  const toVendorName = VENDOR_PRODUKSI[toVendor]?.name ?? toVendor;
+
+  const snapshot1 = await getFlowSnapshot();
+  const maklonPO = snapshot1.maklonPOs.find((p) => p.mrpId === mrpId && p.vendorProduksi === fromVendor);
+  if (!maklonPO) throw new Error("PO Produksi tidak ditemukan.");
+  if (!maklonPO.approved) throw new Error("PO Produksi ini belum di-approve Finance.");
+  if (maklonPO.closedAt) throw new Error("PO Produksi ini sudah ditutup (Close PO) -- tidak ada lagi yang bisa dipindahkan.");
+  if (!MAKLON_PO_ACTIVE_STATUSES.includes(maklonPO.status)) {
+    throw new Error("PO Produksi ini sudah tidak dalam tahap produksi aktif (sudah masuk Delivery/Invoice/Payment) -- tidak ada lagi yang bisa dipindahkan.");
+  }
+
+  // 1) Bahan mentah yang belum disentuh produksi -- pakai transferMaterialAction yang sudah ada
+  // APA ADANYA (bukan ditulis ulang). qty diisi qtyReady (coba pindah SEMUA) -- fungsi itu sendiri
+  // yang clamp ke movableRollCountForInvoice, jadi roll yang sudah dipakai ProductionBatch OTOMATIS
+  // tidak ikut (persis yang dibutuhkan di sini, sisanya ditangani langkah 2 di bawah).
+  const rawItems = snapshot1.invoices
+    .filter((i) => i.mrpId === mrpId && i.destinationVendor === fromVendor && i.qtyReady > 0)
+    .flatMap((i) => i.colorEntries.map((c) => ({ invoiceId: i.id, warna: c.warna, lengan: c.lengan, qty: c.rolls.length })));
+  if (rawItems.length > 0) {
+    await transferMaterialAction(rawItems, toVendor, today());
+  }
+
+  // 2) Roll yang SUDAH di-Resting/Cutting (ProductionBatch ada) tapi BELUM ditutup/di-FG-kan --
+  // fetch snapshot BARU (setelah langkah 1) supaya lihat state ter-update. Grup yang sudah
+  // fgConfirmedAt dianggap "sudah selesai" (bukan WIP lagi) -- tidak diutak-atik, sama seperti guard
+  // di confirmFgDoneAction/closeProductionBatchAction.
+  const snapshot2 = await getFlowSnapshot();
+  const groupConfirmed = new Set(snapshot2.productionGroupMeta.filter((g) => g.mrpId === mrpId && g.fgConfirmedAt).map((g) => g.warna + "|" + g.lengan));
+  const wipBatches = snapshot2.productionBatches.filter(
+    (b) => b.mrpId === mrpId && b.vendorProduksi === fromVendor && !b.closedAt && !groupConfirmed.has(b.warna + "|" + b.lengan)
+  );
+
+  if (wipBatches.length > 0) {
+    const { error: batchErr } = await db
+      .from("production_batches")
+      .update({ vendor_produksi: toVendor })
+      .in(
+        "id",
+        wipBatches.map((b) => b.id)
+      );
+    if (batchErr) throw new Error(batchErr.message);
+
+    // 3) Sinkronkan aduan pola -- blanket, aman dipanggil walau sebagian baris sudah kena
+    // reassign oleh transferMaterialAction di langkah 1 (no-op untuk baris yang sudah toVendor).
+    await db.from("aduan_pola_rows").update({ vendor: toVendor }).eq("mrp_id", mrpId).eq("vendor", fromVendor);
+
+    // 4) Sesuaikan billing PO Produksi untuk porsi WIP ini (porsi bahan mentah sudah disesuaikan
+    // sendiri oleh transferMaterialAction di langkah 1) -- pola SAMA seperti akhir
+    // transferMaterialAction (proporsional untuk fromMaklon, insert-atau-update untuk toMaklon).
+    const detail = snapshot2.mrpDetails.find((d) => d.mrp.id === mrpId);
+    let pcsMoved = 0;
+    const pcsMovedByLengan = new Map<Lengan, number>();
+    for (const b of wipBatches) {
+      const sizeSource = (b.fgSizeQty && Object.keys(b.fgSizeQty).length > 0 ? b.fgSizeQty : b.sizeQty) ?? {};
+      let pcsForBatch = Object.values(sizeSource).reduce((a, c) => a + c, 0);
+      if (pcsForBatch <= 0) {
+        // Roll baru Resting, belum py hasil cutting -- estimasi dari rasio qty/qtyRoll baris aduan
+        // pola asalnya (semangat sama dengan estimasi pcsMoved di transferMaterialAction).
+        const row = detail?.aduanRows.find((a) => a.id === b.aduanRowId);
+        pcsForBatch = row && row.qtyRoll > 0 ? Math.round(row.qty / row.qtyRoll) : 0;
+      }
+      pcsMoved += pcsForBatch;
+      pcsMovedByLengan.set(b.lengan, (pcsMovedByLengan.get(b.lengan) ?? 0) + pcsForBatch);
+    }
+
+    if (pcsMoved > 0) {
+      const snapshot3 = await getFlowSnapshot();
+      const lenganBuckets = Array.from(pcsMovedByLengan.entries()).map(([lengan, qty]) => ({ lengan, qty }));
+      const fromMaklon = snapshot3.maklonPOs.find((m) => m.mrpId === mrpId && m.vendorProduksi === fromVendor);
+      if (fromMaklon) {
+        const newQty = Math.max(0, fromMaklon.qty - pcsMoved);
+        await db.from("maklon_pos").update({ qty: newQty, amount: fromMaklon.qty > 0 ? Math.round((fromMaklon.amount / fromMaklon.qty) * newQty) : 0 }).eq("id", fromMaklon.id);
+        await db.from("maklon_po_cancelled_lines").insert({
+          maklon_po_id: fromMaklon.id,
+          note: `Vendor berhenti produksi — WIP (${pcsMoved} pcs) dipindahkan ke ${toVendorName}`,
+          rolls: wipBatches.length,
+          pcs: pcsMoved,
+          from_vendor: "Procurement",
+          time: nowClock(),
+        });
+      }
+      const toMaklon = snapshot3.maklonPOs.find((m) => m.mrpId === mrpId && m.vendorProduksi === toVendor);
+      if (toMaklon) {
+        const newQty = toMaklon.qty + pcsMoved;
+        await db
+          .from("maklon_pos")
+          .update({ qty: newQty, amount: toMaklon.qty > 0 ? Math.round((toMaklon.amount / toMaklon.qty) * newQty) : maklonAmountForLenganBuckets(snapshot3.hargaMaklon, toVendor, lenganBuckets) })
+          .eq("id", toMaklon.id);
+        await db.from("maklon_po_cancelled_lines").insert({
+          maklon_po_id: toMaklon.id,
+          note: `Menerima WIP (${pcsMoved} pcs) dari vendor lain (${fromVendorName} berhenti produksi)`,
+          rolls: wipBatches.length,
+          pcs: pcsMoved,
+          from_vendor: "Procurement",
+          time: nowClock(),
+        });
+      } else {
+        const newMaklonId = await nextPoDisplayId("maklon_pos", "PO-MKL", [mrpId, toVendor]);
+        await db.from("maklon_pos").insert({
+          id: newMaklonId,
+          mrp_id: mrpId,
+          vendor_produksi: toVendor,
+          qty: pcsMoved,
+          amount: maklonAmountForLenganBuckets(snapshot3.hargaMaklon, toVendor, lenganBuckets),
+          entity: fromMaklon?.entity ?? "Tigalapan Indonesia",
+          status: "PARTIAL_WAITING_MATERIAL",
+          approved: true,
+        });
+        await db.from("maklon_po_cancelled_lines").insert({
+          maklon_po_id: newMaklonId,
+          note: `Menerima WIP (${pcsMoved} pcs) dari vendor lain (${fromVendorName} berhenti produksi)`,
+          rolls: wipBatches.length,
+          pcs: pcsMoved,
+          from_vendor: "Procurement",
+          time: nowClock(),
+        });
+      }
+    }
+  }
+
+  await insertNotification(notif(`Vendor ${fromVendorName} berhenti produksi untuk ${mrpId} — sisa pekerjaan dipindahkan ke ${toVendorName}.`, ["procurement", "finance"]));
+  await insertNotification(
+    notif(`PO Produksi ${mrpId} Anda dihentikan — sisa bahan/WIP dipindahkan ke vendor lain. Finish Good yang sudah ada tetap bisa Anda kirim & tagih.`, ["vendorMaklon"], fromVendor)
+  );
+  await insertNotification(notif(`Anda menerima tambahan produksi untuk ${mrpId} (vendor sebelumnya berhenti produksi) — cek tab Cutting/Finish Good.`, ["vendorMaklon"], toVendor));
+}
+
+export async function setInvoicesPaidAction(invoiceIds: string[], paid: boolean): Promise<void> {
+  await requireInternalRole(await requireSession(), "finance");
+  const db = supabaseServer();
+  const { data: invoices } = await db.from("raw_material_invoices").select("id,status,po_id").in("id", invoiceIds);
+  for (const inv of invoices ?? []) {
+    if (paid && inv.status === "INVOICED") await db.from("raw_material_invoices").update({ status: "PAID", paid_at: today() }).eq("id", inv.id);
+    // Item 2: "Batalkan Bayar" SENGAJA tidak menghapus invoice_payment_proofs -- file itu bukti
+    // audit yang sudah pernah diserahkan, dan Status pill sudah cukup menunjukkan status aslinya
+    // sekarang (INVOICED lagi). Menghapusnya cuma menghilangkan jejak tanpa manfaat.
+    if (!paid && inv.status === "PAID") await db.from("raw_material_invoices").update({ status: "INVOICED", paid_at: null }).eq("id", inv.id);
+  }
+  if (paid && invoices && invoices.length > 0) {
+    const { data: po } = await db.from("material_pos").select("mrp_id").eq("id", invoices[0].po_id).single();
+    if (po) {
+      const { data: mrpRow } = await db.from("mrp").select("first_payment_at").eq("id", po.mrp_id).single();
+      if (mrpRow && !mrpRow.first_payment_at) await db.from("mrp").update({ first_payment_at: today() }).eq("id", po.mrp_id);
+    }
+  }
+}
+
+/** Item 2.5: Finance melampirkan bukti pembayaran (PDF) untuk 1+ invoice sekaligus -- diterima
+ *  sebagai array karena satu transfer bank sering melunasi beberapa invoice sekaligus, jadi 1
+ *  file yang sama perlu nempel ke semua invoice itu dalam SATU round-trip (alur kerja Finance
+ *  yang sebenarnya), bukan upload berulang per invoice. */
+export async function setInvoicePaymentProofAction(invoiceIds: string[], dataUrl: string, fileName?: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "finance");
+  const db = supabaseServer();
+  const uploadedAt = nowIso();
+  for (const invoiceId of invoiceIds) {
+    const { error: proofErr } = await db.from("invoice_payment_proofs").upsert({
+      invoice_id: invoiceId,
+      data_url: dataUrl,
+      file_name: fileName ?? null,
+      uploaded_at: uploadedAt,
+    });
+    if (proofErr) throw new Error(`Gagal menyimpan bukti pembayaran: ${proofErr.message}`);
+    const { error: invErr } = await db
+      .from("raw_material_invoices")
+      .update({ bukti_bayar_at: uploadedAt, bukti_bayar_file_name: fileName ?? null })
+      .eq("id", invoiceId);
+    if (invErr) throw new Error(invErr.message);
+  }
+}
+
+/** Item 2.5: ambil BYTE bukti pembayaran 1 invoice on-demand -- `invoice_payment_proofs` sengaja
+ *  DIKELUARKAN dari get_flow_snapshot_raw() (migration 0017) supaya payloadnya tidak ikut
+ *  re-download di setiap refresh snapshot. Dibaca Finance MAUPUN Procurement (Procurement
+ *  menyerahkan bukti ini ke vendor material) -- DAN sekarang vendor produksi TUJUAN invoice itu
+ *  sendiri (revisi 2026-09-06, item "preview & download file di semua modul") -- vendor cuma
+ *  boleh lihat bukti invoice yang benar-benar ditujukan ke dia (dicek destination_vendor),
+ *  bukan avainvoice manapun. */
+export async function getInvoicePaymentProofAction(invoiceId: string): Promise<{ dataUrl: string; fileName?: string } | null> {
+  const session = await requireSession();
+  if (session.vendorId) {
+    const { data: inv } = await supabaseServer().from("raw_material_invoices").select("destination_vendor").eq("id", invoiceId).maybeSingle();
+    if (inv?.destination_vendor !== session.vendorId) throw new Error("Forbidden: invoice ini bukan milik vendor Anda.");
+  } else {
+    requireAnyInternalRole(session, ["finance", "procurement"]);
+  }
+  const db = supabaseServer();
+  const { data } = await db.from("invoice_payment_proofs").select("data_url,file_name").eq("invoice_id", invoiceId).maybeSingle();
+  if (!data) return null;
+  return { dataUrl: data.data_url, fileName: data.file_name ?? undefined };
+}
+
+export async function setInvoicesDeliveryAction(invoiceIds: string[], deliveryDate: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const db = supabaseServer();
+  const { data: invoices } = await db.from("raw_material_invoices").select("id,status").in("id", invoiceIds);
+  for (const inv of invoices ?? []) {
+    if (inv.status === "PAID") await db.from("raw_material_invoices").update({ status: "DELIVERY", delivered_at: deliveryDate }).eq("id", inv.id);
+  }
+}
+
+/** Tandai 1 roll FISIK DITERIMA di Good Receive — TIDAK menimbang (lihat
+ *  receiveRawMaterialRollAction untuk itu, sekarang dipanggil dari halaman Cutting). Ini yang
+ *  memindahkan status invoice DELIVERY → RECEIVING (dulu dipicu oleh penimbangan roll pertama). */
+export async function markRollArrivedAction(invoiceId: string, warna: string, lengan: Lengan, rollIndex: number, codeRoll?: string): Promise<void> {
+  const vendorId = await requireVendorSession();
+  const db = supabaseServer();
+  const colorId = `${invoiceId}-${warna}-${lengan}`;
+  // Item revisi 2026-09-08: TIDAK LAGI menyentuh code_lot di sini -- sejak kode lot diinput
+  // Procurement saat Paying Voucher (bookInvoiceAction), bukan lagi di-generate random vendor di
+  // Good Receive, roll ini SUDAH punya code_lot dari awal (atau memang kosong untuk invoice lama
+  // dari sebelum field ini ada) -- menyentuhnya di sini cuma berisiko MENIMPA nilai yang benar
+  // dengan `null` kalau vendor tidak kirim apa pun.
+  const { error } = await db.from("raw_material_invoice_rolls").update({ received_at: today(), code_roll: codeRoll ?? null }).eq("invoice_color_id", colorId).eq("roll_index", rollIndex);
+  if (error) throw new Error(error.message);
+
+  const { data: inv } = await db.from("raw_material_invoices").select("id,status,received_at").eq("id", invoiceId).single();
+  if (inv) {
+    await db
+      .from("raw_material_invoices")
+      .update({ status: inv.status === "DELIVERY" ? "RECEIVING" : inv.status, received_at: inv.received_at ?? today() })
+      .eq("id", invoiceId);
+  }
+  void vendorId;
+}
+
+/** Timbang 1 roll yang SUDAH ditandai diterima — dipanggil dari halaman Cutting (lihat
+ *  pendingWeighRolls). Code roll biasanya sudah diisi saat markRollArrivedAction dan tidak
+ *  diubah lagi di sini, KECUALI roll ini sedang ditimbang ulang setelah retur (`codeRoll`
+ *  diisi) -- roll penggantinya bisa saja punya code roll fisik yang berbeda dari roll lama.
+ *
+ *  Roll yang masih punya klaim selisih berat AKTIF (di luar toleransi, belum diselesaikan) DIKUNCI
+ *  di sini juga (bukan cuma di UI) -- tidak boleh ditimbang ulang sampai Procurement atur retur &
+ *  vendor konfirmasi roll pengganti sudah diterima (`claim_retur_received_at` terisi), sesuai
+ *  alur di app/procurement/material-claims/page.tsx. Vendor secara fisik tidak boleh "memperbaiki"
+ *  angka roll yang salah kirim/rusak begitu saja -- harus lewat proses retur beneran. */
+export async function receiveRawMaterialRollAction(
+  invoiceId: string,
+  warna: string,
+  lengan: Lengan,
+  rollIndex: number,
+  netKg: number,
+  claim?: { diffKg: number; pct: number },
+  codeRoll?: string,
+  photo?: { dataUrl: string; fileName?: string }
+): Promise<void> {
+  const vendorId = await requireVendorSession();
+  const db = supabaseServer();
+  const colorId = `${invoiceId}-${warna}-${lengan}`;
+  const { data: rollRow } = await db
+    .from("raw_material_invoice_rolls")
+    .select("code_roll,code_lot,gross_kg,net_kg,claim_resolved_at,claim_retur_received_at,claim_defect_at")
+    .eq("invoice_color_id", colorId)
+    .eq("roll_index", rollIndex)
+    .single();
+
+  if (rollRow && rollRow.net_kg != null && rollRow.gross_kg != null) {
+    // Item 4.4: SEKARANG cuma roll yang lebih RINGAN dari toleransi ("claimable") yang mengunci --
+    // lebih berat dari invoice bukan klaim, tidak pernah bikin roll terkunci.
+    // Item 13 (feedback batch 2026-09-10): ATAU roll ini sudah diklaim FISIK (claim_defect_at,
+    // shading/kotor/dll dari production-cutting-tab.tsx) -- roll ini bisa saja beratnya TETAP
+    // dalam toleransi, tapi tetap harus terkunci sampai Procurement atur retur, sama seperti
+    // klaim berat.
+    const variance = weightVariance(Number(rollRow.gross_kg), Number(rollRow.net_kg));
+    const isActiveClaim = (variance.claimable || !!rollRow.claim_defect_at) && !rollRow.claim_resolved_at;
+    if (isActiveClaim && !rollRow.claim_retur_received_at) {
+      throw new Error(
+        "Roll ini masih diklaim (selisih berat atau cacat fisik) -- menunggu Procurement atur retur & kirim roll pengganti (lihat Klaim Material). Konfirmasi 'diterima' dulu di sini setelah roll penggantinya sampai, baru bisa ditimbang ulang."
+      );
+    }
+  }
+
+  // Item 13: setiap kali roll ini ditimbang (baik pertama kali, edit di "Sudah ditimbang - belum
+  // dikonfirmasi", ATAU claim baru dari roll yang tadinya SUDAH dikonfirmasi -- item 13.6) status
+  // konfirmasinya SELALU kembali kosong -- cuma confirmRollWeighAction yang boleh mengisinya lagi.
+  const update: Record<string, unknown> = { net_kg: netKg, weigh_confirmed_at: null };
+  if (codeRoll && codeRoll.trim()) update.code_roll = codeRoll.trim();
+  const claimKey = `${invoiceId}|${warna}|${lengan}|${rollIndex}`;
+  if (!claim) {
+    // Ditimbang & hasilnya sekarang sesuai toleransi (atau lebih BERAT dari invoice, item 4 --
+    // disimpan normal, bukan klaim) -- kalau roll ini tadinya diklaim, klaimnya resmi tuntas di
+    // sini. Bersihkan sisa catatan retur lama supaya tidak nyangkut/orphan kalau roll_index yang
+    // sama suatu saat kena klaim lagi (baris baru harus mulai dari "BELUM"). Foto bukti (item 2/3)
+    // TETAP ADA di material_claim_photos (arsip klaim lama), cuma flag di roll ini yang dibersihkan.
+    update.claim_retur_note = null;
+    update.claim_retur_requested_at = null;
+    update.claim_retur_delivered_note = null;
+    update.claim_retur_delivered_at = null;
+    update.claim_retur_received_at = null;
+    update.claim_resolved_note = null;
+    update.claim_resolved_at = null;
+    update.claim_photo_at = null;
+    // Item 13: klaim FISIK (kalau ada) ikut dianggap tuntas di titik yang sama seperti klaim
+    // berat -- roll pengganti sudah ditimbang & disimpan normal.
+    update.claim_defect_note = null;
+    update.claim_defect_at = null;
+  } else if (photo) {
+    // Validasi server-side -- kompresi/ukuran/tipe gambar di client (production-cutting-tab.tsx)
+    // cuma konvensi UI, siapa pun yang manggil Server Action ini langsung (skip UI) bisa kirim
+    // string apa saja. Tanpa cek ini, string non-gambar (mis. data:text/html,...) bisa tersimpan
+    // lalu dibuka via window.open() oleh staf Procurement di halaman Klaim Material -- risiko
+    // konten disuntik yang terbuka sebagai halaman hidup, bukan sekadar foto.
+    if (!photo.dataUrl.startsWith("data:image/")) {
+      throw new Error("Foto bukti tidak valid -- harus berupa gambar.");
+    }
+    const base64Part = photo.dataUrl.slice(photo.dataUrl.indexOf(",") + 1);
+    const approxBytes = Math.floor((base64Part.length * 3) / 4);
+    if (approxBytes > 700 * 1024) {
+      throw new Error("Foto bukti terlalu besar -- ambil ulang dengan resolusi lebih kecil.");
+    }
+    // Item 3.3: urutan WAJIB -- upsert material_claim_photos DULU, baru tandai claim_photo_at di
+    // raw_material_invoice_rolls (lewat `update` yang ditulis setelah ini). Gagal di sini HARUS
+    // menggagalkan seluruh aksi (beda dari insert material_claim_history di bawah yang opsional)
+    // supaya vendor tahu foto buktinya tidak tersimpan, bukan diam-diam hilang.
+    const { error: photoErr } = await db.from("material_claim_photos").upsert({
+      claim_key: claimKey,
+      invoice_id: invoiceId,
+      warna,
+      lengan,
+      roll_index: rollIndex,
+      data_url: photo.dataUrl,
+      file_name: photo.fileName ?? null,
+      uploaded_at: nowIso(),
+    });
+    if (photoErr) throw new Error(`Gagal menyimpan foto bukti: ${photoErr.message}`);
+    update.claim_photo_at = nowIso();
+  }
+  const { error } = await db.from("raw_material_invoice_rolls").update(update).eq("invoice_color_id", colorId).eq("roll_index", rollIndex);
+  if (error) throw new Error(error.message);
+
+  if (claim) {
+    const { data: inv } = await db.from("raw_material_invoices").select("po_id,mrp_id,supplier,destination_vendor").eq("id", invoiceId).single();
+    await insertNotification(
+      notif(
+        `Claim selisih berat — ${inv?.po_id ?? ""} ${warna} · ${lengan} roll ${rollIndex + 1}: selisih ${claim.diffKg >= 0 ? "+" : ""}${claim.diffKg.toFixed(2)} kg (${claim.pct.toFixed(1)}%) di luar toleransi. Kode roll: ${codeRoll?.trim() || rollRow?.code_roll || "-"}, lot: ${rollRow?.code_lot || "-"}.`,
+        ["procurement"]
+      )
+    );
+    // Catat ke arsip klaim (lihat findOpenClaimHistoryId) -- gagal di sini TIDAK menggagalkan
+    // aksi utama (claim di raw_material_invoice_rolls sudah tersimpan di atas).
+    try {
+      const historyId = await nextReadableId("MCH");
+      await db.from("material_claim_history").insert({
+        id: historyId,
+        invoice_id: invoiceId,
+        po_id: inv?.po_id ?? null,
+        mrp_id: inv?.mrp_id ?? null,
+        supplier: inv?.supplier ?? null,
+        vendor_produksi: inv?.destination_vendor ?? null,
+        warna,
+        lengan,
+        roll_index: rollIndex,
+        code_roll: codeRoll?.trim() || rollRow?.code_roll || null,
+        code_lot: rollRow?.code_lot ?? null,
+        gross_kg: rollRow?.gross_kg ?? null,
+        claimed_net_kg: netKg,
+        diff_kg: claim.diffKg,
+        pct: claim.pct,
+        claim_photo_at: photo ? update.claim_photo_at : null,
+      });
+    } catch {
+      // tabel arsip belum ada (migration 0011 belum di-apply) -- diamkan, bukan fitur inti.
+    }
+  } else {
+    // Roll ditimbang & hasilnya sesuai toleransi -- kalau ada baris arsip TERBUKA untuk roll ini,
+    // tutup di sini (auto-resolve lewat timbang ulang, beda dari resolveMaterialClaimAction yang
+    // manual "Selesai" tanpa retur).
+    try {
+      const openId = await findOpenClaimHistoryId(db, invoiceId, warna, lengan, rollIndex);
+      if (openId) {
+        await db
+          .from("material_claim_history")
+          .update({ resolved_at: today(), resolution_kind: "AUTO_REWEIGH", resolved_net_kg: netKg, resolved_code_roll: codeRoll?.trim() || rollRow?.code_roll || null })
+          .eq("id", openId);
+      }
+    } catch {
+      // idem -- arsip opsional.
+    }
+  }
+  void vendorId;
+}
+
+/** Item 13 (feedback batch 2026-09-10, owner: "bisa di select rollnya (checkbox dan bisa diajukan
+ *  claim) karena di proses resting ini itu kita menghamparkan kain jadi bisa cek jika ada cacat
+ *  material selain dari claim berat toleransi (shading, kotor, dll)"): klaim FISIK untuk roll yang
+ *  SUDAH masuk ProductionBatch (sudah lewat timbang, sedang/sudah resting) -- dipicu checkbox +
+ *  foto + keterangan di production-cutting-tab.tsx.
+ *
+ *  Setiap batch di-resolve balik ke (invoiceId, warna, lengan, rollIndex) lewat pencocokan
+ *  code_roll (pola sama seperti usedCodeRolls di transferMaterialAction) -- ProductionBatch
+ *  sendiri tidak menyimpan invoiceId/rollIndex langsung. claim_defect_at/claim_defect_note
+ *  ditulis ke raw_material_invoice_rolls (kolom baru, migration 0023) supaya materialClaimsList
+ *  (lib/mrp/derive.ts) otomatis menyertakan roll ini -- termasuk otomatis muncul lagi di
+ *  pendingWeighRolls (Timbang roll) TERKUNCI, tanpa perlu logic tambahan di sana (sudah dicek
+ *  lewat activeClaimKeys, tidak bergantung ProductionBatch ada/tidak). Batch itu sendiri
+ *  DIHAPUS (+ production_batch_sizes-nya) -- fisiknya cacat, tidak bisa lanjut cutting/resting,
+ *  jadi tidak boleh nyangkut di tabel "Material dalam produksi" lagi.
+ *
+ *  Batch yang gagal di-resolve (code_roll kosong, atau tidak ketemu roll aslinya -- seharusnya
+ *  tidak terjadi kalau UI konsisten) di-skip & dilaporkan balik, sama pola dengan
+ *  confirmRollWeighAction, bukan diam-diam gagal semua. */
+export async function submitCuttingDefectClaimAction(
+  batchIds: string[],
+  note: string,
+  photo: { dataUrl: string; fileName?: string }
+): Promise<{ claimed: number; skipped: string[] }> {
+  const vendorId = await requireVendorSession();
+  if (!note.trim()) throw new Error("Keterangan cacat wajib diisi.");
+  if (!photo.dataUrl.startsWith("data:image/")) {
+    throw new Error("Foto bukti tidak valid -- harus berupa gambar.");
+  }
+  const base64Part = photo.dataUrl.slice(photo.dataUrl.indexOf(",") + 1);
+  const approxBytes = Math.floor((base64Part.length * 3) / 4);
+  if (approxBytes > 700 * 1024) {
+    throw new Error("Foto bukti terlalu besar -- ambil ulang dengan resolusi lebih kecil.");
+  }
+  if (batchIds.length === 0) return { claimed: 0, skipped: [] };
+
+  const db = supabaseServer();
+  const snapshot = await getFlowSnapshot();
+  const batches = snapshot.productionBatches.filter((b) => batchIds.includes(b.id) && b.vendorProduksi === vendorId);
+  const skipped: string[] = [];
+  let claimed = 0;
+  const claimedAt = nowIso();
+
+  for (const b of batches) {
+    if (!b.codeRoll) {
+      skipped.push(b.id);
+      continue;
+    }
+    let found: { invoiceId: string; rollIndex: number; invoice: RawMaterialInvoice; codeLot?: string } | null = null;
+    for (const inv of snapshot.invoices) {
+      if (inv.mrpId !== b.mrpId || inv.destinationVendor !== vendorId) continue;
+      const colorKey = b.warna + "|" + b.lengan;
+      const receipts = inv.rollReceipts[colorKey] ?? [];
+      const idx = receipts.findIndex((r) => r?.codeRoll === b.codeRoll);
+      if (idx !== -1) {
+        found = { invoiceId: inv.id, rollIndex: idx, invoice: inv, codeLot: receipts[idx]?.codeLot };
+        break;
+      }
+    }
+    if (!found) {
+      skipped.push(b.id);
+      continue;
+    }
+    const claimKey = `${found.invoiceId}|${b.warna}|${b.lengan}|${found.rollIndex}`;
+    const { error: photoErr } = await db.from("material_claim_photos").upsert({
+      claim_key: claimKey,
+      invoice_id: found.invoiceId,
+      warna: b.warna,
+      lengan: b.lengan,
+      roll_index: found.rollIndex,
+      data_url: photo.dataUrl,
+      file_name: photo.fileName ?? null,
+      uploaded_at: claimedAt,
+    });
+    if (photoErr) throw new Error("Gagal menyimpan foto bukti klaim: " + photoErr.message);
+
+    const colorId = `${found.invoiceId}-${b.warna}-${b.lengan}`;
+    const { error: updErr } = await db
+      .from("raw_material_invoice_rolls")
+      .update({ claim_defect_note: note.trim(), claim_defect_at: claimedAt, claim_photo_at: claimedAt })
+      .eq("invoice_color_id", colorId)
+      .eq("roll_index", found.rollIndex);
+    if (updErr) throw new Error("Gagal menyimpan klaim fisik: " + updErr.message);
+
+    // BUG FIX (2026-09-10, owner-reported): fungsi ini dulu TIDAK PERNAH menulis ke
+    // material_claim_history (arsip klaim, migration 0011) sama sekali -- cuma
+    // raw_material_invoice_rolls (live) di atas. `createClaimReplacementInvoiceAction`
+    // ("Buat PV Pengganti") MEWAJIBKAN baris arsip ada (findOpenClaimHistoryId), jadi klaim
+    // fisik SELALU gagal dibuatkan PV pengganti -- "Klaim ini tidak ditemukan di arsip atau
+    // sudah selesai" -- meski di daftar Klaim Material kelihatan aktif & normal. Sekarang
+    // ditulis juga, pola SAMA PERSIS jalur klaim berat (lihat receiveRawMaterialRollAction) --
+    // soft-fail (try/catch, TIDAK menggagalkan aksi utama) supaya "Ajukan Claim Fisik" (dipakai
+    // vendor SETIAP hari) tidak ikut gagal cuma karena migration 0025 belum ter-apply.
+    // claimed_net_kg/diff_kg/pct dibiarkan kosong (tidak berarti utk klaim fisik, lihat migration
+    // 0025) -- `reason`+`defect_note` jadi penanda/keterangannya sebagai ganti.
+    try {
+      const colorEntry = found.invoice.colorEntries.find((c) => c.warna === b.warna && c.lengan === b.lengan);
+      const grossKg = colorEntry?.rolls[found.rollIndex];
+      const historyId = await nextReadableId("MCH");
+      await db.from("material_claim_history").insert({
+        id: historyId,
+        invoice_id: found.invoiceId,
+        po_id: found.invoice.poId ?? null,
+        mrp_id: found.invoice.mrpId ?? null,
+        supplier: found.invoice.supplier ?? null,
+        vendor_produksi: found.invoice.destinationVendor ?? null,
+        warna: b.warna,
+        lengan: b.lengan,
+        roll_index: found.rollIndex,
+        code_roll: b.codeRoll,
+        code_lot: found.codeLot ?? null,
+        gross_kg: grossKg ?? null,
+        reason: "FISIK",
+        defect_note: note.trim(),
+        claim_photo_at: claimedAt,
+      });
+    } catch {
+      // arsip opsional (migration 0025 belum ter-apply, atau data roll tidak lengkap) -- klaim
+      // fisik utamanya (raw_material_invoice_rolls di atas) SUDAH tersimpan, tidak boleh ikut
+      // gagal cuma karena arsip tambahan ini.
+    }
+
+    await db.from("production_batch_sizes").delete().eq("production_batch_id", b.id);
+    const { error: delErr } = await db.from("production_batches").delete().eq("id", b.id);
+    if (delErr) throw new Error("Gagal menghapus batch resting: " + delErr.message);
+
+    claimed++;
+  }
+
+  if (claimed > 0) {
+    await insertNotification(notif(`${claimed} roll diklaim cacat fisik oleh vendor produksi -- cek Klaim Material`, ["procurement"]));
+  }
+
+  return { claimed, skipped };
+}
+
+/** Item 13.2: tutup tahap "timbang" -- roll yang sudah ditimbang (net_kg terisi) & TIDAK claimable
+ *  (item 4, lebih ringan dari toleransi) baru bisa masuk pool Resting setelah dikonfirmasi di sini
+ *  (lihat gate weigh_confirmed_at di availableCodeRollsForColor/receivedRollCountWithCodeForColor,
+ *  derive.ts). Dipanggil per GRUP (satu klik "Konfirmasi (n)" untuk semua roll warna·lengan yang
+ *  sama, item 14.1) -- roll yang gagal syarat (belum ditimbang, atau masih claimable) di-skip &
+ *  dilaporkan balik supaya UI bisa bilang apa yang ke-skip, bukan diam-diam gagal semua. */
+export async function confirmRollWeighAction(
+  items: { invoiceId: string; warna: string; lengan: Lengan; rollIndex: number }[]
+): Promise<{ confirmed: number; skipped: { invoiceId: string; warna: string; lengan: Lengan; rollIndex: number }[] }> {
+  const vendorId = await requireVendorSession();
+  const db = supabaseServer();
+  const skipped: { invoiceId: string; warna: string; lengan: Lengan; rollIndex: number }[] = [];
+  let confirmed = 0;
+  // Kepemilikan: pastikan tiap invoiceId yang diminta memang milik vendor sesi ini -- tanpa ini,
+  // vendor A yang tahu/tebak ID invoice vendor B bisa ikut men-"Konfirmasi" roll timbang B (bukan
+  // datanya sendiri). Di-cache per invoiceId supaya tidak query berulang kalau items berisi
+  // banyak roll dari invoice yang sama (kasus umum: konfirmasi 1 grup warna sekaligus).
+  const ownedInvoiceIds = new Map<string, boolean>();
+  for (const item of items) {
+    if (!ownedInvoiceIds.has(item.invoiceId)) {
+      const { data: invRow } = await db.from("raw_material_invoices").select("destination_vendor").eq("id", item.invoiceId).maybeSingle();
+      ownedInvoiceIds.set(item.invoiceId, invRow?.destination_vendor === vendorId);
+    }
+    if (!ownedInvoiceIds.get(item.invoiceId)) {
+      skipped.push(item);
+      continue;
+    }
+    const colorId = `${item.invoiceId}-${item.warna}-${item.lengan}`;
+    const { data: rollRow } = await db
+      .from("raw_material_invoice_rolls")
+      .select("gross_kg,net_kg")
+      .eq("invoice_color_id", colorId)
+      .eq("roll_index", item.rollIndex)
+      .maybeSingle();
+    if (!rollRow || rollRow.net_kg == null) {
+      skipped.push(item);
+      continue;
+    }
+    const variance = weightVariance(Number(rollRow.gross_kg ?? 0), Number(rollRow.net_kg));
+    if (variance.claimable) {
+      skipped.push(item);
+      continue;
+    }
+    const { error } = await db
+      .from("raw_material_invoice_rolls")
+      .update({ weigh_confirmed_at: nowIso() })
+      .eq("invoice_color_id", colorId)
+      .eq("roll_index", item.rollIndex);
+    if (error) {
+      skipped.push(item);
+      continue;
+    }
+    confirmed++;
+  }
+  return { confirmed, skipped };
+}
+
+/** Item 2.4: ambil BYTE foto bukti berat bersih 1 klaim on-demand -- `material_claim_photos`
+ *  sengaja DIKELUARKAN dari get_flow_snapshot_raw() (migration 0014) supaya payloadnya tidak ikut
+ *  re-download di setiap refresh snapshot. Dipanggil LANGSUNG dari halaman Klaim Material
+ *  (bukan lewat store/snapshot) cuma saat user klik "Lihat / Download". */
+export async function getMaterialClaimPhotoAction(claimKey: string): Promise<{ dataUrl: string; fileName?: string } | null> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const db = supabaseServer();
+  const { data } = await db.from("material_claim_photos").select("data_url,file_name").eq("claim_key", claimKey).maybeSingle();
+  if (!data) return null;
+  return { dataUrl: data.data_url, fileName: data.file_name ?? undefined };
+}
+
+export async function setMaterialPoEntityAction(poId: string, entitas: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "finance");
+  const db = supabaseServer();
+  const { error } = await db.from("material_pos").update({ entity: entitas }).eq("id", poId);
+  if (error) throw new Error(error.message);
+  await db.from("material_po_color_breakdown").update({ entitas }).eq("material_po_id", poId);
+}
+
+export async function setMaterialPoColorEntityAction(poId: string, warna: string, lengan: Lengan, entitas: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "finance");
+  const { error } = await supabaseServer().from("material_po_color_breakdown").update({ entitas }).eq("material_po_id", poId).eq("warna", warna).eq("lengan", lengan);
+  if (error) throw new Error(error.message);
+}
+
+export async function approveAllMaterialPosAction(): Promise<void> {
+  await requireInternalRole(await requireSession(), "finance");
+  const db = supabaseServer();
+  const toApprove = await fetchUnapprovedMaterialPos(db, undefined);
+  const mrpIds = Array.from(new Set(toApprove.map((po) => po.mrpId)));
+  for (const po of toApprove) {
+    const entitasOrder = Array.from(new Set(po.colorBreakdown.map((c) => c.entitas ?? po.entity)));
+    const newIds = await Promise.all(
+      entitasOrder.slice(1).map((entitas) => nextPoDisplayId("material_pos", "PO-SUP", [po.mrpId, po.vendorProduksi, po.supplier, entitas]))
+    );
+    const parts = splitMaterialPoByEntitas(po, newIds).map((p) => ({ ...p, approved: true }));
+    await writeMaterialPoSplit(db, po.id, parts);
+  }
+  for (const mrpId of mrpIds) await checkPoApproved(mrpId);
+}
+
+export async function approveVendorMaterialPosAction(mrpId: string, vendor: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "finance");
+  const db = supabaseServer();
+  const toApprove = await fetchUnapprovedMaterialPos(db, { mrpId, vendorProduksi: vendor });
+  for (const po of toApprove) {
+    const entitasOrder = Array.from(new Set(po.colorBreakdown.map((c) => c.entitas ?? po.entity)));
+    const newIds = await Promise.all(
+      entitasOrder.slice(1).map((entitas) => nextPoDisplayId("material_pos", "PO-SUP", [po.mrpId, po.vendorProduksi, po.supplier, entitas]))
+    );
+    const parts = splitMaterialPoByEntitas(po, newIds).map((p) => ({ ...p, approved: true }));
+    await writeMaterialPoSplit(db, po.id, parts);
+  }
+  await checkPoApproved(mrpId);
+}
+
+/** PERFORMA: mengembalikan cuttingAt/sizeQty yang baru ditulis supaya store.ts bisa nge-patch
+ *  baris ProductionBatch ini LANGSUNG di client (optimistic), tanpa nunggu backgroundRefresh
+ *  (snapshot 32-tabel) buat lihat roll-nya sudah "Cutting" -- ini yang secara konkret diminta user
+ *  (kasus "10 roll, 5-10 detik per roll" harus kerasa ~instan per klik). Query di fungsi ini
+ *  sendiri sudah selalu murah (2 tulis kecil, tidak pernah pakai getFlowSnapshot()) -- baru berasa
+ *  lambat kalau UI-nya nunggu refresh penuh sesudahnya, itu yang dipotong di sini. */
+export async function updateBatchToCuttingAction(batchId: string, cuttingAt: string, sizeQty: Record<string, number> = {}): Promise<{ cuttingAt: string; sizeQty?: Record<string, number> }> {
+  await requireVendorSession();
+  const db = supabaseServer();
+
+  // Item 18.3: batch ini boleh diedit/"diperbaiki" berulang kali (Input Hasil Cutting SEKARANG
+  // bukan sekali-jalan) SELAMA grup warna/lengannya belum benar-benar final (production_group_meta
+  // .done_at, TAHAP 2). Kalau grupnya sudah fg_confirmed_at (TAHAP 1) tapi belum done_at, edit ini
+  // tetap boleh jalan TAPI reject otomatis grup itu harus dihitung ULANG (recomputeAutoRejectForGroup)
+  // supaya angka reject di tab Reject/Final Produksi tidak basi.
+  const { data: batchRow } = await db.from("production_batches").select("mrp_id,vendor_produksi,warna,lengan").eq("id", batchId).single();
+  let groupKey: string | null = null;
+  if (batchRow) {
+    groupKey = `${batchRow.mrp_id}|${batchRow.warna}|${batchRow.lengan}`;
+    const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).maybeSingle();
+    if (meta?.done_at) {
+      // BUG FIX (2026-09-09, user-reported: "kenapa tidak bisa input hasil cutting?" -- roll BARU
+      // muncul untuk warna/lengan yang grupnya SUDAH terlanjur dikunci Final Produksi, mis. karena
+      // sebagian sudah sampai tahap payment/invoice sebelum roll baru ini ada, lihat fix
+      // maklonProductionFullyDone/readyMrpIds di lib/mrp/derive.ts & production-cutting-tab.tsx):
+      // dulu pesan ini TIDAK menyebutkan jalan keluarnya (harus "Buka kunci" dulu di Final Produksi)
+      // -- pesan generik begini sendirian juga sempat GAGAL sampai ke user (saveGroup di
+      // production-cutting-tab.tsx tidak menangkap error sama sekali, lihat fix di file itu).
+      throw new Error(
+        `Grup ${batchRow.warna} · ${batchRow.lengan} sudah "Selesai Produksi" (Final Produksi) -- hasil cutting tidak bisa diedit lagi. Buka kunci dulu di tab Final Produksi ("Buka kunci ↺") kalau memang masih ada roll baru untuk warna/lengan ini yang perlu diproses.`
+      );
+    }
+  }
+
+  const { error } = await db.from("production_batches").update({ cutting_at: cuttingAt }).eq("id", batchId);
+  if (error) throw new Error(error.message);
+  // Hasil aduan AKTUAL roll ini (lihat komentar ProductionBatch.sizeQty di types.ts) — tabel
+  // production_batch_sizes belum tentu ada (butuh migration 0006_production_batch_output.sql).
+  // Errornya SENGAJA tidak dilempar (cuma dicatat) supaya "Input Hasil Cutting" di atas (aksi
+  // utamanya, sudah berhasil) tidak ikut gagal hanya karena fitur tambahan ini belum ter-migrate
+  // di environment tertentu.
+  // Item 18.3: HAPUS dulu baris lama batch ini sebelum insert -- dulu insert-only, jadi panggilan
+  // KEDUA ("Perbaiki Hasil Cutting") menumpuk baris duplikat alih-alih menggantikannya.
+  const { error: delErr } = await db.from("production_batch_sizes").delete().eq("production_batch_id", batchId);
+  if (delErr) console.error("updateBatchToCuttingAction: gagal hapus hasil aduan lama", delErr.message);
+  const rows = Object.entries(sizeQty).filter(([, qty]) => qty > 0);
+  if (rows.length > 0) {
+    const { error: sizeErr } = await db.from("production_batch_sizes").insert(rows.map(([size, qty]) => ({ production_batch_id: batchId, size, qty })));
+    if (sizeErr) console.error("updateBatchToCuttingAction: gagal simpan hasil aduan (migration 0006 sudah jalan?)", sizeErr.message);
+  }
+
+  if (batchRow && groupKey) {
+    const { data: metaAfter } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).maybeSingle();
+    if (metaAfter?.fg_confirmed_at && !metaAfter.done_at) {
+      await recomputeAutoRejectForGroup(db, groupKey, batchRow.mrp_id, batchRow.vendor_produksi, batchRow.warna, batchRow.lengan as Lengan);
+    }
+  }
+
+  return { cuttingAt, sizeQty: rows.length > 0 ? Object.fromEntries(rows) : undefined };
+}
+
+/** Versi BATCHED dari updateBatchToCuttingAction di atas (JANGAN ubah yang lama, fungsi ini
+ *  tambahan paralel) -- root cause flicker & lambat tombol "Simpan" di modal Hasil Cutting adalah
+ *  saveGroup yang LOOP client memanggil versi single N kali (N round-trip berurutan, tiap panggilan
+ *  trigger backgroundRefresh sendiri-sendiri, snapshot READ dari iterasi awal bisa datang belakangan
+ *  & overwrite state yang sudah dipatch optimistic dari iterasi berikutnya -- lihat catatan di
+ *  spec/changes.md). Fix-nya: 1 round-trip untuk SEMUA roll dalam grup sekaligus, 1 kali gate
+ *  "Selesai Produksi", 1 kali recomputeAutoRejectForGroup -- store.ts cukup panggil
+ *  backgroundRefresh() SATU KALI di akhir, bukan N kali. */
+export async function updateBatchesToCuttingAction(
+  batchIds: string[],
+  cuttingAt: string,
+  sizeQtyByBatchId: Record<string, Record<string, number>>
+): Promise<{ batchId: string; cuttingAt: string; sizeQty?: Record<string, number> }[]> {
+  await requireVendorSession();
+  if (batchIds.length === 0) return [];
+  const db = supabaseServer();
+
+  // Validasi SEMUA batchId dari 1 groupKey yang sama -- server TIDAK percaya urutan/isi array dari
+  // client begitu saja (client bisa saja salah kirim campuran grup warna/lengan berbeda).
+  const { data: batchRows, error: batchErr } = await db
+    .from("production_batches")
+    .select("id,mrp_id,vendor_produksi,warna,lengan")
+    .in("id", batchIds);
+  if (batchErr) throw new Error(batchErr.message);
+  if (!batchRows || batchRows.length !== batchIds.length) throw new Error("Sebagian roll tidak ditemukan.");
+  const groupKeys = new Set(batchRows.map((b) => `${b.mrp_id}|${b.warna}|${b.lengan}`));
+  if (groupKeys.size > 1) throw new Error("Semua roll yang disimpan sekaligus harus dari grup warna/lengan yang sama.");
+  const first = batchRows[0];
+  const groupKey = `${first.mrp_id}|${first.warna}|${first.lengan}`;
+
+  const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).maybeSingle();
+  if (meta?.done_at) {
+    throw new Error(
+      `Grup ${first.warna} · ${first.lengan} sudah "Selesai Produksi" (Final Produksi) -- hasil cutting tidak bisa diedit lagi. Buka kunci dulu di tab Final Produksi ("Buka kunci ↺") kalau memang masih ada roll baru untuk warna/lengan ini yang perlu diproses.`
+    );
+  }
+
+  // 1 UPDATE untuk SEMUA batchId sekaligus (cuttingAt seragam untuk 1 grup, lihat komentar
+  // saveGroup di production-cutting-tab.tsx) -- bukan N update terpisah seperti versi single.
+  const { error } = await db.from("production_batches").update({ cutting_at: cuttingAt }).in("id", batchIds);
+  if (error) throw new Error(error.message);
+
+  // 1 DELETE untuk semua batchId, lalu 1 INSERT gabungan semua baris sizeQty dari semua batch --
+  // bukan N delete + N insert terpisah. Error di sini SENGAJA tidak dilempar (sama seperti versi
+  // single) -- fitur tambahan, tidak boleh menggagalkan aksi utama kalau migration 0006 belum ada.
+  const { error: delErr } = await db.from("production_batch_sizes").delete().in("production_batch_id", batchIds);
+  if (delErr) console.error("updateBatchesToCuttingAction: gagal hapus hasil aduan lama", delErr.message);
+  const results: { batchId: string; cuttingAt: string; sizeQty?: Record<string, number> }[] = [];
+  const allRows: { production_batch_id: string; size: string; qty: number }[] = [];
+  for (const batchId of batchIds) {
+    const rows = Object.entries(sizeQtyByBatchId[batchId] ?? {}).filter(([, qty]) => qty > 0);
+    if (rows.length > 0) allRows.push(...rows.map(([size, qty]) => ({ production_batch_id: batchId, size, qty })));
+    results.push({ batchId, cuttingAt, sizeQty: rows.length > 0 ? Object.fromEntries(rows) : undefined });
+  }
+  if (allRows.length > 0) {
+    const { error: sizeErr } = await db.from("production_batch_sizes").insert(allRows);
+    if (sizeErr) console.error("updateBatchesToCuttingAction: gagal simpan hasil aduan (migration 0006 sudah jalan?)", sizeErr.message);
+  }
+
+  // recomputeAutoRejectForGroup 1x untuk groupKey ini (bukan N kali seperti kalau ini dipanggil
+  // lewat loop versi single) -- fungsi ini SUDAH ada & dipakai versi single, reuse apa adanya.
+  if (meta?.fg_confirmed_at && !meta.done_at) {
+    await recomputeAutoRejectForGroup(db, groupKey, first.mrp_id, first.vendor_produksi, first.warna, first.lengan as Lengan);
+  }
+
+  return results;
+}
+
+/** Tandai alert yield <99% roll ini sudah ditindaklanjuti/di-approve dari portal internal
+ *  Produksi (audience "produksi" — BUKAN Procurement, beda dari material claim berat). */
+export async function resolveProductionYieldAction(batchId: string, note: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "produksi");
+  const { error } = await supabaseServer().from("production_yield_resolutions").upsert({ production_batch_id: batchId, note, resolved_at: today() });
+  if (error) throw new Error(error.message);
+}
+
+export async function unresolveProductionYieldAction(batchId: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "produksi");
+  await supabaseServer().from("production_yield_resolutions").delete().eq("production_batch_id", batchId);
+}
+
+export async function updateDeliveryKoliAction(koliId: string, patch: { ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }): Promise<void> {
+  await requireVendorSession();
+  const db = supabaseServer();
+  const { data: koli } = await db.from("delivery_kolis").select("delivered_at,mrp_id,vendor_produksi").eq("id", koliId).maybeSingle();
+  if (!koli || koli.delivered_at) return;
+  // `excludeKoliId: koliId` -- sisa roll dihitung TANPA menganggap qty koli ini sendiri (versi
+  // LAMA sebelum edit) sebagai "sudah terpakai", supaya qty yang sudah ada di koli ini bisa
+  // dipertahankan/diedit bebas (bukan cuma bisa berkurang).
+  const items = await clampDeliveryItemsBySourceBatch(patch.items, koli.mrp_id, koli.vendor_produksi, koliId);
+  await db.from("delivery_kolis").update({ ekspedisi: patch.ekspedisi, no_koli: patch.noKoli }).eq("id", koliId);
+  await db.from("delivery_koli_items").delete().eq("delivery_koli_id", koliId);
+  if (items.length > 0) {
+    // BUG FIX SEKALIAN (ditemukan saat menambah `source_batch_id`, migration 0024): insert ini dulu
+    // TIDAK PERNAH dicek error-nya -- items LAMA sudah TERLANJUR di-delete di atas, jadi kalau
+    // insert baris PENGGANTI ini gagal diam-diam (mis. migration belum di-apply), koli berakhir
+    // KOSONG SAMA SEKALI (lebih parah dari createDeliveryKoliAction -- di sini bahkan data yang
+    // SUDAH ada sebelum edit ikut hilang). Sekarang dicek & di-throw -- lihat catatan lebih
+    // panjang di createDeliveryKoliAction.
+    const { error: itemsErr } = await db
+      .from("delivery_koli_items")
+      .insert(items.map((it) => ({ delivery_koli_id: koliId, warna: it.warna, lengan: it.lengan, size: it.size, qty: it.qty, kind: it.kind, usia: it.usia ?? null, source_batch_id: it.sourceBatchId ?? null })));
+    if (itemsErr) throw new Error(itemsErr.message);
+  }
+}
+
+export async function setVendorInvoiceDueDateAction(invoiceId: string, dueDate: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "finance");
+  const { error } = await supabaseServer().from("vendor_invoices").update({ due_date: dueDate }).eq("id", invoiceId);
+  if (error) throw new Error(error.message);
+}
+
+export async function setVendorInvoiceOngkirAction(invoiceId: string, ongkirTotal: number): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const { error } = await supabaseServer().from("vendor_invoices").update({ ongkir_total: Math.max(0, ongkirTotal) }).eq("id", invoiceId);
+  if (error) throw new Error(error.message);
+}
+
+export async function setRejectRemarkAction(poId: string, remark: string): Promise<void> {
+  await requireVendorSession();
+  const { error } = await supabaseServer().from("maklon_pos").update({ reject_remark: remark }).eq("id", poId);
+  if (error) throw new Error(error.message);
+}
+
+/** Key format: "invoiceId|warna|lengan|rollIndex" (lihat materialClaimsList di derive.ts) --
+ *  di-parse balik ke lokasi baris raw_material_invoice_rolls yang bersangkutan. */
+function parseClaimKey(key: string): { invoiceId: string; warna: string; lengan: Lengan; invoiceColorId: string; rollIndex: number } | null {
+  const parts = key.split("|");
+  if (parts.length !== 4) return null;
+  const [invoiceId, warna, lengan, rollIndexStr] = parts;
+  return { invoiceId, warna, lengan: lengan as Lengan, invoiceColorId: `${invoiceId}-${warna}-${lengan}`, rollIndex: parseInt(rollIndexStr, 10) };
+}
+
+/** Cari baris material_claim_history yang masih TERBUKA (resolved_at kosong) untuk 1 roll --
+ *  dipakai buat update progres (retur diminta/dikirim/diterima/selesai) ke baris arsip yang
+ *  sama persis dengan progres yang ditulis ke kolom claim_retur_.../claim_resolved_... di
+ *  raw_material_invoice_rolls (lihat migration 0011_material_claim_history.sql). Kalau
+ *  tabelnya belum ada (migration belum di-apply) atau baris terbuka tidak ketemu, return null
+ *  diam-diam -- arsip ini fitur TAMBAHAN, gagal update di sini TIDAK BOLEH menggagalkan aksi
+ *  utamanya (mis. Minta Retur tetap harus jalan meski baris arsipnya entah kenapa tidak ada). */
+async function findOpenClaimHistoryId(db: ReturnType<typeof supabaseServer>, invoiceId: string, warna: string, lengan: Lengan, rollIndex: number): Promise<string | null> {
+  try {
+    const { data } = await db
+      .from("material_claim_history")
+      .select("id")
+      .eq("invoice_id", invoiceId)
+      .eq("warna", warna)
+      .eq("lengan", lengan)
+      .eq("roll_index", rollIndex)
+      .is("resolved_at", null)
+      .order("claimed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return data?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveMaterialClaimAction(key: string, note: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const parsed = parseClaimKey(key);
+  if (!parsed) return;
+  const db = supabaseServer();
+  const { error } = await db
+    .from("raw_material_invoice_rolls")
+    .update({ claim_resolved_note: note, claim_resolved_at: today() })
+    .eq("invoice_color_id", parsed.invoiceColorId)
+    .eq("roll_index", parsed.rollIndex);
+  if (error) throw new Error(error.message);
+  try {
+    const openId = await findOpenClaimHistoryId(db, parsed.invoiceId, parsed.warna, parsed.lengan, parsed.rollIndex);
+    if (openId) await db.from("material_claim_history").update({ resolved_at: today(), resolved_note: note, resolution_kind: "MANUAL" }).eq("id", openId);
+  } catch {
+    // arsip opsional.
+  }
+}
+
+export async function unresolveMaterialClaimAction(key: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const parsed = parseClaimKey(key);
+  if (!parsed) return;
+  const db = supabaseServer();
+  await db.from("raw_material_invoice_rolls").update({ claim_resolved_note: null, claim_resolved_at: null }).eq("invoice_color_id", parsed.invoiceColorId).eq("roll_index", parsed.rollIndex);
+  try {
+    // "Buka lagi" cuma bisa dipanggil untuk klaim yang statusnya masih SELESAI -- baris arsip
+    // yang relevan justru yang SUDAH resolved (bukan openId), jadi dicari langsung tanpa
+    // findOpenClaimHistoryId (yang khusus baris resolved_at kosong).
+    const { data } = await db
+      .from("material_claim_history")
+      .select("id")
+      .eq("invoice_id", parsed.invoiceId)
+      .eq("warna", parsed.warna)
+      .eq("lengan", parsed.lengan)
+      .eq("roll_index", parsed.rollIndex)
+      .eq("resolution_kind", "MANUAL")
+      .not("resolved_at", "is", null)
+      .order("resolved_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (data?.id) await db.from("material_claim_history").update({ resolved_at: null, resolved_note: null, resolution_kind: null }).eq("id", data.id);
+  } catch {
+    // arsip opsional.
+  }
+}
+
+/** Fetch SATU RawMaterialInvoice by id -- CUMA field yang dibaca materialClaimsList (colorEntries
+ *  + rollReceipts, plus id/poId/mrpId/supplier/destinationVendor buat isi MaterialClaimRow) --
+ *  bukan getFlowSnapshot() penuh (32 tabel). Field lain (addBuys/status pembayaran/dst) sengaja
+ *  di-stub kosong -- 3 pemanggilnya (request/markDelivered/confirmReceived retur klaim) semua
+ *  cuma butuh materialClaimsList([inv]).find((c) => c.key === key), tidak baca field lain. */
+async function fetchOneInvoiceForClaims(db: SupabaseClient, invoiceId: string): Promise<RawMaterialInvoice | undefined> {
+  const [invRes, colorRes] = await Promise.all([
+    db.from("raw_material_invoices").select("*").eq("id", invoiceId).maybeSingle(),
+    db.from("raw_material_invoice_colors").select("*, raw_material_invoice_rolls(*)").eq("invoice_id", invoiceId),
+  ]);
+  const inv = invRes.data;
+  if (!inv) return undefined;
+  const colorEntries: ColorEntry[] = [];
+  const rollReceipts: Record<string, (RollReceipt | null)[]> = {};
+  for (const c of colorRes.data ?? []) {
+    const colorKey = `${c.warna}|${c.lengan}`;
+    const rolls = (c.raw_material_invoice_rolls ?? []).sort((a: { roll_index: number }, b: { roll_index: number }) => a.roll_index - b.roll_index);
+    colorEntries.push({ warna: c.warna, lengan: c.lengan, hargaPerRoll: Number(c.harga_per_roll), rolls: rolls.map((r: { gross_kg: number }) => Number(r.gross_kg)) });
+    rollReceipts[colorKey] = rolls.map((r: { net_kg: number | null; received_at: string | null; code_roll: string | null; code_lot: string | null }) =>
+      r.net_kg == null ? null : { netKg: Number(r.net_kg), receivedAt: r.received_at ?? "", codeRoll: r.code_roll ?? undefined, codeLot: r.code_lot ?? undefined }
+    );
+  }
+  return {
+    id: inv.id,
+    poId: inv.po_id,
+    mrpId: inv.mrp_id,
+    vendorProduksi: inv.vendor_produksi,
+    supplier: inv.supplier,
+    colorEntries,
+    addBuys: [],
+    qtyReady: 0,
+    diskon: 0,
+    totalBiaya: 0,
+    kodeTransaksi: "",
+    noInvoiceVendor: "",
+    entity: "",
+    status: inv.status,
+    destinationVendor: inv.destination_vendor ?? "",
+    bookedAt: inv.booked_at,
+    rollReceipts,
+    rollArrivals: {},
+    addBuyReceipts: {},
+  };
+}
+
+/** Step 1 flow klaim bertahap (2026-09-11): Procurement "Terima Klaim" -- gerbang wajib sebelum
+ *  "Buat PV Pengganti" bisa dipakai (lihat gate baru di createClaimReplacementInvoiceAction).
+ *  Tanpa notifikasi, tanpa catatan tambahan -- murni penanda "sudah dilihat/ditindaklanjuti". */
+export async function acceptMaterialClaimAction(key: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const parsed = parseClaimKey(key);
+  if (!parsed) return;
+  const db = supabaseServer();
+  const { error } = await db
+    .from("raw_material_invoice_rolls")
+    .update({ claim_accepted_at: today() })
+    .eq("invoice_color_id", parsed.invoiceColorId)
+    .eq("roll_index", parsed.rollIndex);
+  if (error) throw new Error(error.message);
+  try {
+    const openId = await findOpenClaimHistoryId(db, parsed.invoiceId, parsed.warna, parsed.lengan, parsed.rollIndex);
+    if (openId) await db.from("material_claim_history").update({ accepted_at: today() }).eq("id", openId);
+  } catch {
+    // arsip opsional.
+  }
+}
+
+/** @deprecated — jalur lama, tidak lagi dipicu dari UI sejak flow bertahap 2026-09-11 (Terima
+ *  Klaim -> Buat PV Pengganti -> Tandai Sudah Dikirim, lihat acceptMaterialClaimAction &
+ *  markClaimReplacementShippedAction). Dibiarkan hidup APA ADANYA (tidak dihapus) supaya klaim
+ *  yang masih in-flight di stage RETUR_DIMINTA/RETUR_DIKIRIM/RETUR_DITERIMA dari sebelum flow ini
+ *  tetap bisa diselesaikan lewat jalur lamanya -- lihat keputusan desain D1 di spec. */
+export async function requestMaterialClaimReturAction(key: string, note: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const parsed = parseClaimKey(key);
+  if (!parsed) return;
+  const db = supabaseServer();
+  await db.from("raw_material_invoice_rolls").update({ claim_retur_note: note, claim_retur_requested_at: today() }).eq("invoice_color_id", parsed.invoiceColorId).eq("roll_index", parsed.rollIndex);
+  try {
+    const openId = await findOpenClaimHistoryId(db, parsed.invoiceId, parsed.warna, parsed.lengan, parsed.rollIndex);
+    if (openId) await db.from("material_claim_history").update({ retur_note: note, retur_requested_at: today() }).eq("id", openId);
+  } catch {
+    // arsip opsional.
+  }
+  const inv = await fetchOneInvoiceForClaims(db, parsed.invoiceId);
+  const claim = inv && materialClaimsList([inv]).find((c) => c.key === key);
+  if (claim) {
+    await insertNotification(
+      notif(
+        `Retur diminta ke supplier ${claim.supplier} untuk roll #${claim.rollIndex + 1} (${claim.warna} · ${claim.lengan}, invoice ${claim.invoiceId}). Timbang ulang roll ini begitu penggantinya sampai — catatan: ${note}`,
+        ["vendorMaklon"],
+        claim.vendorProduksi
+      )
+    );
+  }
+}
+
+export async function cancelMaterialClaimReturRequestAction(key: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const parsed = parseClaimKey(key);
+  if (!parsed) return;
+  const db = supabaseServer();
+  // Batalkan mereset SELURUH progres retur (diminta -> dikirim -> diterima), bukan cuma
+  // permintaan awal -- kalau tidak, sisa kolom delivered/received bisa nyangkut dan bikin
+  // stageOf() di halaman Klaim Material salah baca status setelah dibatalkan.
+  await db
+    .from("raw_material_invoice_rolls")
+    .update({ claim_retur_note: null, claim_retur_requested_at: null, claim_retur_delivered_note: null, claim_retur_delivered_at: null, claim_retur_received_at: null })
+    .eq("invoice_color_id", parsed.invoiceColorId)
+    .eq("roll_index", parsed.rollIndex);
+  // A9 (flow bertahap 2026-09-11): ikut me-null-kan progres tahap "diterima Procurement -> PV
+  // pengganti dibuat", konsisten dengan semantik "Batalkan mereset SELURUH progres" di atas. Ini
+  // TIDAK menghapus invoice PV pengganti yang sudah terlanjur dibuat (claim_replacement_invoice_id)
+  // maupun baris vendor_deposits terkait -- keduanya harus diurus manual, UI menampilkan konfirmasi
+  // soal ini sebelum memanggil action ini (lihat cancelMaterialClaimReturRequest di store.ts).
+  // Query TERPISAH dari update legacy di atas & dibungkus try/catch (soft-fail) supaya "Batalkan"
+  // untuk klaim retur legacy TETAP jalan apa adanya sebelum migration 0028 (kolom baru ini) di-apply
+  // user -- kalau kolomnya belum ada, Supabase akan menolak seluruh update kalau digabung 1 query.
+  try {
+    await db
+      .from("raw_material_invoice_rolls")
+      .update({ claim_accepted_at: null, claim_replacement_invoice_id: null, claim_replacement_at: null })
+      .eq("invoice_color_id", parsed.invoiceColorId)
+      .eq("roll_index", parsed.rollIndex);
+  } catch {
+    // kolom belum ada (migration 0028 belum di-apply) -- abaikan, bukan bagian wajib dari "Batalkan".
+  }
+  try {
+    const openId = await findOpenClaimHistoryId(db, parsed.invoiceId, parsed.warna, parsed.lengan, parsed.rollIndex);
+    if (openId) await db.from("material_claim_history").update({ retur_note: null, retur_requested_at: null, retur_delivered_note: null, retur_delivered_at: null, retur_received_at: null }).eq("id", openId);
+  } catch {
+    // arsip opsional.
+  }
+}
+
+/** Procurement menandai roll pengganti (hasil "Minta Retur") sudah dikirim ke vendor -- biasanya
+ *  dipicu setelah supplier mengabari lewat WA. Tahap antara "Retur diminta" dan vendor benar2
+ *  timbang ulang di Cutting, supaya progresnya kelihatan di ERP bukan cuma di chat WA. */
+/** @deprecated — jalur lama, tidak lagi dipicu dari UI sejak flow bertahap 2026-09-11. Lihat
+ *  komentar @deprecated di requestMaterialClaimReturAction & keputusan desain D1 di spec. */
+export async function markMaterialClaimReturDeliveredAction(key: string, note?: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const parsed = parseClaimKey(key);
+  if (!parsed) return;
+  const db = supabaseServer();
+  await db
+    .from("raw_material_invoice_rolls")
+    .update({ claim_retur_delivered_note: note ?? null, claim_retur_delivered_at: today() })
+    .eq("invoice_color_id", parsed.invoiceColorId)
+    .eq("roll_index", parsed.rollIndex);
+  try {
+    const openId = await findOpenClaimHistoryId(db, parsed.invoiceId, parsed.warna, parsed.lengan, parsed.rollIndex);
+    if (openId) await db.from("material_claim_history").update({ retur_delivered_note: note ?? null, retur_delivered_at: today() }).eq("id", openId);
+  } catch {
+    // arsip opsional.
+  }
+  const invForNotif = await fetchOneInvoiceForClaims(db, parsed.invoiceId);
+  const claim = invForNotif && materialClaimsList([invForNotif]).find((c) => c.key === key);
+  if (claim) {
+    await insertNotification(
+      notif(
+        `Roll pengganti untuk klaim retur roll #${claim.rollIndex + 1} (${claim.warna} · ${claim.lengan}, invoice ${claim.invoiceId}) sudah dikirim Procurement. Konfirmasi setelah diterima di halaman Produksi (tab Cutting).${note ? " Catatan: " + note : ""}`,
+        ["vendorMaklon"],
+        claim.vendorProduksi
+      )
+    );
+  }
+}
+
+/** Vendor mengonfirmasi roll pengganti (hasil "Minta Retur") sudah diterima secara fisik --
+ *  dicatat terpisah dari timbang ulang (net_kg) karena konfirmasi terima bisa duluan sebelum
+ *  sempat ditimbang. Tombolnya ada di halaman Produksi > Cutting, section "Timbang roll". */
+/** @deprecated — jalur lama, tidak lagi dipicu dari UI sejak flow bertahap 2026-09-11. Lihat
+ *  komentar @deprecated di requestMaterialClaimReturAction & keputusan desain D1 di spec. Tombol
+ *  "Tandai Diterima" di production-cutting-tab.tsx TETAP memanggil ini -- satu-satunya jalur
+ *  keluar untuk klaim yang sudah terlanjur di stage RETUR_DIKIRIM dari sebelum flow ini. */
+export async function confirmMaterialClaimReturReceivedAction(key: string): Promise<void> {
+  const vendorId = await requireVendorSession();
+  const parsed = parseClaimKey(key);
+  if (!parsed) return;
+  const db = supabaseServer();
+  await db.from("raw_material_invoice_rolls").update({ claim_retur_received_at: today() }).eq("invoice_color_id", parsed.invoiceColorId).eq("roll_index", parsed.rollIndex);
+  try {
+    const openId = await findOpenClaimHistoryId(db, parsed.invoiceId, parsed.warna, parsed.lengan, parsed.rollIndex);
+    if (openId) await db.from("material_claim_history").update({ retur_received_at: today() }).eq("id", openId);
+  } catch {
+    // arsip opsional.
+  }
+  const invForNotif = await fetchOneInvoiceForClaims(db, parsed.invoiceId);
+  const claim = invForNotif && materialClaimsList([invForNotif]).find((c) => c.key === key);
+  if (claim) {
+    await insertNotification(
+      notif(
+        `Vendor konfirmasi roll pengganti untuk klaim retur roll #${claim.rollIndex + 1} (${claim.warna} · ${claim.lengan}, invoice ${claim.invoiceId}) sudah diterima -- tinggal ditimbang ulang.`,
+        ["procurement"]
+      )
+    );
+  }
+  void vendorId;
+}
+
+/** Revisi 2026-09-06: selesaikan klaim selisih berat lewat "retur + pesan ulang" -- BEDA dari
+ *  resolveMaterialClaimAction (manual, tanpa retur) & AUTO_REWEIGH (timbang ulang sesuai
+ *  toleransi): di sini procurement benar-benar memesan ulang bahan yang diretur dengan RATE &
+ *  BERAT TERKINI (bisa beda dari PV lama), membuat invoice baru (PV pengganti) yang dibayar PENUH
+ *  lewat alur Payment normal seperti invoice lain manapun (lihat payment-panel.tsx) -- bukan
+ *  otomatis dipotong di sini.
+ *
+ *  Nilai retur (rate LAMA x berat LAMA yang sudah dibayar Finance untuk roll yang diretur) SELALU
+ *  dicatat penuh sebagai 1 baris CREDIT ke ledger vendor_deposits milik supplier itu -- TIDAK
+ *  dikurangi/dinetkan otomatis terhadap PV pengganti ini, baik PV pengganti ini lebih mahal ATAUPUN
+ *  lebih murah dari nilai retur. Kredit ini FUNGIBLE (lihat migration
+ *  0018_claim_reorder_vendor_deposit.sql & VendorDepositEntry di types.ts): baru benar-benar
+ *  "dipakai" (jadi baris DEBIT) kapan pun & untuk invoice APA PUN ke supplier itu, begitu Finance
+ *  memilihnya secara manual saat membayar (lihat applyVendorDepositAction di bawah). Ini keputusan
+ *  eksplisit dari diskusi konsep dengan owner (saldo deposit wajib dipilih manual, tidak pernah
+ *  otomatis), bukan penyederhanaan teknis.
+ *
+ *  Revisi kedua (2026-09-06): TIDAK ADA LAGI precondition "Minta Retur" dulu -- awalnya diwajibkan,
+ *  tapi owner minta disederhanakan supaya "Buat PV Pengganti" langsung bisa diklik dari klaim mana
+ *  pun yang masih aktif (belum resolved), tanpa perlu melalui tahap retur fisik manapun dulu.
+ *  Tracking retur fisik (Minta Retur/Tandai Dikirim/dst, lihat requestMaterialClaimReturAction dkk)
+ *  tetap ada sebagai jalur TERPISAH & OPSIONAL untuk klaim yang memang perlu dilacak logistiknya --
+ *  tidak lagi jadi syarat untuk penyelesaian finansial di sini. */
+export async function createClaimReplacementInvoiceAction(
+  key: string,
+  rateBaru: number,
+  beratBaruKg: number,
+  buktiInvoiceDataUrl?: string,
+  buktiInvoiceFileName?: string
+): Promise<string> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const parsed = parseClaimKey(key);
+  if (!parsed) throw new Error("Klaim tidak valid.");
+  if (!(rateBaru > 0) || !(beratBaruKg > 0)) throw new Error("Rate & berat roll pengganti harus lebih dari 0.");
+  const db = supabaseServer();
+
+  // A7 (flow bertahap 2026-09-11): step 1 ("Terima Klaim", lihat acceptMaterialClaimAction) wajib
+  // dulu sebelum PV pengganti bisa dibuat -- ditegakkan di server, bukan sekadar sembunyikan
+  // tombol di UI (pola sama seperti gate klaim aktif di receiveRawMaterialRollAction:1160-1164).
+  // Kalau kolom `claim_accepted_at` belum ada sama sekali (migration 0028 belum di-apply user),
+  // query di bawah akan gagal & `rollRow` jadi null/undefined -- jatuh ke pesan error yang sama,
+  // bukan crash React minified.
+  // Klaim LEGACY (dibuat sebelum flow bertahap ini ada, sudah di salah satu stage retur fisik
+  // RETUR_DIMINTA/RETUR_DIKIRIM/RETUR_DITERIMA) tidak pernah punya cara mengisi `claim_accepted_at`
+  // dari UI -- tombol "Terima Klaim" cuma ada untuk klaim yang masih di stage BELUM. Anggap klaim
+  // yang sudah sampai retur diminta (`claim_retur_requested_at` terisi) implicitly "sudah diterima
+  // Procurement", karena Procurement pasti sudah melihat lampirannya sebelum meminta retur.
+  const { data: rollRow } = await db
+    .from("raw_material_invoice_rolls")
+    .select("claim_accepted_at, claim_retur_requested_at")
+    .eq("invoice_color_id", parsed.invoiceColorId)
+    .eq("roll_index", parsed.rollIndex)
+    .maybeSingle();
+  if (!rollRow?.claim_accepted_at && !rollRow?.claim_retur_requested_at) {
+    throw new Error("Klaim ini belum diterima Procurement — klik 'Terima Klaim' dulu.");
+  }
+
+  const openId = await findOpenClaimHistoryId(db, parsed.invoiceId, parsed.warna, parsed.lengan, parsed.rollIndex);
+  if (!openId) throw new Error("Klaim ini tidak ditemukan di arsip atau sudah selesai -- tidak bisa dibuat PV pengganti.");
+  const { data: claimRow, error: claimErr } = await db.from("material_claim_history").select("*").eq("id", openId).single();
+  if (claimErr || !claimRow) throw new Error("Gagal membaca arsip klaim.");
+
+  // Rate invoice ASLI diambil dari DB (bukan dari input user) -- nilai kredit HARUS berdasarkan
+  // yang benar-benar sudah dibayar di invoice lama, bukan angka yang bisa diketik ulang dari
+  // client. `entity` juga ikut invoice asal supaya PV pengganti konsisten entitasnya.
+  const [{ data: origInv }, { data: origColor }] = await Promise.all([
+    db.from("raw_material_invoices").select("entity").eq("id", parsed.invoiceId).single(),
+    db.from("raw_material_invoice_colors").select("harga_per_roll").eq("id", parsed.invoiceColorId).single(),
+  ]);
+  if (!origInv || !origColor) throw new Error("Invoice asal klaim tidak ditemukan.");
+  const rateLama = Number(origColor.harga_per_roll);
+  const beratLamaKg = Number(claimRow.gross_kg);
+  const kredit = rateLama * beratLamaKg;
+  const nilaiBaru = rateBaru * beratBaruKg;
+
+  // PV pengganti = invoice biasa (1 warna/lengan, 1 roll) -- REUSE bentuk row bookInvoiceAction
+  // tapi TANPA menyentuh material_pos.invoiced_rolls/rollCount atau aduan_pola_rows.rib_allocated_roll
+  // PO asal (ini bukan kuantitas kontrak baru, cuma re-sourcing roll yang sudah diretur -- kalau
+  // ikut menambah invoicedRolls/alokasi, kebutuhan MRP akan kehitung dobel).
+  const invoiceId = await nextReadableId("INV");
+  const colorId = `${invoiceId}-${claimRow.warna}-${claimRow.lengan}`;
+  const { error: insErr } = await db.from("raw_material_invoices").insert({
+    id: invoiceId,
+    po_id: claimRow.po_id,
+    mrp_id: claimRow.mrp_id,
+    vendor_produksi: claimRow.vendor_produksi,
+    supplier: claimRow.supplier,
+    qty_ready: 1,
+    diskon: 0,
+    total_biaya: nilaiBaru,
+    kode_transaksi: `KLAIM-${openId}`,
+    no_invoice_vendor: "",
+    entity: origInv.entity,
+    status: "INVOICED",
+    destination_vendor: claimRow.vendor_produksi,
+    booked_at: today(),
+    source_claim_id: key,
+    bukti_pv_storage_path: buktiInvoiceDataUrl ?? null,
+    bukti_pv_file_name: buktiInvoiceFileName ?? null,
+  });
+  if (insErr) throw new Error(`Gagal membuat PV pengganti: ${insErr.message}`);
+  await db.from("raw_material_invoice_colors").insert({ id: colorId, invoice_id: invoiceId, warna: claimRow.warna, lengan: claimRow.lengan, harga_per_roll: rateBaru });
+  await db.from("raw_material_invoice_rolls").insert({ invoice_color_id: colorId, roll_index: 0, gross_kg: beratBaruKg });
+
+  const depositId = await nextReadableId("VDP");
+  const { error: depErr } = await db.from("vendor_deposits").insert({
+    id: depositId,
+    supplier: claimRow.supplier,
+    kind: "CREDIT",
+    amount: kredit,
+    source_claim_id: key,
+    note: `Kredit retur roll #${claimRow.roll_index + 1} (${claimRow.warna} · ${claimRow.lengan}, invoice ${parsed.invoiceId}) -- diganti PV ${invoiceId}.`,
+  });
+  if (depErr) throw new Error(`PV pengganti terbuat tapi gagal mencatat kredit deposit: ${depErr.message}`);
+
+  // Item revisi 2026-09-07 (owner: "kenapa kita di sini jatuhnya seperti bayar double, sementara
+  // kita masih punya uang di supplier"): sebelum ini, PV pengganti SELALU didudukkan sebagai
+  // invoice biasa berstatus INVOICED bernilai PENUH nilaiBaru -- Finance harus lewat alur "Bayar"
+  // (Payment) + lampirkan bukti pembayaran PDF WAJIB untuk SELURUH nilaiBaru, padahal uang yang
+  // sudah ditransfer untuk PV lama (kredit) itu HARUS otomatis mengurangi tagihan PV pengganti --
+  // owner: "hanya perlu dikurangi dengan pv sebelumnya karena di sini kita retur barangnya...
+  // yang perlu kita bayar hanya selisih[nya]". Berlaku DUA ARAH:
+  // - nilaiBaru <= kredit (PV pengganti lebih murah/sama): kredit lama SUDAH LEBIH dari cukup --
+  //   PV pengganti otomatis LUNAS, tidak ada uang baru yang perlu keluar sama sekali. Sisa kredit
+  //   (kredit - nilaiBaru) TETAP di ledger sebagai saldo deposit riil untuk invoice lain nanti.
+  // - nilaiBaru > kredit (PV pengganti lebih mahal): kredit lama otomatis diterapkan sebagai
+  //   pelunasan SEBAGIAN -- yang genuinely perlu dibayar uang baru cuma SELISIHNYA (nilaiBaru -
+  //   kredit), bukan nilaiBaru penuh. PV pengganti TETAP status INVOICED (belum lunas sepenuhnya),
+  //   tapi tagihan efektifnya sudah dikurangi kredit -- lihat outstandingAmountForInvoice
+  //   (lib/mrp/derive.ts) yang dipakai Payment (payment-panel.tsx) untuk netting DEBIT
+  //   `source_invoice_id` ini terhadap total_biaya, supaya kotak "Bayar" di sana otomatis cuma
+  //   minta selisihnya -- total_biaya SENGAJA TIDAK diubah (tetap nilaiBaru penuh) supaya nilai PV
+  //   yang sebenarnya tetap akurat di semua tempat lain (Material Tracking, riwayat Paying
+  //   Voucher, HPP) yang menampilkan total_biaya sebagai "nilai PV ini", bukan "sisa tagihan".
+  //
+  // Di KEDUA kasus, DEBIT dicatat SAAT INI JUGA (bukan menunggu Finance klik "Bayar" manual) --
+  // pola SAMA PERSIS seperti applyVendorDepositAction, cuma dipicu otomatis dari sini.
+  const debitApplied = Math.min(kredit, nilaiBaru);
+  const debitId = await nextReadableId("VDP");
+  const { error: debitErr } = await db.from("vendor_deposits").insert({
+    id: debitId,
+    supplier: claimRow.supplier,
+    kind: "DEBIT",
+    amount: debitApplied,
+    source_invoice_id: invoiceId,
+    note: `Otomatis diterapkan dari kredit retur PV lama ${parsed.invoiceId} ke PV pengganti ${invoiceId}.`,
+  });
+  if (debitErr) throw new Error(`PV pengganti & kredit terbuat tapi gagal mencatat penerapan kredit: ${debitErr.message}`);
+
+  const autoLunas = nilaiBaru <= kredit + 0.5; // toleransi floating point kecil, sama seperti applyVendorDepositAction
+  if (autoLunas) {
+    await db.from("raw_material_invoices").update({ status: "PAID", paid_at: today() }).eq("id", invoiceId);
+    // Side-effect yang sama seperti setInvoicesPaidAction -- tandai first_payment_at MRP ini kalau
+    // ini pembayaran pertamanya, supaya logic lain yang bergantung pada field itu tidak salah
+    // asumsi cuma karena pelunasannya lewat jalur otomatis ini.
+    const { data: mrpRow } = await db.from("mrp").select("first_payment_at").eq("id", claimRow.mrp_id).single();
+    if (mrpRow && !mrpRow.first_payment_at) await db.from("mrp").update({ first_payment_at: today() }).eq("id", claimRow.mrp_id);
+  }
+
+  // A7 (flow bertahap 2026-09-11): `resolved_at` arsip TIDAK ditulis di sini lagi -- klaim baru
+  // benar-benar SELESAI (arsip tertutup) di step 3 ("Tandai Sudah Dikirim", lihat
+  // markClaimReplacementShippedAction), bukan begitu PV pengganti dibuat.
+  await db.from("material_claim_history").update({ resolution_kind: "RETUR_REORDER", replacement_invoice_id: invoiceId }).eq("id", openId);
+
+  // Item 3 (feedback batch 2026-09-07), direvisi A7 (flow bertahap 2026-09-11): dulu langsung
+  // menulis `claim_resolved_at` di sini (roll LAMA langsung dianggap SELESAI begitu PV pengganti
+  // dibuat) -- itu penyebab akar keluhan user (PV pengganti auto-LUNAS tapi tidak pernah di-set
+  // DELIVERY, roll pengganti tidak pernah sampai ke Good Receive vendor). Sekarang cuma menulis
+  // `claim_replacement_invoice_id`/`claim_replacement_at` -- stage klaim ini jadi PV_DIBUAT (bukan
+  // SELESAI), roll LAMA TETAP muncul di "Timbang roll" Cutting sampai step 3 (lihat C3 di spec)
+  // menutupnya bersamaan dengan set invoice ke DELIVERY, supaya tidak pernah ada duplikat 2 roll.
+  await db
+    .from("raw_material_invoice_rolls")
+    .update({ claim_replacement_invoice_id: invoiceId, claim_replacement_at: today() })
+    .eq("invoice_color_id", parsed.invoiceColorId)
+    .eq("roll_index", parsed.rollIndex);
+
+  const sisaDeposit = kredit - debitApplied; // sisa kredit yang MASIH tersedia di ledger supplier ini setelah dipakai PV pengganti ini
+  const kekuranganBayar = nilaiBaru - debitApplied; // 0 kalau autoLunas
+  await insertNotification(
+    notif(
+      autoLunas
+        ? `Klaim retur roll #${claimRow.roll_index + 1} (${claimRow.warna} · ${claimRow.lengan}, invoice ${parsed.invoiceId}) diselesaikan lewat pesan ulang -- PV pengganti ${invoiceId} (Rp ${Math.round(nilaiBaru).toLocaleString("id-ID")}) OTOMATIS LUNAS dari kredit retur (tidak perlu bayar baru), sisa Rp ${Math.round(sisaDeposit).toLocaleString("id-ID")} tercatat di saldo deposit ${claimRow.supplier}.`
+        : `Klaim retur roll #${claimRow.roll_index + 1} (${claimRow.warna} · ${claimRow.lengan}, invoice ${parsed.invoiceId}) diselesaikan lewat pesan ulang -- PV pengganti ${invoiceId} (Rp ${Math.round(nilaiBaru).toLocaleString("id-ID")}) dibuat, kredit retur PV lama Rp ${Math.round(debitApplied).toLocaleString("id-ID")} OTOMATIS diterapkan -- tinggal SELISIH Rp ${Math.round(kekuranganBayar).toLocaleString("id-ID")} yang perlu dibayar di Payment.`,
+      ["finance"]
+    )
+  );
+
+  return invoiceId;
+}
+
+/** Versi GABUNGAN dari createClaimReplacementInvoiceAction di atas (2026-09-14, fitur "PV Pengganti
+ *  gabungan") -- PARALEL, bukan pengganti: fungsi lama TIDAK disentuh sama sekali, dipertahankan
+ *  untuk klik satu-satu per roll seperti sekarang. Fungsi ini dipakai kalau Procurement mencentang
+ *  >=2 klaim roll SEKALIGUS dari 1 invoice asal yang sama, supaya cuma perlu 1 PV pengganti (1
+ *  upload bukti, 1 kali dibayar Finance) alih-alih N PV terpisah.
+ *
+ *  Beda kunci dari versi single:
+ *  - Rate (Rp/kg) PER WARNA (bukan per roll) -- `ratesByWarnaLengan` key-nya `"${warna}|${lengan}"`,
+ *    dipakai bersama oleh semua roll dengan warna/lengan yang sama dalam bundle ini. Berat (kg)
+ *    TETAP per roll individual (`beratByKey`, key-nya claim key) -- fisik, tidak bisa digabung.
+ *  - Kredit lama & debit (penerapan otomatis) dihitung dari TOTAL gabungan semua roll di bundle,
+ *    BUKAN per-roll independen (lihat 1.7 di bawah) -- ini konsekuensi alami dari "1 invoice
+ *    pengganti gabungan, 1 kali bayar" (roll yang nilai barunya di atas kredit ROLL ITU SENDIRI
+ *    bisa "ketutup" oleh roll lain dalam bundle yang kreditnya lebih dari cukup).
+ *  - `raw_material_invoice_rolls.claim_replacement_invoice_id` tetap diisi PER ROLL ASAL (bukan
+ *    field baru) -- cuma nilainya SAMA (invoice gabungan) untuk semua roll yang ikut bundle ini,
+ *    jadi markClaimReplacementShippedAction (step 3, per klaim) otomatis tetap benar tanpa
+ *    perubahan apa pun (lihat komentar di fungsi itu). */
+export async function createClaimReplacementInvoiceBundleAction(
+  keys: string[],
+  ratesByWarnaLengan: Record<string, number>,
+  beratByKey: Record<string, number>,
+  buktiInvoiceDataUrl?: string,
+  buktiInvoiceFileName?: string
+): Promise<string> {
+  await requireInternalRole(await requireSession(), "procurement");
+
+  // 1.1 Validasi awal -- server tidak pernah percaya input client apa pun, termasuk validasi yang
+  // sudah dilakukan UI (checkbox disable dkk, lihat material-claims/page.tsx).
+  if (keys.length < 2) {
+    throw new Error("Pilih minimal 2 klaim untuk PV gabungan -- kalau cuma 1, pakai tombol 'Buat PV Pengganti' biasa.");
+  }
+  const parsedList = keys.map((key) => ({ key, parsed: parseClaimKey(key) }));
+  for (const { key, parsed } of parsedList) {
+    if (!parsed) throw new Error(`Klaim tidak valid: ${key}`);
+  }
+  const parsedEntries = parsedList as { key: string; parsed: NonNullable<ReturnType<typeof parseClaimKey>> }[];
+  const invoiceId = parsedEntries[0].parsed.invoiceId;
+  for (const { parsed } of parsedEntries) {
+    if (parsed.invoiceId !== invoiceId) throw new Error("Semua klaim yang digabung harus dari invoice asal yang sama.");
+  }
+
+  const db = supabaseServer();
+
+  // Per key: gate "sudah diterima Procurement" (sama persis gate versi single) + cari openId arsip
+  // + validasi rate/berat > 0 dari client.
+  const rollRows = await Promise.all(
+    parsedEntries.map(({ parsed }) =>
+      db
+        .from("raw_material_invoice_rolls")
+        .select("claim_accepted_at, claim_retur_requested_at")
+        .eq("invoice_color_id", parsed.invoiceColorId)
+        .eq("roll_index", parsed.rollIndex)
+        .maybeSingle()
+    )
+  );
+  parsedEntries.forEach(({ parsed }, i) => {
+    const rollRow = rollRows[i].data;
+    if (!rollRow?.claim_accepted_at && !rollRow?.claim_retur_requested_at) {
+      throw new Error(`Klaim ${parsed.warna} · ${parsed.lengan} roll #${parsed.rollIndex + 1} belum diterima Procurement -- klik 'Terima Klaim' dulu.`);
+    }
+  });
+
+  const openIds = await Promise.all(
+    parsedEntries.map(({ parsed }) => findOpenClaimHistoryId(db, parsed.invoiceId, parsed.warna, parsed.lengan, parsed.rollIndex))
+  );
+  parsedEntries.forEach(({ parsed }, i) => {
+    if (!openIds[i]) throw new Error(`Klaim ${parsed.warna} · ${parsed.lengan} roll #${parsed.rollIndex + 1} tidak ditemukan di arsip atau sudah selesai.`);
+  });
+
+  parsedEntries.forEach(({ key, parsed }) => {
+    const rate = ratesByWarnaLengan[`${parsed.warna}|${parsed.lengan}`];
+    if (!(rate > 0)) throw new Error(`Rate pengganti untuk warna ${parsed.warna} · ${parsed.lengan} harus lebih dari 0.`);
+    if (!(beratByKey[key] > 0)) throw new Error(`Berat roll pengganti untuk ${parsed.warna} · ${parsed.lengan} roll #${parsed.rollIndex + 1} harus lebih dari 0.`);
+  });
+
+  // 1.2 Data yang dibagi bersama (sama untuk semua key karena 1 invoice asal yang sama).
+  const { data: origInv } = await db.from("raw_material_invoices").select("entity").eq("id", invoiceId).single();
+  if (!origInv) throw new Error("Invoice asal klaim tidak ditemukan.");
+
+  // 1.3 Per key: rate lama (dari raw_material_invoice_colors, BUKAN dari input user) + arsip klaim
+  // lengkap (gross_kg dkk) -- query read-only, aman diparalelkan (pola sama seperti di atas).
+  const [origColors, claimRowsRes] = await Promise.all([
+    Promise.all(parsedEntries.map(({ parsed }) => db.from("raw_material_invoice_colors").select("harga_per_roll").eq("id", parsed.invoiceColorId).single())),
+    Promise.all(openIds.map((openId) => db.from("material_claim_history").select("*").eq("id", openId as string).single())),
+  ]);
+  claimRowsRes.forEach(({ data, error }, i) => {
+    if (error || !data) throw new Error(`Gagal membaca arsip klaim untuk ${parsedEntries[i].parsed.warna} · ${parsedEntries[i].parsed.lengan}.`);
+  });
+  origColors.forEach(({ data, error }, i) => {
+    if (error || !data) throw new Error(`Data rate lama tidak ditemukan untuk ${parsedEntries[i].parsed.warna} · ${parsedEntries[i].parsed.lengan}.`);
+  });
+
+  // claimRow untyped (any) -- sama seperti versi single (baris ~2021, .select("*").single() tanpa
+  // generic type dari Supabase client di sini).
+  type PerKeyCalc = { key: string; parsed: NonNullable<ReturnType<typeof parseClaimKey>>; openId: string; claimRow: any; rateLama: number; kredit: number; nilaiBaru: number };
+  const perKey: PerKeyCalc[] = parsedEntries.map(({ key, parsed }, i) => {
+    const claimRow = claimRowsRes[i].data;
+    const rateLama = Number(origColors[i].data!.harga_per_roll);
+    const kredit = rateLama * Number(claimRow.gross_kg);
+    const nilaiBaru = ratesByWarnaLengan[`${parsed.warna}|${parsed.lengan}`] * beratByKey[key];
+    return { key, parsed, openId: openIds[i] as string, claimRow, rateLama, kredit, nilaiBaru };
+  });
+
+  const totalKredit = perKey.reduce((sum, p) => sum + p.kredit, 0);
+  const totalNilaiBaru = perKey.reduce((sum, p) => sum + p.nilaiBaru, 0);
+
+  // 1.3b FIX (review 2026-09-14, "double-credit lewat race condition"): sebelum ini, arsip klaim
+  // (material_claim_history.replacement_invoice_id) baru ditutup PALING TERAKHIR (setelah invoice +
+  // SEMUA kredit + debit selesai ditulis) -- jendela antara findOpenClaimHistoryId() di atas (baca)
+  // sampai penutupan itu (tulis) bisa diisi PULUHAN round-trip sequential untuk bundle besar, jauh
+  // lebih lebar dari versi single. Kalau user klik 2x / submit dari 2 tab dengan overlap klaim yang
+  // sama dalam jendela itu, KEDUANYA lolos gate baca (openId masih "terbuka" buat keduanya) ->
+  // kredit vendor_deposits DOBEL untuk roll yang sama, gagal senyap tanpa error apa pun.
+  // Sekarang klaim DIKUNCI DI SINI, SEBELUM satu pun baris invoice/kredit/debit ditulis -- 1 UPDATE
+  // ber-syarat (WHERE id IN (...) AND resolved_at IS NULL AND replacement_invoice_id IS NULL),
+  // dieksekusi Postgres sebagai SATU statement atomik (bukan loop per-baris) -- kalau baris yang
+  // ke-UPDATE lebih sedikit dari openIds.length, berarti ADA klaim yang sudah "direbut" panggilan
+  // lain (curiga submit ganda) -- langsung throw & batalkan SEBELUM uang bergerak sama sekali.
+  // Trade-off yang disadari: kalau proses SETELAH ini gagal di tengah (mis. insert kredit roll ke-3
+  // dari 5 gagal), klaim yang sudah terkunci TIDAK BISA di-retry lewat tombol manapun di UI (bukan
+  // "terbuka" lagi) -- perlu campur tangan manual (lihat replacement_invoice_id di material_claim_
+  // history untuk cari invoice pengganti yang "setengah jadi" itu). Ini SENGAJA dipilih di atas
+  // kredit dobel senyap -- state macet itu TERLIHAT (klaim nyangkut di stage PV_DIBUAT dengan
+  // invoice yang jelas timpang), kredit dobel senyap TIDAK TERLIHAT sampai direkonsiliasi manual.
+  const newInvoiceId = await nextReadableId("INV");
+  const { data: lockedRows, error: lockErr } = await db
+    .from("material_claim_history")
+    .update({ resolution_kind: "RETUR_REORDER", replacement_invoice_id: newInvoiceId })
+    .in(
+      "id",
+      perKey.map((p) => p.openId)
+    )
+    .is("resolved_at", null)
+    .is("replacement_invoice_id", null)
+    .select("id");
+  if (lockErr) throw new Error(`Gagal mengunci klaim untuk PV gabungan: ${lockErr.message}`);
+  if ((lockedRows?.length ?? 0) !== perKey.length) {
+    throw new Error("Sebagian klaim ini sudah diproses lewat PV Pengganti lain (kemungkinan submit ganda) -- muat ulang halaman & cek status klaimnya sebelum coba lagi.");
+  }
+
+  // 1.4 SATU invoice pengganti baru menaungi semua roll di bundle ini.
+  const claimRowFirst = perKey[0].claimRow;
+  const { error: insErr } = await db.from("raw_material_invoices").insert({
+    id: newInvoiceId,
+    po_id: claimRowFirst.po_id,
+    mrp_id: claimRowFirst.mrp_id,
+    vendor_produksi: claimRowFirst.vendor_produksi,
+    supplier: claimRowFirst.supplier,
+    qty_ready: keys.length, // konvensi qty_ready = total roll count (sama seperti bookInvoiceAction)
+    diskon: 0,
+    total_biaya: totalNilaiBaru,
+    // Beda dari versi single (kode_transaksi = "KLAIM-" + openId TUNGGAL) -- di sini banyak openId,
+    // jangan paksa satu kolom kode_transaksi memuat semuanya. Sumber kebenaran keterkaitan tiap
+    // roll asal tetap di raw_material_invoice_rolls.claim_replacement_invoice_id (langkah 1.9).
+    kode_transaksi: `KLAIM-BUNDLE-${newInvoiceId}`,
+    no_invoice_vendor: "",
+    entity: origInv.entity,
+    status: "INVOICED",
+    destination_vendor: claimRowFirst.vendor_produksi,
+    booked_at: today(),
+    source_claim_id: keys[0], // 1 sumber utama disimpan (pola lama) -- semua key tetap tertaut lewat langkah 1.9.
+    bukti_pv_storage_path: buktiInvoiceDataUrl ?? null,
+    bukti_pv_file_name: buktiInvoiceFileName ?? null,
+  });
+  if (insErr) throw new Error(`Gagal membuat PV pengganti gabungan: ${insErr.message}`);
+
+  // 1.5 Per DISTINCT (warna,lengan): 1 raw_material_invoice_colors row (rate PER WARNA) + roll_index
+  // BARU mulai dari 0 per grup warna (ikuti pola bookInvoiceAction, BUKAN rollIndex roll asal).
+  const groupsMap = new Map<string, PerKeyCalc[]>();
+  for (const p of perKey) {
+    const groupKey = `${p.parsed.warna}|${p.parsed.lengan}`;
+    const list = groupsMap.get(groupKey) ?? [];
+    list.push(p);
+    groupsMap.set(groupKey, list);
+  }
+  for (const [groupKey, items] of groupsMap) {
+    const [warna, lengan] = groupKey.split("|");
+    const colorId = `${newInvoiceId}-${warna}-${lengan}`;
+    const { error: colorErr } = await db
+      .from("raw_material_invoice_colors")
+      .insert({ id: colorId, invoice_id: newInvoiceId, warna, lengan, harga_per_roll: ratesByWarnaLengan[groupKey] });
+    if (colorErr) throw new Error(`PV pengganti terbuat tapi gagal mencatat warna ${warna} · ${lengan}: ${colorErr.message}`);
+    const rollsPayload = items.map((p, idx) => ({ invoice_color_id: colorId, roll_index: idx, gross_kg: beratByKey[p.key] }));
+    const { error: rollErr } = await db.from("raw_material_invoice_rolls").insert(rollsPayload);
+    if (rollErr) throw new Error(`PV pengganti terbuat tapi gagal mencatat roll ${warna} · ${lengan}: ${rollErr.message}`);
+  }
+
+  // 1.6 Kredit lama TETAP dicatat 1 baris PER ROLL ASLI (bukan digabung) supaya jejak audit di
+  // Saldo Deposit Vendor tetap bisa ditelusuri ke roll spesifik mana pun -- sama pola seperti versi
+  // single, cuma untuk semua roll dalam bundle. FIX (review 2026-09-14): dulu di-loop 1 insert per
+  // roll (N round-trip berurutan, N titik gagal) -- sekarang ID-nya digenerate dulu (nextReadableId
+  // tetap harus dipanggil berurutan, itu sequence server), TAPI baris kreditnya di-insert SEKALIGUS
+  // lewat 1 panggilan `.insert([...])` (Postgres eksekusi sebagai 1 statement) -- mengecilkan jumlah
+  // titik potensial gagal-di-tengah dari N jadi 1, tanpa mengubah jejak audit "1 baris per roll".
+  const depositIds = await Promise.all(perKey.map(() => nextReadableId("VDP")));
+  const { error: depErr } = await db.from("vendor_deposits").insert(
+    perKey.map((p, i) => ({
+      id: depositIds[i],
+      supplier: p.claimRow.supplier,
+      kind: "CREDIT" as const,
+      amount: p.kredit,
+      source_claim_id: p.key,
+      note: `Kredit retur roll #${p.claimRow.roll_index + 1} (${p.claimRow.warna} · ${p.claimRow.lengan}, invoice ${p.parsed.invoiceId}) -- diganti PV gabungan ${newInvoiceId}.`,
+    }))
+  );
+  if (depErr) throw new Error(`PV pengganti terbuat tapi gagal mencatat kredit deposit: ${depErr.message}`);
+
+  // 1.7 DEBIT gabungan -- SATU baris dari TOTAL kredit & TOTAL nilai baru semua roll di bundle
+  // (beda dari 1.6 yang tetap per-roll) -- lihat komentar "DUA ARAH" panjang di
+  // createClaimReplacementInvoiceAction untuk alasan lengkap kenapa kredit lama otomatis
+  // diterapkan sebagai pelunasan (sebagian/penuh) ke PV pengganti ini, bukan menunggu Finance
+  // klik "Bayar" manual.
+  const debitApplied = Math.min(totalKredit, totalNilaiBaru);
+  const debitId = await nextReadableId("VDP");
+  const { error: debitErr } = await db.from("vendor_deposits").insert({
+    id: debitId,
+    supplier: claimRowFirst.supplier,
+    kind: "DEBIT",
+    amount: debitApplied,
+    source_invoice_id: newInvoiceId,
+    note: `Otomatis diterapkan dari kredit retur gabungan (${perKey.length} roll) ke PV pengganti ${newInvoiceId}.`,
+  });
+  if (debitErr) throw new Error(`PV pengganti & kredit terbuat tapi gagal mencatat penerapan kredit: ${debitErr.message}`);
+
+  const autoLunas = totalNilaiBaru <= totalKredit + 0.5; // toleransi floating point kecil, sama seperti versi single
+  if (autoLunas) {
+    await db.from("raw_material_invoices").update({ status: "PAID", paid_at: today() }).eq("id", newInvoiceId);
+    const { data: mrpRow } = await db.from("mrp").select("first_payment_at").eq("id", claimRowFirst.mrp_id).single();
+    if (mrpRow && !mrpRow.first_payment_at) await db.from("mrp").update({ first_payment_at: today() }).eq("id", claimRowFirst.mrp_id);
+  }
+
+  // 1.9 Per key: tandai roll ASAL (claim_replacement_invoice_id/claim_replacement_at) -- SAMA
+  // PERSIS pola versi single, cuma di-loop untuk semua key & invoiceId-nya SAMA (invoice gabungan)
+  // untuk semua key. Status per-klaim (stage) tetap PER ROLL sendiri-sendiri setelah ini (bukan
+  // ikut digabung) -- lihat markClaimReplacementShippedAction yang otomatis tetap benar tanpa
+  // perubahan. `material_claim_history` (resolution_kind + replacement_invoice_id) SUDAH ditulis
+  // lebih awal di 1.3b (langkah kunci anti-race) -- SENGAJA TIDAK ditulis ulang di sini.
+  for (const p of perKey) {
+    await db
+      .from("raw_material_invoice_rolls")
+      .update({ claim_replacement_invoice_id: newInvoiceId, claim_replacement_at: today() })
+      .eq("invoice_color_id", p.parsed.invoiceColorId)
+      .eq("roll_index", p.parsed.rollIndex);
+  }
+
+  // 1.10 Notifikasi Finance SATU KALI (bukan per roll).
+  const sisaDeposit = totalKredit - debitApplied;
+  const kekuranganBayar = totalNilaiBaru - debitApplied;
+  const warnaList = Array.from(new Set(perKey.map((p) => `${p.parsed.warna} · ${p.parsed.lengan}`))).join(", ");
+  await insertNotification(
+    notif(
+      autoLunas
+        ? `Klaim retur ${perKey.length} roll (${warnaList}, invoice ${invoiceId}) diselesaikan lewat pesan ulang gabungan -- PV pengganti ${newInvoiceId} (Rp ${Math.round(totalNilaiBaru).toLocaleString("id-ID")}) OTOMATIS LUNAS dari kredit retur (tidak perlu bayar baru), sisa Rp ${Math.round(sisaDeposit).toLocaleString("id-ID")} tercatat di saldo deposit ${claimRowFirst.supplier}.`
+        : `Klaim retur ${perKey.length} roll (${warnaList}, invoice ${invoiceId}) diselesaikan lewat pesan ulang gabungan -- PV pengganti ${newInvoiceId} (Rp ${Math.round(totalNilaiBaru).toLocaleString("id-ID")}) dibuat, kredit retur PV lama Rp ${Math.round(debitApplied).toLocaleString("id-ID")} OTOMATIS diterapkan -- tinggal SELISIH Rp ${Math.round(kekuranganBayar).toLocaleString("id-ID")} yang perlu dibayar di Payment.`,
+      ["finance"]
+    )
+  );
+
+  return newInvoiceId;
+}
+
+/** Step 3 flow klaim bertahap (2026-09-11): Procurement "Tandai Sudah Dikirim" -- SATU klik yang
+ *  melakukan DUA hal sekaligus (keputusan desain D3 di spec, sengaja tidak dipecah jadi 2 aksi
+ *  UI terpisah -- itulah akar keluhan user, langkah kedua selalu terlupa):
+ *  (a) memindahkan invoice PV pengganti dari PAID ke DELIVERY (logika sama persis
+ *  setInvoicesDeliveryAction) supaya roll pengganti langsung muncul di Good Receive vendor untuk
+ *  diisi code roll barunya, lalu
+ *  (b) menutup klaim (roll LAMA jadi SELESAI + arsip ditutup) -- lihat C3 di spec kenapa urutan
+ *  ini (DELIVERY dulu baru resolve, dalam SATU transaksi/aksi) mencegah roll lama & roll pengganti
+ *  tampil dobel di Cutting. */
+export async function markClaimReplacementShippedAction(key: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const parsed = parseClaimKey(key);
+  if (!parsed) throw new Error("Klaim tidak valid.");
+  const db = supabaseServer();
+
+  const { data: rollRow } = await db
+    .from("raw_material_invoice_rolls")
+    .select("claim_replacement_invoice_id")
+    .eq("invoice_color_id", parsed.invoiceColorId)
+    .eq("roll_index", parsed.rollIndex)
+    .maybeSingle();
+  const replacementInvoiceId: string | null = rollRow?.claim_replacement_invoice_id ?? null;
+  if (!replacementInvoiceId) throw new Error("Klaim ini belum punya PV pengganti.");
+
+  const { data: replInv } = await db.from("raw_material_invoices").select("id,status").eq("id", replacementInvoiceId).maybeSingle();
+  if (!replInv) throw new Error(`PV pengganti ${replacementInvoiceId} tidak ditemukan.`);
+  if (replInv.status === "PAID") {
+    await db.from("raw_material_invoices").update({ status: "DELIVERY", delivered_at: today() }).eq("id", replInv.id);
+  } else if (replInv.status === "INVOICED") {
+    throw new Error(`PV pengganti ${replInv.id} belum dibayar Finance — bayar dulu di Payment sebelum menandai pengiriman.`);
+  }
+  // status DELIVERY/RECEIVING/dst -- sudah lewat tahap PAID, lewati saja (idempotent).
+
+  const { error } = await db
+    .from("raw_material_invoice_rolls")
+    .update({ claim_resolved_note: `Roll pengganti PV ${replacementInvoiceId} dikirim`, claim_resolved_at: today() })
+    .eq("invoice_color_id", parsed.invoiceColorId)
+    .eq("roll_index", parsed.rollIndex);
+  if (error) throw new Error(error.message);
+
+  try {
+    const openId = await findOpenClaimHistoryId(db, parsed.invoiceId, parsed.warna, parsed.lengan, parsed.rollIndex);
+    if (openId) await db.from("material_claim_history").update({ resolved_at: today() }).eq("id", openId);
+  } catch {
+    // arsip opsional.
+  }
+}
+
+/** Pakai sebagian/semua saldo deposit vendor (supplier) untuk mengurangi pembayaran invoice yang
+ *  dipilih -- SELALU dipilih manual oleh Finance (lihat payment-panel.tsx "Saldo Deposit
+ *  Tersedia"), server memvalidasi ULANG `amount <= saldo tersedia` (jangan percaya angka dari
+ *  client) dengan menghitung ulang seluruh ledger existing untuk supplier itu. TIDAK mengubah
+ *  raw_material_invoices.total_biaya -- jumlah yang benar-benar ditransfer (net) itu murni hasil
+ *  kalkulasi UI (total tagihan - saldo dipakai), bukan field tersimpan baru di invoice, supaya
+ *  histori "invoice ini nilainya segini" tetap konsisten dengan PV aslinya.
+ *
+ *  1 baris DEBIT per invoice yang dipilih (bukan 1 baris gabungan), dialokasikan PROPORSIONAL ke
+ *  total_biaya masing-masing invoice -- supaya breakdown-nya tetap rapi & bisa ditelusuri per
+ *  invoice dari halaman Saldo Deposit Vendor, walau `amount` yang dipilih user itu 1 angka
+ *  gabungan untuk semua invoice terpilih sekaligus. */
+export async function applyVendorDepositAction(supplier: string, amount: number, invoiceIds: string[], note?: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "finance");
+  if (!(amount > 0)) throw new Error("Jumlah saldo yang dipakai harus lebih dari 0.");
+  if (invoiceIds.length === 0) throw new Error("Pilih minimal 1 invoice.");
+  const db = supabaseServer();
+
+  const [{ data: ledgerRows, error: ledgerErr }, { data: invRows, error: invErr }] = await Promise.all([
+    db.from("vendor_deposits").select("kind,amount").eq("supplier", supplier),
+    db.from("raw_material_invoices").select("id,total_biaya").in("id", invoiceIds),
+  ]);
+  if (ledgerErr) throw new Error(ledgerErr.message);
+  if (invErr) throw new Error(invErr.message);
+  const balance = (ledgerRows ?? []).reduce((a, r) => a + (r.kind === "CREDIT" ? Number(r.amount) : -Number(r.amount)), 0);
+  // Toleransi kecil (Rp 0.5) untuk pembulatan floating point, bukan celah bisnis.
+  if (amount > balance + 0.5) throw new Error(`Saldo deposit ${supplier} tidak cukup (tersedia Rp ${Math.round(balance).toLocaleString("id-ID")}).`);
+  const totalTagihan = (invRows ?? []).reduce((a, r) => a + Number(r.total_biaya), 0);
+  if (totalTagihan <= 0) throw new Error("Invoice tidak ditemukan.");
+
+  const rows = await Promise.all(
+    (invRows ?? []).map(async (r) => ({
+      id: await nextReadableId("VDP"),
+      supplier,
+      kind: "DEBIT",
+      amount: amount * (Number(r.total_biaya) / totalTagihan),
+      source_invoice_id: r.id,
+      note: note || `Dipakai untuk bayar invoice ${r.id}.`,
+    }))
+  );
+  const { error: insErr } = await db.from("vendor_deposits").insert(rows);
+  if (insErr) throw new Error(`Gagal mencatat pemakaian saldo deposit: ${insErr.message}`);
+}
+
+/** Revisi 2026-09-07: halaman Saldo Deposit Vendor tadinya murni read-only (lihat komentar di
+ *  app/finance/vendor-deposit/page.tsx) -- ditambahkan supaya Finance bisa membersihkan baris
+ *  ledger yang keliru/yatim (mis. sisa dari "Reset Data" sebelum vendor_deposits ikut dihapus di
+ *  resetAllAction, atau salah catat manual) tanpa perlu reset seluruh aplikasi. Hapus PERMANEN 1
+ *  baris ledger (CREDIT atau DEBIT) -- tidak ada guard "sudah dipakai/belum" karena saldo SELALU
+ *  dihitung live dari SUM seluruh baris (vendorDepositBalance), jadi menghapus baris otomatis
+ *  mengoreksi saldo berjalan tanpa perlu migrasi/kompensasi baris lain. */
+export async function deleteVendorDepositEntryAction(id: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "finance");
+  const { error } = await supabaseServer().from("vendor_deposits").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/** Revisi 2026-09-07: sama alasannya dengan deleteVendorDepositEntryAction di atas --
+ *  material_claim_history (arsip Riwayat Klaim Material) standalone, tidak ikut cascade terhapus
+ *  waktu resetAllAction menghapus mrp (baru dibetulkan di action itu sendiri, tapi baris LAMA yang
+ *  sudah terlanjur "yatim" dari sebelum perbaikan itu tetap butuh cara dibersihkan manual). */
+export async function deleteMaterialClaimHistoryAction(id: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const { error } = await supabaseServer().from("material_claim_history").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/** Fetch aduan_pola_rows (+sizes) untuk SATU mrpId -- targeted, dipakai
+ *  fetchProductionScopeForMrp maupun closePoWithReasonAction/reassignMaterialToSupplierAction di
+ *  bawah (dua-duanya cuma butuh potongan .aduanRows ini, bukan MrpDetail penuh). */
+async function fetchAduanRowsForMrp(db: SupabaseClient, mrpId: string): Promise<AduanPolaRow[]> {
+  const { data } = await db.from("aduan_pola_rows").select("*, aduan_pola_sizes(size,qty)").eq("mrp_id", mrpId);
+  return (data ?? []).map((a) => ({
+    id: a.id,
+    lenganGroupId: a.lengan_group_id,
+    warna: a.warna,
+    lengan: a.lengan,
+    kode: a.kode,
+    qtyRoll: Number(a.qty_roll),
+    sizes: (a.aduan_pola_sizes ?? []).map((s: { size: string; qty: number }) => ({ size: s.size, qty: s.qty })),
+    qty: a.qty,
+    vendor: a.vendor,
+    ribAllocatedRoll: a.rib_allocated_roll == null ? undefined : Number(a.rib_allocated_roll),
+  }));
+}
+
+/** Fetch tabel rate harga kain (harga_kain + harga_kain_pks) -- dipakai materialAmountForPo.
+ *  Tabel LOOKUP GLOBAL kecil (harga per supplier/kategori/warna, bukan per-MRP), jadi tetap
+ *  di-fetch penuh (bukan getFlowSnapshot() 32-tabel, tapi 2 tabel kecil ini saja). */
+async function fetchHargaTables(db: SupabaseClient): Promise<{ hargaKain: HargaKainRow[]; hargaKainPks: HargaKainPksRow[] }> {
+  const [kainRes, pksRes] = await Promise.all([db.from("harga_kain").select("*"), db.from("harga_kain_pks").select("*")]);
+  const hargaKain: HargaKainRow[] = (kainRes.data ?? []).map((r) => ({
+    id: r.id,
+    kodeSupplier: r.kode_supplier,
+    namaSupplier: r.nama_supplier,
+    kategori: r.kategori,
+    warna: r.warna,
+    hargaPerKg: Number(r.harga_per_kg),
+  }));
+  const hargaKainPks: HargaKainPksRow[] = (pksRes.data ?? []).map((r) => ({
+    id: r.id,
+    kodeSupplier: r.kode_supplier,
+    kategori: r.kategori,
+    warna: r.warna,
+    satuan: r.satuan,
+    tonaseMin: r.tonase_min == null ? undefined : Number(r.tonase_min),
+    tonaseMax: r.tonase_max == null ? undefined : Number(r.tonase_max),
+    hargaPerKg: Number(r.harga_per_kg),
+  }));
+  return { hargaKain, hargaKainPks };
+}
+
+export async function closePoWithReasonAction(poId: string, reason: string, warna: string, lengan: Lengan, closeQty: number): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const db = supabaseServer();
+  const po = await fetchOneMaterialPo(db, poId);
+  if (!po) return;
+  const colorKey = `${warna}|${lengan}`;
+  const colorEntry = po.colorBreakdown.find((c) => c.warna === warna && c.lengan === lengan);
+  if (!colorEntry) return;
+  const invoicedForColor = po.invoicedByColor[colorKey] ?? 0;
+  const colorRemaining = colorEntry.rollCount - invoicedForColor;
+  const qty = Math.max(1, Math.min(closeQty, colorRemaining));
+
+  const newColorBreakdown = po.colorBreakdown.map((c) => (c.warna === warna && c.lengan === lengan ? { ...c, rollCount: c.rollCount - qty } : c));
+  const newRollCount = po.rollCount - qty;
+  const fullyClosed = newRollCount <= po.invoicedRolls;
+
+  const [aduanRows, { hargaKain, hargaKainPks }, maklonRes] = await Promise.all([
+    fetchAduanRowsForMrp(db, po.mrpId),
+    fetchHargaTables(db),
+    db.from("maklon_pos").select("id,qty,amount,status").eq("mrp_id", po.mrpId).eq("vendor_produksi", po.vendorProduksi).maybeSingle(),
+  ]);
+  let pcsRemoved = 0;
+  const colorAduanRows = aduanRows.filter((a) => a.vendor === po.vendorProduksi && a.warna === warna && a.lengan === lengan);
+  const colorTotalRolls = colorAduanRows.reduce((s, a) => s + a.qtyRoll, 0);
+  const colorTotalQty = colorAduanRows.reduce((s, a) => s + a.qty, 0);
+  if (colorTotalRolls > 0) pcsRemoved = Math.round(colorTotalQty * (qty / colorTotalRolls));
+
+  await db.from("material_po_color_breakdown").update({ roll_count: newColorBreakdown.find((c) => c.warna === warna && c.lengan === lengan)!.rollCount }).eq("material_po_id", poId).eq("warna", warna).eq("lengan", lengan);
+  await db
+    .from("material_pos")
+    .update({ roll_count: newRollCount, amount: materialAmountForPo(hargaKain, hargaKainPks, po.supplier, newColorBreakdown), status: fullyClosed ? "CANCELLED" : po.status })
+    .eq("id", poId);
+
+  const maklon = maklonRes.data;
+  if (maklon) {
+    const newQty = Math.max(0, maklon.qty - pcsRemoved);
+    await db
+      .from("maklon_pos")
+      .update({
+        qty: newQty,
+        amount: maklon.qty > 0 ? Math.round((maklon.amount / maklon.qty) * newQty) : 0,
+        status: pcsRemoved > 0 && maklon.status === "FULL_WAITING_MATERIAL" ? "PARTIAL_WAITING_MATERIAL" : maklon.status,
+      })
+      .eq("id", maklon.id);
+    await db.from("maklon_po_cancelled_lines").insert({ maklon_po_id: maklon.id, note: reason, rolls: qty, warna, lengan, pcs: pcsRemoved, from_vendor: "Procurement", time: nowClock() });
+  }
+
+  await insertNotification(
+    notif(
+      `PO ${poId} (${warna} · ${lengan}) ditutup ${fullyClosed ? "penuh" : "sebagian"} (${qty} roll) — alasan: ${reason}. PO Vendor Produksi ikut terpotong ${pcsRemoved} pcs.`,
+      ["finance", "vendorMaklon"],
+      po.vendorProduksi
+    )
+  );
+}
+
+export async function reassignMaterialToSupplierAction(poId: string, warna: string, lengan: Lengan, moveQty: number, newSupplier: string, reason: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const db = supabaseServer();
+  const po = await fetchOneMaterialPo(db, poId);
+  if (!po) return;
+  const colorKey = `${warna}|${lengan}`;
+  const colorEntry = po.colorBreakdown.find((c) => c.warna === warna && c.lengan === lengan);
+  if (!colorEntry) return;
+  const invoicedForColor = po.invoicedByColor[colorKey] ?? 0;
+  const colorRemaining = colorEntry.rollCount - invoicedForColor;
+  const qty = Math.max(1, Math.min(moveQty, colorRemaining));
+
+  const newColorBreakdown = po.colorBreakdown.map((c) => (c.warna === warna && c.lengan === lengan ? { ...c, rollCount: c.rollCount - qty } : c));
+  const newRollCount = po.rollCount - qty;
+  const fullyClosed = newRollCount <= po.invoicedRolls;
+
+  const { hargaKain, hargaKainPks } = await fetchHargaTables(db);
+  const newPoColorBreakdown = [{ warna, lengan, rollCount: qty, entitas: colorEntry.entitas ?? po.entity }];
+  const newPoId = await nextPoDisplayId("material_pos", "PO-SUP", [po.mrpId, po.vendorProduksi, newSupplier]);
+  const newPoAmount = materialAmountForPo(hargaKain, hargaKainPks, newSupplier, newPoColorBreakdown);
+
+  await db.from("material_po_color_breakdown").update({ roll_count: newColorBreakdown.find((c) => c.warna === warna && c.lengan === lengan)!.rollCount }).eq("material_po_id", poId).eq("warna", warna).eq("lengan", lengan);
+  await db
+    .from("material_pos")
+    .update({ roll_count: newRollCount, amount: materialAmountForPo(hargaKain, hargaKainPks, po.supplier, newColorBreakdown), status: fullyClosed ? "CANCELLED" : po.status })
+    .eq("id", poId);
+
+  await db.from("material_pos").insert({
+    id: newPoId,
+    mrp_id: po.mrpId,
+    vendor_produksi: po.vendorProduksi,
+    supplier: newSupplier,
+    warna,
+    lengan,
+    roll_count: qty,
+    available_rolls: qty,
+    invoiced_rolls: 0,
+    amount: newPoAmount,
+    entity: colorEntry.entitas ?? po.entity,
+    status: "WAITING_INVOICE",
+    approved: false,
+    days_since_po: 0,
+  });
+  await db.from("material_po_color_breakdown").insert({ material_po_id: newPoId, warna, lengan, roll_count: qty, entitas: colorEntry.entitas ?? po.entity });
+
+  await insertNotification(
+    notif(`PO ${poId} (${warna} · ${lengan}, ${qty} roll) dialihkan dari supplier ${po.supplier} ke ${newSupplier} — alasan: ${reason}. PO material baru ${newPoId} menunggu approval Finance.`, ["finance"])
+  );
+}
+
+export async function receiveRawMaterialAddBuyAction(invoiceId: string, addBuyId: string): Promise<void> {
+  await requireVendorSession();
+  const db = supabaseServer();
+  await db.from("raw_material_invoice_addbuys").update({ received_at: today() }).eq("id", addBuyId).eq("invoice_id", invoiceId);
+  const { data: inv } = await db.from("raw_material_invoices").select("status,received_at").eq("id", invoiceId).single();
+  if (inv) {
+    await db.from("raw_material_invoices").update({ status: inv.status === "DELIVERY" ? "RECEIVING" : inv.status, received_at: inv.received_at ?? today() }).eq("id", invoiceId);
+  }
+}
+
+export async function advanceMaklonProductionAction(id: string): Promise<void> {
+  await requireVendorSession();
+  const db = supabaseServer();
+  const { data: po } = await db.from("maklon_pos").select("status").eq("id", id).single();
+  if (!po) return;
+  let next: string | null = null;
+  if (po.status === "FULL_WAITING_MATERIAL" || po.status === "PARTIAL_WAITING_MATERIAL") next = "PRODUCTION";
+  else if (po.status === "PRODUCTION") next = "DELIVERY";
+  if (next) await db.from("maklon_pos").update({ status: next }).eq("id", id);
+}
+
+export async function approveMaklonInvoiceAction(invoiceId: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "finance");
+  const db = supabaseServer();
+  const { data: inv } = await db.from("maklon_invoices").select("id,vendor_produksi").eq("id", invoiceId).single();
+  await db.from("maklon_invoices").update({ status: "APPROVED", approved_at: today() }).eq("id", invoiceId);
+  if (inv) await insertNotification(notif(`Invoice maklon ${inv.id} disetujui Finance — menunggu payment`, ["vendorMaklon"], inv.vendor_produksi));
+}
+
+export async function payMaklonInvoiceAction(invoiceId: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "finance");
+  const db = supabaseServer();
+  const { data: inv } = await db.from("maklon_invoices").select("id,vendor_produksi,maklon_po_id").eq("id", invoiceId).single();
+  if (!inv) return;
+  await db.from("maklon_invoices").update({ status: "PAID", paid_at: today() }).eq("id", invoiceId);
+  await db.from("maklon_pos").update({ status: "FULLY_PAID" }).eq("id", inv.maklon_po_id);
+  await insertNotification(notif(`Invoice maklon ${inv.id} telah dibayar Finance`, ["vendorMaklon"], inv.vendor_produksi));
+}
+
+export async function undoProductionGroupDoneAction(groupKey: string): Promise<void> {
+  await requireVendorSession();
+  const { error } = await supabaseServer().from("production_group_meta").update({ done_at: null }).eq("group_key", groupKey);
+  if (error) throw new Error(error.message);
+}
+
+// =========================================================================
+// Produksi
+// =========================================================================
+
+export async function startProductionBatchAction(input: { mrpId: string; aduanRowId: string; qtyRoll: number; gramasi: number; restingAt: string; codeRoll?: string }): Promise<void> {
+  await requireVendorSession();
+  const db = supabaseServer();
+  const { data: aduanRow } = await db.from("aduan_pola_rows").select("vendor,kode,warna,lengan").eq("id", input.aduanRowId).single();
+  if (!aduanRow) throw new Error("Baris Aduan Pola tidak ditemukan.");
+  const id = await nextReadableId("BATCH");
+  const { error } = await db.from("production_batches").insert({
+    id,
+    mrp_id: input.mrpId,
+    vendor_produksi: aduanRow.vendor,
+    aduan_row_id: input.aduanRowId,
+    kode: aduanRow.kode,
+    warna: aduanRow.warna,
+    lengan: aduanRow.lengan,
+    qty_roll: input.qtyRoll,
+    gramasi: input.gramasi,
+    resting_at: input.restingAt,
+    created_at: today(),
+    code_roll: input.codeRoll ?? null,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Item 14 (feedback batch 2026-09-10, owner: "Tambahkan fitur untuk bisa edit hasil input ulang
+ *  (takutnya salah isi jam resting atau qty cutting)") -- edit `resting_at` batch yang sudah ada,
+ *  dipanggil dari modal "Input/Perbaiki Hasil Cutting" (production-cutting-tab.tsx) saat dibuka
+ *  dalam mode edit untuk 1 SESI RESTING ("Part") sekaligus, karena semua batch di sesi itu selalu
+ *  berbagi satu resting_at yang sama (restingSessionGroups, lib/mrp/derive.ts). Gating SAMA
+ *  seperti updateBatchToCuttingAction (blocked kalau grup warna/lengan-nya sudah "Selesai Produksi"
+ *  Final -- production_group_meta.done_at) -- resting_at ikut jadi basis durasi resting/status
+ *  tepat waktu yang dikunci di tahap itu, jadi tidak boleh diubah lagi setelahnya. */
+export async function updateBatchRestingAtAction(batchIds: string[], restingAt: string): Promise<void> {
+  await requireVendorSession();
+  if (batchIds.length === 0) return;
+  const db = supabaseServer();
+  const { data: batchRows } = await db.from("production_batches").select("id,mrp_id,vendor_produksi,warna,lengan").in("id", batchIds);
+  for (const batchRow of batchRows ?? []) {
+    const groupKey = `${batchRow.mrp_id}|${batchRow.warna}|${batchRow.lengan}`;
+    const { data: meta } = await db.from("production_group_meta").select("done_at").eq("group_key", groupKey).maybeSingle();
+    if (meta?.done_at) {
+      throw new Error(
+        `Grup ${batchRow.warna} · ${batchRow.lengan} sudah "Selesai Produksi" (Final Produksi) -- tanggal/jam resting tidak bisa diedit lagi. Buka kunci dulu di tab Final Produksi ("Buka kunci ↺") kalau memang perlu.`
+      );
+    }
+  }
+  const { error } = await db.from("production_batches").update({ resting_at: restingAt }).in("id", batchIds);
+  if (error) throw new Error(error.message);
+}
+
+/** Item revisi 2026-09-08 (owner: input FG "seperti sebelumnya" -- per size, terakumulasi ke
+ *  target, tiap "Simpan progres" tercatat ke riwayat) -- dipanggil dari saveFgProgressAction DAN
+ *  closeProductionBatchAction supaya SEMUA jalur simpan (per-roll manual maupun quick-fill by
+ *  size di level grup) sama-sama tercatat ke ProductionResult (dibaca FgProgressHistory di
+ *  production-result-panel.tsx, tidak diubah).
+ *
+ *  KENAPA DELTA, bukan insert `newSizeQty` apa adanya: cumulativeSizeQtyForGroup (progress bar,
+ *  target reject, HPP) MENJUMLAHKAN SEMUA baris production_results kind FG per groupKey -- kalau
+ *  tiap "Simpan progres" insert FULL qty, lalu roll itu akhirnya ditutup dan insert FULL qty lagi,
+ *  angkanya dobel. `batch.fg_logged_snapshot` (migration 0022) adalah baseline "apa yang sudah
+ *  tercatat ke riwayat" per roll -- cuma SELISIH (delta positif) sejak baseline itu yang di-log
+ *  sebagai baris baru, lalu baseline di-update ke `newSizeQty`.
+ *
+ *  Note format HARUS PERSIS `"Roll " + (codeRoll ?? batchId)` (sama utk delta antara maupun
+ *  final) -- isRollClosureResult (derive.ts) mengecualikan baris dgn prefix ini dari pool
+ *  shippable "Isi Koli" (fix PR #37: roll yang belum ditutup tidak boleh kelihatan shippable).
+ *  Baris ini TETAP ikut kehitung di cumulativeSizeQtyForGroup (progress bar/reject) -- basis
+ *  shippable roll murni ProductionBatch.closedAt, tidak disentuh di sini. */
+async function logFgProgressDelta(
+  db: SupabaseClient,
+  batch: { id: string; mrp_id: string; vendor_produksi: string; warna: string; lengan: string; code_roll: string | null; fg_logged_snapshot: Record<string, number> | null },
+  newSizeQty: Record<string, number>
+): Promise<void> {
+  const baseline = batch.fg_logged_snapshot ?? {};
+  const sizes = new Set([...Object.keys(baseline), ...Object.keys(newSizeQty)]);
+  const deltaRows = Array.from(sizes)
+    .map((size) => [size, (newSizeQty[size] ?? 0) - (baseline[size] ?? 0)] as const)
+    .filter(([, delta]) => delta > 0);
+
+  if (deltaRows.length > 0) {
+    const groupKey = `${batch.mrp_id}|${batch.warna}|${batch.lengan}`;
+    const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", batch.mrp_id).eq("vendor_produksi", batch.vendor_produksi).maybeSingle();
+    const resultId = await nextReadableId("PR");
+    const { error: resultErr } = await db.from("production_results").insert({
+      id: resultId,
+      group_key: groupKey,
+      mrp_id: batch.mrp_id,
+      vendor_produksi: batch.vendor_produksi,
+      po_id: maklon?.id ?? "",
+      warna: batch.warna,
+      lengan: batch.lengan,
+      kind: "FG",
+      recorded_at: nowIso(),
+      note: `Roll ${batch.code_roll ?? batch.id}`,
+    });
+    if (resultErr) throw new Error(resultErr.message);
+    const { error: sizeErr } = await db.from("production_result_sizes").insert(deltaRows.map(([size, qty]) => ({ production_result_id: resultId, size, qty })));
+    if (sizeErr) throw new Error(sizeErr.message);
+  }
+  // Baseline SELALU diupdate ke nilai baru (termasuk kalau ada size yang justru berkurang/koreksi
+  // -- tidak di-log sebagai riwayat negatif, cukup baseline-nya turun) supaya delta berikutnya
+  // dihitung dari kondisi TERKINI, bukan angka lama.
+  const { error: baselineErr } = await db.from("production_batches").update({ fg_logged_snapshot: newSizeQty }).eq("id", batch.id);
+  if (baselineErr) throw new Error(baselineErr.message);
+}
+
+/** "Tutup Roll" (HPP per roll, migration 0020) -- kunci hasil Finish Good AKTUAL 1 roll SPESIFIK
+ *  (fgSizeQty, tabel baru production_batch_fg_sizes -- beda dari production_batch_sizes yang itu
+ *  TARGET cutting), lalu log ke riwayat lewat logFgProgressDelta (di atas) -- supaya semua alur
+ *  lama yang baca pool production_results (tab Reject/Rework, badge, "Selesai Produksi" tahap 1/2,
+ *  Pengiriman Rework) tetap jalan tanpa disentuh sama sekali. Lihat plan HPP per roll untuk desain
+ *  lengkap. */
+export async function closeProductionBatchAction(batchId: string, fgSizeQty: Record<string, number>): Promise<void> {
+  await requireVendorSession();
+  const db = supabaseServer();
+  const { data: batch } = await db
+    .from("production_batches")
+    .select("id,mrp_id,vendor_produksi,warna,lengan,code_roll,cutting_at,closed_at,fg_logged_snapshot")
+    .eq("id", batchId)
+    .single();
+  if (!batch) throw new Error("Roll tidak ditemukan.");
+  if (!batch.cutting_at) throw new Error("Roll ini belum dicutting — isi Hasil Cutting dulu di tab Cutting.");
+  if (batch.closed_at) return;
+  const groupKey = `${batch.mrp_id}|${batch.warna}|${batch.lengan}`;
+  const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at").eq("group_key", groupKey).maybeSingle();
+  if (meta?.fg_confirmed_at) throw new Error(`Grup ${batch.warna} · ${batch.lengan} sudah "Selesai Produksi" — tidak bisa menutup roll baru di grup ini.`);
+
+  // Replace (bukan tambah) -- hapus dulu baris progres yang mungkin sudah tersimpan dari
+  // "Simpan progres" (saveFgProgressAction, di bawah) sebelum roll ini ditutup, supaya tidak
+  // menumpuk baris duplikat per size (production_batch_fg_sizes tidak punya unique constraint
+  // per size, murni riwayat insert -- lihat catatan sama di saveFgProgressAction).
+  const { error: delErr } = await db.from("production_batch_fg_sizes").delete().eq("production_batch_id", batchId);
+  if (delErr) throw new Error(delErr.message);
+  const rows = Object.entries(fgSizeQty).filter(([, qty]) => qty > 0);
+  if (rows.length > 0) {
+    const { error: sizeErr } = await db.from("production_batch_fg_sizes").insert(rows.map(([size, qty]) => ({ production_batch_id: batchId, size, qty })));
+    if (sizeErr) throw new Error(sizeErr.message);
+  }
+  const { error } = await db.from("production_batches").update({ closed_at: today() }).eq("id", batchId);
+  if (error) throw new Error(error.message);
+
+  // Log ke riwayat -- HANYA delta yang belum pernah tercatat (mis. dari "Simpan progres"
+  // sebelumnya), bukan `fgSizeQty` penuh lagi -- lihat catatan panjang di logFgProgressDelta.
+  await logFgProgressDelta(db, batch, fgSizeQty);
+
+  await maybeAdvanceMaklonToDelivery(batch.mrp_id, batch.vendor_produksi);
+}
+
+/** Item revisi 2026-09-12 (owner: "kenapa tidak bisa klik selesai produksi jika qtynya tidak
+ *  maksimal... jadikan tombol selesai produksi trigger untuk selesaikan finish good, selisih size
+ *  yang tidak terpenuhi jadi reject") -- dipanggil dari confirmFgDoneAction SEBELUM
+ *  recomputeAutoRejectForGroup, GANTI dari (bukan tambahan di samping) guard lama yang menolak
+ *  "Selesai Produksi" kalau ada roll grup ini yang belum "Tutup Roll" manual. Sekarang "Selesai
+ *  Produksi" SENDIRI yang menutup roll-roll itu -- pakai FG yang SUDAH tersimpan apa adanya di
+ *  production_batch_fg_sizes (dari "Simpan" quick-save/progress sebelumnya, TIDAK ditambah/dikurangi
+ *  di sini), baru set closed_at. Pola replace+insert production_batch_fg_sizes yang ada di
+ *  closeProductionBatchAction TIDAK dipakai ulang di sini karena kita justru mau MEMPERTAHANKAN
+ *  baris yang sudah ada apa adanya (bukan replace dengan payload baru dari client) -- cukup
+ *  logFgProgressDelta dipanggil dengan qty yang sudah ada supaya baseline/riwayat tetap konsisten
+ *  (delta biasanya 0 karena "Simpan" sudah mencatatnya duluan). */
+async function autoCloseOpenBatchesForGroup(db: SupabaseClient, groupBatches: ProductionBatch[]): Promise<void> {
+  const openIds = groupBatches.filter((b) => !b.closedAt).map((b) => b.id);
+  if (openIds.length === 0) return;
+  const { data: rows } = await db
+    .from("production_batches")
+    .select("id,mrp_id,vendor_produksi,warna,lengan,code_roll,fg_logged_snapshot,production_batch_fg_sizes(size,qty)")
+    .in("id", openIds);
+  for (const b of rows ?? []) {
+    const fgSizeQty: Record<string, number> = {};
+    for (const s of b.production_batch_fg_sizes ?? []) fgSizeQty[s.size] = s.qty;
+    const { error } = await db.from("production_batches").update({ closed_at: today() }).eq("id", b.id);
+    if (error) throw new Error(error.message);
+    await logFgProgressDelta(db, b, fgSizeQty);
+  }
+}
+
+/** Item revisi 2026-09-08 (owner: "apa tidak bisa untuk saat input misal hari ini berapa terus
+ *  simpan nanti akan tersave... akan lanjut lagi untuk memenuhi target") -- simpan progres FG 1
+ *  roll TANPA menutup roll (beda dari closeProductionBatchAction yang final, set `closed_at` &
+ *  mencatat `production_results`/`production_result_sizes` buat riwayat/reject). Sebelum ini
+ *  draft qty per size MURNI React state di browser (fgSizeDraft di production-result-panel.tsx)
+ *  -- hilang begitu refresh/pindah halaman, jadi kalau 1 roll butuh beberapa hari untuk selesai
+ *  dikerjakan, progres hari-hari sebelumnya tidak pernah benar2 tersimpan. Sekarang tersimpan ke
+ *  production_batch_fg_sizes betulan, dibaca lagi sebagai draft awal begitu grup dibuka ulang
+ *  (lihat production-result-panel.tsx). */
+export async function saveFgProgressAction(batchId: string, sizeQty: Record<string, number>): Promise<void> {
+  await requireVendorSession();
+  const db = supabaseServer();
+  const { data: batch } = await db
+    .from("production_batches")
+    .select("id,mrp_id,vendor_produksi,warna,lengan,code_roll,cutting_at,closed_at,fg_logged_snapshot")
+    .eq("id", batchId)
+    .single();
+  if (!batch) throw new Error("Roll tidak ditemukan.");
+  if (!batch.cutting_at) throw new Error("Roll ini belum dicutting — isi Hasil Cutting dulu di tab Cutting.");
+  if (batch.closed_at) throw new Error("Roll ini sudah ditutup — tidak bisa diubah lagi.");
+
+  // Log ke riwayat DULU (delta terhadap fg_logged_snapshot) -- lihat catatan panjang di
+  // logFgProgressDelta -- baru replace production_batch_fg_sizes, supaya kalau insert riwayat
+  // gagal, state tersimpan (fg_logged_snapshot & production_batch_fg_sizes) tidak sempat berubah.
+  await logFgProgressDelta(db, batch, sizeQty);
+
+  // Replace (bukan tambah) -- hapus dulu baris progres LAMA batch ini sebelum insert yang baru,
+  // supaya "Simpan progres" berkali-kali tidak menumpuk baris duplikat per size (tabel ini tidak
+  // punya unique constraint per size, murni snapshot nilai TERKINI -- beda dari production_results
+  // yang murni riwayat delta, lihat logFgProgressDelta).
+  const { error: delErr } = await db.from("production_batch_fg_sizes").delete().eq("production_batch_id", batchId);
+  if (delErr) throw new Error(delErr.message);
+  const rows = Object.entries(sizeQty).filter(([, qty]) => qty > 0);
+  if (rows.length > 0) {
+    const { error: insErr } = await db.from("production_batch_fg_sizes").insert(rows.map(([size, qty]) => ({ production_batch_id: batchId, size, qty })));
+    if (insErr) throw new Error(insErr.message);
+  }
+}
+
+export async function submitProductionResultAction(input: { mrpId: string; vendorProduksi: string; warna: string; lengan: Lengan; kind: "FG" | "REJECT"; sizeQty: Record<string, number>; note?: string }): Promise<void> {
+  await requireVendorSession();
+  const db = supabaseServer();
+  const groupKey = `${input.mrpId}|${input.warna}|${input.lengan}`;
+  const { data: meta } = await db.from("production_group_meta").select("done_at").eq("group_key", groupKey).maybeSingle();
+  if (meta?.done_at) return;
+
+  const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", input.mrpId).eq("vendor_produksi", input.vendorProduksi).maybeSingle();
+  const id = await nextReadableId("PR");
+  const { error } = await db.from("production_results").insert({
+    id,
+    group_key: groupKey,
+    mrp_id: input.mrpId,
+    vendor_produksi: input.vendorProduksi,
+    po_id: maklon?.id ?? "",
+    warna: input.warna,
+    lengan: input.lengan,
+    kind: input.kind,
+    recorded_at: nowIso(),
+    note: input.note ?? null,
+  });
+  if (error) throw new Error(error.message);
+  const sizeRows = Object.entries(input.sizeQty).map(([size, qty]) => ({ production_result_id: id, size, qty }));
+  if (sizeRows.length > 0) await db.from("production_result_sizes").insert(sizeRows);
+
+  await maybeAdvanceMaklonToDelivery(input.mrpId, input.vendorProduksi);
+}
+
+/** Data pendukung TARGETED (bukan getFlowSnapshot() penuh) untuk 1 mrpId+vendorProduksi -- persis
+ *  yang dibutuhkan cuttingSizesForGroup/targetSizesForGroup/cumulativeSizeQtyForGroup
+ *  (lib/mrp/derive.ts), yang terbukti CUMA PERNAH baca data untuk SATU mrp (+vendor untuk
+ *  batch/hasil), tidak pernah lintas-MRP. Dipakai bareng oleh confirmFgDoneAction &
+ *  maybeAdvanceMaklonToDelivery -- dua-duanya jalur Produksi paling sering diklik.
+ *
+ *  PERFORMA: dulu masing-masing fetch lewat getFlowSnapshot() (32 tabel, ratusan KB, ~0.6-1.4
+ *  detik terukur langsung ke Supabase). Sekarang 3 query kecil paralel, di-scope ke 1 mrp+vendor.
+ *
+ *  Pemetaan kolom persis lib/mrp/repo/snapshot.ts (dibaca ulang saat menulis ini) supaya bentuk
+ *  objeknya SAMA dengan yang dipakai getFlowSnapshot() -- fungsi murni derive.ts-nya tidak
+ *  berubah sama sekali, cuma sumber datanya yang di-target-kan. `MrpDetail` yang dikembalikan
+ *  CUMA benar untuk field `.aduanRows` (satu-satunya yang dibaca fungsi2 di atas lewat
+ *  mrpDetailFor) -- field lain (lenganGroups/materialRows/dates/dst) sengaja kosong/dummy, JANGAN
+ *  dipakai untuk keperluan lain.
+ *
+ *  BUG FIX (2026-09-06): `batches[].sizeQty` WAJIB ikut ter-fetch (lihat query production_batches
+ *  di bawah) -- fungsi ini dulu sengaja tidak mengikutkannya (komentar lama beralasan
+ *  targetSizesForGroup/maklonProductionFullyDone tidak membacanya), tapi cuttingSizesForGroup
+ *  SEJAK item 18 (batch revisi 2026-09-04) SELALU = actualCutSizesForGroup, yang WAJIB baca
+ *  sizeQty. Tanpanya, confirmFgDoneAction SELALU menolak "Selesai Produksi" (baseline dikira
+ *  kosong padahal sudah diisi) dan recomputeAutoRejectForGroup SELALU menghitung reject 0 apapun
+ *  hasil cutting sebenarnya -- lihat detail lengkap di komentar query production_batches. */
+async function fetchProductionScopeForMrp(
+  db: SupabaseClient,
+  mrpId: string,
+  vendorProduksi: string
+): Promise<{ mrpDetail: MrpDetail; batches: ProductionBatch[]; results: ProductionResult[] }> {
+  const [aduanRows, batchRes, resultRes] = await Promise.all([
+    fetchAduanRowsForMrp(db, mrpId),
+    // BUG FIX (2026-09-06): dulu cuma `select("*")` -- TIDAK ikut production_batch_sizes (hasil
+    // aduan aktual per roll). Komentar lama di bawah bilang ini aman karena
+    // targetSizesForGroup/maklonProductionFullyDone tidak baca sizeQty -- BENAR waktu ditulis,
+    // tapi item 18 (batch revisi 2026-09-04) mengubah cuttingSizesForGroup jadi SELALU
+    // actualCutSizesForGroup (lib/mrp/derive.ts), yang WAJIB baca b.sizeQty. Akibatnya SEJAK ITU:
+    // baseline di confirmFgDoneAction SELALU kosong ({}) -- "Selesai Produksi" SELALU menolak
+    // dengan error 'Isi "Input Hasil Cutting"...' walau hasil cutting sudah benar-benar diisi
+    // (errornya tidak pernah kelihatan user karena tombolnya fire-and-forget, lihat fix di
+    // production-result-panel.tsx). DAN recomputeAutoRejectForGroup (dipanggil dari
+    // closeProductionPoAction, yang TIDAK punya guard ini, makanya "Close PO" tetap bisa
+    // "berhasil") SELALU menghitung reject = 0 apapun selisih cutting-vs-FG yang sebenarnya --
+    // reject sisanya diam-diam salah/hilang. Sekarang di-embed persis pola yang sama dengan
+    // production_results+production_result_sizes di baris bawah (dan pola sizeQty yang sudah
+    // benar di lib/mrp/repo/snapshot.ts, dibaca ulang saat menulis fix ini untuk memastikan
+    // pemetaannya identik).
+    db.from("production_batches").select("*, production_batch_sizes(size,qty)").eq("mrp_id", mrpId).eq("vendor_produksi", vendorProduksi),
+    db.from("production_results").select("*, production_result_sizes(size,qty)").eq("mrp_id", mrpId).eq("vendor_produksi", vendorProduksi).eq("kind", "FG"),
+  ]);
+
+  const mrpDetail: MrpDetail = {
+    mrp: { id: mrpId, kategori: "", warna: "", targetDate: "", live: true, qty: 0 },
+    lenganGroups: [],
+    aduanRows,
+    materialRows: [],
+    poSent: false,
+    dates: { created: "" },
+    ppicApproval: "DRAFT",
+  };
+
+  const batches: ProductionBatch[] = (batchRes.data ?? []).map((b) => {
+    const sizeRows = b.production_batch_sizes ?? [];
+    const sizeQty: Record<string, number> = {};
+    for (const s of sizeRows) sizeQty[s.size] = s.qty;
+    return {
+      id: b.id,
+      mrpId: b.mrp_id,
+      vendorProduksi: b.vendor_produksi,
+      aduanRowId: b.aduan_row_id,
+      kode: b.kode ?? "",
+      warna: b.warna,
+      lengan: b.lengan,
+      qtyRoll: Number(b.qty_roll),
+      gramasi: b.gramasi == null ? 0 : Number(b.gramasi),
+      restingAt: b.resting_at ?? "",
+      cuttingAt: b.cutting_at ?? undefined,
+      createdAt: b.created_at,
+      codeRoll: b.code_roll ?? undefined,
+      // BUG FIX (2026-09-09, owner: "Selesai Produksi" SELALU gagal dengan error "Tutup semua
+      // roll grup ini dulu" walau semua roll sudah benar-benar "Tutup Roll"): `closedAt` dulu
+      // TIDAK PERNAH dipetakan di sini sama sekali -- padahal `select("*")` di atas SUDAH ikut
+      // `closed_at`, cuma tidak pernah dibaca ke object yang di-return. Akibatnya guard
+      // `groupBatches.some((b) => !b.closedAt)` di confirmFgDoneAction SELALU true (closedAt
+      // selalu undefined di sini), jadi "Selesai Produksi" tidak akan PERNAH bisa berhasil sejak
+      // guard itu ditambahkan (item 9, PR #38) -- lubang ini sudah ada dari situ, bukan regresi
+      // dari perubahan sesi ini.
+      closedAt: b.closed_at ?? undefined,
+      // Pola sama persis dengan lib/mrp/repo/snapshot.ts -- undefined (bukan {}) kalau belum ada
+      // hasil aduan sama sekali, supaya `!b.sizeQty` di actualCutSizesForGroup (derive.ts) tetap
+      // konsisten membedakan "belum diisi" vs "diisi tapi semua size kebetulan 0".
+      sizeQty: sizeRows.length > 0 ? sizeQty : undefined,
+    };
+  });
+
+  const results: ProductionResult[] = (resultRes.data ?? []).map((r) => {
+    const sizeQty: Record<string, number> = {};
+    for (const s of r.production_result_sizes ?? []) sizeQty[s.size] = s.qty;
+    return {
+      id: r.id,
+      groupKey: r.group_key,
+      mrpId: r.mrp_id,
+      vendorProduksi: r.vendor_produksi,
+      poId: r.po_id,
+      warna: r.warna,
+      lengan: r.lengan,
+      kind: r.kind,
+      sizeQty,
+      recordedAt: r.recorded_at,
+      note: r.note ?? undefined,
+      usia: r.usia ?? undefined,
+    };
+  });
+
+  return { mrpDetail, batches, results };
+}
+
+/** Jalankan derive.advanceMaklonToDeliveryIfFullyDone (fungsi murni yang sama persis dipakai UI
+ *  lama) -- kalau hasilnya bilang PO maklon harus pindah ke DELIVERY, tulis balik status itu.
+ *  Dipanggil setelah tiap kali ada ProductionResult baru (submitProductionResult, rework/waste,
+ *  confirmFgDone, markProductionGroupDone -- 4 action Produksi paling sering diklik). Begitu
+ *  status PO BUKAN "PRODUCTION" (early-return pertama fungsi murninya), berhenti setelah 1 query
+ *  kecil tanpa perlu fetchProductionScopeForMrp sama sekali. */
+async function maybeAdvanceMaklonToDelivery(mrpId: string, vendorProduksi: string) {
+  const db = supabaseServer();
+
+  const { data: poRow } = await db.from("maklon_pos").select("*").eq("mrp_id", mrpId).eq("vendor_produksi", vendorProduksi).maybeSingle();
+  if (!poRow || poRow.status !== "PRODUCTION") return;
+
+  const [cancelledRes, scope] = await Promise.all([
+    db.from("maklon_po_cancelled_lines").select("*").eq("maklon_po_id", poRow.id),
+    fetchProductionScopeForMrp(db, mrpId, vendorProduksi),
+  ]);
+
+  const po: MaklonPO = {
+    id: poRow.id,
+    mrpId: poRow.mrp_id,
+    vendorProduksi: poRow.vendor_produksi,
+    qty: poRow.qty,
+    amount: Number(poRow.amount),
+    entity: poRow.entity ?? "",
+    status: poRow.status,
+    approved: poRow.approved,
+    cancelledLines: (cancelledRes.data ?? []).map((c) => ({
+      note: c.note,
+      rolls: Number(c.rolls),
+      warna: c.warna ?? undefined,
+      lengan: c.lengan ?? undefined,
+      pcs: c.pcs ?? undefined,
+      from: c.from_vendor ?? undefined,
+      time: c.time,
+    })),
+  };
+
+  const updated = advanceMaklonToDeliveryIfFullyDone(mrpId, vendorProduksi, [po], [scope.mrpDetail], scope.batches, scope.results);
+  const after = updated.find((m) => m.id === po.id);
+  if (after && after.status !== po.status) {
+    await db.from("maklon_pos").update({ status: after.status }).eq("id", after.id);
+  }
+}
+
+export async function reworkRejectSizeAction(input: { mrpId: string; vendorProduksi: string; warna: string; lengan: Lengan; fromSize: string; qty: number; toLengan: Lengan; toSize: string; usia: Usia }): Promise<void> {
+  await requireVendorSession();
+  // Rework fisik cuma bisa memotong lengan PANJANG jadi PENDEK (sisa potongan lengan), tidak bisa
+  // sebaliknya (lengan PENDEK tidak bisa "dipanjangkan" lagi) — dulu tidak ada guard sama sekali,
+  // baik di UI (dropdown bebas pilih) maupun di sini, jadi rework PENDEK→PANJANG bisa kesimpan.
+  if (input.lengan === "PENDEK" && input.toLengan === "PANJANG") {
+    throw new Error("Rework PENDEK ke PANJANG tidak valid — lengan yang sudah dipotong pendek tidak bisa dipanjangkan lagi.");
+  }
+  // Item revisi 2026-09-08 (owner: "Yang bisa dirework adalah size yang sama ukurannya dengan
+  // juga yang ada dibawah size yang ingin dirework tersebut") -- guard yang sama dengan lengan di
+  // atas, dicek ulang server-side (UI production-rework-tab.tsx sudah memfilter dropdown-nya).
+  if (!reworkSizeAllowed(input.fromSize, input.toSize)) {
+    throw new Error(`Rework ${input.fromSize} ke ${input.toSize} tidak valid — size tujuan cuma boleh sama atau lebih kecil dari size asal.`);
+  }
+  const db = supabaseServer();
+  const sourceGroupKey = `${input.mrpId}|${input.warna}|${input.lengan}`;
+  const outputGroupKey = `${input.mrpId}|${input.warna}|${input.toLengan}`;
+  // Dulu diam-diam `return` di sini kalau grup sumber/tujuan sudah "Selesai Produksi" -- dari sisi
+  // UI itu tampak seperti tombol "Simpan Rework" tidak melakukan apa-apa sama sekali (dialog
+  // ditutup, tapi tidak ada yang tersimpan, tanpa pesan error apa pun). Sekarang dilempar sebagai
+  // error supaya UI (production-rework-tab.tsx) bisa menampilkannya ke user.
+  const { data: metas } = await db.from("production_group_meta").select("group_key,done_at").in("group_key", [sourceGroupKey, outputGroupKey]);
+  if ((metas ?? []).some((g) => g.done_at)) {
+    throw new Error(
+      `Grup ${input.warna} · ${sourceGroupKey === outputGroupKey ? input.lengan : `${input.lengan} atau ${input.toLengan}`} sudah ditandai "Selesai Produksi" -- buka kunci dulu di tab Final Produksi sebelum bisa rework.`
+    );
+  }
+
+  const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", input.mrpId).eq("vendor_produksi", input.vendorProduksi).maybeSingle();
+  const rejectId = await nextReadableId("PR");
+  const fgId = await nextReadableId("PR");
+  const recordedAt = nowIso();
+  await db.from("production_results").insert([
+    {
+      id: rejectId,
+      group_key: sourceGroupKey,
+      mrp_id: input.mrpId,
+      vendor_produksi: input.vendorProduksi,
+      po_id: maklon?.id ?? "",
+      warna: input.warna,
+      lengan: input.lengan,
+      kind: "REJECT",
+      recorded_at: recordedAt,
+      note: `Rework ${input.qty} pcs ke ${input.toLengan} size ${input.toSize} (${input.usia})`,
+    },
+    {
+      id: fgId,
+      group_key: outputGroupKey,
+      mrp_id: input.mrpId,
+      vendor_produksi: input.vendorProduksi,
+      po_id: maklon?.id ?? "",
+      warna: input.warna,
+      lengan: input.toLengan,
+      kind: "FG",
+      recorded_at: recordedAt,
+      note: `Rework dari ${input.lengan} size ${input.fromSize} (${input.usia})`,
+      usia: input.usia,
+    },
+  ]);
+  await db.from("production_result_sizes").insert([
+    { production_result_id: rejectId, size: input.fromSize, qty: -input.qty },
+    { production_result_id: fgId, size: input.toSize, qty: input.qty },
+  ]);
+
+  await maybeAdvanceMaklonToDelivery(input.mrpId, input.vendorProduksi);
+}
+
+// Item 19 (feedback batch 2026-09-04): "Buang ke Sisa" dihapus dari UI & flow -- wasteRejectSizeAction
+// (dulu di sini) sudah tidak dipakai lagi & dihapus. wasteQtyForGroup (derive.ts) TETAP dipertahankan
+// (masih dipakai sebagai guard di undoFgConfirmAction di bawah) dan baris WASTE lama (kalau ada)
+// tetap valid secara historis -- tidak ada migration yang menghapus enum 'WASTE'/data lama.
+
+/** Item 18.4: hitung ulang reject OTOMATIS (kind='REJECT' dan note null -- beda dari reject hasil
+ *  rework manual) 1 grup warna/lengan dari SELISIH hasil cutting AKTUAL (cuttingSizesForGroup, ==
+ *  actualCutSizesForGroup sejak item 18.1 -- fallback ke target rencana MRP sudah dihapus) dikurangi
+ *  Finish Good yang sudah tercatat. Dipakai bareng oleh confirmFgDoneAction (TAHAP 1),
+ *  updateBatchToCuttingAction (kalau hasil cutting diedit SETELAH tahap 1, lihat item 18.3), dan
+ *  closeProductionPoAction (item 21, Close PO per PO Produksi). SELALU hapus dulu baris auto-reject
+ *  lama grup ini sebelum insert yang baru, supaya tidak menumpuk (mis. Selesai -> Buka kunci ->
+ *  Selesai lagi, atau edit hasil cutting berkali-kali). `scope` boleh dioper dari pemanggil yang
+ *  sudah fetch duluan (mis. confirmFgDoneAction) supaya tidak query 2x. */
+async function recomputeAutoRejectForGroup(
+  db: SupabaseClient,
+  groupKey: string,
+  mrpId: string,
+  vendorProduksi: string,
+  warna: string,
+  lengan: Lengan,
+  scope?: { mrpDetail: MrpDetail; batches: ProductionBatch[]; results: ProductionResult[] }
+): Promise<void> {
+  const s = scope ?? (await fetchProductionScopeForMrp(db, mrpId, vendorProduksi));
+  const target = cuttingSizesForGroup(mrpId, warna, lengan, [s.mrpDetail], s.batches);
+  const fgRecorded = cumulativeSizeQtyForGroup(groupKey, "FG", s.results);
+  const rejectSizeQty: Record<string, number> = {};
+  for (const [size, t] of Object.entries(target)) {
+    const shortfall = t - (fgRecorded[size] ?? 0);
+    if (shortfall > 0) rejectSizeQty[size] = shortfall;
+  }
+
+  const { data: oldAutoRejects } = await db.from("production_results").select("id").eq("group_key", groupKey).eq("kind", "REJECT").is("note", null);
+  if (oldAutoRejects && oldAutoRejects.length > 0) {
+    await db.from("production_results").delete().in("id", oldAutoRejects.map((r) => r.id));
+  }
+
+  if (Object.keys(rejectSizeQty).length > 0) {
+    const { data: maklonRow } = await db.from("maklon_pos").select("id").eq("mrp_id", mrpId).eq("vendor_produksi", vendorProduksi).maybeSingle();
+    const id = await nextReadableId("PR");
+    await db.from("production_results").insert({ id, group_key: groupKey, mrp_id: mrpId, vendor_produksi: vendorProduksi, po_id: maklonRow?.id ?? "", warna, lengan, kind: "REJECT", recorded_at: nowIso() });
+    await db.from("production_result_sizes").insert(Object.entries(rejectSizeQty).map(([size, qty]) => ({ production_result_id: id, size, qty })));
+  }
+}
+
+/** TAHAP 1 dari 2 -- diklik dari tab FINISH GOOD begitu input Finish Good untuk 1 warna/lengan
+ *  memang sudah final (tidak akan nambah lagi). Menghitung reject otomatis (cutting AKTUAL
+ *  dikurangi Finish Good yang sudah diinput, lewat recomputeAutoRejectForGroup) dan menyimpannya
+ *  ke production_results, TAPI SENGAJA belum mengunci Rework/Buang ke Sisa -- itu baru dikunci di
+ *  TAHAP 2 (markProductionGroupDoneAction, tab Final Produksi), supaya reject yang baru dihitung di
+ *  sini masih sempat dirework jadi baju (ukuran/lengan lain) sebelum benar-benar final. Lihat
+ *  migration 0013_production_group_fg_confirmed.sql untuk kolom fg_confirmed_at.
+ *
+ *  Item 18.2: baseline reject SEKARANG SELALU hasil cutting AKTUAL (actualCutSizesForGroup, lewat
+ *  cuttingSizesForGroup yang sejak item 18.1 tidak fallback ke target rencana MRP lagi). Kalau
+ *  grup ini punya batch yang SUDAH dicutting tapi belum SATU PUN diisi hasil cuttingnya (baseline
+ *  kosong padahal ada batch tercutting), TOLAK -- dulu ini diam-diam jatuh balik ke target rencana
+ *  MRP, itu ROOT CAUSE reject dobel-hitung (target 10, cutting aktual 8, FG 6 -> reject tampil 4,
+ *  seharusnya 2). Grup TANPA batch cutting sama sekali (murni grup TUJUAN rework lintas lengan,
+ *  lihat warnaLenganGroupsWithFg) baseline-nya memang kosong -- itu SAH, reject 0, tetap boleh
+ *  confirm. */
+export async function confirmFgDoneAction(groupKey: string, mrpId: string, vendorProduksi: string, warna: string, lengan: Lengan): Promise<void> {
+  await requireVendorSession();
+  const db = supabaseServer();
+  const scope = await fetchProductionScopeForMrp(db, mrpId, vendorProduksi);
+
+  const groupBatches = scope.batches.filter((b) => b.mrpId === mrpId && b.warna === warna && b.lengan === lengan && b.cuttingAt);
+  const hasCutBatches = groupBatches.length > 0;
+  const baseline = actualCutSizesForGroup(mrpId, warna, lengan, scope.batches);
+  if (hasCutBatches && Object.keys(baseline).length === 0) {
+    throw new Error('Isi "Input Hasil Cutting" untuk semua roll grup ini dulu — reject dihitung dari hasil cutting aktual, bukan dari target PO/MRP.');
+  }
+  // Item revisi 2026-09-12 (owner: "kenapa tidak bisa klik selesai produksi jika qtynya tidak
+  // maksimal... jadikan tombol selesai produksi trigger untuk selesaikan finish good"): dulu di
+  // sini kita MENOLAK confirm kalau ada roll grup ini yang belum "Tutup Roll" manual (lihat commit
+  // lama, item revisi 2026-09-08) -- alasannya waktu itu: roll yang belum closedAt tidak pernah
+  // shippable (closedUnshippedRollsForMrp murni basis ProductionBatch.closedAt), jadi FG bisa
+  // "terkunci selesai" tapi mustahil dikirim. Alasan itu MASIH VALID, tapi solusinya sekarang
+  // dibalik: BUKAN menolak user, tapi "Selesai Produksi" SENDIRI yang menutup roll-roll itu
+  // (autoCloseOpenBatchesForGroup, pakai FG yang sudah diisi apa adanya) sebelum lanjut -- jadi
+  // invariant "grup fg_confirmed_at terisi -> semua roll closedAt" tetap terjaga, TANPA
+  // mewajibkan user klik "Tutup Roll" manual dulu satu-satu.
+  await autoCloseOpenBatchesForGroup(db, groupBatches);
+
+  // Refetch scope (bukan reuse yang di atas) -- groupBatches/closedAt & production_results di atas
+  // sudah berubah setelah autoCloseOpenBatchesForGroup (roll baru ditutup + kemungkinan baris FG
+  // baru ter-log lewat logFgProgressDelta), recomputeAutoRejectForGroup harus baca kondisi TERKINI.
+  await recomputeAutoRejectForGroup(db, groupKey, mrpId, vendorProduksi, warna, lengan);
+
+  const { data: existing } = await db.from("production_group_meta").select("group_key").eq("group_key", groupKey).maybeSingle();
+  if (existing) await db.from("production_group_meta").update({ fg_confirmed_at: today() }).eq("group_key", groupKey);
+  else await db.from("production_group_meta").insert({ group_key: groupKey, mrp_id: mrpId, vendor_produksi: vendorProduksi, warna, lengan, fg_confirmed_at: today() });
+
+  await maybeAdvanceMaklonToDelivery(mrpId, vendorProduksi);
+}
+
+/** Kebalikan confirmFgDoneAction -- buka kunci Finish Good grup ini supaya bisa input lagi.
+ *  Ditolak kalau: (a) TAHAP 2 (Final Produksi) sudah dikunci duluan -- harus dibuka dulu di sana
+ *  (undoProductionGroupDoneAction) sebelum bisa buka tahap 1; atau (b) reject hasil hitungan di
+ *  sini SUDAH SEMPAT dirework/dibuang -- membuka lagi bisa bikin data reject/rework tidak
+ *  konsisten (deduksi rework tanpa reject dasar yang jelas), jadi diblokir sebagai pengaman. */
+export async function undoFgConfirmAction(groupKey: string): Promise<void> {
+  await requireVendorSession();
+  const db = supabaseServer();
+  const { data: meta } = await db.from("production_group_meta").select("done_at").eq("group_key", groupKey).maybeSingle();
+  if (meta?.done_at) {
+    throw new Error('Grup ini sudah "Selesai Produksi" di tab Final Produksi -- buka kunci itu dulu sebelum bisa buka kunci Finish Good.');
+  }
+  // reworkQtyForGroup/wasteQtyForGroup cuma butuh production_results GRUP INI (kind/groupKey/
+  // sizeQty/note) -- di-scope by group_key langsung, bukan getFlowSnapshot() penuh.
+  const { data: groupResultRows } = await db
+    .from("production_results")
+    .select("group_key, kind, note, production_result_sizes(size,qty)")
+    .eq("group_key", groupKey);
+  const groupResults: Pick<ProductionResult, "groupKey" | "kind" | "note" | "sizeQty">[] = (groupResultRows ?? []).map((r) => {
+    const sizeQty: Record<string, number> = {};
+    for (const s of r.production_result_sizes ?? []) sizeQty[s.size] = s.qty;
+    return { groupKey: r.group_key, kind: r.kind, note: r.note ?? undefined, sizeQty };
+  });
+  if (reworkQtyForGroup(groupKey, groupResults as ProductionResult[]) > 0 || wasteQtyForGroup(groupKey, groupResults as ProductionResult[]) > 0) {
+    throw new Error("Sebagian reject grup ini sudah dirework/dibuang ke sisa -- tidak bisa dibuka lagi supaya data reject tidak jadi tidak konsisten.");
+  }
+  const { data: oldAutoRejects } = await db.from("production_results").select("id").eq("group_key", groupKey).eq("kind", "REJECT").is("note", null);
+  if (oldAutoRejects && oldAutoRejects.length > 0) {
+    await db.from("production_results").delete().in("id", oldAutoRejects.map((r) => r.id));
+  }
+  await db.from("production_group_meta").update({ fg_confirmed_at: null }).eq("group_key", groupKey);
+}
+
+/** TAHAP 2 dari 2 -- diklik dari tab FINAL PRODUKSI, SETELAH rework/buang ke sisa (kalau ada)
+ *  juga sudah selesai. Ini yang benar-benar mengunci grup (Finish Good/Reject/Rework/Waste tidak
+ *  bisa berubah lagi -- lihat guard di reworkRejectSizeAction/wasteRejectSizeAction). Butuh
+ *  fg_confirmed_at (TAHAP 1) sudah terisi duluan -- reject tidak dihitung ulang di sini lagi,
+ *  itu sudah tugas confirmFgDoneAction. PENTING (item 22, direvisi dari desain awal sesi ini):
+ *  `done_at` di sini BUKAN LAGI gate Pengiriman -- FG sudah shippable begitu fg_confirmed_at
+ *  (TAHAP 1) terisi (lihat gate di availableFgToShip di lib/mrp/derive.ts). `done_at` sekarang
+ *  murni kunci final + basis status tepat-waktu/telat (productionStatusFromDates). */
+export async function markProductionGroupDoneAction(groupKey: string, mrpId: string, vendorProduksi: string, warna: string, lengan: Lengan): Promise<void> {
+  // warna/lengan dipertahankan di signature (dipanggil dgn argumen yang sama seperti
+  // confirmFgDoneAction dari UI) walau tidak dipakai lagi di sini -- reject sudah dihitung di
+  // TAHAP 1 (confirmFgDoneAction), bukan tugas action ini lagi.
+  void warna;
+  void lengan;
+  await requireVendorSession();
+  const db = supabaseServer();
+  const { data: existing } = await db.from("production_group_meta").select("group_key,fg_confirmed_at").eq("group_key", groupKey).maybeSingle();
+  if (!existing?.fg_confirmed_at) {
+    throw new Error('Selesaikan dulu Finish Good ("Selesai Produksi" di tab Finish Good) sebelum bisa Selesai Produksi di sini -- supaya reject sempat dihitung & dirework dulu kalau perlu.');
+  }
+  await db.from("production_group_meta").update({ done_at: today() }).eq("group_key", groupKey);
+  await maybeAdvanceMaklonToDelivery(mrpId, vendorProduksi);
+}
+
+/** Item 21 (feedback batch 2026-09-04): "Close PO" untuk siklus produksi PARSIAL -- menutup SATU
+ *  PO Produksi (mrpId+vendorProduksi) sekaligus, SEMUA warna/lengan-nya bersamaan (bukan satu per
+ *  satu, sesuai keputusan OQ6a). Reference pattern: closePoWithReasonAction (Procurement, PO
+ *  Material) -- reason wajib, audit row `maklon_po_cancelled_lines`, notifikasi.
+ *
+ *  Langkah: (a) reason wajib; (b) tiap grup warna/lengan PO ini yang BELUM `done_at` -- kalau
+ *  belum `fg_confirmed_at` juga, hitung reject dulu (recomputeAutoRejectForGroup, item 18.4) baru
+ *  isi fg_confirmed_at, lalu set done_at (mengunci grup itu, sama seperti TAHAP 2 biasa); (c) set
+ *  closed_at/close_reason di maklon_pos; (d) audit row; (e) notifikasi procurement+finance+vendor.
+ *
+ *  Item 22 (REVISI dari draft awal): closed_at di sini JUGA memblokir Pengiriman -- termasuk FG
+ *  yang SUDAH fgConfirmed sebelum ditutup tapi belum sempat masuk koli (lihat gate di
+ *  availableFgToShip, derive.ts). Koli yang sudah dibuat/terkirim SEBELUM PO ditutup tidak
+ *  terpengaruh (itu sudah masa lalu). */
+export async function closeProductionPoAction(maklonPoId: string, reason: string): Promise<void> {
+  const vendorId = await requireVendorSession();
+  if (!reason || !reason.trim()) throw new Error("Alasan penutupan PO wajib diisi.");
+  const db = supabaseServer();
+  const { data: po } = await db.from("maklon_pos").select("id,mrp_id,vendor_produksi,closed_at").eq("id", maklonPoId).maybeSingle();
+  if (!po) throw new Error("PO Produksi tidak ditemukan.");
+  if (po.vendor_produksi !== vendorId) throw new Error("PO ini bukan milik vendor Anda.");
+  if (po.closed_at) return;
+
+  const scope = await fetchProductionScopeForMrp(db, po.mrp_id, po.vendor_produksi);
+  const groups = warnaLenganGroupsWithFg(po.mrp_id, po.vendor_produksi, scope.batches, scope.results);
+  for (const g of groups) {
+    const groupKey = `${po.mrp_id}|${g.warna}|${g.lengan}`;
+    const { data: meta } = await db.from("production_group_meta").select("group_key,fg_confirmed_at,done_at").eq("group_key", groupKey).maybeSingle();
+    if (meta?.done_at) continue;
+    if (!meta?.fg_confirmed_at) {
+      await recomputeAutoRejectForGroup(db, groupKey, po.mrp_id, po.vendor_produksi, g.warna, g.lengan, scope);
+    }
+    if (meta) {
+      await db.from("production_group_meta").update({ fg_confirmed_at: meta.fg_confirmed_at ?? today(), done_at: today() }).eq("group_key", groupKey);
+    } else {
+      await db
+        .from("production_group_meta")
+        .insert({ group_key: groupKey, mrp_id: po.mrp_id, vendor_produksi: po.vendor_produksi, warna: g.warna, lengan: g.lengan, fg_confirmed_at: today(), done_at: today() });
+    }
+  }
+
+  await db.from("maklon_pos").update({ closed_at: today(), close_reason: reason.trim() }).eq("id", maklonPoId);
+  await db.from("maklon_po_cancelled_lines").insert({ maklon_po_id: maklonPoId, note: `Close PO: ${reason.trim()}`, rolls: 0, from_vendor: "Vendor Produksi", time: nowClock() });
+  await insertNotification(
+    notif(`PO Produksi ${maklonPoId} (${po.mrp_id}) ditutup oleh vendor — alasan: ${reason.trim()}. Sisa Finish Good yang belum masuk koli tidak bisa dikirim lagi.`, ["procurement", "finance"])
+  );
+  await insertNotification(notif(`PO Produksi ${maklonPoId} (${po.mrp_id}) sudah Anda tutup (Close PO) — alasan: ${reason.trim()}.`, ["vendorMaklon"], po.vendor_produksi));
+}
+
+/** Kebalikan closeProductionPoAction (2026-09-06) -- sengaja TIDAK ada sebelumnya (Close PO
+ *  didesain sebagai penutupan yang deliberate/final, lihat komentar closeProductionPoAction).
+ *  Ditambahkan karena bug fetchProductionScopeForMrp (lihat komentar di fungsi itu) sempat bikin
+ *  "Selesai Produksi" biasa selalu gagal diam-diam, jadi vendor terpaksa pakai Close PO sebagai
+ *  jalan pintas -- tanpa ini, PO yang kelanjur ditutup gara-gara bug itu TIDAK PERNAH bisa dikirim
+ *  lagi walau bug-nya sudah diperbaiki. Cuma membuka gerbang Pengiriman lagi (`closed_at`/
+ *  `close_reason` dikosongkan) -- TIDAK menyentuh fg_confirmed_at/done_at per grup warna/lengan
+ *  yang sudah dikunci Close PO; kalau reject grup tertentu perlu dihitung ulang (mis. gara-gara
+ *  bug di atas), buka kunci granular per grup lewat "Buka kunci ↺" di tab Final Produksi/Finish
+ *  Good seperti biasa, baru "Selesai Produksi" lagi. */
+export async function reopenProductionPoAction(maklonPoId: string): Promise<void> {
+  const vendorId = await requireVendorSession();
+  const db = supabaseServer();
+  const { data: po } = await db.from("maklon_pos").select("id,mrp_id,vendor_produksi,closed_at").eq("id", maklonPoId).maybeSingle();
+  if (!po) throw new Error("PO Produksi tidak ditemukan.");
+  if (po.vendor_produksi !== vendorId) throw new Error("PO ini bukan milik vendor Anda.");
+  if (!po.closed_at) return;
+  await db.from("maklon_pos").update({ closed_at: null, close_reason: null }).eq("id", maklonPoId);
+  await insertNotification(notif(`PO Produksi ${maklonPoId} (${po.mrp_id}) dibuka kembali oleh vendor — Pengiriman untuk sisa Finish Good bisa dilanjutkan lagi.`, ["procurement", "finance"]));
+}
+
+// =========================================================================
+// Delivery
+// =========================================================================
+
+/** Item 2026-09-10 (migration 0024, "roll boleh dikirim sebagian"): pertahanan berlapis SISI
+ *  SERVER terhadap balapan antar-tab/vendor -- klien (halaman Pengiriman) sudah men-clamp qty ke
+ *  sisa roll yang dilihatnya SAAT input, tapi snapshot itu bisa basi begitu request lain (tab lain,
+ *  atau koli lain yang baru saja disimpan) mengklaim sisa yang sama lebih dulu. Di sini snapshot
+ *  di-fetch ULANG (fresh) tepat sebelum insert, sisa per (roll,size) dihitung lewat fungsi yang
+ *  SAMA (`rollRemainingBySizeForMrp`) yang dipakai UI utk menampilkan sisa -- tiap item ber-
+ *  `sourceBatchId` di-clamp ke sisa itu (dikurangi berjalan kalau 1 submission py >1 item roll+size
+ *  yang sama), item yang qty-nya jadi 0 dibuang. `excludeKoliId` diteruskan APA ADANYA supaya edit
+ *  koli yang sudah ada tidak salah menganggap qty koli itu sendiri sebagai "sudah terpakai orang
+ *  lain" (lihat pemanggil). Item TANPA `sourceBatchId` (Rework/legacy) tidak disentuh sama sekali. */
+async function clampDeliveryItemsBySourceBatch(items: DeliveryKoliItem[], mrpId: string, vendorProduksi: string, excludeKoliId: string | undefined): Promise<DeliveryKoliItem[]> {
+  if (!items.some((it) => it.sourceBatchId)) return items;
+  const snapshot = await getFlowSnapshot();
+  const remainingRows = rollRemainingBySizeForMrp(mrpId, vendorProduksi, snapshot.productionBatches, snapshot.deliveryKolis, snapshot.maklonPOs, snapshot.productionGroupMeta, excludeKoliId);
+  const remainingByRoll = new Map(remainingRows.map((r) => [r.roll.id, { ...r.remaining }]));
+  return items
+    .map((it) => {
+      if (!it.sourceBatchId) return it;
+      const remaining = remainingByRoll.get(it.sourceBatchId);
+      const avail = remaining?.[it.size] ?? 0;
+      const qty = Math.min(it.qty, avail);
+      if (remaining) remaining[it.size] = avail - qty;
+      return { ...it, qty };
+    })
+    .filter((it) => it.qty > 0);
+}
+
+export async function createDeliveryKoliAction(input: { mrpId: string; vendorProduksi: string; ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }): Promise<void> {
+  await requireVendorSession();
+  const db = supabaseServer();
+  const items = await clampDeliveryItemsBySourceBatch(input.items, input.mrpId, input.vendorProduksi, undefined);
+  const id = await nextReadableId("KOLI");
+  const { error } = await db.from("delivery_kolis").insert({ id, mrp_id: input.mrpId, vendor_produksi: input.vendorProduksi, ekspedisi: input.ekspedisi, no_koli: input.noKoli, created_at: today() });
+  if (error) throw new Error(error.message);
+  if (items.length > 0) {
+    // BUG FIX SEKALIAN (ditemukan saat menambah `source_batch_id`, migration 0024): insert ini dulu
+    // TIDAK PERNAH dicek error-nya sama sekali -- gagal (mis. migration belum di-apply, kolom
+    // `source_batch_id` belum ada) berarti koli tersimpan KOSONG (delivery_kolis ada, items-nya
+    // NOL) TANPA vendor tahu sama sekali "Simpan koli" sebenarnya gagal separuh jalan. Sekarang
+    // dicek & di-throw -- pola sama material_claim_photos (HARUS menggagalkan seluruh aksi supaya
+    // user tahu, bukan diam-diam hilang), krusial di sini karena source_batch_id JUGA basis
+    // pelacakan "roll sudah kepakai koli mana" (rollRemainingBySizeForMrp) -- kalau diam-diam gagal
+    // tersimpan, roll yang SUDAH terkirim bisa muncul lagi sebagai "tersedia" di koli berikutnya.
+    const { error: itemsErr } = await db
+      .from("delivery_koli_items")
+      .insert(items.map((it) => ({ delivery_koli_id: id, warna: it.warna, lengan: it.lengan, size: it.size, qty: it.qty, kind: it.kind, usia: it.usia ?? null, source_batch_id: it.sourceBatchId ?? null })));
+    if (itemsErr) throw new Error(itemsErr.message);
+  }
+}
+
+/** Item 2026-09-11 (feedback: "Checkbox Koli yang mau dikirim (disamakan ekspedisinya - jadi satu
+ *  resi)", migration 0026) -- pengganti setKoliEkspedisiAction lama (migration 0024): SATU aksi
+ *  atomik yang set `ekspedisi`+catatan+foto+no resi utk >=1 koli SEKALIGUS, SEMUANYA dapat
+ *  `resiGroupId` BARU yang sama (SETIAP koli, termasuk yang dikirim sendirian, SELALU lewat jalur
+ *  ini begitu ekspedisinya di-set -- "grup isi 1" bukan jalur khusus terpisah, lihat
+ *  koliOngkirShare di derive.ts). Foto (SAMA persis utk semua koli dalam grup) diduplikasi ke
+ *  tiap baris `delivery_koli_ekspedisi_photos` (pola sama material_claim_photos -- 1 baris per
+ *  koli, bukan per grup) supaya `getDeliveryKoliEkspedisiPhotoAction` (dipanggil per koliId di
+ *  seluruh app) tetap jalan apa adanya. Validasi foto server-side sama persis pola
+ *  material_claim_photos.
+ *
+ *  Revisi 2026-09-12 (user-reported): `note` (catatan ekspedisi) DIBUAT OPSIONAL -- dulu wajib
+ *  diisi sama seperti no resi/foto, terlalu memberatkan untuk kasus yang memang tidak ada catatan
+ *  tambahan. `noResi` & foto TETAP wajib (tidak disentuh). */
+export async function setKoliEkspedisiResiGroupAction(
+  koliIds: string[],
+  ekspedisi: string,
+  note: string,
+  noResi: string,
+  photo: { dataUrl: string; fileName?: string }
+): Promise<void> {
+  const vendorId = await requireVendorSession();
+  if (koliIds.length === 0) return;
+  if (!ekspedisi.trim()) throw new Error("Pilih ekspedisi dulu.");
+  if (!noResi.trim()) throw new Error("No resi wajib diisi.");
+  if (!photo.dataUrl.startsWith("data:image/")) throw new Error("Foto lampiran tidak valid -- harus berupa gambar.");
+  const base64Part = photo.dataUrl.slice(photo.dataUrl.indexOf(",") + 1);
+  const approxBytes = Math.floor((base64Part.length * 3) / 4);
+  if (approxBytes > 700 * 1024) throw new Error("Foto lampiran terlalu besar -- ambil ulang dengan resolusi lebih kecil.");
+  const db = supabaseServer();
+
+  // Kepemilikan + belum delivered -- cegah vendor A menyentuh koli vendor B, & cegah ekspedisi/
+  // resi koli yang SUDAH terkirim diubah lewat sini (harusnya sudah final).
+  const { data: rows } = await db.from("delivery_kolis").select("id,vendor_produksi,delivered_at").in("id", koliIds);
+  const validIds = (rows ?? []).filter((r) => r.vendor_produksi === vendorId && !r.delivered_at).map((r) => r.id);
+  if (validIds.length === 0) return;
+
+  const resiGroupId = await nextReadableId("RESI");
+  const notedAt = nowIso();
+  const { error: photoErr } = await db
+    .from("delivery_koli_ekspedisi_photos")
+    .upsert(validIds.map((koliId) => ({ delivery_koli_id: koliId, data_url: photo.dataUrl, file_name: photo.fileName ?? null, uploaded_at: notedAt })));
+  if (photoErr) throw new Error(`Gagal menyimpan foto lampiran: ${photoErr.message}`);
+  const { error } = await db
+    .from("delivery_kolis")
+    .update({ ekspedisi, ekspedisi_note: note.trim(), ekspedisi_note_at: notedAt, no_resi: noResi.trim(), resi_group_id: resiGroupId })
+    .in("id", validIds);
+  if (error) throw new Error(error.message);
+}
+
+/** Ambil BYTE foto lampiran ekspedisi 1 koli on-demand -- `delivery_koli_ekspedisi_photos` sengaja
+ *  DIKELUARKAN dari get_flow_snapshot_raw() (migration 0024, pola sama material_claim_photos)
+ *  supaya payloadnya tidak ikut re-download di setiap refresh snapshot.
+ *
+ *  Item 2026-09-10 (Procurement "Invoice Vendor" & Finance "Payment Maklon" minta bisa lihat
+ *  lampiran ekspedisi sebelum approve/bayar): dulu HANYA `requireVendorSession()` (cuma dipanggil
+ *  dari Riwayat Pengiriman vendor sendiri) -- sekarang dibuka juga untuk procurement/finance,
+ *  pola SAMA PERSIS `getInvoicePaymentProofAction` di atas (vendor dicek KEPEMILIKAN koli-nya,
+ *  internal role dicek lewat requireAnyInternalRole). */
+export async function getDeliveryKoliEkspedisiPhotoAction(koliId: string): Promise<{ dataUrl: string; fileName?: string } | null> {
+  const session = await requireSession();
+  if (session.vendorId) {
+    const { data: koli } = await supabaseServer().from("delivery_kolis").select("vendor_produksi").eq("id", koliId).maybeSingle();
+    if (koli?.vendor_produksi !== session.vendorId) throw new Error("Forbidden: koli ini bukan milik vendor Anda.");
+  } else {
+    requireAnyInternalRole(session, ["procurement", "finance"]);
+  }
+  const db = supabaseServer();
+  const { data } = await db.from("delivery_koli_ekspedisi_photos").select("data_url,file_name").eq("delivery_koli_id", koliId).maybeSingle();
+  if (!data) return null;
+  return { dataUrl: data.data_url, fileName: data.file_name ?? undefined };
+}
+
+/** Item 2026-09-11 (feedback: "berat dan delivery itu digabung jadi satu aksi ... berat per koli
+ *  tetap dihitung per koli", migration 0026) -- pengganti setKoliWeightAction+markKoliDeliveredAction
+ *  lama (dulu dipanggil berurutan per koli dari UI) -- sekarang SATU aksi utk SELURUH grup resi
+ *  sekaligus: berat TIAP koli (fisiknya beda-beda) disimpan satu-satu, lalu SEMUA koli dalam
+ *  grup ditandai `delivered_at` BARENG. Ongkir yang DIBAYAR (dihitung dari total berat segrup,
+ *  diprorata balik per koli) murni derived read-time lewat koliOngkirShare (derive.ts) -- TIDAK
+ *  ada apa pun yang perlu dihitung/disimpan khusus di sini selain berat mentah tiap koli. */
+export async function deliverKoliResiGroupAction(items: { koliId: string; beratKoli: number }[]): Promise<void> {
+  const vendorId = await requireVendorSession();
+  if (items.length === 0) return;
+  if (items.some((it) => !(it.beratKoli > 0))) throw new Error("Berat semua koli dalam grup ini harus diisi (> 0) sebelum Delivery.");
+  const db = supabaseServer();
+  const koliIds = items.map((it) => it.koliId);
+  const { data: rows } = await db.from("delivery_kolis").select("id,vendor_produksi,ekspedisi,resi_group_id,delivered_at,no_koli").in("id", koliIds);
+  if (!rows || rows.length !== koliIds.length) throw new Error("Sebagian koli tidak ditemukan.");
+  if (rows.some((r) => r.vendor_produksi !== vendorId)) throw new Error("Forbidden: sebagian koli bukan milik vendor Anda.");
+  if (rows.some((r) => r.delivered_at)) return; // sudah delivered semua -- no-op, idempotent
+  if (rows.some((r) => !r.ekspedisi)) throw new Error("Pilih ekspedisi dulu untuk semua koli di grup ini.");
+  // Koli TANPA resi_group_id (data lama sebelum migration 0026) dianggap grup isi-dirinya-sendiri
+  // (fallback ke id sendiri) -- mencegah client kirim campuran koli lama yang tidak benar2 satu
+  // grup fisik yang sama.
+  const groupIds = new Set(rows.map((r) => r.resi_group_id ?? r.id));
+  if (groupIds.size > 1) throw new Error("Koli yang dipilih bukan dari grup resi yang sama.");
+
+  for (const it of items) {
+    const { error } = await db.from("delivery_kolis").update({ berat_koli: it.beratKoli }).eq("id", it.koliId);
+    if (error) throw new Error(error.message);
+  }
+  const { error: deliverErr } = await db.from("delivery_kolis").update({ delivered_at: today() }).in("id", koliIds);
+  if (deliverErr) throw new Error(deliverErr.message);
+
+  // Spec Portal Warehouse R18 -- Warehouse butuh tahu begitu ada koli baru "sedang dikirim" (siap
+  // ditunggu di /warehouse/penerimaan begitu invoice-nya PAID nanti).
+  const noKoliLabel = rows.map((r) => r.no_koli ?? r.id).join(", ");
+  await insertNotification(notif(`Koli ${noKoliLabel} dari ${VENDOR_PRODUKSI[vendorId]?.name ?? vendorId} sedang dikirim`, ["warehouse"]));
+}
+
+// =========================================================================
+// Vendor invoice (billing aktif)
+// =========================================================================
+
+export async function createVendorInvoiceAction(input: { vendorProduksi: string; lines: { mrpId: string; warna: string; lengan: Lengan; usia?: Usia; qty: number; ratePerPc: number }[]; note?: string }): Promise<void> {
+  await requireVendorSession();
+  const db = supabaseServer();
+  if (input.lines.length === 0) return;
+  const id = await nextReadableId("VINV");
+  const totalTagihan = input.lines.reduce((s, l) => s + l.qty * l.ratePerPc, 0);
+  const { error } = await db.from("vendor_invoices").insert({
+    id,
+    vendor_produksi: input.vendorProduksi,
+    total_tagihan: totalTagihan,
+    net_tagihan: totalTagihan,
+    status: "SUBMITTED",
+    note: input.note ?? null,
+    submitted_at: today(),
+  });
+  if (error) throw new Error(error.message);
+  await db.from("vendor_invoice_lines").insert(
+    input.lines.map((l) => ({ vendor_invoice_id: id, mrp_id: l.mrpId, warna: l.warna, lengan: l.lengan, usia: l.usia ?? null, qty: l.qty, rate_per_pc: l.ratePerPc, amount: l.qty * l.ratePerPc }))
+  );
+  await insertNotification(notif(`Invoice vendor baru ${id} menunggu review Procurement`, ["procurement"]));
+}
+
+function lineKeyLocal(mrpId: string, warna: string, lengan: Lengan, usia?: Usia): string {
+  return mrpId + "|" + warna + "|" + lengan + "|" + (usia ?? "");
+}
+
+/** Item 2026-09-11 (feedback: "ketika sudah final pengiriman nanti akan ada button submit
+ *  invoice, jadi tidak ada lagi action apa2 di halaman Invoice & Payment", migration 0026) --
+ *  pengganti alur "Create Invoice" manual (checkbox+qty+rate) yang DIHAPUS dari
+ *  invoice-vendor-panel.tsx -- invoice sekarang diajukan LANGSUNG dari grup resi yang sudah
+ *  delivered penuh, di halaman Pengiriman.
+ *
+ *  qty TIDAK PERNAH dipercaya dari client -- dihitung ULANG dari snapshot fresh
+ *  (`resiGroupInvoiceLines`, derive.ts), pola sama `clampDeliveryItemsBySourceBatch` -- cuma
+ *  `ratePerPc` per baris yang dipercaya dari client (keputusan bisnis, tidak bisa diturunkan
+ *  otomatis dari data manapun). Reuse `createVendorInvoiceAction` APA ADANYA (bukan menulis ulang
+ *  logic insert invoice) untuk baris hasil gabungan qty riil + rate dari client, lalu tandai
+ *  SEMUA koliIds `resi_invoiced_at` supaya grup yang sama tidak bisa disubmit dua kali. */
+export async function submitResiGroupInvoiceAction(
+  koliIds: string[],
+  rates: { mrpId: string; warna: string; lengan: Lengan; usia?: Usia; ratePerPc: number }[]
+): Promise<void> {
+  const vendorId = await requireVendorSession();
+  if (koliIds.length === 0) return;
+  const db = supabaseServer();
+  const { data: rows } = await db.from("delivery_kolis").select("id,vendor_produksi,delivered_at,resi_invoiced_at,resi_group_id").in("id", koliIds);
+  if (!rows || rows.length !== koliIds.length) throw new Error("Sebagian koli tidak ditemukan.");
+  if (rows.some((r) => r.vendor_produksi !== vendorId)) throw new Error("Forbidden: sebagian koli bukan milik vendor Anda.");
+  if (rows.some((r) => !r.delivered_at)) throw new Error("Semua koli dalam grup ini harus sudah Delivery dulu sebelum submit invoice.");
+  if (rows.some((r) => r.resi_invoiced_at)) throw new Error("Grup pengiriman ini sudah pernah diajukan invoice-nya.");
+  const groupIds = new Set(rows.map((r) => r.resi_group_id ?? r.id));
+  if (groupIds.size > 1) throw new Error("Koli yang dipilih bukan dari grup resi yang sama.");
+
+  const snapshot = await getFlowSnapshot();
+  const lines = resiGroupInvoiceLines(koliIds, snapshot.deliveryKolis);
+  if (lines.length === 0) return;
+  const rateMap = new Map(rates.map((r) => [lineKeyLocal(r.mrpId, r.warna, r.lengan, r.usia), r.ratePerPc]));
+  const invoiceLines = lines.map((l) => ({
+    mrpId: l.mrpId,
+    warna: l.warna,
+    lengan: l.lengan,
+    usia: l.usia,
+    qty: l.qty,
+    ratePerPc: rateMap.get(lineKeyLocal(l.mrpId, l.warna, l.lengan, l.usia)) ?? 0,
+  }));
+  if (invoiceLines.some((l) => !(l.ratePerPc > 0))) throw new Error("Rate per pc harus diisi (> 0) untuk semua baris.");
+
+  await createVendorInvoiceAction({ vendorProduksi: vendorId, lines: invoiceLines });
+
+  const { error } = await db.from("delivery_kolis").update({ resi_invoiced_at: nowIso() }).in("id", koliIds);
+  if (error) throw new Error(error.message);
+}
+
+export async function setVendorInvoiceStatusAction(invoiceId: string, status: "SUBMITTED" | "REVISION" | "APPROVED" | "PAID"): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const db = supabaseServer();
+  const { data: invoice } = await db.from("vendor_invoices").select("id,vendor_produksi").eq("id", invoiceId).single();
+  await db
+    .from("vendor_invoices")
+    .update({ status, approved_at: status === "APPROVED" ? today() : undefined, paid_at: status === "PAID" ? today() : undefined })
+    .eq("id", invoiceId);
+  if (invoice && status === "APPROVED") await insertNotification(notif(`Invoice vendor ${invoice.id} disetujui Procurement — menunggu payment Finance`, ["finance", "vendorMaklon"], invoice.vendor_produksi));
+  if (invoice && status === "PAID") await insertNotification(notif(`Invoice vendor ${invoice.id} telah dibayar Finance`, ["vendorMaklon"], invoice.vendor_produksi));
+}
+
+export async function payVendorInvoiceAction(invoiceId: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "finance");
+  const db = supabaseServer();
+  const { data: invoice } = await db.from("vendor_invoices").select("id,vendor_produksi,status").eq("id", invoiceId).single();
+  if (!invoice || invoice.status === "PAID") return;
+  await db.from("vendor_invoices").update({ status: "PAID", paid_at: today() }).eq("id", invoiceId);
+  await insertNotification(notif(`Invoice vendor ${invoice.id} telah dibayar lunas oleh Finance`, ["vendorMaklon"], invoice.vendor_produksi));
+}
+
+// =========================================================================
+// Warehouse (Spec Portal Warehouse bagian B) — Penerimaan & Bongkar koli barang jadi.
+// =========================================================================
+
+/** "Bongkar Koli" -- SELALU per RESI GROUP dan SELALU UTUH (Q5 final, non-goal: tidak ada bongkar
+ *  sebagian/koreksi qty/klaim selisih). Payload dari client SENGAJA cuma `{ resiGroupId, note? }`
+ *  -- qty & hpp_per_item TIDAK PERNAH dipercaya dari client, server membangun ulang daftar item
+ *  dari snapshot FRESH (`warehouseReceivableGroups`, derive.ts) yang APA ADANYA memanggil
+ *  `hppRowsForInvoicePerRoll` (pola sama `submitResiGroupInvoiceAction` yang juga tidak percaya
+ *  qty dari client). Gate invoice PAID (R9) divalidasi ULANG di sini (bukan cuma di UI) lewat
+ *  `group.gateReason`. */
+export async function receiveWarehouseResiGroupAction(resiGroupId: string, note?: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "warehouse");
+  const db = supabaseServer();
+
+  // Idempotent -- resi group ini sudah pernah dibongkar sebelumnya (klik dobel/replay action) ->
+  // no-op, bukan error.
+  const { data: existing } = await db.from("warehouse_receipts").select("id").eq("resi_group_id", resiGroupId).maybeSingle();
+  if (existing) return;
+
+  const snapshot = await getFlowSnapshot();
+  const groups = warehouseReceivableGroups(
+    snapshot.deliveryKolis,
+    snapshot.vendorInvoices,
+    snapshot.mrpDetails,
+    snapshot.staticMrps,
+    snapshot.productionBatches,
+    snapshot.productionResults,
+    snapshot.productionGroupMeta,
+    snapshot.invoices,
+    snapshot.warehouseReceipts,
+    snapshot.ekspedisiRates,
+    snapshot.itemSellingPrices
+  );
+  const group = groups.find((g) => g.resiGroupId === resiGroupId);
+  // Validasi server-side ulang (R11): grup tidak ditemukan berarti resi ini sudah tidak eligible
+  // lagi (mis. koli belum delivered semua, atau resiGroupId salah) -- no-op, jangan tampilkan
+  // error membingungkan untuk kondisi race yang wajar (mis. koli baru saja ditambahkan lagi).
+  if (!group) return;
+  if (group.gateReason) throw new Error(group.gateReason);
+
+  const id = await nextReadableId("WHR");
+  const receivedAt = nowIso();
+  // Kolom `vendor_invoice_id` di warehouse_receipts cuma 1 (bukan array) -- diisi kalau SELURUH
+  // item grup ini bisa ditelusuri ke TEPAT SATU invoice (kasus umum), kosong kalau gabungan >1
+  // invoice (tetap valid, cuma tidak ada 1 nomor invoice representatif tunggal untuk kolom ini).
+  const vendorInvoiceId = group.invoiceIds.length === 1 ? group.invoiceIds[0] : null;
+
+  const { error } = await db.from("warehouse_receipts").insert({
+    id,
+    resi_group_id: group.resiGroupId,
+    mrp_id: group.mrpId,
+    vendor_produksi: group.vendorProduksi,
+    vendor_invoice_id: vendorInvoiceId,
+    received_at: receivedAt,
+    note: note?.trim() || null,
+    created_at: receivedAt,
+  });
+  if (error) {
+    // Race condition: request lain untuk resi group yang sama sudah menang duluan di antara cek
+    // idempotency di atas dan insert ini -- unique constraint (resi_group_id) di DB menolak baris
+    // kita. Perlakukan sama seperti early-return `if (existing) return` di atas: no-op, bukan error.
+    if ((error as { code?: string }).code === "23505") return;
+    throw new Error(error.message);
+  }
+
+  const { error: koliErr } = await db.from("warehouse_receipt_kolis").insert(group.koliIds.map((koliId) => ({ warehouse_receipt_id: id, delivery_koli_id: koliId })));
+  if (koliErr) throw new Error(`Gagal menyimpan koli penerimaan: ${koliErr.message}`);
+
+  if (group.items.length > 0) {
+    const { error: itemsErr } = await db.from("warehouse_receipt_items").insert(
+      group.items.map((it) => ({
+        warehouse_receipt_id: id,
+        delivery_koli_id: it.deliveryKoliId,
+        warna: it.warna,
+        lengan: it.lengan,
+        size: it.size,
+        kind: it.kind,
+        qty: it.qty,
+        hpp_per_item: it.hppPerItem,
+        source_batch_id: it.sourceBatchId ?? null,
+      }))
+    );
+    if (itemsErr) throw new Error(`Gagal menyimpan item penerimaan: ${itemsErr.message}`);
+  }
+
+  await insertNotification(notif(`Warehouse membongkar koli resi ${group.noResi ?? group.noKoli} (${group.mrpLabel})`, ["finance", "produksi"]));
+}
+
+export async function addVendorInvoiceAdjustmentAction(invoiceId: string, input: { kind: VendorInvoiceAdjustmentKind; label: string; amount: number; note?: string }): Promise<void> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const db = supabaseServer();
+  // BUG FIX 2026-09-12 (user-reported: pilih Denda/Reward tapi nilai invoice tidak berubah) --
+  // dua panggilan Supabase di bawah ini SEBELUMNYA tidak pernah dicek errornya (pola bug yang
+  // sama seperti CRUD Master Data, lihat catatan di requireMasterDataRole di atas) -- kalau
+  // insert ke vendor_invoice_adjustments gagal (mis. network flaky), fungsi ini tetap resolve
+  // tanpa throw, jadi Procurement mengira sudah menambahkan denda/reward padahal tidak pernah
+  // benar-benar tersimpan, dan vendorInvoiceFinalAmount (dihitung live dari inv.adjustments)
+  // tidak pernah berubah karena baris adjustment-nya memang tidak ada di DB.
+  const { data: invoice, error: lookupErr } = await db.from("vendor_invoices").select("id,vendor_produksi").eq("id", invoiceId).single();
+  if (lookupErr) throw new Error(lookupErr.message);
+  if (!invoice) throw new Error(`Invoice ${invoiceId} tidak ditemukan.`);
+  const id = await nextReadableId("ADJ");
+  const { error } = await db.from("vendor_invoice_adjustments").insert({ id, vendor_invoice_id: invoiceId, kind: input.kind, label: input.label, amount: input.amount, note: input.note ?? null, added_at: today() });
+  if (error) throw new Error(error.message);
+  const text =
+    input.kind === "TIDAK_ADA"
+      ? `Catatan ditambahkan Procurement pada invoice ${invoice.id}: ${input.label} (tanpa sanksi)`
+      : `${input.kind === "DENDA" ? "Denda" : "Reward"} ditambahkan Procurement pada invoice ${invoice.id}: ${input.label} (Rp ${input.amount.toLocaleString("id-ID")})`;
+  await insertNotification(notif(text, ["vendorMaklon"], invoice.vendor_produksi));
+}
+
+// =========================================================================
+// Notifikasi
+// =========================================================================
+
+export async function markNotificationReadAction(id: string): Promise<void> {
+  await requireSession();
+  const { error } = await supabaseServer().from("notifications").update({ read: true }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function markAllNotificationsReadAction(ids: string[]): Promise<void> {
+  await requireSession();
+  if (ids.length === 0) return;
+  const { error } = await supabaseServer().from("notifications").update({ read: true }).in("id", ids);
+  if (error) throw new Error(error.message);
+}
+
+export async function dismissNotificationAction(id: string): Promise<void> {
+  await requireSession();
+  const { error } = await supabaseServer().from("notifications").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/** Hapus semua data yang terkait SATU MRP saja (bukan seluruh data bisnis) -- khusus PPIC.
+ *  Ganti total fitur "Reset data" lama (resetAllAction, dihapus) yang menghapus SEMUA MRP/modul
+ *  sekaligus.
+ *
+ *  BUG FIX 2026-09-13 #3 (tester-reported, giliran ketiga): fungsi ini TIDAK dibungkus transaksi
+ *  (Supabase JS client tidak punya multi-statement transaction) -- kalau guard/validasi (cek
+ *  lintas-MRP) dan DELETE sungguhan diselang-seling seperti versi sebelumnya, guard yang gagal DI
+ *  TENGAH JALAN membuat sebagian data SUDAH TERLANJUR TERHAPUS padahal fungsi akhirnya throw
+ *  (dilaporkan gagal ke user, tapi sebagian data sudah hilang permanen -- persis skenario yang mau
+ *  dicegah). Sekarang fungsi ini dibagi TEGAS 2 FASE:
+ *  FASE VALIDASI (baca-saja, TIDAK ADA delete APA PUN) -- kumpulkan SEMUA id yang akan dihapus &
+ *  jalankan SEMUA pengecekan lintas-MRP dulu; kalau ADA SATU SAJA yang gagal, throw DI SINI, sebelum
+ *  baris kode delete pertama sekalipun dieksekusi.
+ *  FASE HAPUS (cuma jalan kalau FASE VALIDASI lolos semua) -- urutan hapus PENTING, jangan diubah
+ *  tanpa alasan kuat: (1) vendor_invoices, (2) warehouse_receipt_items -> warehouse_receipt_kolis ->
+ *  warehouse_receipts, (3) material_claim_photos & invoice_payment_proofs (pakai id raw_material_
+ *  invoices yang sudah dikumpulkan di fase validasi -- SEBELUM mrp dihapus, karena raw_material_
+ *  invoices ikut cascade begitu mrp dihapus), (4) material_claim_history, (5) TERAKHIR baris `mrp`
+ *  (memicu cascade FK ON DELETE CASCADE untuk lengan_groups, aduan_pola_rows, material_rows,
+ *  material_pos, maklon_pos, raw_material_invoices, maklon_invoices, production_batches,
+ *  production_results, production_group_meta, delivery_kolis, vendor_invoice_lines).
+ *  `vendor_deposits` dan `notifications` SENGAJA TIDAK disentuh -- vendor_deposits adalah ledger
+ *  KUMULATIF PER SUPPLIER (bukan per MRP), dan notifications tidak punya kolom mrp_id sama sekali.
+ */
+export async function resetMrpAction(mrpId: string): Promise<void> {
+  await requireInternalRole(await requireSession(), "ppic");
+  const db = supabaseServer();
+
+  const { data: mrpRow, error: mrpFetchErr } = await db.from("mrp").select("id").eq("id", mrpId).maybeSingle();
+  if (mrpFetchErr) throw new Error(`Gagal memvalidasi MRP ${mrpId} sebelum reset: ${mrpFetchErr.message}`);
+  if (!mrpRow) throw new Error(`MRP ${mrpId} tidak ditemukan.`);
+
+  // ===== FASE VALIDASI -- baca-saja, TIDAK ADA delete di bawah sampai bagian "FASE HAPUS" =====
+  //
+  // BUG FIX 2026-09-13 #4 (reviewer-reported): SEMUA query select di fase ini sekarang WAJIB cek
+  // `{ error }` dan throw -- sebelumnya cuma destructure `{ data }` lalu fallback `?? []` kalau
+  // query gagal, jadi query yang GAGAL (network blip, dst) tidak bisa dibedakan dari "memang tidak
+  // ada baris lintas-MRP". Itu artinya guard bisa diam-diam menyimpulkan "aman" padahal sebenarnya
+  // TIDAK TAHU -- melanggar tujuan utama fase ini (mendeteksi kondisi tidak aman SEBELUM hapus
+  // apa pun). Sekarang query gagal = throw jelas, bukan lolos diam-diam sebagai array kosong.
+
+  // Cegah invoice vendor lintas-MRP ikut rusak -- satu vendor_invoice bisa berisi lines dari LEBIH
+  // DARI SATU MRP sekaligus (fitur gabung resi pengiriman, lihat submitResiGroupInvoiceAction).
+  const { data: linesForThisMrp, error: linesErr } = await db.from("vendor_invoice_lines").select("vendor_invoice_id").eq("mrp_id", mrpId);
+  if (linesErr) throw new Error(`Gagal memvalidasi invoice vendor sebelum reset MRP ${mrpId}: ${linesErr.message}`);
+  const affectedInvoiceIds = Array.from(new Set((linesForThisMrp ?? []).map((r) => r.vendor_invoice_id)));
+  if (affectedInvoiceIds.length > 0) {
+    const { data: crossLines, error: crossLinesErr } = await db.from("vendor_invoice_lines").select("vendor_invoice_id,mrp_id").in("vendor_invoice_id", affectedInvoiceIds).neq("mrp_id", mrpId);
+    if (crossLinesErr) throw new Error(`Gagal memvalidasi invoice vendor lintas-MRP sebelum reset MRP ${mrpId}: ${crossLinesErr.message}`);
+    if (crossLines && crossLines.length > 0) {
+      const crossIds = Array.from(new Set(crossLines.map((r) => r.vendor_invoice_id)));
+      throw new Error(
+        `Tidak bisa reset MRP ${mrpId} -- invoice vendor ${crossIds.join(", ")} juga berisi baris dari MRP lain (dibuat lewat gabungan resi pengiriman). Selesaikan/pisahkan invoice itu dulu secara manual sebelum reset MRP ini.`
+      );
+    }
+  }
+
+  // Cegah resi Warehouse lintas-MRP ikut rusak -- `warehouse_receipts.mrp_id` HANYA representatif
+  // (koli PERTAMA dalam grup, lihat WarehouseReceivableGroup.mrpId di lib/mrp/derive.ts), SATU resi
+  // bongkar Warehouse BISA mencakup koli dari LEBIH DARI SATU MRP sekaligus (vendor boleh gabung
+  // koli MRP mana pun ke 1 resi, lihat setKoliEkspedisiResiGroupAction, TIDAK ada syarat koli-koli
+  // itu harus 1 MRP yang sama). Di-scope lewat KEANGGOTAAN KOLI (delivery_kolis.mrp_id, BUKAN
+  // warehouse_receipts.mrp_id yang cuma representatif) supaya kedua arah (MRP representatif MAUPUN
+  // MRP non-representatif di resi gabungan yang sama) sama-sama terdeteksi & ditolak.
+  const { data: koliRowsForThisMrp, error: koliErr } = await db.from("delivery_kolis").select("id").eq("mrp_id", mrpId);
+  if (koliErr) throw new Error(`Gagal memvalidasi koli pengiriman sebelum reset MRP ${mrpId}: ${koliErr.message}`);
+  const koliIdsForThisMrp = (koliRowsForThisMrp ?? []).map((r) => r.id);
+  let warehouseReceiptIds: string[] = [];
+  if (koliIdsForThisMrp.length > 0) {
+    const { data: whKoliRows, error: whKoliErr } = await db.from("warehouse_receipt_kolis").select("warehouse_receipt_id").in("delivery_koli_id", koliIdsForThisMrp);
+    if (whKoliErr) throw new Error(`Gagal memvalidasi resi Warehouse sebelum reset MRP ${mrpId}: ${whKoliErr.message}`);
+    const candidateReceiptIds = Array.from(new Set((whKoliRows ?? []).map((r) => r.warehouse_receipt_id)));
+    if (candidateReceiptIds.length > 0) {
+      const { data: allKolisInCandidates, error: allKolisErr } = await db.from("warehouse_receipt_kolis").select("warehouse_receipt_id,delivery_koli_id").in("warehouse_receipt_id", candidateReceiptIds);
+      if (allKolisErr) throw new Error(`Gagal memvalidasi anggota resi Warehouse sebelum reset MRP ${mrpId}: ${allKolisErr.message}`);
+      const allKoliIds = Array.from(new Set((allKolisInCandidates ?? []).map((r) => r.delivery_koli_id)));
+      const { data: koliMrpRows, error: koliMrpErr } = await db.from("delivery_kolis").select("id,mrp_id").in("id", allKoliIds);
+      if (koliMrpErr) throw new Error(`Gagal memvalidasi MRP asal koli sebelum reset MRP ${mrpId}: ${koliMrpErr.message}`);
+      const mrpIdByKoli = new Map((koliMrpRows ?? []).map((r) => [r.id, r.mrp_id]));
+      const crossReceiptIds = new Set(
+        (allKolisInCandidates ?? []).filter((r) => mrpIdByKoli.get(r.delivery_koli_id) !== mrpId).map((r) => r.warehouse_receipt_id)
+      );
+      if (crossReceiptIds.size > 0) {
+        throw new Error(
+          `Tidak bisa reset MRP ${mrpId} -- resi Warehouse ${Array.from(crossReceiptIds).join(", ")} juga berisi koli dari MRP lain (dikirim gabungan). Selesaikan/pisahkan resi itu dulu secara manual sebelum reset MRP ini.`
+        );
+      }
+      warehouseReceiptIds = candidateReceiptIds;
+    }
+  }
+
+  // Tabel dengan kolom referensi TANPA FK constraint ke raw_material_invoices -- kumpulkan ID
+  // invoice-nya DI FASE VALIDASI (sebelum mrp dihapus, karena cascade bakal menghapus
+  // raw_material_invoices duluan begitu baris `mrp` dihapus di FASE HAPUS langkah terakhir).
+  const { data: rawInvoices, error: rawInvoicesErr } = await db.from("raw_material_invoices").select("id").eq("mrp_id", mrpId);
+  if (rawInvoicesErr) throw new Error(`Gagal memvalidasi invoice material sebelum reset MRP ${mrpId}: ${rawInvoicesErr.message}`);
+  const rawInvoiceIds = (rawInvoices ?? []).map((r) => r.id);
+
+  // ===== FASE HAPUS -- semua guard di atas sudah lolos, baru mulai ada operasi delete ===== //
+
+  if (affectedInvoiceIds.length > 0) {
+    const { error: delInvErr } = await db.from("vendor_invoices").delete().in("id", affectedInvoiceIds);
+    if (delInvErr) throw new Error(`Reset MRP gagal di tabel "vendor_invoices": ${delInvErr.message}`);
+  }
+
+  if (warehouseReceiptIds.length > 0) {
+    const { error: whItemsErr } = await db.from("warehouse_receipt_items").delete().in("warehouse_receipt_id", warehouseReceiptIds);
+    if (whItemsErr) throw new Error(`Reset MRP gagal di tabel "warehouse_receipt_items": ${whItemsErr.message}`);
+    const { error: whKolisErr } = await db.from("warehouse_receipt_kolis").delete().in("warehouse_receipt_id", warehouseReceiptIds);
+    if (whKolisErr) throw new Error(`Reset MRP gagal di tabel "warehouse_receipt_kolis": ${whKolisErr.message}`);
+    const { error: whReceiptsErr } = await db.from("warehouse_receipts").delete().in("id", warehouseReceiptIds);
+    if (whReceiptsErr) throw new Error(`Reset MRP gagal di tabel "warehouse_receipts": ${whReceiptsErr.message}`);
+  }
+
+  if (rawInvoiceIds.length > 0) {
+    const { error: photoErr } = await db.from("material_claim_photos").delete().in("invoice_id", rawInvoiceIds);
+    if (photoErr) throw new Error(`Reset MRP gagal di tabel "material_claim_photos": ${photoErr.message}`);
+    const { error: proofErr } = await db.from("invoice_payment_proofs").delete().in("invoice_id", rawInvoiceIds);
+    if (proofErr) throw new Error(`Reset MRP gagal di tabel "invoice_payment_proofs": ${proofErr.message}`);
+  }
+
+  const { error: claimHistErr } = await db.from("material_claim_history").delete().eq("mrp_id", mrpId);
+  if (claimHistErr) throw new Error(`Reset MRP gagal di tabel "material_claim_history": ${claimHistErr.message}`);
+
+  // Hapus baris mrp TERAKHIR -- cascade FK (ON DELETE CASCADE, lihat migration 0001 dkk) otomatis
+  // menghapus lengan_groups, aduan_pola_rows, material_rows, material_pos, maklon_pos,
+  // raw_material_invoices, maklon_invoices, production_batches, production_results,
+  // production_group_meta, delivery_kolis, dan vendor_invoice_lines milik MRP ini.
+  const { error: mrpErr } = await db.from("mrp").delete().eq("id", mrpId);
+  if (mrpErr) throw new Error(`Reset MRP gagal di tabel "mrp": ${mrpErr.message}`);
+}
+
+/** Item revisi 2026-09-13 (owner-reported, security review): snapshot penuh ini dulu dikirim APA
+ *  ADANYA ke SIAPA PUN yang punya sesi valid -- termasuk sesi Vendor Produksi eksternal. Beberapa
+ *  tabel Master Data (harga maklon/kain/kain PKS, harga jual item -- semua data costing/margin
+ *  INTERNAL) sama sekali tidak dipakai di halaman vendor manapun (diverifikasi lewat grep
+ *  menyeluruh app/vendor-maklon/**), tapi tetap ikut terkirim ke browser vendor lewat snapshot
+ *  ini. Sekarang di-strip KHUSUS untuk sesi vendor, di level SERVER (bukan disembunyikan di UI
+ *  doang) -- supaya datanya memang tidak pernah keluar ke browser vendor sama sekali.
+ *  `ekspedisiRates` SENGAJA TIDAK di-strip -- itu dipakai LIVE di halaman Pengiriman vendor
+ *  (dropdown ekspedisi + kalkulasi ongkir yang ditampilkan ke vendor), beda dari 4 tabel costing
+ *  internal di atas. Sesi internal (Procurement/Finance/dst) TIDAK terpengaruh sama sekali --
+ *  tetap dapat snapshot penuh seperti sebelumnya, CRUD Master Data (addHargaMaklonRowAction dkk)
+ *  juga tidak disentuh sama sekali (fungsi terpisah, independen dari sini).
+ *
+ *  BUG FIX 2026-09-14 (owner-reported: "% HPP & Harga Jual tidak muncul" -- padahal data Master
+ *  Data-nya ada): kondisi di atas cuma cek `session.vendorId` TANPA mempertimbangkan `session.
+ *  internalRoles` -- padahal cookie internal (`erp_internal_session`) dan cookie vendor
+ *  (`erp_vendor_session`) SENGAJA TERPISAH TOTAL & BISA HIDUP BERSAMAAN di 1 browser (lihat
+ *  catatan desain di lib/auth/session.ts -- ini memang didukung untuk skenario 1 browser dipakai
+ *  gonta-ganti banyak role/vendor buat testing). Akibatnya: user yang login sebagai Finance TAPI
+ *  browser-nya masih menyimpan cookie vendor LAMA dari sesi testing sebelumnya (belum expired/
+ *  logout) ikut kena strip juga -- padahal dia jelas-jelas staff internal yang sedang aktif di
+ *  halaman Finance. Sekarang cuma di-strip kalau BENAR-BENAR sesi vendor MURNI (tidak punya role
+ *  internal apa pun sama sekali) -- begitu ada 1 saja internal role aktif, snapshot penuh tetap
+ *  dikirim (sesuai jaminan komentar di atas: "sesi internal TIDAK terpengaruh sama sekali"). */
+export async function getFlowSnapshotAction() {
+  const session = await requireSession();
+  const snapshot = await getFlowSnapshot();
+  if (session.vendorId && session.internalRoles.length === 0) {
+    return { ...snapshot, hargaMaklon: [], hargaKain: [], hargaKainPks: [], itemSellingPrices: [] };
+  }
+  return snapshot;
+}
+
+// =========================================================================
+// Master Data CRUD (lib/mrp/masterData.ts) -- satu tabel per fungsi, tanpa business logic,
+// dipakai halaman Master Data (add/update/delete satu baris) & tombol "Import dari Google
+// Sheets" (replaceX -- ganti SELURUH tabel, bukan merge, persis perilaku lama).
+// =========================================================================
+import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaMaklonRow, KerahMansetSettingRow, SupplierRow } from "./masterData";
+
+async function requireMasterDataRole() {
+  const session = await requireSession();
+  if (!session.internalRoles.some((r) => r === "procurement" || r === "finance")) {
+    throw new Error("Forbidden: Master Data hanya bisa diubah dari modul Procurement/Finance.");
+  }
+}
+
+// BUG FIX 2026-09-12 (user-reported: edit Master Data "balik lagi" ke nilai lama setelah refresh):
+// SEMUA fungsi CRUD Master Data di bawah ini sebelumnya tidak pernah mengecek `{ error }` dari
+// balasan Supabase (`.update()`/`.insert()`/`.delete()` client Supabase TIDAK throw sendiri kalau
+// gagal -- selalu resolve dengan `{ data, error }`, error-nya harus dicek manual). Efeknya: kalau
+// panggilan ke Supabase gagal (mis. network flaky -- lihat catatan ECONNRESET di getFlowSnapshot),
+// fungsi ini tetap "sukses" (promise resolve tanpa throw), jadi store.ts (yang HANYA rollback +
+// window.alert kalau action ini throw) tidak pernah tahu update-nya sebenarnya gagal -- baris
+// optimistic di UI kelihatan sudah berubah, tapi begitu halaman di-refresh dan snapshot asli
+// dari Supabase di-fetch ulang, nilai lama muncul lagi (kelihatan seperti "edit hilang sendiri").
+// Sekarang setiap panggilan Supabase di sini dicek errornya dan di-throw dengan pesan jelas, sama
+// seperti pola actions.ts lain (mis. finalizeHppForInvoiceAction lama, replaceHargaKainAction dst).
+export async function addHargaMaklonRowAction(): Promise<void> {
+  await requireMasterDataRole();
+  const id = await nextReadableId("HMKL");
+  const { error } = await supabaseServer().from("harga_maklon").insert({ id, kode_vendor: "", nama_vendor: "", tipe_lengan: "PDK", jenis_harga: "Standar", harga: 0 });
+  if (error) throw new Error(error.message);
+}
+export async function updateHargaMaklonRowAction(id: string, patch: Partial<HargaMaklonRow>): Promise<void> {
+  await requireMasterDataRole();
+  const p: Record<string, unknown> = {};
+  if (patch.kodeVendor !== undefined) p.kode_vendor = patch.kodeVendor;
+  if (patch.namaVendor !== undefined) p.nama_vendor = patch.namaVendor;
+  if (patch.tipeLengan !== undefined) p.tipe_lengan = patch.tipeLengan;
+  if (patch.jenisHarga !== undefined) p.jenis_harga = patch.jenisHarga;
+  if (patch.kapasitasMin !== undefined) p.kapasitas_min = patch.kapasitasMin;
+  if (patch.kapasitasMax !== undefined) p.kapasitas_max = patch.kapasitasMax;
+  if (patch.harga !== undefined) p.harga = patch.harga;
+  const { error } = await supabaseServer().from("harga_maklon").update(p).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+export async function deleteHargaMaklonRowAction(id: string): Promise<void> {
+  await requireMasterDataRole();
+  const { error } = await supabaseServer().from("harga_maklon").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+export async function replaceHargaMaklonAction(rows: HargaMaklonRow[]): Promise<void> {
+  await requireMasterDataRole();
+  const db = supabaseServer();
+  const del = await db.from("harga_maklon").delete().neq("id", "");
+  if (del.error) throw new Error(del.error.message);
+  if (rows.length === 0) return;
+  const ids = await Promise.all(rows.map(() => nextReadableId("HMKL")));
+  const { error } = await db.from("harga_maklon").insert(
+    rows.map((r, i) => ({ id: ids[i], kode_vendor: r.kodeVendor, nama_vendor: r.namaVendor, tipe_lengan: r.tipeLengan, jenis_harga: r.jenisHarga, kapasitas_min: r.kapasitasMin ?? null, kapasitas_max: r.kapasitasMax ?? null, harga: r.harga }))
+  );
+  if (error) throw new Error(error.message);
+}
+
+export async function addHargaKainRowAction(): Promise<void> {
+  await requireMasterDataRole();
+  const id = await nextReadableId("HKAIN");
+  const { error } = await supabaseServer().from("harga_kain").insert({ id, kode_supplier: "", nama_supplier: "", kategori: "", warna: "", harga_per_kg: 0 });
+  if (error) throw new Error(error.message);
+}
+export async function updateHargaKainRowAction(id: string, patch: Partial<HargaKainRow>): Promise<void> {
+  await requireMasterDataRole();
+  const p: Record<string, unknown> = {};
+  if (patch.kodeSupplier !== undefined) p.kode_supplier = patch.kodeSupplier;
+  if (patch.namaSupplier !== undefined) p.nama_supplier = patch.namaSupplier;
+  if (patch.kategori !== undefined) p.kategori = patch.kategori;
+  if (patch.warna !== undefined) p.warna = patch.warna;
+  if (patch.hargaPerKg !== undefined) p.harga_per_kg = patch.hargaPerKg;
+  const { error } = await supabaseServer().from("harga_kain").update(p).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+export async function deleteHargaKainRowAction(id: string): Promise<void> {
+  await requireMasterDataRole();
+  const { error } = await supabaseServer().from("harga_kain").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+export async function replaceHargaKainAction(rows: HargaKainRow[]): Promise<void> {
+  await requireMasterDataRole();
+  const db = supabaseServer();
+  const del = await db.from("harga_kain").delete().neq("id", "");
+  if (del.error) throw new Error(del.error.message);
+  if (rows.length === 0) return;
+  const ids = await Promise.all(rows.map(() => nextReadableId("HKAIN")));
+  const { error } = await db.from("harga_kain").insert(rows.map((r, i) => ({ id: ids[i], kode_supplier: r.kodeSupplier, nama_supplier: r.namaSupplier, kategori: r.kategori, warna: r.warna, harga_per_kg: r.hargaPerKg })));
+  if (error) throw new Error(error.message);
+}
+
+export async function addHargaKainPksRowAction(): Promise<void> {
+  await requireMasterDataRole();
+  const id = await nextReadableId("HKPKS");
+  const { error } = await supabaseServer().from("harga_kain_pks").insert({ id, kode_supplier: "", kategori: "", warna: "", satuan: "TON", harga_per_kg: 0 });
+  if (error) throw new Error(error.message);
+}
+export async function updateHargaKainPksRowAction(id: string, patch: Partial<HargaKainPksRow>): Promise<void> {
+  await requireMasterDataRole();
+  const p: Record<string, unknown> = {};
+  if (patch.kodeSupplier !== undefined) p.kode_supplier = patch.kodeSupplier;
+  if (patch.kategori !== undefined) p.kategori = patch.kategori;
+  if (patch.warna !== undefined) p.warna = patch.warna;
+  if (patch.satuan !== undefined) p.satuan = patch.satuan;
+  if (patch.tonaseMin !== undefined) p.tonase_min = patch.tonaseMin;
+  if (patch.tonaseMax !== undefined) p.tonase_max = patch.tonaseMax;
+  if (patch.hargaPerKg !== undefined) p.harga_per_kg = patch.hargaPerKg;
+  const { error } = await supabaseServer().from("harga_kain_pks").update(p).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+export async function deleteHargaKainPksRowAction(id: string): Promise<void> {
+  await requireMasterDataRole();
+  const { error } = await supabaseServer().from("harga_kain_pks").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+export async function replaceHargaKainPksAction(rows: HargaKainPksRow[]): Promise<void> {
+  await requireMasterDataRole();
+  const db = supabaseServer();
+  const del = await db.from("harga_kain_pks").delete().neq("id", "");
+  if (del.error) throw new Error(del.error.message);
+  if (rows.length === 0) return;
+  const ids = await Promise.all(rows.map(() => nextReadableId("HKPKS")));
+  const { error } = await db
+    .from("harga_kain_pks")
+    .insert(rows.map((r, i) => ({ id: ids[i], kode_supplier: r.kodeSupplier, kategori: r.kategori, warna: r.warna, satuan: r.satuan, tonase_min: r.tonaseMin ?? null, tonase_max: r.tonaseMax ?? null, harga_per_kg: r.hargaPerKg })));
+  if (error) throw new Error(error.message);
+}
+
+export async function addEntitasAction(nama: string): Promise<void> {
+  await requireMasterDataRole();
+  const id = await nextReadableId("ENT");
+  const { error } = await supabaseServer().from("entitas").insert({ id, nama });
+  if (error) throw new Error(error.message);
+}
+export async function updateEntitasAction(id: string, nama: string): Promise<void> {
+  await requireMasterDataRole();
+  const { error } = await supabaseServer().from("entitas").update({ nama }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+export async function deleteEntitasAction(id: string): Promise<void> {
+  await requireMasterDataRole();
+  const { error } = await supabaseServer().from("entitas").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+export async function replaceEntitasAction(rows: EntitasRow[]): Promise<void> {
+  await requireMasterDataRole();
+  const db = supabaseServer();
+  const del = await db.from("entitas").delete().neq("id", "");
+  if (del.error) throw new Error(del.error.message);
+  if (rows.length === 0) return;
+  const ids = await Promise.all(rows.map(() => nextReadableId("ENT")));
+  const { error } = await db.from("entitas").insert(rows.map((r, i) => ({ id: ids[i], nama: r.nama })));
+  if (error) throw new Error(error.message);
+}
+
+export async function addSupplierAction(nama: string): Promise<void> {
+  await requireMasterDataRole();
+  const id = await nextReadableId("SUP");
+  const { error } = await supabaseServer().from("suppliers").insert({ id, nama });
+  if (error) throw new Error(error.message);
+}
+export async function updateSupplierAction(id: string, nama: string): Promise<void> {
+  await requireMasterDataRole();
+  const { error } = await supabaseServer().from("suppliers").update({ nama }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+export async function deleteSupplierAction(id: string): Promise<void> {
+  await requireMasterDataRole();
+  const { error } = await supabaseServer().from("suppliers").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+export async function replaceSupplierAction(rows: SupplierRow[]): Promise<void> {
+  await requireMasterDataRole();
+  const db = supabaseServer();
+  const del = await db.from("suppliers").delete().neq("id", "");
+  if (del.error) throw new Error(del.error.message);
+  if (rows.length === 0) return;
+  const ids = await Promise.all(rows.map(() => nextReadableId("SUP")));
+  const { error } = await db.from("suppliers").insert(rows.map((r, i) => ({ id: ids[i], nama: r.nama })));
+  if (error) throw new Error(error.message);
+}
+
+// Master Data "Ekspedisi" (tarif ongkir flat per kg, DIPAKAI LIVE, lihat masterData.ts) -- tanpa
+// replaceXAction (tidak ada import Google Sheets untuk tabel ini, lihat spec).
+export async function addEkspedisiRateAction(): Promise<void> {
+  await requireMasterDataRole();
+  const id = await nextReadableId("EKS");
+  // Placeholder nama = id itu sendiri (bukan "") -- constraint unique(nama) di DB akan menolak 2
+  // baris kosong sekaligus kalau user klik "+ Tambah baris" berulang sebelum mengisi nama asli.
+  const { error } = await supabaseServer().from("ekspedisi_rates").insert({ id, nama: id, price_per_kg: 0 });
+  if (error) throw new Error(error.message);
+}
+export async function updateEkspedisiRateAction(id: string, patch: Partial<EkspedisiRateRow>): Promise<void> {
+  await requireMasterDataRole();
+  const p: Record<string, unknown> = {};
+  if (patch.nama !== undefined) p.nama = patch.nama;
+  if (patch.pricePerKg !== undefined) p.price_per_kg = patch.pricePerKg;
+  const { error } = await supabaseServer().from("ekspedisi_rates").update(p).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+export async function deleteEkspedisiRateAction(id: string): Promise<void> {
+  await requireMasterDataRole();
+  const { error } = await supabaseServer().from("ekspedisi_rates").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+// Master Data "Kerah/Manset" (konversi pcs->kg + harga/kg, GLOBAL, migration 0036) -- SELALU
+// PERSIS 2 baris (KERAH & MANSET), tidak ada add/delete, cuma update.
+export async function updateKerahMansetSettingAction(kind: "KERAH" | "MANSET", patch: Partial<Pick<KerahMansetSettingRow, "kgPerPcs" | "hargaPerKg">>): Promise<void> {
+  await requireMasterDataRole();
+  const p: Record<string, unknown> = {};
+  if (patch.kgPerPcs !== undefined) p.kg_per_pcs = patch.kgPerPcs;
+  if (patch.hargaPerKg !== undefined) p.harga_per_kg = patch.hargaPerKg;
+  const { error } = await supabaseServer().from("kerah_manset_settings").update(p).eq("kind", kind);
+  if (error) throw new Error(error.message);
+}

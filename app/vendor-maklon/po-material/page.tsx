@@ -1,0 +1,252 @@
+"use client";
+
+import { AppShell } from "@/components/shell/app-shell";
+import { StatusPill } from "@/components/ui/status-pill";
+import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
+import { useMrpStore } from "@/lib/mrp/store";
+import { addDays, formatDate, invoiceBadge, receivedNotYetProducedRows } from "@/lib/mrp/derive";
+import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import type { Lengan, RawMaterialInvoice } from "@/lib/mrp/types";
+// Item revisi 2026-09-06: vendor produksi sekarang bisa lihat/download bukti PV & bukti
+// pembayaran untuk PO material tujuannya sendiri -- dulu tidak ada sama sekali di halaman ini.
+// buktiPvDataUrl/buktiPvFileName sudah ada di snapshot (tidak perlu fetch tambahan); bukti
+// pembayaran TETAP fetch on-demand (getInvoicePaymentProofAction, sekarang juga mengizinkan
+// vendor tujuan invoice-nya sendiri -- lihat lib/mrp/actions.ts).
+import { getInvoicePaymentProofAction } from "@/lib/mrp/actions";
+// Revisi 2026-09-08 (bug fix popup blocked): openPreviewWindow/fillPreviewWindow -- lihat
+// catatan panjang di lib/mrp/clientFiles.ts.
+import { viewAndDownloadFile, openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
+
+async function viewPaymentProof(invoiceId: string) {
+  const win = openPreviewWindow();
+  try {
+    const proof = await getInvoicePaymentProofAction(invoiceId);
+    if (!proof) {
+      win?.close();
+      return;
+    }
+    fillPreviewWindow(win, proof.dataUrl);
+  } catch (err) {
+    win?.close();
+    throw err;
+  }
+}
+
+const REMARK_BY_STATUS: Record<string, string> = {
+  WAITING_INVOICE: "Menunggu invoice supplier",
+  INVOICED: "Menunggu payment",
+  PAID: "Menunggu dikirim procurement",
+  DELIVERY: "Menunggu diterima",
+  RECEIVING: "Sedang diterima",
+  WAITING_PRODUCTION: "Siap dipakai produksi",
+  PRODUCTION_DONE: "Sudah dipakai produksi",
+};
+
+type Row = {
+  key: string;
+  mrpId: string;
+  poId: string;
+  supplier: string;
+  warna: string;
+  // Rincian per warna/lengan (dipakai buat baris expand DataTable) -- `warna` di atas cuma
+  // string gabungan buat kolom ringkas, `roll` juga TOTAL gabungan semua warna dalam baris ini
+  // (bisa nyampur "warna A berapa roll, warna B berapa roll" jadi satu angka kalau tidak
+  // dipecah lagi di sini).
+  colorDetail: { warna: string; lengan: Lengan; roll: number }[];
+  roll: number;
+  rollReceiving: number;
+  rollProduksi: number;
+  rollSisa: number;
+  status: string;
+  deliveredAt?: string;
+  receivedAt?: string;
+  productionStart?: string;
+  invoiceId?: string;
+  buktiPvDataUrl?: string;
+  buktiPvFileName?: string;
+  buktiBayarAt?: string;
+  buktiBayarFileName?: string;
+};
+
+function PoMaterialContent({ vendorId }: { vendorId: string }) {
+  const materialPOs = useMrpStore((s) => s.materialPOs);
+  const invoices = useMrpStore((s) => s.invoices);
+  const productionBatches = useMrpStore((s) => s.productionBatches);
+
+  const myPOs = materialPOs.filter((p) => p.vendorProduksi === vendorId && p.approved && p.status !== "CANCELLED");
+  const myInvoices = invoices.filter((i) => i.destinationVendor === vendorId);
+  const groupRows = receivedNotYetProducedRows(vendorId, invoices, productionBatches);
+
+  function groupFor(mrpId: string, warna: string, lengan: Lengan) {
+    return groupRows.find((g) => g.mrpId === mrpId && g.warna === warna && g.lengan === lengan);
+  }
+
+  const rows: Row[] = [
+    ...myPOs
+      .filter((p) => p.invoicedRolls < p.rollCount)
+      .map(
+        (p): Row => ({
+          key: "waiting-" + p.id,
+          mrpId: p.mrpId,
+          poId: p.id,
+          supplier: p.supplier,
+          warna: p.colorBreakdown.map((c) => `${c.warna} · ${c.lengan}`).join(", "),
+          colorDetail: p.colorBreakdown.map((c) => ({ warna: c.warna, lengan: c.lengan, roll: c.rollCount })),
+          roll: p.rollCount - p.invoicedRolls,
+          rollReceiving: 0,
+          rollProduksi: 0,
+          rollSisa: 0,
+          status: "WAITING_INVOICE",
+        })
+      ),
+    ...myInvoices.map((i): Row => {
+      // Hanya warna yang benar-benar sudah diterima (ada roll receipt) yang ditampilkan di field Warna.
+      const receivedColorEntries = i.colorEntries.filter((c) => {
+        const key = c.warna + "|" + c.lengan;
+        return (i.rollReceipts[key] ?? []).some((r) => r != null);
+      });
+      const rollReceiving = i.colorEntries.reduce((sum, c) => {
+        const key = c.warna + "|" + c.lengan;
+        return sum + (i.rollReceipts[key] ?? []).filter((r) => r != null).length;
+      }, 0);
+      const rollProduksi = receivedColorEntries.reduce((sum, c) => sum + (groupFor(i.mrpId, c.warna, c.lengan)?.used ?? 0), 0);
+      const rollSisa = receivedColorEntries.reduce((sum, c) => sum + (groupFor(i.mrpId, c.warna, c.lengan)?.remaining ?? 0), 0);
+      return {
+        key: i.id,
+        mrpId: i.mrpId,
+        poId: i.poId,
+        supplier: i.supplier,
+        warna: receivedColorEntries.length > 0 ? receivedColorEntries.map((c) => `${c.warna} · ${c.lengan}`).join(", ") : "Menunggu diterima",
+        colorDetail: i.colorEntries.map((c) => ({ warna: c.warna, lengan: c.lengan, roll: c.rolls.length })),
+        roll: i.qtyReady,
+        rollReceiving,
+        rollProduksi,
+        rollSisa,
+        status: i.status,
+        deliveredAt: i.deliveredAt,
+        receivedAt: i.receivedAt,
+        productionStart: i.productionStart,
+        invoiceId: i.id,
+        buktiPvDataUrl: i.buktiPvDataUrl,
+        buktiPvFileName: i.buktiPvFileName,
+        buktiBayarAt: i.buktiBayarAt,
+        buktiBayarFileName: i.buktiBayarFileName,
+      };
+    }),
+  ];
+
+  // Default kolom sesuai permintaan: No. MRP (firstColumn) + Jumlah Roll, Qty Roll Receiving,
+  // Qty Roll Produksi, Tanggal Delivery, Tanggal Receiving — 5 toggleable + firstColumn = 6
+  // total. Sisanya (No PO, Supplier, Warna, Sisa roll, Status, Remark, tanggal lain) tetap ada,
+  // cuma dipindah ke toggle "Kolom".
+  const columns: ColumnDef<Row>[] = [
+    { key: "noPo", label: "No PO", default: false, render: (r) => <span className="font-mono font-medium">{r.poId}</span> },
+    { key: "supplier", label: "Supplier", default: false, render: (r) => r.supplier },
+    { key: "warna", label: "Warna", default: false, render: (r) => r.warna },
+    { key: "roll", label: "Jumlah roll", default: true, align: "right", render: (r) => r.roll + " roll" },
+    { key: "rollReceiving", label: "Qty roll receiving", default: true, align: "right", render: (r) => r.rollReceiving },
+    { key: "rollProduksi", label: "Qty roll produksi", default: true, align: "right", render: (r) => r.rollProduksi },
+    { key: "rollSisa", label: "Sisa roll material", default: false, align: "right", render: (r) => r.rollSisa },
+    {
+      key: "status",
+      label: "Status",
+      default: false,
+      render: (r) =>
+        r.status === "WAITING_INVOICE" ? (
+          <StatusPill tone="warning">WAITING INVOICE</StatusPill>
+        ) : (
+          <StatusPill tone={invoiceBadge(r.status as RawMaterialInvoice["status"]).tone}>{invoiceBadge(r.status as RawMaterialInvoice["status"]).label}</StatusPill>
+        ),
+    },
+    { key: "remark", label: "Remark", default: false, render: (r) => REMARK_BY_STATUS[r.status] ?? "—" },
+    {
+      key: "buktiPv",
+      label: "Bukti Invoice (PV)",
+      default: false,
+      render: (r) =>
+        r.buktiPvDataUrl ? (
+          <button onClick={() => viewAndDownloadFile(r.buktiPvDataUrl!)} className="font-sans text-[11px] font-semibold text-action-primary underline">
+            Lihat / Download
+          </button>
+        ) : (
+          <span className="font-sans text-[11px] text-text-muted">—</span>
+        ),
+    },
+    {
+      key: "buktiBayar",
+      label: "Bukti Pembayaran",
+      default: false,
+      render: (r) =>
+        r.buktiBayarAt && r.invoiceId ? (
+          <button onClick={() => viewPaymentProof(r.invoiceId!)} className="font-sans text-[11px] font-semibold text-action-primary underline">
+            Lihat / Download
+          </button>
+        ) : (
+          <span className="font-sans text-[11px] text-text-muted">—</span>
+        ),
+    },
+    { key: "tglDelivery", label: "Tanggal Delivery", default: true, render: (r) => formatDate(r.deliveredAt) },
+    { key: "tglReceiving", label: "Tanggal Receiving", default: true, render: (r) => formatDate(r.receivedAt) },
+    { key: "tglProduksi", label: "Tanggal Start Produksi", default: false, render: (r) => formatDate(r.productionStart) },
+    { key: "tglDeadline", label: "Tgl Deadline", default: false, render: (r) => (r.receivedAt ? formatDate(addDays(r.receivedAt, 7)) : "—") },
+    {
+      key: "targetDone",
+      label: "Target Done Produksi",
+      default: false,
+      render: (r) => (r.receivedAt ? formatDate(addDays(r.receivedAt, VENDOR_PRODUKSI[vendorId]?.productionLeadDays ?? 7)) : "—"),
+    },
+  ];
+
+  return (
+    <AppShell
+      role="vendorMaklon"
+      vendorId={vendorId}
+      activeHref="/vendor-maklon/po-material"
+      breadcrumb={["Dashboard", "PO Material Saya"]}
+      title="PO Material Saya"
+      subtitle={`${rows.length} baris material yang ditujukan ke vendor Anda, sudah disetujui Finance`}
+      roleOverride={VENDOR_PRODUKSI[vendorId]?.name ?? vendorId}
+      entityOverride="Vendor Produksi"
+    >
+      <DataTable
+        title="PO material tujuan saya"
+        columns={columns}
+        rows={rows}
+        keyOf={(r) => r.key}
+        firstColumnLabel="No. MRP"
+        firstColumnRender={(r) => <span className="font-mono">{r.mrpId}</span>}
+        filterDefs={[
+          { label: "No MRP", options: Array.from(new Set(rows.map((r) => r.mrpId))), test: (r, v) => r.mrpId === v },
+          { label: "No PO", options: Array.from(new Set(rows.map((r) => r.poId))), test: (r, v) => r.poId === v },
+          { label: "Status", options: Array.from(new Set(rows.map((r) => r.status))), test: (r, v) => r.status === v },
+        ]}
+        emptyText="Belum ada PO material yang disetujui Finance untuk vendor Anda."
+        renderExpanded={(r) =>
+          r.colorDetail.length === 0 ? (
+            <div className="font-sans text-[11.5px] text-text-muted">Belum ada rincian warna untuk baris ini.</div>
+          ) : (
+            <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
+              <div className="grid grid-cols-3 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                <span>Warna</span>
+                <span>Lengan</span>
+                <span className="text-right">Roll</span>
+              </div>
+              {r.colorDetail.map((c, i) => (
+                <div key={i} className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+                  <span className="font-medium">{c.warna}</span>
+                  <span>{c.lengan}</span>
+                  <span className="text-right font-mono">{c.roll}</span>
+                </div>
+              ))}
+            </div>
+          )
+        }
+      />
+    </AppShell>
+  );
+}
+
+export default function VendorPoMaterialPage() {
+  return <VendorAuthGuard>{(vendorId) => <PoMaterialContent vendorId={vendorId} />}</VendorAuthGuard>;
+}

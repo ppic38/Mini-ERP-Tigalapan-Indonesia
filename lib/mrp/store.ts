@@ -1,0 +1,1824 @@
+import { create } from "zustand";
+import type {
+  AddBuyItem,
+  AduanPolaRow,
+  ColorEntry,
+  DeliveryKoli,
+  DeliveryKoliItem,
+  Lengan,
+  LenganGroup,
+  MaklonInvoice,
+  MaklonPO,
+  MaterialClaimHistory,
+  MaterialPO,
+  MaterialRow,
+  Mrp,
+  Notification,
+  ProductionBatch,
+  ProductionGroupMeta,
+  ProductionResult,
+  ProductionYieldResolution,
+  RawMaterialInvoice,
+  Usia,
+  VendorDepositEntry,
+  VendorInvoice,
+  VendorInvoiceAdjustmentKind,
+  WarehouseReceipt,
+} from "./types";
+import type { ParsedMrpImport } from "./parseImport";
+import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaMaklonRow, ItemSellingPriceRow, KerahMansetSettingRow, SupplierRow, VendorProduksiMasterRow } from "./masterData";
+import { localDateString } from "./derive";
+import * as rawActions from "./actions";
+
+// Setiap Server Action di lib/mrp/actions.ts lempar Error("Unauthorized: ...") / Error("Forbidden:
+// ...") kalau sesi login tidak valid/kedaluwarsa/salah role (lihat requireSession/
+// requireInternalRole di lib/auth/session.ts). Tanpa penanganan ini, error itu jadi unhandled
+// promise rejection di event handler halaman -> Next.js dev overlay nge-crash SELURUH halaman
+// (bukan cuma gagal aksi yang barusan diklik).
+//
+// PERNAH dicoba pakai `new Proxy(rawActions, {...})` supaya tidak perlu ubah satu-satu di ~40
+// tempat -- TERNYATA CRASH TOTAL di production build (tidak kelihatan di `next dev`/`tsc`!):
+// export Server Action hasil bundling "use server" di production adalah properti non-writable +
+// non-configurable pada namespace modul, dan spesifikasi Proxy MEWAJIBKAN `get` trap mengembalikan
+// NILAI PERSIS SAMA untuk properti seperti itu -- Proxy saya mengembalikan fungsi WRAPPER (beda
+// referensi), jadi browser melempar
+// `TypeError: 'get' on proxy: property 'xxxAction' is a read-only and non-configurable data
+// property on the proxy target but the proxy did not return its actual value`
+// untuk SETIAP pemanggilan actions.xxxAction(...) -- akibatnya semua Server Action gagal total di
+// production walau `npm run build` & `tsc --noEmit` sama sekali tidak mendeteksinya (murni runtime
+// invariant JS, bukan type error). Diganti objek BIASA (bukan Proxy) berisi salinan tiap fungsi
+// yang sudah dibungkus try/catch -- tidak men-trap akses ke modul asli sama sekali, jadi tidak
+// kena invariant itu.
+let redirectingForAuthError = false;
+// Bug fix (2026-09-06): race condition "Tandai diterima 4 baris cepat-cepat -> 2 baris sempat
+// balik lagi jadi belum diterima, lalu balik sendiri jadi diterima". Root cause: tiap action
+// optimistic (assignMaterialSupplier, markRollArrived, dkk) memanggil backgroundRefresh() begitu
+// TULISANNYA SENDIRI selesai -- kalau user klik beberapa roll berdekatan, klik roll-3 bisa selesai
+// (server confirm) DULUAN dan langsung fetch ulang snapshot PENUH, padahal tulisan roll-4 (dari
+// klik berikutnya) masih di tengah jalan di server. Snapshot yang diambil saat itu masih versi
+// LAMA (belum ikut roll-4), dan `set()`-nya MENIMPA BALIK state Zustand -- termasuk patch
+// optimistic roll-4 yang sudah benar duluan di layar -- sampai refresh KEDUA (dipicu oleh
+// backgroundRefresh milik klik roll-4 sendiri) datang membetulkannya lagi beberapa saat kemudian.
+// Ini bukan soal 1 action tertentu, tapi soal KAPAN snapshot boleh diambil relatif ke SEMUA
+// action lain yang mungkin masih berjalan bersamaan -- makanya di-perbaiki di sini (guardAction,
+// satu-satunya titik yang membungkus SEMUA pemanggilan actions.xxxAction(...) tanpa kecuali),
+// bukan diulang manual di setiap action satu-satu. Counter di bawah menghitung "berapa banyak
+// actions.xxxAction() yang tulisannya masih berjalan SEKARANG" (getFlowSnapshotAction sengaja
+// TIDAK dihitung -- itu baca, bukan tulis, dan refresh() sendiri lewat sini juga; menghitungnya
+// bikin backgroundRefresh menunggu dirinya sendiri).
+let inFlightWriteCount = 0;
+// Fix (feedback batch 2026-09-10, item 6/10 "tombol ngeflick"): dipakai oleh refresh() di bawah
+// supaya SEMUA pemanggilnya (bukan cuma scheduleRefresh/backgroundRefresh) menunggu semua tulisan
+// yang sedang berlangsung selesai dulu sebelum fetch snapshot -- lihat catatan panjang di refresh().
+function waitForNoInFlightWrites(): Promise<void> {
+  return new Promise((resolve) => {
+    function check() {
+      if (inFlightWriteCount <= 0) {
+        resolve();
+        return;
+      }
+      setTimeout(check, 120);
+    }
+    check();
+  });
+}
+// BUG FIX 2026-09-11 (owner: "kenapa fitur reset data tidak bisa bekerja?"): `alertOnAuthError`
+// param baru -- SEBELUMNYA guardAction selalu memicu alert+redirect untuk SEMUA action begitu
+// errornya "Unauthorized"/"Forbidden", TERMASUK getFlowSnapshotAction (dipanggil dari
+// StoreHydrator saat mount/focus/poll -- lihat components/shell/store-hydrator.tsx). Snapshot itu
+// SENGAJA gagal diam-diam di halaman publik (mis. "/" sebelum login sama sekali) -- komentar
+// store-hydrator.tsx sendiri bilang begitu -- tapi guardAction MENYELA error itu duluan sebelum
+// sempat sampai ke `.catch(() => {})` milik StoreHydrator, jadi malah muncul alert "sesi
+// kedaluwarsa" + `window.location.href = "/"` di halaman "/" itu SENDIRI -- yang karena sudah di
+// "/", ganti jadi RELOAD, me-remount StoreHydrator, memicu fetchNow(force=true) lagi, Unauthorized
+// lagi, alert lagi -- infinite reload loop tiap kunjungan anonim/sesi kedaluwarsa, bukan cuma soal
+// reset data (tapi bikin apa pun yang butuh sesi valid, termasuk klik "Reset data" sendiri, terasa
+// "tidak bekerja" karena halaman keburu reload sebelum aksinya sempat diproses). Sekarang
+// getFlowSnapshotAction TIDAK memicu alert -- errornya di-throw apa adanya, dibiarkan diserap
+// pemanggilnya sendiri (StoreHydrator/scheduleRefresh, keduanya sudah py try/catch sendiri).
+// Action LAIN (termasuk resetAllAction) TETAP memicu alert seperti sebelumnya -- itu memang
+// signal yang benar kalau sesi mati DI TENGAH pemakaian aktif.
+function guardAction<Args extends unknown[], R>(
+  fn: (...args: Args) => Promise<R>,
+  countInFlight: boolean,
+  alertOnAuthError: boolean
+): (...args: Args) => Promise<R> {
+  return async (...args: Args) => {
+    if (countInFlight) inFlightWriteCount++;
+    try {
+      return await fn(...args);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (alertOnAuthError && typeof window !== "undefined" && (message.startsWith("Unauthorized") || message.startsWith("Forbidden"))) {
+        // Aksi yang gagal biasanya diikuti get().refresh() (juga dibungkus guardAction) -- tanpa
+        // guard ini, refresh() akan gagal dengan error sesi yang SAMA lagi dan memicu alert +
+        // redirect kedua. Cukup sekali per navigasi.
+        if (!redirectingForAuthError) {
+          redirectingForAuthError = true;
+          window.alert("Sesi login Anda sudah tidak valid/kedaluwarsa. Anda akan diarahkan ke halaman login ulang.");
+          window.location.href = "/";
+        }
+        return undefined as R;
+      }
+      throw err;
+    } finally {
+      if (countInFlight) inFlightWriteCount--;
+    }
+  };
+}
+
+const actions = Object.fromEntries(
+  Object.entries(rawActions).map(([key, fn]) => [
+    key,
+    guardAction(fn as (...args: unknown[]) => Promise<unknown>, key !== "getFlowSnapshotAction", key !== "getFlowSnapshotAction"),
+  ])
+) as typeof rawActions;
+
+export type MrpDates = {
+  created: string;
+  ppicSubmitted?: string;
+  ppicApproved?: string;
+  poSent?: string;
+  poApproved?: string;
+  firstInvoice?: string;
+  firstPayment?: string;
+};
+
+export type PpicApprovalStatus = "DRAFT" | "WAITING_PPIC_APPROVAL" | "PPIC_APPROVED" | "REJECTED";
+
+export type MrpDetail = {
+  mrp: Mrp;
+  lenganGroups: LenganGroup[];
+  aduanRows: AduanPolaRow[];
+  materialRows: MaterialRow[];
+  poSent: boolean;
+  dates: MrpDates;
+  ppicApproval: PpicApprovalStatus;
+  ppicRejectionNote?: string;
+};
+
+export type FlowState = {
+  mrpDetails: MrpDetail[];
+  staticMrps: Mrp[];
+  materialPOs: MaterialPO[];
+  maklonPOs: MaklonPO[];
+  invoices: RawMaterialInvoice[];
+  maklonInvoices: MaklonInvoice[];
+  productionBatches: ProductionBatch[];
+  productionResults: ProductionResult[];
+  deliveryKolis: DeliveryKoli[];
+  vendorInvoices: VendorInvoice[];
+  /** Spec Portal Warehouse (migration 0031) -- arsip penerimaan gudang, 1 entri = 1 resi group
+   *  yang sudah "Bongkar" (lihat receiveWarehouseResiGroupAction). */
+  warehouseReceipts: WarehouseReceipt[];
+  notifications: Notification[];
+  productionGroupMeta: ProductionGroupMeta[];
+  rejectRemarks: Record<string, string>;
+  materialClaimResolutions: Record<string, { note: string; resolvedAt: string }>;
+  materialClaimReturRequests: Record<string, { note: string; requestedAt: string }>;
+  /** Procurement menandai roll pengganti (hasil "Minta Retur") sudah dikirim ke vendor — tahap
+   *  antara "Retur diminta" dan vendor benar2 timbang ulang di Cutting (lihat
+   *  markMaterialClaimReturDeliveredAction). */
+  materialClaimReturDeliveries: Record<string, { note: string; deliveredAt: string }>;
+  /** Vendor mengonfirmasi roll pengganti sudah diterima fisik — dicatat terpisah dari timbang
+   *  ulang karena konfirmasi terima bisa duluan sebelum sempat ditimbang (lihat
+   *  confirmMaterialClaimReturReceivedAction). */
+  materialClaimReturReceipts: Record<string, { receivedAt: string }>;
+  /** Procurement menandai klaim sudah DITERIMA (step 1 dari flow bertahap 2026-09-11, sebelum
+   *  "Buat PV Pengganti" bisa diklik) -- lihat acceptMaterialClaimAction. Stage KLAIM_DITERIMA. */
+  materialClaimAcceptances: Record<string, { acceptedAt: string }>;
+  /** Procurement sudah membuat PV pengganti untuk klaim ini (step 2) TAPI belum menandai
+   *  "Sudah Dikirim" (step 3) -- lihat createClaimReplacementInvoiceAction &
+   *  markClaimReplacementShippedAction. Stage PV_DIBUAT; `invoiceId` dipakai UI untuk menampilkan
+   *  nomor PV pengganti & status pembayarannya (dari `invoices`). */
+  materialClaimReplacements: Record<string, { invoiceId: string; at: string }>;
+  /** Arsip/histori permanen tiap siklus klaim selisih berat, termasuk yang SUDAH SELESAI (auto
+   *  atau manual) -- lihat migration 0011_material_claim_history.sql & tab "Riwayat/Arsip" di
+   *  app/procurement/material-claims/page.tsx. Beda dari materialClaimResolutions/
+   *  materialClaimReturRequests/dst di atas (yang cuma menyimpan status TERAKHIR untuk klaim yang
+   *  MASIH AKTIF, langsung di kolom raw_material_invoice_rolls) -- begitu klaim tuntas & roll
+   *  ditimbang ulang, kolom-kolom itu di-null-kan lagi (supaya roll_index yang sama bisa mulai
+   *  bersih kalau kena klaim lagi), jadi tidak ada jejak historis di sana. */
+  materialClaimHistory: MaterialClaimHistory[];
+  /** Ledger saldo deposit vendor (per supplier, fungible) -- lihat VendorDepositEntry di types.ts
+   *  & vendorDepositBalance/vendorDepositEntriesFor di derive.ts. */
+  vendorDeposits: VendorDepositEntry[];
+  /** Keyed by ProductionBatch.id — resolusi alert yield <99% (lihat productionYieldAlertsList di
+   *  derive.ts), ditindaklanjuti dari portal internal Produksi (bukan Procurement). */
+  productionYieldResolutions: Record<string, ProductionYieldResolution>;
+  hargaMaklon: HargaMaklonRow[];
+  hargaKain: HargaKainRow[];
+  hargaKainPks: HargaKainPksRow[];
+  entitasList: EntitasRow[];
+  supplierList: SupplierRow[];
+  /** Tarif ongkir ekspedisi, flat per kg -- DIPAKAI LIVE (lihat EkspedisiRateRow di masterData.ts)
+   *  oleh ekspedisiPrice/koliOngkirShare (derive.ts), bukan cuma data referensi seperti hargaMaklon
+   *  dkk di atas. */
+  ekspedisiRates: EkspedisiRateRow[];
+  /** Harga jual per item (kategori/warna/lengan/size), di-seed SEKALI dari Item Library Tigalapan
+   *  (lihat ItemSellingPriceRow di masterData.ts, migration 0035) -- dipakai untuk menghitung kolom
+   *  "% HPP" di Laporan HPP (Finance). READ-ONLY, tidak ada action CRUD untuk field ini. */
+  itemSellingPrices: ItemSellingPriceRow[];
+  /** Master Data "Kerah/Manset" (konversi qty PCS -> kg + harga/kg, GLOBAL, migration 0036) --
+   *  SELALU PERSIS 2 baris (KERAH & MANSET), tidak ada add/delete. DIPAKAI LIVE oleh
+   *  `parseMrpImportFile` (konversi qty pcs mentah dari kolom Excel KERAH/MANSET jadi kg sungguhan
+   *  saat import MRP kategori WANGKI MYNO) & PO Approval (estimasi nominal Rp, PURELY DISPLAY). */
+  kerahMansetSettings: KerahMansetSettingRow[];
+  /** Kategori & kapasitas produksi PER MINGGU asli tiap vendor produksi (dari spreadsheet
+   *  Procurement, lihat migration 0019_vendor_kapasitas_asli.sql) -- sumber utama untuk
+   *  `vendorProduksiRows` (derive.ts) & kolom "Qty vs Kapasitas" di portal vendor
+   *  (app/vendor-maklon/po-produksi/page.tsx). Field lain vendor (ratePerPc, estDays, dst.) TETAP
+   *  di VENDOR_PRODUKSI (lib/mrp/seed.ts), tidak ikut pindah ke sini. */
+  vendorProduksiList: VendorProduksiMasterRow[];
+  /** True selama snapshot AWAL belum selesai di-fetch dari Supabase (lihat StoreHydrator di
+   *  components/shell/store-hydrator.tsx). Halaman-halaman bisa pakai ini untuk skeleton/loading
+   *  state kalau perlu -- opsional, tidak wajib dicek. */
+  hydrated: boolean;
+  /** True selama ADA action yang sedang berjalan (lihat withBusyTracking di bawah) -- dipakai
+   *  components/shell/busy-overlay.tsx untuk nge-blok klik lain sampai selesai, supaya user
+   *  tidak klik berulang kali (mis. dobel klik "Reset data" atau "Approve") selagi request masih
+   *  diproses server. TIDAK ikut ke-trigger oleh polling/refresh background StoreHydrator (itu
+   *  manggil getFlowSnapshotAction+hydrate langsung, bukan lewat action yang di-track ini). */
+  busy: boolean;
+};
+
+// CATATAN MIGRASI SUPABASE (baca sebelum mengubah file ini):
+// Store ini DULU (sebelum migrasi) satu-satunya sumber kebenaran, di-persist ke localStorage
+// lewat zustand `persist` middleware, dan tiap action memutasi state secara LANGSUNG & SINKRON.
+// Sekarang Supabase Postgres yang jadi sumber kebenaran (lihat lib/mrp/actions.ts, Server Actions
+// yang benar-benar menulis ke database), dan store ini murni CACHE client-side:
+//   1. `hydrate(snapshot)` dipanggil sekali oleh StoreHydrator saat app mount (fetch penuh lewat
+//      getFlowSnapshotAction), dan lagi setiap kali sebuah action selesai (lihat refresh() di
+//      bawah) -- BUKAN lagi lewat window "storage" event (localStorage-only hack, sudah dihapus).
+//   2. Tiap action di FlowActions sekarang ASYNC: panggil Server Action yang sesuai (yang
+//      melakukan validasi sesi + tulis ke Supabase), lalu refresh() snapshot supaya UI reflect
+//      hasilnya. Tidak ada lagi optimistic update manual -- lebih sederhana & konsisten, walau
+//      artinya UI menunggu 1 roundtrip server sebelum berubah (trade-off yang disengaja, lihat
+//      plan migrasi).
+//   3. Business logic (splitMaterialPoByEntitas, dsb.) SUDAH PINDAH ke lib/mrp/actions.ts /
+//      lib/mrp/derive.ts -- file ini tidak boleh lagi berisi logika bisnis, cuma pemetaan
+//      "action UI" -> "Server Action" + refresh.
+//   4. SEBAGIAN action (lihat komentar `notYetMigrated` di bawah) BELUM diporting ke Supabase --
+//      dipanggil tidak error, tapi TIDAK melakukan apa-apa (cuma console.warn), supaya UI lama
+//      tidak crash sambil menunggu porting lanjutan. JANGAN anggap action-action itu berfungsi.
+type FlowActions = {
+  hydrate: (snapshot: FlowState) => void;
+  refresh: () => Promise<void>;
+
+  importMrp: (parsed: ParsedMrpImport, customId?: string) => Promise<string>;
+  assignMaterialSupplier: (mrpId: string, materialRowIds: string[], supplier: string) => Promise<void>;
+  assignMaterialEntitas: (mrpId: string, materialRowId: string, entitas: string) => Promise<void>;
+  switchAduanVendor: (mrpId: string, aduanId: string, toVendor: string) => Promise<void>;
+  approvePpicMrp: (mrpId: string) => Promise<void>;
+  rejectPpicMrp: (mrpId: string, reason: string) => Promise<void>;
+  sendPoToFinance: (mrpId: string) => Promise<void>;
+  approveMaterialPo: (id: string) => Promise<void>;
+  approveMaklonPo: (id: string) => Promise<void>;
+  bookInvoice: (
+    poId: string,
+    input: { colorEntries: ColorEntry[]; addBuys: AddBuyItem[]; diskon: number; kodeTransaksi: string; noInvoiceVendor: string; buktiPvDataUrl?: string; buktiPvFileName?: string }
+  ) => Promise<void>;
+  setInvoicesPaid: (invoiceIds: string[], paid: boolean) => Promise<void>;
+  // Item 2.6: getter-nya (getInvoicePaymentProofAction) SENGAJA tidak dilewatkan lewat store --
+  // sama seperti getMaterialClaimPhotoAction, payload-nya on-demand murni, dipanggil langsung dari
+  // komponen (lihat payment-panel.tsx / paying-voucher-material-panel.tsx).
+  setInvoicePaymentProof: (invoiceIds: string[], dataUrl: string, fileName?: string) => Promise<void>;
+  setInvoicesDelivery: (invoiceIds: string[], deliveryDate: string) => Promise<void>;
+  markRollArrived: (invoiceId: string, warna: string, lengan: Lengan, rollIndex: number, codeRoll?: string) => Promise<void>;
+  receiveRawMaterialRoll: (
+    invoiceId: string,
+    warna: string,
+    lengan: Lengan,
+    rollIndex: number,
+    netKg: number,
+    claim?: { diffKg: number; pct: number },
+    codeRoll?: string,
+    photo?: { dataUrl: string; fileName?: string }
+  ) => Promise<void>;
+  /** Item 13.2: tutup tahap "timbang" untuk sekelompok roll sekaligus (satu klik "Konfirmasi (n)"
+   *  per warna·lengan, item 14.1) -- roll yang net_kg-nya belum diisi atau masih claimable di-skip
+   *  & dilaporkan balik di `skipped`. */
+  confirmRollWeigh: (items: { invoiceId: string; warna: string; lengan: Lengan; rollIndex: number }[]) => Promise<{ confirmed: number; skipped: { invoiceId: string; warna: string; lengan: Lengan; rollIndex: number }[] }>;
+  /** Item 13 (feedback batch 2026-09-10): klaim fisik (shading/kotor/dll) untuk roll yang sudah
+   *  masuk resting -- lihat submitCuttingDefectClaimAction. */
+  submitCuttingDefectClaim: (batchIds: string[], note: string, photo: { dataUrl: string; fileName?: string }) => Promise<{ claimed: number; skipped: string[] }>;
+  startProductionBatch: (input: { mrpId: string; aduanRowId: string; qtyRoll: number; gramasi: number; restingAt: string; codeRoll?: string }) => Promise<void>;
+  // "WASTE" SENGAJA tidak termasuk di sini -- item 19: "Buang ke Sisa" (satu-satunya jalur dulu
+  // bikin entri WASTE) sudah dihapus, jadi kind di sini praktis selalu "FG"/"REJECT" saja.
+  submitProductionResult: (input: { mrpId: string; vendorProduksi: string; warna: string; lengan: Lengan; kind: "FG" | "REJECT"; sizeQty: Record<string, number>; note?: string }) => Promise<void>;
+  /** "Tutup Roll" (HPP per roll) -- lihat closeProductionBatchAction di lib/mrp/actions.ts. */
+  closeProductionBatch: (batchId: string, fgSizeQty: Record<string, number>) => Promise<void>;
+  /** "Simpan progres" (belum menutup roll) -- lihat saveFgProgressAction di lib/mrp/actions.ts. */
+  saveFgProgress: (batchId: string, sizeQty: Record<string, number>) => Promise<void>;
+  createDeliveryKoli: (input: { mrpId: string; vendorProduksi: string; ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }) => Promise<void>;
+  /** Item 2026-09-11 (migration 0026) -- lihat setKoliEkspedisiResiGroupAction di actions.ts.
+   *  Pengganti setKoliWeight/markKoliDelivered/setKoliEkspedisi lama (dihapus, cuma dipanggil dari
+   *  halaman Pengiriman yang sekarang selalu lewat 3 method grup ini). */
+  setKoliEkspedisiResiGroup: (koliIds: string[], ekspedisi: string, note: string, noResi: string, photo: { dataUrl: string; fileName?: string }) => Promise<void>;
+  /** Lihat deliverKoliResiGroupAction di actions.ts -- berat per koli + Delivery seluruh grup,
+   *  satu aksi. */
+  deliverKoliResiGroup: (items: { koliId: string; beratKoli: number }[]) => Promise<void>;
+  /** Lihat submitResiGroupInvoiceAction di actions.ts -- ganti alur "Create Invoice" manual lama
+   *  (dihapus dari invoice-vendor-panel.tsx). */
+  submitResiGroupInvoice: (koliIds: string[], rates: { mrpId: string; warna: string; lengan: Lengan; usia?: Usia; ratePerPc: number }[]) => Promise<void>;
+  createVendorInvoice: (input: { vendorProduksi: string; lines: { mrpId: string; warna: string; lengan: Lengan; usia?: Usia; qty: number; ratePerPc: number }[]; note?: string }) => Promise<void>;
+  setVendorInvoiceStatus: (invoiceId: string, status: VendorInvoice["status"]) => Promise<void>;
+  addVendorInvoiceAdjustment: (invoiceId: string, input: { kind: VendorInvoiceAdjustmentKind; label: string; amount: number; note?: string }) => Promise<void>;
+  payVendorInvoice: (invoiceId: string) => Promise<void>;
+  /** Spec Portal Warehouse — "Bongkar Koli", SELALU per resi group & SELALU utuh (Q5). Lihat
+   *  receiveWarehouseResiGroupAction di actions.ts — qty TIDAK dipercaya dari client. */
+  receiveWarehouseResiGroup: (resiGroupId: string, note?: string) => Promise<void>;
+  markNotificationRead: (id: string) => Promise<void>;
+  markAllNotificationsRead: (ids: string[]) => Promise<void>;
+  dismissNotification: (id: string) => Promise<void>;
+
+  addHargaMaklonRow: () => Promise<void>;
+  updateHargaMaklonRow: (id: string, patch: Partial<HargaMaklonRow>) => Promise<void>;
+  deleteHargaMaklonRow: (id: string) => Promise<void>;
+  replaceHargaMaklon: (rows: HargaMaklonRow[]) => Promise<void>;
+  addHargaKainRow: () => Promise<void>;
+  updateHargaKainRow: (id: string, patch: Partial<HargaKainRow>) => Promise<void>;
+  deleteHargaKainRow: (id: string) => Promise<void>;
+  replaceHargaKain: (rows: HargaKainRow[]) => Promise<void>;
+  addHargaKainPksRow: () => Promise<void>;
+  updateHargaKainPksRow: (id: string, patch: Partial<HargaKainPksRow>) => Promise<void>;
+  deleteHargaKainPksRow: (id: string) => Promise<void>;
+  replaceHargaKainPks: (rows: HargaKainPksRow[]) => Promise<void>;
+  addEntitas: (nama: string) => Promise<void>;
+  updateEntitas: (id: string, nama: string) => Promise<void>;
+  deleteEntitas: (id: string) => Promise<void>;
+  replaceEntitas: (rows: EntitasRow[]) => Promise<void>;
+  addSupplier: (nama: string) => Promise<void>;
+  updateSupplier: (id: string, nama: string) => Promise<void>;
+  deleteSupplier: (id: string) => Promise<void>;
+  replaceSupplier: (rows: SupplierRow[]) => Promise<void>;
+  addEkspedisiRateRow: () => Promise<void>;
+  updateEkspedisiRateRow: (id: string, patch: Partial<EkspedisiRateRow>) => Promise<void>;
+  deleteEkspedisiRateRow: (id: string) => Promise<void>;
+  updateKerahMansetSetting: (kind: "KERAH" | "MANSET", patch: Partial<Pick<KerahMansetSettingRow, "kgPerPcs" | "hargaPerKg">>) => Promise<void>;
+
+  setMaterialPoEntity: (poId: string, entitas: string) => Promise<void>;
+  setMaterialPoColorEntity: (poId: string, warna: string, lengan: Lengan, entitas: string) => Promise<void>;
+  approveAllMaterialPos: () => Promise<void>;
+  approveVendorMaterialPos: (mrpId: string, vendor: string) => Promise<void>;
+  closePoWithReason: (poId: string, reason: string, warna: string, lengan: Lengan, closeQty: number) => Promise<void>;
+  reassignMaterialToSupplier: (poId: string, warna: string, lengan: Lengan, moveQty: number, newSupplier: string, reason: string) => Promise<void>;
+  transferMaterial: (items: { invoiceId: string; warna: string; lengan: Lengan; qty: number }[], toVendor: string, deliveryDate: string) => Promise<void>;
+  /** Vendor produksi berhenti mid-produksi -- lihat withdrawVendorProductionAction di actions.ts. */
+  withdrawVendorProduction: (mrpId: string, fromVendor: string, toVendor: string) => Promise<void>;
+  advanceMaklonProduction: (id: string) => Promise<void>;
+  submitMaklonInvoice: (maklonPoId: string, input: { penalty: number; bonus: number; retentionPct: number; note: string }) => Promise<void>;
+  approveMaklonInvoice: (invoiceId: string) => Promise<void>;
+  payMaklonInvoice: (invoiceId: string) => Promise<void>;
+  receiveRawMaterialAddBuy: (invoiceId: string, addBuyId: string) => Promise<void>;
+  updateBatchToCutting: (batchId: string, cuttingAt: string, sizeQty?: Record<string, number>) => Promise<void>;
+  /** Versi BATCHED updateBatchToCutting -- SEMUA roll 1 grup (mis. 10 roll) dalam 1 klik "Simpan"
+   *  lewat 1 round-trip server (bukan N), optimistic PENUH (patch state SEBELUM await, pola sama
+   *  seperti markRollArrived) supaya modal Hasil Cutting bisa langsung tertutup tanpa nunggu apa
+   *  pun -- lihat saveGroup di production-cutting-tab.tsx. */
+  updateBatchesToCutting: (batchIds: string[], cuttingAt: string, sizeQtyByBatchId: Record<string, Record<string, number>>) => Promise<void>;
+  /** Item 14 (feedback batch 2026-09-10): edit resting_at untuk 1 sesi resting (beberapa batch
+   *  sekaligus, semuanya berbagi resting_at yang sama). */
+  updateBatchRestingAt: (batchIds: string[], restingAt: string) => Promise<void>;
+  resolveProductionYield: (batchId: string, note: string) => Promise<void>;
+  unresolveProductionYield: (batchId: string) => Promise<void>;
+  reworkRejectSize: (input: { mrpId: string; vendorProduksi: string; warna: string; lengan: Lengan; fromSize: string; qty: number; toLengan: Lengan; toSize: string; usia: Usia }) => Promise<void>;
+  updateDeliveryKoli: (koliId: string, patch: { ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }) => Promise<void>;
+  setVendorInvoiceDueDate: (invoiceId: string, dueDate: string) => Promise<void>;
+  setVendorInvoiceOngkir: (invoiceId: string, ongkirTotal: number) => Promise<void>;
+  /** TAHAP 1 -- "Selesai Produksi" di tab Finish Good (hitung reject, tidak mengunci rework). */
+  confirmFgDone: (groupKey: string, mrpId: string, vendorProduksi: string, warna: string, lengan: Lengan) => Promise<void>;
+  undoFgConfirm: (groupKey: string) => Promise<void>;
+  /** TAHAP 2 -- "Selesai Produksi" di tab Final Produksi (kunci final, basis on-time/delay). */
+  markProductionGroupDone: (groupKey: string, mrpId: string, vendorProduksi: string, warna: string, lengan: Lengan) => Promise<void>;
+  undoProductionGroupDone: (groupKey: string) => Promise<void>;
+  /** Item 21: "Close PO" per PO Produksi (mrpId+vendorProduksi) -- kunci SEMUA warna/lengannya
+   *  sekaligus DAN blokir Pengiriman untuk sisa FG yang belum masuk koli (item 22). */
+  closeProductionPo: (maklonPoId: string, reason: string) => Promise<void>;
+  /** Kebalikan closeProductionPo -- buka lagi gerbang Pengiriman PO ini (lihat komentar lengkap di
+   *  reopenProductionPoAction, lib/mrp/actions.ts). */
+  reopenProductionPo: (maklonPoId: string) => Promise<void>;
+  setRejectRemark: (poId: string, remark: string) => Promise<void>;
+  resolveMaterialClaim: (key: string, note: string) => Promise<void>;
+  unresolveMaterialClaim: (key: string) => Promise<void>;
+  /** Step 1 flow bertahap (2026-09-11) -- Procurement "Terima Klaim". Lihat acceptMaterialClaimAction. */
+  acceptMaterialClaim: (key: string) => Promise<void>;
+  /** Step 3 flow bertahap (2026-09-11) -- Procurement "Tandai Sudah Dikirim", sekaligus memindahkan
+   *  invoice PV pengganti dari PAID ke DELIVERY. Lihat markClaimReplacementShippedAction. */
+  markClaimReplacementShipped: (key: string) => Promise<void>;
+  requestMaterialClaimRetur: (key: string, note: string) => Promise<void>;
+  cancelMaterialClaimReturRequest: (key: string) => Promise<void>;
+  markMaterialClaimReturDelivered: (key: string, note?: string) => Promise<void>;
+  confirmMaterialClaimReturReceived: (key: string) => Promise<void>;
+  /** Revisi 2026-09-06: selesaikan klaim lewat "retur + pesan ulang" -- buat PV pengganti baru
+   *  (rate & berat TERKINI, bebas beda dari PV lama) DAN catat kredit ke saldo deposit vendor
+   *  (supplier) itu kalau nilainya lebih kecil dari yang sudah dibayar untuk roll yang diretur.
+   *  Lihat createClaimReplacementInvoiceAction & claim-replacement-modal.tsx. */
+  createClaimReplacementInvoice: (key: string, rateBaru: number, beratBaruKg: number, buktiInvoiceDataUrl?: string, buktiInvoiceFileName?: string) => Promise<string>;
+  /** Versi GABUNGAN (2026-09-14, fitur "PV Pengganti gabungan") -- >=2 klaim roll dari 1 invoice
+   *  asal yang sama sekaligus jadi 1 PV pengganti. PARALEL dengan createClaimReplacementInvoice di
+   *  atas (tidak menggantikannya). Lihat createClaimReplacementInvoiceBundleAction &
+   *  claim-replacement-bundle-modal.tsx. `ratesByWarnaLengan` key-nya `"${warna}|${lengan}"`,
+   *  `beratByKey` key-nya claim key (sama seperti `keys`). */
+  createClaimReplacementInvoiceBundle: (
+    keys: string[],
+    ratesByWarnaLengan: Record<string, number>,
+    beratByKey: Record<string, number>,
+    buktiInvoiceDataUrl?: string,
+    buktiInvoiceFileName?: string
+  ) => Promise<string>;
+  /** Pakai sebagian/semua saldo deposit vendor (supplier) untuk mengurangi pembayaran invoice yang
+   *  dipilih -- SELALU dipilih manual oleh Finance (lihat payment-panel.tsx), tidak pernah
+   *  otomatis. Validasi `amount <= saldo tersedia` diulang di server (applyVendorDepositAction). */
+  applyVendorDeposit: (supplier: string, amount: number, invoiceIds: string[], note?: string) => Promise<void>;
+  /** Hapus permanen 1 baris ledger saldo deposit -- lihat deleteVendorDepositEntryAction. */
+  deleteVendorDepositEntry: (id: string) => Promise<void>;
+  /** Hapus permanen 1 baris arsip Riwayat Klaim Material -- lihat deleteMaterialClaimHistoryAction
+   *  (dipakai untuk membersihkan baris "yatim" hasil test/reset dari sebelum resetAllAction ikut
+   *  menghapus tabel ini). */
+  deleteMaterialClaimHistory: (id: string) => Promise<void>;
+  /** Hapus semua data terkait SATU MRP saja (bukan seluruh data bisnis) -- lihat resetMrpAction.
+   *  Ganti total fitur "Reset data" lama (resetAll, dihapus). Confirm dialog WAJIB ditampilkan di
+   *  caller SEBELUM memanggil ini -- lihat app/mrp/ppic/page.tsx. */
+  resetMrp: (mrpId: string) => Promise<void>;
+};
+
+const emptyState: FlowState = {
+  mrpDetails: [],
+  staticMrps: [],
+  materialPOs: [],
+  maklonPOs: [],
+  invoices: [],
+  maklonInvoices: [],
+  productionBatches: [],
+  productionResults: [],
+  deliveryKolis: [],
+  vendorInvoices: [],
+  warehouseReceipts: [],
+  notifications: [],
+  productionGroupMeta: [],
+  rejectRemarks: {},
+  materialClaimResolutions: {},
+  materialClaimReturRequests: {},
+  materialClaimReturDeliveries: {},
+  materialClaimReturReceipts: {},
+  materialClaimAcceptances: {},
+  materialClaimReplacements: {},
+  materialClaimHistory: [],
+  vendorDeposits: [],
+  productionYieldResolutions: {},
+  hargaMaklon: [],
+  hargaKain: [],
+  hargaKainPks: [],
+  entitasList: [],
+  supplierList: [],
+  ekspedisiRates: [],
+  itemSellingPrices: [],
+  kerahMansetSettings: [],
+  vendorProduksiList: [],
+  hydrated: false,
+  busy: false,
+};
+
+function notYetMigrated(name: string) {
+  console.warn(`[mrp-store] Action "${name}" belum diporting ke Supabase pasca migrasi -- tidak melakukan apa-apa. Lihat lib/mrp/store.ts.`);
+}
+
+/** Bungkus method yang namanya ada di `BUSY_TRACKED_ACTIONS` (lihat di bawah) supaya `busy`
+ *  otomatis true selama method itu (dan `refresh()` yang dipanggil di akhirnya) masih berjalan --
+ *  dipakai components/shell/busy-overlay.tsx utk nge-blok klik lain sampai selesai. Method yang
+ *  TIDAK masuk daftar dibiarkan apa adanya (tetap async & tetap benar secara fungsional, cuma
+ *  tidak memicu overlay). Counter (bukan boolean) supaya panggilan yang saling nested (mis. action
+ *  manapun yang di dalamnya manggil get().refresh()) tetap dihitung benar -- busy baru balik false
+ *  kalau SEMUA pemanggilan yang sedang berjalan sudah selesai. Ini objek BIASA (bukan Proxy) --
+ *  lihat catatan panjang di `guardAction` di atas soal kenapa Proxy berbahaya untuk pola begini.
+ */
+// Cuma action yang (a) reset data, atau (b) benar-benar "oper" alur/data ke modul/role LAIN
+// (approve, kirim PO, booking invoice, bayar, dst.) yang dipagari lewat `busy` ini -- klik kecil
+// yang sering dipencet berkali-kali dalam satu sesi kerja (pilih entitas, tandai notifikasi
+// dibaca, edit field kecil, dst.) SENGAJA tidak, supaya tidak ada penundaan tambahan sama sekali
+// sebelum klik berikutnya diterima.
+//
+// CATATAN (revisi 2026-09-05): `busy` DULU memicu overlay penuh layar yang TERLIHAT (spinner +
+// teks "Memproses...", lihat busy-overlay.tsx) -- sekarang overlay itu dibuat transparan (fungsi
+// blokir klik-nya TETAP SAMA PERSIS, cuma tidak lagi terlihat user). Jadi daftar di bawah ini
+// sekarang murni soal PENCEGAHAN DOBEL-KLIK, bukan lagi soal "action mana yang layak bikin user
+// menunggu terlihat" -- semua action tetap benar-benar menunggu tulisannya selesai (tidak berubah
+// jadi optimistic), cuma penundaan itu tidak lagi ditampilkan ke user.
+const BUSY_TRACKED_ACTIONS = new Set<string>([
+  "resetMrp",
+  "approvePpicMrp",
+  "rejectPpicMrp",
+  "sendPoToFinance",
+  "approveMaterialPo",
+  "approveAllMaterialPos",
+  "approveVendorMaterialPos",
+  "approveMaklonPo",
+  "bookInvoice",
+  "setInvoicesPaid",
+  "setInvoicePaymentProof",
+  "setInvoicesDelivery",
+  "approveMaklonInvoice",
+  "payMaklonInvoice",
+  "createVendorInvoice",
+  "setVendorInvoiceStatus",
+  "payVendorInvoice",
+  "transferMaterial",
+  "withdrawVendorProduction",
+  "closePoWithReason",
+  "reassignMaterialToSupplier",
+  "createDeliveryKoli",
+  // Item 2026-09-11 (migration 0026): "markKoliDelivered" (aksi lama, dihapus) diganti
+  // "deliverKoliResiGroup" -- handoff signifikan yang sama (koli resmi "berangkat"), tetap
+  // busy-tracked. "submitResiGroupInvoice" BARU (ganti alur "Create Invoice" manual lama yang
+  // sebelumnya lewat "createVendorInvoice", juga busy-tracked) -- sama-sama "oper" data ke modul
+  // lain (Procurement/Finance), jadi ikut daftar ini.
+  "deliverKoliResiGroup",
+  "submitResiGroupInvoice",
+  "closeProductionPo",
+  "reopenProductionPo",
+]);
+
+function withBusyTracking<T extends Record<string, unknown>>(set: Setter, obj: T): T {
+  let counter = 0;
+  const wrapped: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (typeof value !== "function" || !BUSY_TRACKED_ACTIONS.has(key)) {
+      wrapped[key] = value;
+      continue;
+    }
+    wrapped[key] = async (...args: unknown[]) => {
+      counter++;
+      set({ busy: true });
+      try {
+        return await (value as (...a: unknown[]) => unknown)(...args);
+      } finally {
+        counter--;
+        if (counter <= 0) {
+          counter = 0;
+          set({ busy: false });
+        }
+      }
+    };
+  }
+  return wrapped as T;
+}
+
+type Setter = (partial: Partial<FlowState & FlowActions>) => void;
+
+export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
+  // PERFORMA: dulu SETIAP action di bawah ini nge-`await get().refresh()` sebelum selesai -- itu
+  // artinya klik user menunggu 2 round-trip server BERURUTAN (tulis data, LALU fetch ulang
+  // SELURUH data app -- 32 tabel, ratusan KB -- via getFlowSnapshotAction) sebelum tombolnya
+  // "selesai loading". Diukur langsung ke Supabase: RPC snapshot penuh itu sendiri ~0.6-1.4 detik,
+  // di atas biaya tulis datanya -- jadi tiap klik gampang kerasa 1-2+ detik hanya dari refresh-nya
+  // saja, sebelum ditambah proses reshape & round-trip Server Action ke browser.
+  //
+  // refresh() sekarang dipanggil TANPA di-await (backgroundRefresh) di semua action -- write-nya
+  // tetap ditunggu (jadi kalau gagal, errornya tetap kelempar ke caller seperti biasa), tapi
+  // sync-ulang data TIDAK lagi memblokir selesainya klik. Ini aman karena refresh() cuma
+  // re-fetch (read-only, idempotent) lalu `set()` ke store Zustand -- komponen yang subscribe
+  // tetap otomatis re-render begitu itu selesai di background (biasanya <1 detik kemudian), tidak
+  // ada komponen manapun yang butuh state ter-refresh SEBELUM action-nya sendiri selesai (tidak
+  // ada pemanggilan `useMrpStore.getState()` sinkron setelah `await store.xxxAction(...)` di
+  // seluruh components/app -- polanya selalu subscription `useMrpStore((s) => s.x)`).
+  // Bug fix (2026-09-06, lihat catatan panjang di guardAction/inFlightWriteCount di atas):
+  // backgroundRefresh() dulu langsung fetch snapshot SAAT ITU JUGA setiap dipanggil -- kalau ada
+  // action LAIN yang tulisannya masih berjalan bersamaan (klik beberapa roll/baris berdekatan),
+  // snapshot yang diambil bisa "separuh jalan" dan menimpa balik patch optimistic tulisan itu
+  // sampai refresh berikutnya (milik action itu sendiri) datang membetulkannya lagi -- gejalanya:
+  // status sempat "flicker" balik ke lama sebelum benar lagi. Sekarang backgroundRefresh cuma
+  // MENJADWALKAN (debounce singkat, coalesce beberapa panggilan berdekatan jadi 1 fetch), dan
+  // fetch-nya sendiri BARU benar-benar jalan begitu `inFlightWriteCount` balik ke 0 (semua tulisan
+  // yang sedang berlangsung SAAT scheduleRefresh() dievaluasi sudah selesai) -- kalau masih ada
+  // yang berjalan, coba lagi sebentar kemudian. Hasilnya: snapshot yang diambil selalu mencakup
+  // SEMUA tulisan dari klik-klik berdekatan sekaligus, bukan potongan di tengah jalan.
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  function scheduleRefresh() {
+    if (refreshTimer) return; // sudah ada 1 fetch terjadwal -- panggilan lain cukup numpang itu
+    refreshTimer = setTimeout(async () => {
+      refreshTimer = null;
+      if (inFlightWriteCount > 0) {
+        scheduleRefresh(); // masih ada tulisan lain yang belum selesai -- tunda lagi sebentar
+        return;
+      }
+      try {
+        await get().refresh();
+      } catch (err) {
+        console.warn("[mrp-store] background refresh gagal:", err);
+      }
+    }, 120);
+  }
+  function backgroundRefresh() {
+    scheduleRefresh();
+  }
+
+  return withBusyTracking(set, {
+  ...emptyState,
+
+  hydrate: (snapshot) => set({ ...snapshot, hydrated: true }),
+  // Fix (feedback batch 2026-09-10, item 6/10 "tombol ngeflick" di Good Receive & Cutting): dulu
+  // cuma jalur backgroundRefresh/scheduleRefresh (dipanggil dari action DI DALAM store ini) yang
+  // menunggu `inFlightWriteCount` balik ke 0 sebelum fetch -- StoreHydrator (components/shell/
+  // store-hydrator.tsx) memanggil refresh() ini LANGSUNG dari mount/focus/visibilitychange/poll
+  // 30 detik, sepenuhnya di luar guard itu. Kalau salah satu trigger itu (paling sering poll 30
+  // detik) kebetulan bersamaan dengan action lain yang masih menulis (mis. markRollArrived,
+  // updateBatchToCutting), snapshot yang diambil di sini bisa "separuh jalan" & menimpa balik
+  // patch optimistic action itu -- sampai backgroundRefresh MILIK action itu sendiri datang
+  // membetulkannya lagi sesaat kemudian. Itulah gejala "klik -> kelihatan belum kesimpan -> balik
+  // lagi sudah tersimpan". Sekarang refresh() ITU SENDIRI menunggu semua tulisan yang sedang
+  // berlangsung selesai dulu -- melindungi SEMUA pemanggil (StoreHydrator, login flow di
+  // internal-auth-store.ts/vendor-auth-store.ts, DAN scheduleRefresh), bukan cuma jalur
+  // backgroundRefresh yang sudah ter-guard.
+  refresh: async () => {
+    await waitForNoInFlightWrites();
+    const { busy: _snapshotBusy, ...snapshot } = await actions.getFlowSnapshotAction();
+    // `busy` SENGAJA tidak ikut di-spread -- ini flag UI lokal punya store.ts (lihat
+    // withBusyTracking), bukan bagian data server; overwrite balik pakai kosong/false dari sini
+    // akan salah kalau ada action LAIN yang kebetulan masih berjalan bersamaan.
+    set({ ...snapshot, hydrated: true });
+  },
+
+  importMrp: async (parsed, customId) => {
+    const id = await actions.importMrpAction(parsed, customId);
+    backgroundRefresh();
+    return id;
+  },
+  // PERFORMA: optimistic PATCH SEBELUM tulisnya selesai (bukan sesudah, beda dari
+  // updateBatchToCutting) -- dropdown "Vendor Material" di Procurement langsung pindah nilai
+  // seketika diklik, tidak nunggu round-trip server sama sekali. Aman: kalau tulisnya GAGAL,
+  // state di-ROLLBACK ke sebelum klik + user diberi tahu lewat alert, jadi tidak pernah ada
+  // kondisi UI bilang "sudah tersimpan" padahal database-nya beda (lihat juga markRollArrived
+  // di bawah, pola yang sama).
+  assignMaterialSupplier: async (mrpId, materialRowIds, supplier) => {
+    const previous = get().mrpDetails;
+    set({
+      mrpDetails: previous.map((d) =>
+        d.mrp.id !== mrpId ? d : { ...d, materialRows: d.materialRows.map((r) => (materialRowIds.includes(r.id) ? { ...r, supplier } : r)) }
+      ),
+    });
+    try {
+      await actions.assignMaterialSupplierAction(mrpId, materialRowIds, supplier);
+    } catch (err) {
+      set({ mrpDetails: previous });
+      window.alert("Gagal menyimpan pilihan vendor material -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  assignMaterialEntitas: async (mrpId, materialRowId, entitas) => {
+    const previous = get().mrpDetails;
+    set({
+      mrpDetails: previous.map((d) =>
+        d.mrp.id !== mrpId ? d : { ...d, materialRows: d.materialRows.map((r) => (r.id === materialRowId ? { ...r, entitas } : r)) }
+      ),
+    });
+    try {
+      await actions.assignMaterialEntitasAction(mrpId, materialRowId, entitas);
+    } catch (err) {
+      set({ mrpDetails: previous });
+      window.alert("Gagal menyimpan entitas material -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  switchAduanVendor: async (mrpId, aduanId, toVendor) => {
+    const previous = get().mrpDetails;
+    set({
+      mrpDetails: previous.map((d) => (d.mrp.id !== mrpId ? d : { ...d, aduanRows: d.aduanRows.map((a) => (a.id === aduanId ? { ...a, vendor: toVendor } : a)) })),
+    });
+    try {
+      await actions.switchAduanVendorAction(mrpId, aduanId, toVendor);
+    } catch (err) {
+      set({ mrpDetails: previous });
+      window.alert("Gagal memindahkan vendor aduan -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  approvePpicMrp: async (mrpId) => {
+    const previous = get().mrpDetails;
+    set({
+      mrpDetails: previous.map((d) =>
+        d.mrp.id === mrpId ? { ...d, ppicApproval: "PPIC_APPROVED", dates: { ...d.dates, ppicApproved: localDateString(new Date()) } } : d
+      ),
+    });
+    try {
+      await actions.approvePpicMrpAction(mrpId);
+    } catch (err) {
+      set({ mrpDetails: previous });
+      window.alert("Gagal menyetujui MRP -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  rejectPpicMrp: async (mrpId, reason) => {
+    const previous = get().mrpDetails;
+    set({ mrpDetails: previous.map((d) => (d.mrp.id === mrpId ? { ...d, ppicApproval: "REJECTED", ppicRejectionNote: reason } : d)) });
+    try {
+      await actions.rejectPpicMrpAction(mrpId, reason);
+    } catch (err) {
+      set({ mrpDetails: previous });
+      window.alert("Gagal menolak MRP -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  // PERFORMA (2026-09-06): patch SEKETIKA dari hasil insert yang BENAR-BENAR sudah tersimpan
+  // (sendPoToFinanceAction sekarang mengembalikan materialPOs/maklonPOs final, lihat komentar
+  // panjang di sana) -- bukan optimistic/tebakan sebelum tulisnya selesai (beda dari
+  // assignMaterialSupplier dkk di atas), tapi TETAP menghindari nunggu backgroundRefresh (snapshot
+  // penuh, ~0.5-1.4 detik) sebelum baris PO baru kelihatan di Procurement. Aman karena PO baru ini
+  // tidak mungkin sudah ada duplikatnya di array (id-nya baru digenerate barusan).
+  sendPoToFinance: async (mrpId) => {
+    const result = await actions.sendPoToFinanceAction(mrpId);
+    set({
+      materialPOs: [...get().materialPOs, ...result.materialPOs],
+      maklonPOs: [...get().maklonPOs, ...result.maklonPOs],
+      mrpDetails: get().mrpDetails.map((d) => (d.mrp.id === mrpId ? { ...d, poSent: true, dates: { ...d.dates, poSent: localDateString(new Date()) } } : d)),
+    });
+    backgroundRefresh();
+  },
+  approveMaterialPo: async (id) => {
+    await actions.approveMaterialPoAction(id);
+    backgroundRefresh();
+  },
+  approveMaklonPo: async (id) => {
+    const previous = get().maklonPOs;
+    set({ maklonPOs: previous.map((p) => (p.id === id ? { ...p, approved: true } : p)) });
+    try {
+      await actions.approveMaklonPoAction(id);
+    } catch (err) {
+      set({ maklonPOs: previous });
+      window.alert("Gagal menyetujui PO Produksi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  bookInvoice: async (poId, input) => {
+    await actions.bookInvoiceAction(poId, input);
+    backgroundRefresh();
+  },
+  // Patch di-cek dengan guard status yang PERSIS SAMA dengan setInvoicesPaidAction (cuma
+  // transisi INVOICED->PAID / PAID->INVOICED yang valid) -- supaya tidak optimistically
+  // mem-"bayar" invoice yang statusnya sebenarnya tidak akan berubah di server.
+  setInvoicesPaid: async (invoiceIds, paid) => {
+    const idSet = new Set(invoiceIds);
+    const previous = get().invoices;
+    const now = localDateString(new Date());
+    set({
+      invoices: previous.map((i) => {
+        if (!idSet.has(i.id)) return i;
+        if (paid && i.status === "INVOICED") return { ...i, status: "PAID", paidAt: now };
+        if (!paid && i.status === "PAID") return { ...i, status: "INVOICED", paidAt: undefined };
+        return i;
+      }),
+    });
+    try {
+      await actions.setInvoicesPaidAction(invoiceIds, paid);
+    } catch (err) {
+      set({ invoices: previous });
+      window.alert("Gagal mengubah status pembayaran -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  setInvoicePaymentProof: async (invoiceIds, dataUrl, fileName) => {
+    await actions.setInvoicePaymentProofAction(invoiceIds, dataUrl, fileName);
+    backgroundRefresh();
+  },
+  setInvoicesDelivery: async (invoiceIds, deliveryDate) => {
+    const idSet = new Set(invoiceIds);
+    const previous = get().invoices;
+    set({
+      invoices: previous.map((i) => (idSet.has(i.id) && i.status === "PAID" ? { ...i, status: "DELIVERY", deliveredAt: deliveryDate } : i)),
+    });
+    try {
+      await actions.setInvoicesDeliveryAction(invoiceIds, deliveryDate);
+    } catch (err) {
+      set({ invoices: previous });
+      window.alert("Gagal mengatur tanggal delivery -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  // Optimistic PATCH sebelum tulisnya selesai (sama seperti assignMaterialSupplier di atas) --
+  // "Tandai diterima" langsung ganti jadi pill "Diterima" seketika diklik. status/receivedAt
+  // invoice dihitung persis logika server-nya (markRollArrivedAction: DELIVERY -> RECEIVING,
+  // receivedAt cuma diisi kalau belum ada) supaya tidak menyimpang dari yang bakal ditulis.
+  // Rollback + alert kalau tulisnya gagal.
+  markRollArrived: async (invoiceId, warna, lengan, rollIndex, codeRoll) => {
+    const colorKey = `${warna}|${lengan}`;
+    const arrivedAt = localDateString(new Date());
+    const previous = get().invoices;
+    set({
+      invoices: previous.map((inv) => {
+        if (inv.id !== invoiceId) return inv;
+        const arr = [...(inv.rollArrivals[colorKey] ?? [])];
+        // codeLot TIDAK diisi di sini lagi (item revisi 2026-09-08) -- sudah diinput Procurement
+        // saat Paying Voucher (lihat ColorEntry.lots, ditampilkan langsung dari sana di halaman
+        // Good Receive), bukan lagi bagian dari aksi "tandai diterima" ini. backgroundRefresh()
+        // di bawah akan mewariskan nilai code_lot yang sudah ada dari snapshot server berikutnya.
+        arr[rollIndex] = { arrivedAt, codeRoll };
+        return {
+          ...inv,
+          rollArrivals: { ...inv.rollArrivals, [colorKey]: arr },
+          status: inv.status === "DELIVERY" ? "RECEIVING" : inv.status,
+          receivedAt: inv.receivedAt ?? arrivedAt,
+        };
+      }),
+    });
+    try {
+      await actions.markRollArrivedAction(invoiceId, warna, lengan, rollIndex, codeRoll);
+    } catch (err) {
+      set({ invoices: previous });
+      window.alert("Gagal menandai roll diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  // Optimistic PATCH sebelum tulisnya selesai (pola sama seperti assignMaterialSupplier/
+  // markRollArrived) -- HANYA untuk jalur NON-claim (claim === undefined), yaitu kasus paling umum
+  // (roll dalam toleransi, atau lebih berat -- item 4) yang dipicu tombol "Simpan"/"Simpan semua"
+  // di Cutting. Jalur claim (upload foto, lebih jarang & lebih rawan gagal validasi ukuran/tipe
+  // gambar server-side) SENGAJA TETAP menunggu seperti biasa -- lihat catatan yang sama di batch
+  // perbaikan sebelumnya soal kenapa aksi dengan hasil "belum pasti sampai server selesai" tidak
+  // dioptimalkan begitu saja. `receivedAt` di RollReceipt TIDAK diubah (itu tanggal Good Receive,
+  // dari raw_material_invoice_rolls.received_at yang sama dipakai RollArrival -- bukan tanggal
+  // ditimbang, lihat lib/mrp/repo/snapshot.ts) -- diwariskan dari nilai yang sudah ada.
+  receiveRawMaterialRoll: async (invoiceId, warna, lengan, rollIndex, netKg, claim, codeRoll, photo) => {
+    const colorKey = `${warna}|${lengan}`;
+    const claimKey = `${invoiceId}|${warna}|${lengan}|${rollIndex}`;
+    const previousInvoices = get().invoices;
+    const previousClaimResolutions = get().materialClaimResolutions;
+    const previousClaimReturRequests = get().materialClaimReturRequests;
+    const previousClaimReturDeliveries = get().materialClaimReturDeliveries;
+    const previousClaimReturReceipts = get().materialClaimReturReceipts;
+    if (!claim) {
+      const trimmedCodeRoll = codeRoll?.trim() || undefined;
+      set({
+        invoices: previousInvoices.map((inv) => {
+          if (inv.id !== invoiceId) return inv;
+          const arr = [...(inv.rollReceipts[colorKey] ?? [])];
+          const existing = arr[rollIndex];
+          arr[rollIndex] = {
+            netKg,
+            receivedAt: existing?.receivedAt ?? inv.rollArrivals[colorKey]?.[rollIndex]?.arrivedAt ?? "",
+            codeRoll: trimmedCodeRoll ?? existing?.codeRoll,
+            codeLot: existing?.codeLot,
+            // claimPhotoAt DIBERSIHKAN (jalur non-claim, mirror update.claim_photo_at = null di
+            // receiveRawMaterialRollAction); weighConfirmedAt SELALU direset tiap ditimbang ulang
+            // (item 13, mirror update.weigh_confirmed_at = null yang tanpa syarat di server).
+            claimPhotoAt: undefined,
+            weighConfirmedAt: undefined,
+          };
+          return { ...inv, rollReceipts: { ...inv.rollReceipts, [colorKey]: arr } };
+        }),
+      });
+      const clearClaimRecord = <T extends Record<string, unknown>>(prev: T): T => {
+        const next = { ...prev };
+        delete next[claimKey];
+        return next;
+      };
+      set({
+        materialClaimResolutions: clearClaimRecord(previousClaimResolutions),
+        materialClaimReturRequests: clearClaimRecord(previousClaimReturRequests),
+        materialClaimReturDeliveries: clearClaimRecord(previousClaimReturDeliveries),
+        materialClaimReturReceipts: clearClaimRecord(previousClaimReturReceipts),
+      });
+    }
+    try {
+      await actions.receiveRawMaterialRollAction(invoiceId, warna, lengan, rollIndex, netKg, claim, codeRoll, photo);
+    } catch (err) {
+      if (!claim) {
+        set({
+          invoices: previousInvoices,
+          materialClaimResolutions: previousClaimResolutions,
+          materialClaimReturRequests: previousClaimReturRequests,
+          materialClaimReturDeliveries: previousClaimReturDeliveries,
+          materialClaimReturReceipts: previousClaimReturReceipts,
+        });
+      }
+      window.alert("Gagal menyimpan hasil timbang -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  // Fix loading blocking tombol "Konfirmasi (n)" -- DULU nunggu PENUH round-trip server dulu baru
+  // UI berubah (isPending menahan tombol dgn teks "Mengonfirmasi…"). Sekarang optimistic PENUH
+  // (patch SEBELUM await, pola sama seperti markRollArrived) -- weighConfirmedAt di-set utk SEMUA
+  // roll di `items` SEKETIKA. Kalau server skip SEBAGIAN (net_kg belum terisi/masih claimable/
+  // bukan invoice vendor ini, jarang), batalkan patch optimistic KHUSUS roll yang di-skip itu saja
+  // (bukan revert semua -- yang berhasil dikonfirmasi tetap dikonfirmasi).
+  confirmRollWeigh: async (items) => {
+    const nowIso = () => {
+      // Mirror helper privat nowIso() di actions.ts (tidak diekspor dari sana) -- format
+      // "YYYY-MM-DD HH:mm", sama seperti nilai yang bakal ditulis confirmRollWeighAction ke
+      // weigh_confirmed_at. Nilai persis TIDAK krusial di sini (weighConfirmedAt cuma dipakai
+      // sebagai flag ada/tidak-ada, lihat derive.ts) -- backgroundRefresh() di bawah akan
+      // menggantinya dengan nilai server yang sebenarnya begitu snapshot berikutnya datang.
+      const d = new Date();
+      const hh = String(d.getHours()).padStart(2, "0");
+      const mm = String(d.getMinutes()).padStart(2, "0");
+      return `${localDateString(d)} ${hh}:${mm}`;
+    };
+    const now = nowIso();
+    const previous = get().invoices;
+    set({
+      invoices: previous.map((inv) => {
+        const relevant = items.filter((it) => it.invoiceId === inv.id);
+        if (relevant.length === 0) return inv;
+        const rollReceipts = { ...inv.rollReceipts };
+        for (const it of relevant) {
+          const colorKey = `${it.warna}|${it.lengan}`;
+          const arr = [...(rollReceipts[colorKey] ?? [])];
+          if (arr[it.rollIndex]) arr[it.rollIndex] = { ...arr[it.rollIndex]!, weighConfirmedAt: now };
+          rollReceipts[colorKey] = arr;
+        }
+        return { ...inv, rollReceipts };
+      }),
+    });
+    let result: { confirmed: number; skipped: { invoiceId: string; warna: string; lengan: Lengan; rollIndex: number }[] };
+    try {
+      result = await actions.confirmRollWeighAction(items);
+    } catch (err) {
+      set({ invoices: previous }); // gagal total -- revert semua patch optimistic di atas
+      window.alert("Gagal mengonfirmasi timbang -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      // Fix (review 2026-09-14): confirmRollWeighAction sendiri LOOP per item di server (tidak
+      // atomik) -- kalau throw-nya terjadi di TENGAH loop itu (mis. query ownership utk item ke-3
+      // gagal jaringan), sebagian item SEBELUMNYA bisa saja sudah benar-benar ter-`weigh_confirmed_at`
+      // di DB walau promise ini akhirnya reject. Revert optimistic murni lokal di atas tidak tahu
+      // soal itu -- backgroundRefresh() di sini memastikan client balik konsisten dengan keadaan
+      // DB yang sebenarnya, bukan cuma asumsi "gagal total = tidak ada yang berubah".
+      backgroundRefresh();
+      throw err;
+    }
+    if (result.skipped.length > 0) {
+      set({
+        invoices: get().invoices.map((inv) => {
+          const relevant = result.skipped.filter((it) => it.invoiceId === inv.id);
+          if (relevant.length === 0) return inv;
+          const rollReceipts = { ...inv.rollReceipts };
+          for (const it of relevant) {
+            const colorKey = `${it.warna}|${it.lengan}`;
+            const arr = [...(rollReceipts[colorKey] ?? [])];
+            if (arr[it.rollIndex]) arr[it.rollIndex] = { ...arr[it.rollIndex]!, weighConfirmedAt: undefined };
+            rollReceipts[colorKey] = arr;
+          }
+          return { ...inv, rollReceipts };
+        }),
+      });
+    }
+    backgroundRefresh();
+    return result;
+  },
+  // Item 13 (feedback batch 2026-09-10): klaim fisik dari roll yang sudah masuk resting -- batch-
+  // nya dihapus server-side (lihat submitCuttingDefectClaimAction), jadi TIDAK optimistic (perlu
+  // snapshot baru supaya "Material dalam produksi" & "Timbang roll" langsung konsisten).
+  submitCuttingDefectClaim: async (batchIds, note, photo) => {
+    const result = await actions.submitCuttingDefectClaimAction(batchIds, note, photo);
+    backgroundRefresh();
+    return result;
+  },
+  startProductionBatch: async (input) => {
+    await actions.startProductionBatchAction(input);
+    backgroundRefresh();
+  },
+  submitProductionResult: async (input) => {
+    await actions.submitProductionResultAction(input);
+    backgroundRefresh();
+  },
+  closeProductionBatch: async (batchId, fgSizeQty) => {
+    await actions.closeProductionBatchAction(batchId, fgSizeQty);
+    backgroundRefresh();
+  },
+  saveFgProgress: async (batchId, sizeQty) => {
+    await actions.saveFgProgressAction(batchId, sizeQty);
+    backgroundRefresh();
+  },
+  createDeliveryKoli: async (input) => {
+    await actions.createDeliveryKoliAction(input);
+    backgroundRefresh();
+  },
+  // TIDAK dibuat optimistic -- foto lampiran belum tentu valid (divalidasi server) & melibatkan
+  // upload, pola sama seperti submitCuttingDefectClaim (bukan skalar sederhana).
+  setKoliEkspedisiResiGroup: async (koliIds, ekspedisi, note, noResi, photo) => {
+    await actions.setKoliEkspedisiResiGroupAction(koliIds, ekspedisi, note, noResi, photo);
+    backgroundRefresh();
+  },
+  // TIDAK dibuat optimistic -- deliverKoliResiGroupAction diam-diam no-op (tidak set
+  // delivered_at, TIDAK throw) kalau ekspedisi belum ter-set sama sekali (lihat
+  // lib/mrp/actions.ts, mirip alasan markKoliDeliveredAction lama). Kalau di-optimistic, UI bisa
+  // terlanjur bilang "terkirim" padahal server sebenarnya menolak tanpa error yang bisa ditangkap.
+  deliverKoliResiGroup: async (items) => {
+    await actions.deliverKoliResiGroupAction(items);
+    backgroundRefresh();
+  },
+  submitResiGroupInvoice: async (koliIds, rates) => {
+    await actions.submitResiGroupInvoiceAction(koliIds, rates);
+    backgroundRefresh();
+  },
+  createVendorInvoice: async (input) => {
+    await actions.createVendorInvoiceAction(input);
+    backgroundRefresh();
+  },
+  setVendorInvoiceStatus: async (invoiceId, status) => {
+    const previous = get().vendorInvoices;
+    const now = localDateString(new Date());
+    set({
+      vendorInvoices: previous.map((i) =>
+        i.id === invoiceId ? { ...i, status, approvedAt: status === "APPROVED" ? now : i.approvedAt, paidAt: status === "PAID" ? now : i.paidAt } : i
+      ),
+    });
+    try {
+      await actions.setVendorInvoiceStatusAction(invoiceId, status);
+    } catch (err) {
+      set({ vendorInvoices: previous });
+      window.alert("Gagal mengubah status invoice vendor -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  // TIDAK dibuat optimistic -- adjustment baru butuh id baru dari server (nextReadableId), tidak
+  // bisa dipastikan dari argumen saja tanpa risiko id sementara yang harus direkonsiliasi.
+  addVendorInvoiceAdjustment: async (invoiceId, input) => {
+    await actions.addVendorInvoiceAdjustmentAction(invoiceId, input);
+    backgroundRefresh();
+  },
+  payVendorInvoice: async (invoiceId) => {
+    const previous = get().vendorInvoices;
+    set({ vendorInvoices: previous.map((i) => (i.id === invoiceId && i.status !== "PAID" ? { ...i, status: "PAID", paidAt: localDateString(new Date()) } : i)) });
+    try {
+      await actions.payVendorInvoiceAction(invoiceId);
+    } catch (err) {
+      set({ vendorInvoices: previous });
+      window.alert("Gagal membayar invoice vendor -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  // TIDAK dibuat optimistic -- item & hpp_per_item hasil "Bongkar" dibangun ULANG di server dari
+  // snapshot fresh (qty TIDAK dipercaya dari client sama sekali, lihat receiveWarehouseResiGroupAction),
+  // jadi tidak ada cara menebak hasilnya di client sebelum server selesai.
+  receiveWarehouseResiGroup: async (resiGroupId, note) => {
+    await actions.receiveWarehouseResiGroupAction(resiGroupId, note);
+    backgroundRefresh();
+  },
+  // PERFORMA (revisi 2026-09-06): "semua tombol aksi harus terasa instan, jangan sampai user
+  // menunggu beberapa detik baru lihat hasilnya" -- diterapkan ke semua action DI BAWAH INI yang
+  // hasil akhirnya bisa dipastikan 100% dari argumen yang dioper (bukan nilai yang baru diketahui
+  // SETELAH server selesai memprosesnya, mis. reject otomatis di confirmFgDone). Pola PERSIS sama
+  // dengan assignMaterialSupplier/markRollArrived di atas: patch dulu SEBELUM tulisnya selesai,
+  // kalau tulisnya gagal di-ROLLBACK + alert. Action yang perhitungan hasilnya baru pasti setelah
+  // server selesai (reject, split PO per entitas, dst.) SENGAJA TIDAK diubah -- optimistic di situ
+  // berisiko menampilkan angka yang salah/sementara untuk data yang justru paling sensitif.
+  markNotificationRead: async (id) => {
+    const previous = get().notifications;
+    set({ notifications: previous.map((n) => (n.id === id ? { ...n, read: true } : n)) });
+    try {
+      await actions.markNotificationReadAction(id);
+    } catch (err) {
+      set({ notifications: previous });
+      window.alert("Gagal menandai notifikasi dibaca -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  markAllNotificationsRead: async (ids) => {
+    const idSet = new Set(ids);
+    const previous = get().notifications;
+    set({ notifications: previous.map((n) => (idSet.has(n.id) ? { ...n, read: true } : n)) });
+    try {
+      await actions.markAllNotificationsReadAction(ids);
+    } catch (err) {
+      set({ notifications: previous });
+      window.alert("Gagal menandai semua notifikasi dibaca -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  dismissNotification: async (id) => {
+    const previous = get().notifications;
+    set({ notifications: previous.filter((n) => n.id !== id) });
+    try {
+      await actions.dismissNotificationAction(id);
+    } catch (err) {
+      set({ notifications: previous });
+      window.alert("Gagal menghapus notifikasi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+
+  addHargaMaklonRow: async () => {
+    await actions.addHargaMaklonRowAction();
+    backgroundRefresh();
+  },
+  updateHargaMaklonRow: async (id, patch) => {
+    const previous = get().hargaMaklon;
+    set({ hargaMaklon: previous.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+    try {
+      await actions.updateHargaMaklonRowAction(id, patch);
+    } catch (err) {
+      set({ hargaMaklon: previous });
+      window.alert("Gagal menyimpan harga maklon -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  deleteHargaMaklonRow: async (id) => {
+    const previous = get().hargaMaklon;
+    set({ hargaMaklon: previous.filter((r) => r.id !== id) });
+    try {
+      await actions.deleteHargaMaklonRowAction(id);
+    } catch (err) {
+      set({ hargaMaklon: previous });
+      window.alert("Gagal menghapus baris harga maklon -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  replaceHargaMaklon: async (rows) => {
+    await actions.replaceHargaMaklonAction(rows);
+    backgroundRefresh();
+  },
+  addHargaKainRow: async () => {
+    await actions.addHargaKainRowAction();
+    backgroundRefresh();
+  },
+  updateHargaKainRow: async (id, patch) => {
+    const previous = get().hargaKain;
+    set({ hargaKain: previous.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+    try {
+      await actions.updateHargaKainRowAction(id, patch);
+    } catch (err) {
+      set({ hargaKain: previous });
+      window.alert("Gagal menyimpan harga kain -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  deleteHargaKainRow: async (id) => {
+    const previous = get().hargaKain;
+    set({ hargaKain: previous.filter((r) => r.id !== id) });
+    try {
+      await actions.deleteHargaKainRowAction(id);
+    } catch (err) {
+      set({ hargaKain: previous });
+      window.alert("Gagal menghapus baris harga kain -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  replaceHargaKain: async (rows) => {
+    await actions.replaceHargaKainAction(rows);
+    backgroundRefresh();
+  },
+  addHargaKainPksRow: async () => {
+    await actions.addHargaKainPksRowAction();
+    backgroundRefresh();
+  },
+  updateHargaKainPksRow: async (id, patch) => {
+    const previous = get().hargaKainPks;
+    set({ hargaKainPks: previous.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+    try {
+      await actions.updateHargaKainPksRowAction(id, patch);
+    } catch (err) {
+      set({ hargaKainPks: previous });
+      window.alert("Gagal menyimpan harga kain PKS -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  deleteHargaKainPksRow: async (id) => {
+    const previous = get().hargaKainPks;
+    set({ hargaKainPks: previous.filter((r) => r.id !== id) });
+    try {
+      await actions.deleteHargaKainPksRowAction(id);
+    } catch (err) {
+      set({ hargaKainPks: previous });
+      window.alert("Gagal menghapus baris harga kain PKS -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  replaceHargaKainPks: async (rows) => {
+    await actions.replaceHargaKainPksAction(rows);
+    backgroundRefresh();
+  },
+  addEntitas: async (nama) => {
+    await actions.addEntitasAction(nama);
+    backgroundRefresh();
+  },
+  updateEntitas: async (id, nama) => {
+    const previous = get().entitasList;
+    set({ entitasList: previous.map((r) => (r.id === id ? { ...r, nama } : r)) });
+    try {
+      await actions.updateEntitasAction(id, nama);
+    } catch (err) {
+      set({ entitasList: previous });
+      window.alert("Gagal menyimpan nama entitas -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  deleteEntitas: async (id) => {
+    const previous = get().entitasList;
+    set({ entitasList: previous.filter((r) => r.id !== id) });
+    try {
+      await actions.deleteEntitasAction(id);
+    } catch (err) {
+      set({ entitasList: previous });
+      window.alert("Gagal menghapus entitas -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  replaceEntitas: async (rows) => {
+    await actions.replaceEntitasAction(rows);
+    backgroundRefresh();
+  },
+  addSupplier: async (nama) => {
+    await actions.addSupplierAction(nama);
+    backgroundRefresh();
+  },
+  updateSupplier: async (id, nama) => {
+    const previous = get().supplierList;
+    set({ supplierList: previous.map((r) => (r.id === id ? { ...r, nama } : r)) });
+    try {
+      await actions.updateSupplierAction(id, nama);
+    } catch (err) {
+      set({ supplierList: previous });
+      window.alert("Gagal menyimpan nama supplier -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  deleteSupplier: async (id) => {
+    const previous = get().supplierList;
+    set({ supplierList: previous.filter((r) => r.id !== id) });
+    try {
+      await actions.deleteSupplierAction(id);
+    } catch (err) {
+      set({ supplierList: previous });
+      window.alert("Gagal menghapus supplier -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  replaceSupplier: async (rows) => {
+    await actions.replaceSupplierAction(rows);
+    backgroundRefresh();
+  },
+  addEkspedisiRateRow: async () => {
+    await actions.addEkspedisiRateAction();
+    backgroundRefresh();
+  },
+  updateEkspedisiRateRow: async (id, patch) => {
+    const previous = get().ekspedisiRates;
+    set({ ekspedisiRates: previous.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+    try {
+      await actions.updateEkspedisiRateAction(id, patch);
+    } catch (err) {
+      set({ ekspedisiRates: previous });
+      window.alert("Gagal menyimpan tarif ekspedisi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  deleteEkspedisiRateRow: async (id) => {
+    const previous = get().ekspedisiRates;
+    set({ ekspedisiRates: previous.filter((r) => r.id !== id) });
+    try {
+      await actions.deleteEkspedisiRateAction(id);
+    } catch (err) {
+      set({ ekspedisiRates: previous });
+      window.alert("Gagal menghapus baris ekspedisi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  updateKerahMansetSetting: async (kind, patch) => {
+    const previous = get().kerahMansetSettings;
+    set({ kerahMansetSettings: previous.map((r) => (r.kind === kind ? { ...r, ...patch } : r)) });
+    try {
+      await actions.updateKerahMansetSettingAction(kind, patch);
+    } catch (err) {
+      set({ kerahMansetSettings: previous });
+      window.alert("Gagal menyimpan Master Data Kerah/Manset -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+
+  setMaterialPoEntity: async (poId, entitas) => {
+    const previous = get().materialPOs;
+    set({
+      materialPOs: previous.map((p) => (p.id === poId ? { ...p, entity: entitas, colorBreakdown: p.colorBreakdown.map((c) => ({ ...c, entitas })) } : p)),
+    });
+    try {
+      await actions.setMaterialPoEntityAction(poId, entitas);
+    } catch (err) {
+      set({ materialPOs: previous });
+      window.alert("Gagal menyimpan entitas -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  setMaterialPoColorEntity: async (poId, warna, lengan, entitas) => {
+    const previous = get().materialPOs;
+    set({
+      materialPOs: previous.map((p) =>
+        p.id === poId ? { ...p, colorBreakdown: p.colorBreakdown.map((c) => (c.warna === warna && c.lengan === lengan ? { ...c, entitas } : c)) } : p
+      ),
+    });
+    try {
+      await actions.setMaterialPoColorEntityAction(poId, warna, lengan, entitas);
+    } catch (err) {
+      set({ materialPOs: previous });
+      window.alert("Gagal menyimpan entitas warna -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  approveAllMaterialPos: async () => {
+    await actions.approveAllMaterialPosAction();
+    backgroundRefresh();
+  },
+  approveVendorMaterialPos: async (mrpId, vendor) => {
+    await actions.approveVendorMaterialPosAction(mrpId, vendor);
+    backgroundRefresh();
+  },
+  closePoWithReason: async (poId, reason, warna, lengan, closeQty) => {
+    await actions.closePoWithReasonAction(poId, reason, warna, lengan, closeQty);
+    backgroundRefresh();
+  },
+  reassignMaterialToSupplier: async (poId, warna, lengan, moveQty, newSupplier, reason) => {
+    await actions.reassignMaterialToSupplierAction(poId, warna, lengan, moveQty, newSupplier, reason);
+    backgroundRefresh();
+  },
+  transferMaterial: async (items, toVendor, deliveryDate) => {
+    await actions.transferMaterialAction(items, toVendor, deliveryDate);
+    backgroundRefresh();
+  },
+  withdrawVendorProduction: async (mrpId, fromVendor, toVendor) => {
+    await actions.withdrawVendorProductionAction(mrpId, fromVendor, toVendor);
+    backgroundRefresh();
+  },
+  advanceMaklonProduction: async (id) => {
+    const previous = get().maklonPOs;
+    set({
+      maklonPOs: previous.map((p) => {
+        if (p.id !== id) return p;
+        if (p.status === "FULL_WAITING_MATERIAL" || p.status === "PARTIAL_WAITING_MATERIAL") return { ...p, status: "PRODUCTION" };
+        if (p.status === "PRODUCTION") return { ...p, status: "DELIVERY" };
+        return p;
+      }),
+    });
+    try {
+      await actions.advanceMaklonProductionAction(id);
+    } catch (err) {
+      set({ maklonPOs: previous });
+      window.alert("Gagal memajukan status PO Produksi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  submitMaklonInvoice: async () => {}, // sudah no-op sejak sebelum migrasi (jalur ditutup, lihat lib/mrp/actions.ts)
+  approveMaklonInvoice: async (invoiceId) => {
+    const previous = get().maklonInvoices;
+    set({ maklonInvoices: previous.map((i) => (i.id === invoiceId ? { ...i, status: "APPROVED", approvedAt: localDateString(new Date()) } : i)) });
+    try {
+      await actions.approveMaklonInvoiceAction(invoiceId);
+    } catch (err) {
+      set({ maklonInvoices: previous });
+      window.alert("Gagal menyetujui invoice maklon -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  payMaklonInvoice: async (invoiceId) => {
+    const previousInvoices = get().maklonInvoices;
+    const previousPOs = get().maklonPOs;
+    const target = previousInvoices.find((i) => i.id === invoiceId);
+    set({
+      maklonInvoices: previousInvoices.map((i) => (i.id === invoiceId ? { ...i, status: "PAID", paidAt: localDateString(new Date()) } : i)),
+      maklonPOs: target ? previousPOs.map((p) => (p.id === target.maklonPoId ? { ...p, status: "FULLY_PAID" } : p)) : previousPOs,
+    });
+    try {
+      await actions.payMaklonInvoiceAction(invoiceId);
+    } catch (err) {
+      set({ maklonInvoices: previousInvoices, maklonPOs: previousPOs });
+      window.alert("Gagal membayar invoice maklon -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  receiveRawMaterialAddBuy: async (invoiceId, addBuyId) => {
+    const previous = get().invoices;
+    const receivedAt = localDateString(new Date());
+    set({
+      invoices: previous.map((i) =>
+        i.id === invoiceId
+          ? {
+              ...i,
+              addBuyReceipts: { ...i.addBuyReceipts, [addBuyId]: { receivedAt } },
+              status: i.status === "DELIVERY" ? "RECEIVING" : i.status,
+              receivedAt: i.receivedAt ?? receivedAt,
+            }
+          : i
+      ),
+    });
+    try {
+      await actions.receiveRawMaterialAddBuyAction(invoiceId, addBuyId);
+    } catch (err) {
+      set({ invoices: previous });
+      window.alert("Gagal menandai add buy diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  updateBatchToCutting: async (batchId, cuttingAt, sizeQty) => {
+    const result = await actions.updateBatchToCuttingAction(batchId, cuttingAt, sizeQty);
+    // Optimistic PATCH lokal -- baris roll ini di tabel Cutting berubah jadi "sudah cutting"
+    // SEKETIKA (tidak nunggu backgroundRefresh snapshot penuh), langsung dari hasil tulis di
+    // atas. Kasus nyata yang diminta: 10 roll di-"Update ke Cutting" satu-satu, tiap klik harus
+    // kerasa instan, bukan nunggu ~1 detik+ snapshot ulang cuma buat lihat 1 baris berubah.
+    set({
+      productionBatches: get().productionBatches.map((b) => (b.id === batchId ? { ...b, cuttingAt: result.cuttingAt, sizeQty: result.sizeQty ?? b.sizeQty } : b)),
+    });
+    backgroundRefresh();
+  },
+  // Fix flicker & loading blocking tombol "Simpan" (modal Hasil Cutting, N roll sekaligus) --
+  // saveGroup DULU loop `await updateBatchToCutting` satu-satu (N round-trip berurutan, N
+  // backgroundRefresh terpisah); snapshot READ dari iterasi awal bisa datang BELAKANGAN &
+  // menimpa (overwrite penuh) patch optimistic dari iterasi-iterasi berikutnya yang sudah
+  // selesai duluan -- itu penyebab baris roll yang "sudah diklik" sempat balik jadi "belum".
+  // Fix-nya: 1 round-trip untuk SEMUA batchIds sekaligus (updateBatchesToCuttingAction), patch
+  // optimistic PENUH SEBELUM await (pola sama seperti markRollArrived di atas), 1 kali
+  // backgroundRefresh() di akhir saja (bukan N kali).
+  updateBatchesToCutting: async (batchIds, cuttingAt, sizeQtyByBatchId) => {
+    const idSet = new Set(batchIds);
+    const previous = get().productionBatches;
+    set({
+      productionBatches: previous.map((b) => (idSet.has(b.id) ? { ...b, cuttingAt, sizeQty: sizeQtyByBatchId[b.id] ?? b.sizeQty } : b)),
+    });
+    try {
+      await actions.updateBatchesToCuttingAction(batchIds, cuttingAt, sizeQtyByBatchId);
+    } catch (err) {
+      set({ productionBatches: previous });
+      window.alert("Gagal menyimpan hasil cutting -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      // Fix (review 2026-09-14): dulu TIDAK ada backgroundRefresh() di jalur gagal ini -- kalau
+      // updateBatchesToCuttingAction sempat menulis SEBAGIAN di server (mis. UPDATE cutting_at
+      // untuk seluruh grup sudah commit, tapi recomputeAutoRejectForGroup di akhir yang gagal
+      // throw), revert `set({ productionBatches: previous })` di atas malah membuat UI client
+      // "nyangkut" salah (tampil belum-cutting) padahal server-nya sudah berubah -- tanpa refresh,
+      // itu baru kebetulan ke-sync lagi kalau ada aksi LAIN yang memicu backgroundRefresh. Sekarang
+      // dipanggil eksplisit di sini juga supaya client selalu balik konsisten dengan DB, apa pun
+      // hasil aslinya di server (bukan cuma percaya revert optimistic lokal).
+      backgroundRefresh();
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  // Item 14 (feedback batch 2026-09-10): edit resting_at untuk semua batch 1 sesi resting
+  // sekaligus (mereka selalu berbagi 1 resting_at yang sama, lihat restingSessionGroups).
+  updateBatchRestingAt: async (batchIds, restingAt) => {
+    const idSet = new Set(batchIds);
+    const previous = get().productionBatches;
+    set({ productionBatches: previous.map((b) => (idSet.has(b.id) ? { ...b, restingAt } : b)) });
+    try {
+      await actions.updateBatchRestingAtAction(batchIds, restingAt);
+    } catch (err) {
+      set({ productionBatches: previous });
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  resolveProductionYield: async (batchId, note) => {
+    const previous = get().productionYieldResolutions;
+    set({ productionYieldResolutions: { ...previous, [batchId]: { note, resolvedAt: localDateString(new Date()) } } });
+    try {
+      await actions.resolveProductionYieldAction(batchId, note);
+    } catch (err) {
+      set({ productionYieldResolutions: previous });
+      window.alert("Gagal menandai alert yield -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  unresolveProductionYield: async (batchId) => {
+    const previous = get().productionYieldResolutions;
+    const next = { ...previous };
+    delete next[batchId];
+    set({ productionYieldResolutions: next });
+    try {
+      await actions.unresolveProductionYieldAction(batchId);
+    } catch (err) {
+      set({ productionYieldResolutions: previous });
+      window.alert("Gagal membuka lagi alert yield -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  reworkRejectSize: async (input) => {
+    await actions.reworkRejectSizeAction(input);
+    backgroundRefresh();
+  },
+  // Guard "sudah delivered_at -> no-op" di updateDeliveryKoliAction ditiru di sini juga (mirip
+  // markKoliDelivered) supaya tidak optimistically menampilkan perubahan yang sebenarnya ditolak
+  // server tanpa error.
+  updateDeliveryKoli: async (koliId, patch) => {
+    const previous = get().deliveryKolis;
+    set({
+      deliveryKolis: previous.map((k) => (k.id === koliId && !k.deliveredAt ? { ...k, ekspedisi: patch.ekspedisi, noKoli: patch.noKoli, items: patch.items } : k)),
+    });
+    try {
+      await actions.updateDeliveryKoliAction(koliId, patch);
+    } catch (err) {
+      set({ deliveryKolis: previous });
+      window.alert("Gagal menyimpan koli -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  setVendorInvoiceDueDate: async (invoiceId, dueDate) => {
+    const previous = get().vendorInvoices;
+    set({ vendorInvoices: previous.map((i) => (i.id === invoiceId ? { ...i, dueDate } : i)) });
+    try {
+      await actions.setVendorInvoiceDueDateAction(invoiceId, dueDate);
+    } catch (err) {
+      set({ vendorInvoices: previous });
+      window.alert("Gagal menyimpan jatuh tempo -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  setVendorInvoiceOngkir: async (invoiceId, ongkirTotal) => {
+    const previous = get().vendorInvoices;
+    const clamped = Math.max(0, ongkirTotal);
+    set({ vendorInvoices: previous.map((i) => (i.id === invoiceId ? { ...i, ongkirTotal: clamped } : i)) });
+    try {
+      await actions.setVendorInvoiceOngkirAction(invoiceId, ongkirTotal);
+    } catch (err) {
+      set({ vendorInvoices: previous });
+      window.alert("Gagal menyimpan ongkir -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  confirmFgDone: async (groupKey, mrpId, vendorProduksi, warna, lengan) => {
+    await actions.confirmFgDoneAction(groupKey, mrpId, vendorProduksi, warna, lengan);
+    backgroundRefresh();
+  },
+  undoFgConfirm: async (groupKey) => {
+    await actions.undoFgConfirmAction(groupKey);
+    backgroundRefresh();
+  },
+  markProductionGroupDone: async (groupKey, mrpId, vendorProduksi, warna, lengan) => {
+    await actions.markProductionGroupDoneAction(groupKey, mrpId, vendorProduksi, warna, lengan);
+    backgroundRefresh();
+  },
+  undoProductionGroupDone: async (groupKey) => {
+    const previous = get().productionGroupMeta;
+    set({ productionGroupMeta: previous.map((m) => (m.groupKey === groupKey ? { ...m, doneAt: undefined } : m)) });
+    try {
+      await actions.undoProductionGroupDoneAction(groupKey);
+    } catch (err) {
+      set({ productionGroupMeta: previous });
+      window.alert("Gagal membuka kunci -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  // closeProductionPo TIDAK dibuat optimistic -- server-nya menghitung reject otomatis untuk
+  // grup yang belum fg_confirmed DAN mengunci banyak grup warna/lengan sekaligus (lihat
+  // closeProductionPoAction), bukan sekadar 1 field deterministik dari argumen.
+  closeProductionPo: async (maklonPoId, reason) => {
+    await actions.closeProductionPoAction(maklonPoId, reason);
+    backgroundRefresh();
+  },
+  reopenProductionPo: async (maklonPoId) => {
+    const previous = get().maklonPOs;
+    set({ maklonPOs: previous.map((p) => (p.id === maklonPoId ? { ...p, closedAt: undefined, closeReason: undefined } : p)) });
+    try {
+      await actions.reopenProductionPoAction(maklonPoId);
+    } catch (err) {
+      set({ maklonPOs: previous });
+      window.alert("Gagal membuka kembali PO -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  setRejectRemark: async (poId, remark) => {
+    const previous = get().rejectRemarks;
+    set({ rejectRemarks: { ...previous, [poId]: remark } });
+    try {
+      await actions.setRejectRemarkAction(poId, remark);
+    } catch (err) {
+      set({ rejectRemarks: previous });
+      window.alert("Gagal menyimpan catatan -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  resolveMaterialClaim: async (key, note) => {
+    const previous = get().materialClaimResolutions;
+    set({ materialClaimResolutions: { ...previous, [key]: { note, resolvedAt: localDateString(new Date()) } } });
+    try {
+      await actions.resolveMaterialClaimAction(key, note);
+    } catch (err) {
+      set({ materialClaimResolutions: previous });
+      window.alert("Gagal menandai klaim selesai -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  unresolveMaterialClaim: async (key) => {
+    const previous = get().materialClaimResolutions;
+    const next = { ...previous };
+    delete next[key];
+    set({ materialClaimResolutions: next });
+    try {
+      await actions.unresolveMaterialClaimAction(key);
+    } catch (err) {
+      set({ materialClaimResolutions: previous });
+      window.alert("Gagal membuka lagi klaim -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  requestMaterialClaimRetur: async (key, note) => {
+    const previous = get().materialClaimReturRequests;
+    set({ materialClaimReturRequests: { ...previous, [key]: { note, requestedAt: localDateString(new Date()) } } });
+    try {
+      await actions.requestMaterialClaimReturAction(key, note);
+    } catch (err) {
+      set({ materialClaimReturRequests: previous });
+      window.alert("Gagal meminta retur -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  // Batalkan mereset SELURUH progres klaim (retur diminta -> dikirim -> diterima, DAN sejak flow
+  // bertahap 2026-09-11 juga diterima Procurement -> PV pengganti dibuat) -- lihat komentar sama
+  // di cancelMaterialClaimReturRequestAction -- jadi optimistic-nya juga harus menghapus key ini
+  // dari KELIMA record sekaligus, bukan cuma materialClaimReturRequests.
+  cancelMaterialClaimReturRequest: async (key) => {
+    const previousRequests = get().materialClaimReturRequests;
+    const previousDeliveries = get().materialClaimReturDeliveries;
+    const previousReceipts = get().materialClaimReturReceipts;
+    const previousAcceptances = get().materialClaimAcceptances;
+    const previousReplacements = get().materialClaimReplacements;
+    // A9: kalau klaim ini sudah punya PV pengganti, ingatkan Finance/Procurement bahwa invoice-nya
+    // TETAP ADA (tidak ikut dihapus) & harus diurus manual -- server juga tidak menyentuh invoice
+    // maupun vendor_deposits sama sekali, cuma me-null-kan progres di sisi klaim.
+    const existingReplacement = previousReplacements[key];
+    if (existingReplacement && !window.confirm(`Klaim ini sudah punya PV pengganti (${existingReplacement.invoiceId}). Membatalkan klaim TIDAK menghapus PV pengganti tersebut maupun saldo deposit yang sudah tercatat -- keduanya tetap ada & harus diurus manual. Lanjutkan membatalkan?`)) {
+      return;
+    }
+    const nextRequests = { ...previousRequests };
+    delete nextRequests[key];
+    const nextDeliveries = { ...previousDeliveries };
+    delete nextDeliveries[key];
+    const nextReceipts = { ...previousReceipts };
+    delete nextReceipts[key];
+    const nextAcceptances = { ...previousAcceptances };
+    delete nextAcceptances[key];
+    const nextReplacements = { ...previousReplacements };
+    delete nextReplacements[key];
+    set({
+      materialClaimReturRequests: nextRequests,
+      materialClaimReturDeliveries: nextDeliveries,
+      materialClaimReturReceipts: nextReceipts,
+      materialClaimAcceptances: nextAcceptances,
+      materialClaimReplacements: nextReplacements,
+    });
+    try {
+      await actions.cancelMaterialClaimReturRequestAction(key);
+    } catch (err) {
+      set({
+        materialClaimReturRequests: previousRequests,
+        materialClaimReturDeliveries: previousDeliveries,
+        materialClaimReturReceipts: previousReceipts,
+        materialClaimAcceptances: previousAcceptances,
+        materialClaimReplacements: previousReplacements,
+      });
+      window.alert("Gagal membatalkan klaim -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  // Step 1 flow bertahap (2026-09-11) -- pola optimistic sama persis requestMaterialClaimRetur.
+  acceptMaterialClaim: async (key) => {
+    const previous = get().materialClaimAcceptances;
+    set({ materialClaimAcceptances: { ...previous, [key]: { acceptedAt: localDateString(new Date()) } } });
+    try {
+      await actions.acceptMaterialClaimAction(key);
+    } catch (err) {
+      set({ materialClaimAcceptances: previous });
+      window.alert("Gagal menandai klaim diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  // Step 3 flow bertahap (2026-09-11) -- TIDAK optimistic (server memutuskan boleh/tidaknya
+  // berdasarkan status invoice PV pengganti saat ini -- INVOICED ditolak, lihat
+  // markClaimReplacementShippedAction), pola sama seperti createClaimReplacementInvoice di bawah.
+  markClaimReplacementShipped: async (key) => {
+    try {
+      await actions.markClaimReplacementShippedAction(key);
+    } catch (err) {
+      window.alert("Gagal menandai PV pengganti terkirim -- " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  markMaterialClaimReturDelivered: async (key, note) => {
+    const previous = get().materialClaimReturDeliveries;
+    set({ materialClaimReturDeliveries: { ...previous, [key]: { note: note ?? "", deliveredAt: localDateString(new Date()) } } });
+    try {
+      await actions.markMaterialClaimReturDeliveredAction(key, note);
+    } catch (err) {
+      set({ materialClaimReturDeliveries: previous });
+      window.alert("Gagal menandai retur terkirim -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  confirmMaterialClaimReturReceived: async (key) => {
+    const previous = get().materialClaimReturReceipts;
+    set({ materialClaimReturReceipts: { ...previous, [key]: { receivedAt: localDateString(new Date()) } } });
+    try {
+      await actions.confirmMaterialClaimReturReceivedAction(key);
+    } catch (err) {
+      set({ materialClaimReturReceipts: previous });
+      window.alert("Gagal menandai retur diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  // Revisi 2026-09-06: TIDAK optimistic -- action ini membuat record baru (id invoice pengganti
+  // digenerate server, nilai kredit dihitung dari rate invoice ASLI yang cuma diketahui server)
+  // yang tidak punya representasi 1-baris sederhana untuk di-patch di client sebelum server
+  // selesai, beda dari action klaim lain di atas (yang cuma menimpa 1 key di record status). Klik
+  // ini juga jarang & disengaja (submit modal, bukan klik berulang di sebuah list), jadi menunggu
+  // 1 round-trip di sini bukan trade-off yang terasa.
+  createClaimReplacementInvoice: async (key, rateBaru, beratBaruKg, buktiInvoiceDataUrl, buktiInvoiceFileName) => {
+    const newInvoiceId = await actions.createClaimReplacementInvoiceAction(key, rateBaru, beratBaruKg, buktiInvoiceDataUrl, buktiInvoiceFileName);
+    // Baris klaim ini sekarang PV_DIBUAT (bukan lagi SELESAI, lihat A7) -- id invoice baru cuma
+    // diketahui SETELAH server selesai (digenerate server), jadi update dict-nya di sini (segera
+    // setelah await sukses, sebelum menunggu roundtrip backgroundRefresh) supaya UI langsung
+    // pindah stage tanpa jeda terlihat.
+    const previous = get().materialClaimReplacements;
+    set({ materialClaimReplacements: { ...previous, [key]: { invoiceId: newInvoiceId, at: localDateString(new Date()) } } });
+    backgroundRefresh();
+    return newInvoiceId;
+  },
+  // Pola SAMA seperti createClaimReplacementInvoice di atas (tidak optimistic, tunggu 1
+  // round-trip server dulu karena id invoice pengganti digenerate server) -- cuma di sini SEMUA
+  // key dalam bundle di-set sekaligus ke invoice pengganti gabungan yang SAMA.
+  createClaimReplacementInvoiceBundle: async (keys, ratesByWarnaLengan, beratByKey, buktiInvoiceDataUrl, buktiInvoiceFileName) => {
+    const newInvoiceId = await actions.createClaimReplacementInvoiceBundleAction(keys, ratesByWarnaLengan, beratByKey, buktiInvoiceDataUrl, buktiInvoiceFileName);
+    const previous = get().materialClaimReplacements;
+    const patch: typeof previous = {};
+    const at = localDateString(new Date());
+    for (const key of keys) patch[key] = { invoiceId: newInvoiceId, at };
+    set({ materialClaimReplacements: { ...previous, ...patch } });
+    backgroundRefresh();
+    return newInvoiceId;
+  },
+  applyVendorDeposit: async (supplier, amount, invoiceIds, note) => {
+    await actions.applyVendorDepositAction(supplier, amount, invoiceIds, note);
+    backgroundRefresh();
+  },
+  deleteVendorDepositEntry: async (id) => {
+    const previous = get().vendorDeposits;
+    set({ vendorDeposits: previous.filter((e) => e.id !== id) });
+    try {
+      await actions.deleteVendorDepositEntryAction(id);
+    } catch (err) {
+      set({ vendorDeposits: previous });
+      window.alert("Gagal menghapus baris saldo deposit -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  deleteMaterialClaimHistory: async (id) => {
+    const previous = get().materialClaimHistory;
+    set({ materialClaimHistory: previous.filter((h) => h.id !== id) });
+    try {
+      await actions.deleteMaterialClaimHistoryAction(id);
+    } catch (err) {
+      set({ materialClaimHistory: previous });
+      window.alert("Gagal menghapus baris arsip klaim -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  resetMrp: async (mrpId: string) => {
+    await actions.resetMrpAction(mrpId);
+    backgroundRefresh();
+  },
+  });
+});

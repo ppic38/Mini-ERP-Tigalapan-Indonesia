@@ -1,0 +1,288 @@
+"use client";
+
+import { useEffect, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { Sidebar } from "@/components/shell/sidebar";
+import { Topbar } from "@/components/shell/topbar";
+import { NAV } from "@/lib/shell/nav";
+import { useMrpStore } from "@/lib/mrp/store";
+import { useInternalAuthStore } from "@/lib/internal-auth-store";
+import { useVendorAuthStore } from "@/lib/mrp/vendor-auth-store";
+import type { InternalRole } from "@/lib/internal-auth";
+import {
+  GOOGLE_SHEET_URLS,
+  fetchGoogleSheetCsv,
+  mapEntitasRows,
+  mapHargaKainPksRows,
+  mapHargaKainRows,
+  mapHargaMaklonRows,
+  parseCsvRows,
+} from "@/lib/mrp/importGoogleSheet";
+import {
+  countMaterialClaimsUnresolved,
+  countMaterialInvoicesReadyForDelivery,
+  countMaterialPOsAwaitingInvoice,
+  countMrpAwaitingScmApproval,
+  countMrpWithoutPO,
+  countPaymentTotal,
+  countPoApprovalTotal,
+  countProductionYieldUnresolved,
+  countVendorGoodReceiveEligible,
+  countVendorInvoicePaymentTotal,
+  countVendorInvoicesAwaitingReview,
+  countVendorPengirimanReady,
+  countVendorProduksiActionable,
+  countWarehousePendingReceipt,
+} from "@/lib/shell/badges";
+
+const GATED_ROLES: InternalRole[] = ["ppic", "procurement", "finance", "scm", "produksi", "warehouse"];
+
+export function AppShell({
+  role,
+  activeHref,
+  breadcrumb,
+  title,
+  subtitle,
+  actions,
+  children,
+  notifCount,
+  roleOverride,
+  entityOverride,
+  vendorId,
+}: {
+  role: keyof typeof NAV;
+  activeHref?: string;
+  breadcrumb: string[];
+  title: string;
+  subtitle?: string;
+  actions?: ReactNode;
+  children: ReactNode;
+  notifCount?: number;
+  roleOverride?: string;
+  entityOverride?: string;
+  vendorId?: string;
+}) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  // Revisi 2026-09-07: `hydrated` sudah lama ada di store (di-set true begitu getFlowSnapshot()
+  // pertama SUKSES lewat StoreHydrator) tapi TIDAK PERNAH dibaca di mana pun -- akibatnya tiap
+  // halaman langsung render dengan array store yang masih KOSONG selama snapshot awal masih
+  // di-fetch (`mounted` cuma menandai React sudah hydrate di client, BUKAN datanya sudah
+  // sampai). Beberapa halaman (mis. Purchase Order -> panel "Material") punya warning "belum ada
+  // X" yang dihitung dari array itu -- selama window ini warning itu SELALU salah muncul (bukan
+  // benar-benar kosong, cuma belum sempat ke-load), baru hilang begitu snapshot beneran selesai.
+  // Fix-nya di SINI (bukan per halaman) supaya berlaku otomatis untuk SEMUA halaman yang pakai
+  // AppShell -- children diganti indikator "Memuat data..." sampai hydrated, tanpa AppShell
+  // sendiri (sidebar/topbar) ikut hilang seperti behavior lama.
+  const hydrated = useMrpStore((s) => s.hydrated);
+
+  const router = useRouter();
+  const unlockedRoles = useInternalAuthStore((s) => s.unlockedRoles);
+  const logoutInternal = useInternalAuthStore((s) => s.logout);
+  const logoutVendor = useVendorAuthStore((s) => s.logout);
+
+  const isGated = GATED_ROLES.includes(role as InternalRole);
+  const authorized = !isGated || unlockedRoles.includes(role as InternalRole);
+
+  useEffect(() => {
+    if (mounted && isGated && !authorized) router.replace("/");
+  }, [mounted, isGated, authorized, router]);
+
+  const nav = NAV[role];
+  const allNotifications = useMrpStore((s) => s.notifications);
+  const markNotificationRead = useMrpStore((s) => s.markNotificationRead);
+  const markAllNotificationsRead = useMrpStore((s) => s.markAllNotificationsRead);
+  const dismissNotification = useMrpStore((s) => s.dismissNotification);
+
+  const myNotifications = allNotifications
+    .filter((n) => n.audience.includes(role) && (role !== "vendorMaklon" || !n.vendorId || n.vendorId === vendorId))
+    .sort((a, b) => (a.time < b.time ? 1 : -1));
+
+  const materialPOs = useMrpStore((s) => s.materialPOs);
+  const maklonPOs = useMrpStore((s) => s.maklonPOs);
+  const invoices = useMrpStore((s) => s.invoices);
+  const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
+  const maklonInvoices = useMrpStore((s) => s.maklonInvoices);
+  const mrpDetails = useMrpStore((s) => s.mrpDetails);
+  const staticMrps = useMrpStore((s) => s.staticMrps);
+  const productionResults = useMrpStore((s) => s.productionResults);
+  const productionBatches = useMrpStore((s) => s.productionBatches);
+  const productionGroupMeta = useMrpStore((s) => s.productionGroupMeta);
+  const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
+  const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
+  const ekspedisiRates = useMrpStore((s) => s.ekspedisiRates);
+  const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
+  const materialClaimResolutions = useMrpStore((s) => s.materialClaimResolutions);
+  const materialClaimReturRequests = useMrpStore((s) => s.materialClaimReturRequests);
+  const materialClaimReturDeliveries = useMrpStore((s) => s.materialClaimReturDeliveries);
+  const materialClaimReturReceipts = useMrpStore((s) => s.materialClaimReturReceipts);
+  const productionYieldResolutions = useMrpStore((s) => s.productionYieldResolutions);
+
+  // Auto-import Master Data (Harga Maklon/Kain/Kain PKS/Entitas) begitu terdeteksi kosong — SAMA
+  // pola dengan `autoImportIfEmpty` di components/mrp/import-sheet-button.tsx, tapi dipasang di
+  // sini (AppShell, mount di SETIAP halaman Procurement/Finance) supaya jalan otomatis walau user
+  // tidak pernah buka halaman Master Data / tab-nya secara manual sama sekali — sebelumnya
+  // auto-import cuma jalan kalau panel tab yang bersangkutan sempat DIRENDER (mis. tab "Harga
+  // Kain" tidak pernah diklik → hargaKain tetap kosong selamanya, bikin dropdown "Vendor
+  // material" di PO kosong walau user merasa "sudah pernah import").
+  const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
+  const hargaKain = useMrpStore((s) => s.hargaKain);
+  const hargaKainPks = useMrpStore((s) => s.hargaKainPks);
+  const entitasList = useMrpStore((s) => s.entitasList);
+  const replaceHargaMaklon = useMrpStore((s) => s.replaceHargaMaklon);
+  const replaceHargaKain = useMrpStore((s) => s.replaceHargaKain);
+  const replaceHargaKainPks = useMrpStore((s) => s.replaceHargaKainPks);
+  const replaceEntitas = useMrpStore((s) => s.replaceEntitas);
+  useEffect(() => {
+    if (role !== "procurement" && role !== "finance") return;
+    // BUG FIX 2026-09-12 (user-reported: edit Master Data "balik lagi" ke nilai lama setelah hard
+    // refresh): state awal store SEBELUM StoreHydrator selesai fetch snapshot dari Supabase
+    // memang `[]` untuk hargaKain/hargaMaklon/dst (lihat lib/mrp/store.ts initialState) -- effect
+    // ini dulu cuma cek `.length === 0` TANPA menunggu hydrasi selesai, jadi di jendela waktu
+    // sebelum snapshot selesai (setiap mount/hard-refresh halaman Procurement/Finance), kondisi
+    // "kosong" itu SELALU true sesaat, memicu replaceHargaKain/dst dari Google Sheets -- yaitu
+    // DELETE SEMUA baris + insert ulang dari Sheets (masih berisi nilai lama) -- yang diam-diam
+    // MENIMPA edit manual yang baru saja disimpan ke Supabase tapi belum sempat disinkronkan balik
+    // ke Google Sheets. Sekarang tunggu `hydrated` dulu sebelum menilai array itu "genuinely
+    // kosong" (baru boleh auto-import kalau snapshot ASLI dari Supabase memang kosong).
+    if (!hydrated) return;
+    if (hargaMaklon.length === 0) {
+      fetchGoogleSheetCsv(GOOGLE_SHEET_URLS.hargaMaklon)
+        .then((csv) => replaceHargaMaklon(mapHargaMaklonRows(parseCsvRows(csv))))
+        .catch(() => {}); // gagal diam-diam — tombol Import manual di halaman Master Data tetap ada sebagai fallback
+    }
+    if (hargaKain.length === 0) {
+      fetchGoogleSheetCsv(GOOGLE_SHEET_URLS.hargaKain)
+        .then((csv) => replaceHargaKain(mapHargaKainRows(parseCsvRows(csv))))
+        .catch(() => {});
+    }
+    if (hargaKainPks.length === 0) {
+      fetchGoogleSheetCsv(GOOGLE_SHEET_URLS.hargaKainPks)
+        .then((csv) => replaceHargaKainPks(mapHargaKainPksRows(parseCsvRows(csv))))
+        .catch(() => {});
+    }
+    if (entitasList.length === 0) {
+      fetchGoogleSheetCsv(GOOGLE_SHEET_URLS.entitas)
+        .then((csv) => replaceEntitas(mapEntitasRows(parseCsvRows(csv))))
+        .catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, hydrated, hargaMaklon.length, hargaKain.length, hargaKainPks.length, entitasList.length]);
+
+  let badgeOverrides: Record<string, number> | undefined;
+  if (role === "finance") {
+    badgeOverrides = {
+      "/finance/po-approval": countPoApprovalTotal(materialPOs, maklonPOs),
+      "/finance/payment": countPaymentTotal(invoices, vendorInvoices),
+    };
+  } else if (role === "procurement") {
+    badgeOverrides = {
+      "/procurement/po-approval": countMrpWithoutPO(mrpDetails),
+      // "Invoice Vendor" sekarang tab kedua di halaman ini (bukan halaman terpisah lagi) —
+      // badge-nya digabung ke sini juga.
+      "/raw-material": countMaterialPOsAwaitingInvoice(materialPOs) + countVendorInvoicesAwaitingReview(vendorInvoices),
+      "/procurement/material-tracking": countMaterialInvoicesReadyForDelivery(invoices),
+      "/procurement/material-claims": countMaterialClaimsUnresolved(invoices, materialClaimResolutions),
+    };
+  } else if (role === "scm") {
+    badgeOverrides = {
+      "/scm/approval-mrp": countMrpAwaitingScmApproval(mrpDetails),
+    };
+  } else if (role === "produksi") {
+    badgeOverrides = {
+      "/produksi/yield-alerts": countProductionYieldUnresolved(productionBatches, mrpDetails, productionYieldResolutions),
+    };
+  } else if (role === "warehouse") {
+    badgeOverrides = {
+      "/warehouse/penerimaan": countWarehousePendingReceipt(
+        deliveryKolis,
+        vendorInvoices,
+        mrpDetails,
+        staticMrps,
+        productionBatches,
+        productionResults,
+        productionGroupMeta,
+        invoices,
+        warehouseReceipts,
+        ekspedisiRates,
+        itemSellingPrices
+      ),
+    };
+  } else if (role === "vendorMaklon" && vendorId) {
+    badgeOverrides = {
+      // PO Produksi Saya sengaja TIDAK dikasih badge — sekarang 100% monitoring, tidak ada
+      // satu pun tombol aksi di halaman itu (semua trigger sudah pindah ke Good Receive,
+      // Produksi, dan Invoice & Payment).
+      "/vendor-maklon/receiving": countVendorGoodReceiveEligible(vendorId, invoices),
+      "/vendor-maklon/production": countVendorProduksiActionable(vendorId, productionBatches, productionResults, invoices, productionGroupMeta, {
+        resolutions: materialClaimResolutions,
+        returRequests: materialClaimReturRequests,
+        returDeliveries: materialClaimReturDeliveries,
+        returReceipts: materialClaimReturReceipts,
+      }),
+      "/vendor-maklon/pengiriman": countVendorPengirimanReady(vendorId, productionResults, deliveryKolis, productionGroupMeta, maklonPOs, productionBatches),
+      // Item migration 0026: Invoice & Payment sekarang 100% arsip (Create Invoice manual
+      // dihapus, submit invoice pindah ke Pengiriman per resi-group) -- countVendorInvoicePaymentTotal
+      // selalu 0 sekarang (lib/shell/badges.ts), jadi baris ini efektif tidak pernah menyala lagi.
+      "/vendor-maklon/invoice-payment": countVendorInvoicePaymentTotal(vendorId, mrpDetails, deliveryKolis, vendorInvoices, maklonInvoices),
+    };
+  }
+
+  if (!mounted || (isGated && !authorized)) return null;
+
+  return (
+    <div className="flex min-h-screen bg-surface-page">
+      <Sidebar items={nav.items} activeHref={activeHref} badgeOverrides={badgeOverrides} />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <Topbar
+          role={roleOverride ?? nav.role}
+          entity={entityOverride ?? nav.entity}
+          notifications={myNotifications}
+          onMarkRead={markNotificationRead}
+          onMarkAllRead={() => markAllNotificationsRead(myNotifications.map((n) => n.id))}
+          onDismiss={dismissNotification}
+          onLogout={
+            isGated
+              ? () => {
+                  logoutInternal(role as InternalRole);
+                  router.push("/");
+                }
+              : role === "vendorMaklon"
+                ? () => {
+                    logoutVendor();
+                    router.push("/vendor-maklon/login");
+                  }
+                : undefined
+          }
+        />
+        <div className="flex items-center gap-2 px-[22px] pt-3.5 font-sans text-xs text-[#94A3B0]">
+          {breadcrumb.map((crumb, i) => (
+            <span key={i} className={i === breadcrumb.length - 1 ? "font-medium text-[#31414F]" : undefined}>
+              {crumb}
+              {i < breadcrumb.length - 1 ? " /" : ""}
+            </span>
+          ))}
+        </div>
+        <div className="flex items-end gap-3 px-[22px] pb-0 pt-2">
+          <div>
+            <div className="font-heading text-[22px] font-bold tracking-tight text-text-primary">{title}</div>
+            {subtitle && <div className="mt-0.5 font-sans text-xs text-text-muted">{subtitle}</div>}
+          </div>
+          {actions && <div className="ml-auto flex gap-2">{actions}</div>}
+        </div>
+        <div className="flex min-w-0 flex-1 flex-col gap-3.5 px-[22px] py-4">
+          {hydrated ? (
+            children
+          ) : (
+            <div className="flex flex-1 items-center justify-center py-20">
+              <div className="flex items-center gap-2 font-sans text-[12.5px] text-text-muted">
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-border-subtle border-t-action-primary" />
+                Memuat data…
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

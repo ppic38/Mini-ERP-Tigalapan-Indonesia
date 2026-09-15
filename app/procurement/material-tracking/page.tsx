@@ -1,0 +1,411 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { AppShell } from "@/components/shell/app-shell";
+import { StatusPill } from "@/components/ui/status-pill";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Button } from "@/components/ui/button";
+import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { TransferMaterialModal, type TransferCandidate } from "@/components/mrp/transfer-material-modal";
+import { SetDeliveryModal } from "@/components/mrp/set-delivery-modal";
+import { WithdrawVendorModal } from "@/components/mrp/withdraw-vendor-modal";
+import { useMrpStore } from "@/lib/mrp/store";
+import {
+  formatDate,
+  formatPcs,
+  formatRupiah,
+  maklonPoBadgeWithApproval,
+  materialPoFullStatus,
+  materialPoFullStatusBadge,
+  movableRollCountForInvoiceColor,
+  mrpDetailFor,
+  rollArrivalProgress,
+  rollArrivalStatus,
+  rollArrivalStatusBadge,
+  type MaterialPoFullStatus,
+} from "@/lib/mrp/derive";
+import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import type { MaklonPO, MaklonPoStatus, RawMaterialInvoice } from "@/lib/mrp/types";
+
+// PO Produksi masih "aktif" (belum sampai tahap kirim/tagih) -- eligible untuk "Vendor Berhenti
+// Produksi", SAMA PERSIS gate MAKLON_PO_ACTIVE_STATUSES di withdrawVendorProductionAction
+// (lib/mrp/actions.ts) supaya baris yang ditampilkan di UI konsisten dengan yang diterima server.
+const MAKLON_PO_ACTIVE_STATUSES: MaklonPoStatus[] = ["FULL_WAITING_MATERIAL", "PARTIAL_WAITING_MATERIAL", "PRODUCTION", "PARTIAL_PRODUCTION"];
+
+type TrackingRow = {
+  id: string;
+  kind: "invoice" | "pending";
+  mrpId: string;
+  poId: string;
+  supplierVendor: string;
+  roll: number;
+  nilai: number | null;
+  warna: string;
+  entitas: string;
+  kodeTransaksi?: string;
+  tglMrp?: string;
+  tglInvoice?: string;
+  tglPayment?: string;
+  tglDelivery?: string;
+  tglReceiving?: string;
+  tglProduksi?: string;
+  status: MaterialPoFullStatus;
+  invoice?: RawMaterialInvoice;
+};
+
+export default function MaterialTrackingPage() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  const invoices = useMrpStore((s) => s.invoices);
+  const materialPOs = useMrpStore((s) => s.materialPOs);
+  const maklonPOs = useMrpStore((s) => s.maklonPOs);
+  const mrpDetails = useMrpStore((s) => s.mrpDetails);
+  const productionBatches = useMrpStore((s) => s.productionBatches);
+  const productionResults = useMrpStore((s) => s.productionResults);
+  const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
+  const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
+  const setInvoicesDelivery = useMrpStore((s) => s.setInvoicesDelivery);
+  const transferMaterial = useMrpStore((s) => s.transferMaterial);
+  const withdrawVendorProduction = useMrpStore((s) => s.withdrawVendorProduction);
+
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [deliveryOpen, setDeliveryOpen] = useState(false);
+  // "Vendor Berhenti Produksi" -- PO Produksi yang lagi dipilih untuk dipindahkan sisa
+  // pekerjaannya, lihat WithdrawVendorModal & withdrawVendorProductionAction.
+  const [withdrawTarget, setWithdrawTarget] = useState<MaklonPO | null>(null);
+  // Item 4 (feedback batch 2026-09-07): "Material per line" & "PO Produksi aktif" dulu ditumpuk
+  // vertikal di 1 halaman -- owner khawatir makin lama makin banyak baris di keduanya jadi
+  // menumpuk & membingungkan. Dipisah jadi 2 tab, murni pembungkus navigasi (isi/logic tiap
+  // section tidak berubah).
+  const [tab, setTab] = useState<"material" | "produksi-aktif">("material");
+
+  if (!mounted) return null;
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  // Item revisi 2026-09-07 (owner: "kenapa sudah status production untuk roll... yang dibuat baru
+  // (berdasarkan claim) padahal belum di set delivery"): materialPoFullStatus dihitung PER MaterialPO
+  // (`po.id`), bukan per invoice -- SEMUA invoice yang berbagi po.id yang sama (termasuk PV
+  // pengganti klaim yang baru dibuat belakangan, lihat createClaimReplacementInvoiceAction) ikut
+  // "mewarisi" status PALING MAJU di antara SEMUA invoice PO itu (lihat `rank`/`bestIdx` di
+  // materialPoFullStatus) PLUS progres produksi keseluruhan PO. Ini benar untuk 1 invoice bulk per
+  // PO (asumsi lama), tapi SALAH untuk PV pengganti klaim -- roll penggantinya baru diterbitkan
+  // belakangan & belum tentu sudah dikirim/diterima vendor sama sekali, padahal PO induknya sendiri
+  // sudah lama masuk PRODUCTION dari roll-roll LAIN yang tidak terkait. Untuk baris PV pengganti
+  // (i.sourceClaimId terisi), status yang ditampilkan sekarang murni dari status invoice ITU
+  // SENDIRI (WAITING_INVOICE/INVOICED/PAID/DELIVERY/RECEIVING -- field ini sendiri TIDAK PERNAH
+  // maju melewati RECEIVING, lihat actions.ts, jadi aman dipetakan langsung tanpa perlu logic
+  // produksi PO sama sekali), bukan status agregat PO induknya.
+  const claimInvoiceOwnStatus: Record<RawMaterialInvoice["status"], MaterialPoFullStatus> = {
+    WAITING_INVOICE: "WAITING_INVOICE",
+    INVOICED: "INVOICE",
+    PAID: "PAID",
+    DELIVERY: "DELIVERY",
+    RECEIVING: "RECEIVING",
+    WAITING_PRODUCTION: "RECEIVING",
+    PRODUCTION_DONE: "RECEIVING",
+  };
+  const invoiceRows: TrackingRow[] = invoices.map((i) => {
+    const po = materialPOs.find((p) => p.id === i.poId);
+    return {
+      id: i.id,
+      kind: "invoice",
+      mrpId: i.mrpId,
+      poId: i.poId,
+      supplierVendor: `${i.supplier} → ${VENDOR_PRODUKSI[i.destinationVendor]?.name ?? i.destinationVendor}`,
+      roll: i.qtyReady,
+      nilai: i.totalBiaya,
+      warna: i.colorEntries.map((c) => c.warna).join(", ") || "—",
+      entitas: i.entity,
+      kodeTransaksi: i.kodeTransaksi,
+      tglMrp: mrpDetailFor(i.mrpId, mrpDetails)?.dates.created,
+      tglInvoice: i.bookedAt,
+      tglPayment: i.paidAt,
+      tglDelivery: i.deliveredAt,
+      tglReceiving: i.receivedAt,
+      tglProduksi: i.productionStart,
+      status: i.sourceClaimId
+        ? claimInvoiceOwnStatus[i.status]
+        : po
+          ? materialPoFullStatus(po, invoices, productionBatches, productionResults, mrpDetails, deliveryKolis, vendorInvoices, maklonPOs)
+          : "INVOICE",
+      invoice: i,
+    };
+  });
+
+  // Material Tracking sekarang KHUSUS material yang sudah dibayar (Finance) ke atas —
+  // "belum dibayar" (materialPO yang belum diinvoice sama sekali, ATAU invoice yang sudah
+  // dibuat tapi statusnya masih INVOICED/belum PAID) sengaja tidak ditampilkan di sini, supaya
+  // halaman ini fokus ke tracking fisik material yang sudah pasti jadi (dibayar), bukan yang
+  // masih dalam proses invoice/approval. Baris "pending" (materialPO belum diinvoice) yang
+  // sebelumnya ikut ditampilkan sudah dihapus dari sini.
+  const rows: TrackingRow[] = invoiceRows.filter((r) => r.invoice && r.invoice.status !== "INVOICED");
+
+  const selectedRows = rows.filter((r) => selected.has(r.id));
+  const selectedInvoiceOnly = selectedRows.filter((r) => r.kind === "invoice" && r.invoice).map((r) => r.invoice!);
+  const selectedPaidList = selectedInvoiceOnly.filter((i) => i.status === "PAID");
+  // Item 1 (feedback batch 2026-09-04): pindah ke vendor lain sekarang dibolehkan SAMPAI tahap
+  // PRODUCTION (roll individual yang sudah dipotong tetap dilindungi lewat cap "roll belum
+  // dipotong" di TransferMaterialModal, lihat movableRollCountForInvoice) -- begitu status sudah
+  // FINISH_GOOD ke atas (barang jadi, bukan roll lagi, lihat materialPoFullStatus), material itu
+  // baru benar-benar tidak bisa dipindahkan lagi.
+  const TRANSFER_BLOCKED_STATUSES = new Set<MaterialPoFullStatus>(["FINISH_GOOD", "DELIVERED_FROM_VENDOR", "SELESAI"]);
+  const transferEligibleRows = selectedRows.filter((r) => r.kind === "invoice" && r.invoice && !TRANSFER_BLOCKED_STATUSES.has(r.status));
+  const transferEligibleInvoices = transferEligibleRows.map((r) => r.invoice!);
+  const transferBlockedCount = selectedInvoiceOnly.length - transferEligibleInvoices.length;
+
+  // Dibatasi ke 6 kolom default (+ No. MRP di firstColumn = 7 total) — sebelumnya 10 kolom
+  // sekaligus nyala bikin tabel penuh & baris jadi bertumpuk-tumpuk (3 kolom tanggal terpisah,
+  // dsb). Sisanya tetap bisa dinyalakan lewat "Kolom" kalau perlu audit detail per tanggal.
+  // Item revisi 2026-09-08 (owner: "kasih sama urutan kolom untuk [Roll Diterima] dan [Status]"
+  // -- dikonfirmasi via AskUserQuestion): "Roll Diterima" (dulu posisi ke-4) direname jadi
+  // "Status Material (Roll)" & dipindah ke tepat SEBELUM "Status" (posisi terakhir) supaya kedua
+  // kolom terkait status ini bersebelahan, bukan terpisah jauh seperti sebelumnya. `key` internal
+  // TETAP "rollDiterima" (cuma label & posisi yang berubah) -- render function tidak disentuh.
+  const columns: ColumnDef<TrackingRow>[] = [
+    { key: "noPo", label: "No PO", default: true, render: (r) => <span className="font-mono font-medium">{r.poId}</span> },
+    { key: "supplierVendor", label: "Supplier → Vendor", default: true, render: (r) => r.supplierVendor },
+    { key: "roll", label: "Roll", default: true, align: "right", render: (r) => r.roll },
+    { key: "nilai", label: "Nilai", default: true, align: "right", render: (r) => (r.nilai != null ? formatRupiah(r.nilai) : "—") },
+    { key: "warna", label: "Warna", default: true, render: (r) => r.warna },
+    { key: "entitas", label: "Entitas", default: false, render: (r) => r.entitas },
+    { key: "kodeTransaksi", label: "Kode Transaksi", default: false, render: (r) => <span className="font-mono">{r.kodeTransaksi ?? "—"}</span> },
+    { key: "tglMrp", label: "Tanggal MRP", default: false, render: (r) => formatDate(r.tglMrp) },
+    { key: "tglInvoice", label: "Tanggal Invoice", default: false, render: (r) => formatDate(r.tglInvoice) },
+    { key: "tglPayment", label: "Tanggal Payment", default: false, render: (r) => formatDate(r.tglPayment) },
+    { key: "tglDelivery", label: "Tanggal Delivery", default: false, render: (r) => formatDate(r.tglDelivery) },
+    { key: "tglReceiving", label: "Tanggal Receiving", default: false, render: (r) => formatDate(r.tglReceiving) },
+    { key: "tglProduksi", label: "Tanggal Proses Produksi", default: false, render: (r) => formatDate(r.tglProduksi) },
+    {
+      key: "rollDiterima",
+      label: "Status Material (Roll)",
+      default: true,
+      align: "right",
+      render: (r) => {
+        if (!r.invoice) return "—";
+        const p = rollArrivalProgress(r.invoice);
+        if (p.total === 0) return "—";
+        const badge = rollArrivalStatusBadge(rollArrivalStatus(r.invoice));
+        return (
+          <span className="flex items-center justify-end gap-1.5">
+            <span className="font-mono">{`${p.arrived}/${p.total} roll`}</span>
+            <StatusPill tone={badge.tone}>{badge.label}</StatusPill>
+          </span>
+        );
+      },
+    },
+    {
+      key: "status",
+      label: "Status",
+      default: true,
+      render: (r) => <StatusPill tone={materialPoFullStatusBadge(r.status).tone}>{materialPoFullStatusBadge(r.status).label}</StatusPill>,
+    },
+  ];
+
+  // "PO Produksi aktif" -- kasus jarang tapi nyata: vendor tiba-tiba minta berhenti mid-produksi.
+  // Cuma PO yang masih dalam tahap produksi aktif yang eligible (sama gate dengan
+  // withdrawVendorProductionAction) -- PO yang sudah masuk Delivery/Invoice/Payment tidak ada lagi
+  // yang bisa dipindahkan (Finish Good sudah selesai/dikirim, bukan WIP lagi).
+  const activePOs = maklonPOs.filter((p) => p.approved && !p.closedAt && p.qty > 0 && MAKLON_PO_ACTIVE_STATUSES.includes(p.status));
+  const activePoColumns: ColumnDef<MaklonPO>[] = [
+    { key: "noPo", label: "No PO", default: true, render: (p) => <span className="font-mono font-medium">{p.id}</span> },
+    { key: "vendor", label: "Vendor", default: true, render: (p) => VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi },
+    { key: "qty", label: "Qty", default: true, align: "right", render: (p) => formatPcs(p.qty) + " pcs" },
+    { key: "nilai", label: "Nilai", default: true, align: "right", render: (p) => formatRupiah(p.amount) },
+    {
+      key: "status",
+      label: "Status",
+      default: true,
+      render: (p) => {
+        const badge = maklonPoBadgeWithApproval(p, vendorInvoices);
+        return <StatusPill tone={badge.tone}>{badge.label}</StatusPill>;
+      },
+    },
+    {
+      key: "aksi",
+      label: "Aksi",
+      default: true,
+      render: (p) => (
+        <Button onClick={() => setWithdrawTarget(p)} variant="danger" size="xs">
+          Vendor Berhenti Produksi →
+        </Button>
+      ),
+    },
+  ];
+
+  return (
+    <AppShell
+      role="procurement"
+      activeHref="/procurement/material-tracking"
+      breadcrumb={["Dashboard", "Material Tracking"]}
+      title="Material tracking"
+      subtitle={`${rows.length} baris material — invoice yang sudah dibayar Finance ke atas`}
+    >
+      <div className="flex gap-2 rounded-lg border border-border-subtle bg-surface-card p-1.5">
+        {(
+          [
+            // Item revisi 2026-09-07: badge tab dulu cuma jumlah baris total (rows.length) --
+            // owner minta badge cuma nyala kalau MASIH ADA yang perlu di-set delivery (hilang
+            // begitu semua baris yang tampil sudah di-set delivery), bukan sekadar "ada baris".
+            // Sama definisi dengan countMaterialInvoicesReadyForDelivery (badge sidebar).
+            { key: "material" as const, label: "Material", badge: rows.filter((r) => r.invoice?.status === "PAID" && !r.invoice.deliveredAt).length },
+            // "PO Produksi aktif" SENGAJA tidak pakai badge sama sekali -- ini bukan antrean kerja
+            // yang perlu ditindak (beda dari "Material" di atas), murni daftar monitoring PO yang
+            // sedang berjalan, jadi badge angka di sini cuma bikin bingung.
+            { key: "produksi-aktif" as const, label: "PO Produksi aktif", badge: 0 },
+          ]
+        ).map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className={
+              "flex items-center gap-1.5 rounded-md px-3.5 py-[7px] font-sans text-[12.5px] font-semibold " +
+              (tab === t.key ? "bg-action-primary text-white" : "text-text-muted hover:bg-[#F7F9FB]")
+            }
+          >
+            {t.label}
+            {t.badge > 0 && (
+              <span className="flex-shrink-0 rounded-full bg-danger px-[5px] py-px font-mono text-[9px] font-semibold text-white">{t.badge}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {tab === "produksi-aktif" && (
+        <DataTable
+          title="PO Produksi aktif"
+          subtitle="Vendor tiba-tiba berhenti mid-produksi? Pindahkan sisa pekerjaannya (bahan mentah + WIP belum Finish Good) ke vendor lain sekaligus."
+          columns={activePoColumns}
+          rows={activePOs}
+          keyOf={(p) => p.id}
+          firstColumnLabel="No. MRP"
+          firstColumnRender={(p) => <span className="font-mono">{p.mrpId}</span>}
+          emptyText="Tidak ada PO Produksi aktif."
+        />
+      )}
+
+      {withdrawTarget && (
+        <WithdrawVendorModal
+          mrpId={withdrawTarget.mrpId}
+          fromVendorName={VENDOR_PRODUKSI[withdrawTarget.vendorProduksi]?.name ?? withdrawTarget.vendorProduksi}
+          qty={withdrawTarget.qty}
+          amount={withdrawTarget.amount}
+          otherVendors={Object.entries(VENDOR_PRODUKSI)
+            .filter(([id]) => id !== withdrawTarget.vendorProduksi)
+            .map(([id, v]) => ({ id, name: v.name }))}
+          onConfirm={(toVendor) => withdrawVendorProduction(withdrawTarget.mrpId, withdrawTarget.vendorProduksi, toVendor)}
+          onClose={() => setWithdrawTarget(null)}
+        />
+      )}
+
+      {tab === "material" && selected.size > 0 && (
+        <div className="flex items-center gap-3 rounded-lg border border-[#CFE0EF] bg-info-bg px-5 py-[10px]">
+          <span className="font-sans text-xs font-medium text-info-fg">{selected.size} dipilih</span>
+          <div className="ml-1 flex gap-2">
+            {selectedPaidList.length > 0 && (
+              <button onClick={() => setDeliveryOpen(true)} className="rounded-md border border-[#A8C5DF] bg-white px-2.5 py-[5px] font-sans text-[11.5px] font-semibold text-action-primary">
+                Set Delivery ({selectedPaidList.length})
+              </button>
+            )}
+            {transferEligibleInvoices.length > 0 && (
+              <button onClick={() => setTransferOpen(true)} className="rounded-md border border-[#A8C5DF] bg-white px-2.5 py-[5px] font-sans text-[11.5px] font-semibold text-action-primary">
+                Pindahkan {transferEligibleInvoices.length} ke vendor lain
+              </button>
+            )}
+          </div>
+          {transferBlockedCount > 0 && (
+            <span className="font-sans text-[11px] text-danger-fg">
+              {transferBlockedCount} baris tidak bisa dipindahkan — sudah masuk Finish Good (barang jadi, bukan roll lagi).
+            </span>
+          )}
+        </div>
+      )}
+
+      {tab === "material" && (
+      <DataTable
+        title="Material per line"
+        columns={columns}
+        rows={rows}
+        keyOf={(r) => r.id}
+        firstColumnLabel="No. MRP"
+        firstColumnRender={(r) => (
+          <span className="flex items-center gap-2.5">
+            <Checkbox checked={selected.has(r.id)} onChange={() => toggle(r.id)} />
+            <span className="font-mono">{r.mrpId}</span>
+          </span>
+        )}
+        filterDefs={[
+          { label: "No MRP", options: Array.from(new Set(rows.map((r) => r.mrpId))), test: (r, v) => r.mrpId === v },
+          { label: "No PO", options: Array.from(new Set(rows.map((r) => r.poId))), test: (r, v) => r.poId === v },
+          { label: "Entitas", options: Array.from(new Set(rows.map((r) => r.entitas))), test: (r, v) => r.entitas === v },
+          {
+            label: "Status",
+            options: Array.from(new Set(rows.map((r) => materialPoFullStatusBadge(r.status).label))),
+            test: (r, v) => materialPoFullStatusBadge(r.status).label === v,
+          },
+          {
+            label: "Roll diterima",
+            options: ["Belum", "Parsial", "Lengkap"],
+            test: (r, v) => {
+              if (!r.invoice) return false;
+              const s = rollArrivalStatus(r.invoice);
+              return (v === "Belum" && s === "BELUM") || (v === "Parsial" && s === "PARSIAL") || (v === "Lengkap" && s === "LENGKAP");
+            },
+          },
+        ]}
+        emptyText="Belum ada invoice material yang sudah dibayar Finance."
+      />
+      )}
+
+      {deliveryOpen && (
+        <SetDeliveryModal
+          count={selectedPaidList.length}
+          onCancel={() => setDeliveryOpen(false)}
+          onConfirm={(deliveryDate) => {
+            setInvoicesDelivery(selectedPaidList.map((i) => i.id), deliveryDate);
+            setSelected(new Set());
+            setDeliveryOpen(false);
+          }}
+        />
+      )}
+
+      {transferOpen && (
+        <TransferMaterialModal
+          // Item 2 (feedback batch 2026-09-10): 1 baris per (invoice, warna, lengan) -- bukan lagi
+          // 1 baris per invoice dengan warna digabung jadi 1 string -- supaya user bisa pilih
+          // pindahkan 1 warna saja dari invoice multi-warna, dengan cap "roll belum dipotong"
+          // sendiri per warna (movableRollCountForInvoiceColor).
+          items={transferEligibleInvoices.flatMap((i) =>
+            i.colorEntries.map(
+              (c): TransferCandidate => ({
+                id: `${i.id}|${c.warna}|${c.lengan}`,
+                invoiceId: i.id,
+                mrpId: i.mrpId,
+                poId: i.poId,
+                warna: c.warna,
+                lengan: c.lengan,
+                qtyReady: movableRollCountForInvoiceColor(i, productionBatches, c.warna, c.lengan),
+              })
+            ).filter((c) => c.qtyReady > 0)
+          )}
+          vendors={Object.keys(VENDOR_PRODUKSI).map((v) => ({ id: v, name: VENDOR_PRODUKSI[v].name }))}
+          onCancel={() => setTransferOpen(false)}
+          onConfirm={(toVendor, items, deliveryDate) => {
+            transferMaterial(items, toVendor, deliveryDate);
+            setSelected(new Set());
+            setTransferOpen(false);
+          }}
+        />
+      )}
+    </AppShell>
+  );
+}
