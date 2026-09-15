@@ -28,9 +28,10 @@ export function materialSupplierNames(hargaKain: HargaKainRow[], supplierList: S
  *  harga untuk `warna` tertentu di Harga Kain — supaya Procurement tidak bisa memilih kombinasi
  *  supplier+warna yang tidak ada harganya sama sekali (yang berujung PO jatuh ke fallback
  *  "Estimasi" pakai angka flat lama yang jauh di bawah harga pasar, lihat hargaKainRateInfo).
- *  Daftar manual di tab "Supplier" TETAP ikut ditampilkan untuk semua warna (itu memang
- *  pelengkap yang sengaja belum ada data harganya — user yang pilih itu tahu risikonya). */
-export function materialSupplierNamesForWarna(hargaKain: HargaKainRow[], supplierList: SupplierRow[], warna: string): string[] {
+ *  Revisi 2026-09-15 (owner: "hilangkan opsi Supplier ABC/Cemerlang/Rajut Jaya"): daftar manual
+ *  tab "Supplier" (tabel `suppliers`, isinya cuma data dummy seed 0002 & tab-nya sudah
+ *  disembunyikan) TIDAK LAGI digabung ke sini -- sumbernya murni Harga Kain. */
+export function materialSupplierNamesForWarna(hargaKain: HargaKainRow[], warna: string): string[] {
   const names = new Set<string>();
   const baseWarna = baseWarnaForKainFallback(warna);
   for (const r of hargaKain) {
@@ -38,7 +39,6 @@ export function materialSupplierNamesForWarna(hargaKain: HargaKainRow[], supplie
     if (normKey(r.warna) === normKey(warna)) names.add(r.namaSupplier);
     else if (baseWarna && normKey(r.warna) === normKey(baseWarna)) names.add(r.namaSupplier);
   }
-  for (const r of supplierList) if (r.nama) names.add(r.nama);
   return Array.from(names).sort((a, b) => a.localeCompare(b, "id-ID"));
 }
 

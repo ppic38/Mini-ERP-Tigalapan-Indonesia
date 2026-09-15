@@ -69,7 +69,6 @@ export default function PoApprovalPage() {
   const hargaKain = useMrpStore((s) => s.hargaKain);
   const hargaKainPks = useMrpStore((s) => s.hargaKainPks);
   const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
-  const supplierList = useMrpStore((s) => s.supplierList);
   const vendorProduksiList = useMrpStore((s) => s.vendorProduksiList);
   const hargaRib = useMrpStore((s) => s.hargaRib);
   const hargaKerahManset = useMrpStore((s) => s.hargaKerahManset);
@@ -352,14 +351,16 @@ export default function PoApprovalPage() {
       )}
 
       {detail && (
-        <div className="grid gap-3.5" style={{ gridTemplateColumns: "1.3fr 1fr" }}>
+        // Revisi 2026-09-15 (owner: tabel Material terlalu sempit) -- porsi dibalik: Vendor produksi
+        // dipangkas, Material dapat ruang terbesar (kolomnya jauh lebih banyak).
+        <div className="grid gap-3.5" style={{ gridTemplateColumns: "minmax(0, 0.8fr) minmax(0, 1.7fr)" }}>
           <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
             <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Vendor produksi</div>
             {/* Item 2026-09-13 (user-reported): kolom "%" (persentase kapasitas terpakai) dihapus
                -- tidak relevan buat keputusan di halaman ini, cuma bikin tabel penuh. */}
             <div
               className="grid gap-x-2 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
-              style={{ gridTemplateColumns: "1fr 80px 80px 130px" }}
+              style={{ gridTemplateColumns: "minmax(0, 1fr) 64px 72px 118px" }}
             >
               <span>Nama vendor</span>
               <span className="text-right">Qty plan</span>
@@ -373,7 +374,7 @@ export default function PoApprovalPage() {
                   key={v.vendor}
                   onClick={() => setDrillVendor(v.vendor)}
                   className="grid w-full items-center gap-x-2 border-b border-[#F1F4F7] px-4 py-[11px] text-left font-sans text-xs text-[#31414F] last:border-b-0 hover:bg-[#F7F9FB]"
-                  style={{ gridTemplateColumns: "1fr 80px 80px 130px" }}
+                  style={{ gridTemplateColumns: "minmax(0, 1fr) 64px 72px 118px" }}
                 >
                   <span className="font-medium">{v.name}</span>
                   <span className="text-right font-mono">{formatPcs(v.qty)}</span>
@@ -398,7 +399,11 @@ export default function PoApprovalPage() {
               // PO Bahan aktual) -- gated kondisi SAMA seperti kolom kg (showKerahManset).
               // Kolom "Est. Rib (Rp)" (Master Data Harga RIB, migration 0037) SELALU tampil -- rib
               // ada di semua kategori, bukan cuma WANGKI MYNO.
-              const cols = showKerahManset ? "1fr 50px 60px 60px 60px 90px 90px 90px 1fr" : "1fr 50px 60px 90px 1fr";
+              // Kolom Warna diberi lebar minimum supaya nama warna tidak patah per kata (revisi
+              // 2026-09-15, owner: tabel Material terlalu sempit).
+              const cols = showKerahManset
+                ? "minmax(120px, 1.3fr) 44px 60px 64px 64px 104px 104px 104px minmax(150px, 1fr)"
+                : "minmax(140px, 1.5fr) 44px 60px 110px minmax(160px, 1fr)";
               return (
                 <>
                   <div
@@ -417,10 +422,10 @@ export default function PoApprovalPage() {
                   </div>
                   {materialGroups.map((g) => {
                     // Dipersempit ke supplier yang benar-benar punya harga untuk warna ini di Harga
-                    // Kain (+ daftar manual tab Supplier) — supaya tidak bisa pilih kombinasi
-                    // supplier+warna yang harganya tidak ada sama sekali (yang berujung PO jatuh ke
-                    // fallback "Estimasi" pakai angka flat jauh di bawah harga pasar).
-                    const optionsForWarna = materialSupplierNamesForWarna(hargaKain, supplierList, g.warna);
+                    // Kain — supaya tidak bisa pilih kombinasi supplier+warna yang harganya tidak ada
+                    // sama sekali (yang berujung PO jatuh ke fallback "Estimasi" pakai angka flat jauh
+                    // di bawah harga pasar). Daftar dummy tab Supplier sudah TIDAK ikut (2026-09-15).
+                    const optionsForWarna = materialSupplierNamesForWarna(hargaKain, g.warna);
                     // Fix (review 2026-09-14): MRP WANGKI MYNO yang di-import SEBELUM fitur konversi
                     // pcs->kg ini (lihat parseImport.ts) masih punya kerah_kg/manset_kg berisi ANGKA
                     // PCS MENTAH (bukan kg -- data lama SENGAJA tidak dimigrasi, lihat spec Non-goals).

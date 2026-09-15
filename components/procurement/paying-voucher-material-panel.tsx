@@ -45,7 +45,6 @@ export function PayingVoucherMaterialPanel() {
   const closePoWithReason = useMrpStore((s) => s.closePoWithReason);
   const reassignMaterialToSupplier = useMrpStore((s) => s.reassignMaterialToSupplier);
   const hargaKain = useMrpStore((s) => s.hargaKain);
-  const supplierList = useMrpStore((s) => s.supplierList);
 
   const [selectedPoId, setSelectedPoId] = useState<string | null>(null);
   const [afterSubmitPoId, setAfterSubmitPoId] = useState<string | null>(null);
@@ -244,7 +243,7 @@ export function PayingVoucherMaterialPanel() {
       {closingPo && (
         <ClosePoReasonModal
           po={closingPo}
-          supplierOptionsForWarna={(warna) => materialSupplierNamesForWarna(hargaKain, supplierList, warna)}
+          supplierOptionsForWarna={(warna) => materialSupplierNamesForWarna(hargaKain, warna)}
           onNo={() => setClosingPoId(null)}
           onYes={(reason, warna, lengan, closeQty, newSupplier) => {
             if (newSupplier) {

@@ -14,8 +14,9 @@ import { HargaKerahMansetPanel } from "@/components/procurement/harga-kerah-mans
 // Item revisi 2026-09-15 (owner: tab "Supplier" dihapus dari menu Master Data -- datanya memang
 // kosong/tidak pernah dipakai, dicek langsung ke DB sebelum dihapus, lihat catatan di
 // components/procurement/supplier-panel.tsx yang TETAP DIBIARKAN ADA sebagai file -- store action
-// & merge ke dropdown "Vendor material" (materialSupplierNames di lib/mrp/derive.ts) SENGAJA TIDAK
-// disentuh, murni tab/menu-nya yang disembunyikan sesuai permintaan ("hapus tabnya saja").
+// SENGAJA TIDAK disentuh, murni tab/menu-nya yang disembunyikan sesuai permintaan ("hapus tabnya
+// saja"). Update 2026-09-15: merge daftar ini ke dropdown "Vendor material" SUDAH dilepas (lihat
+// materialSupplierNamesForWarna di lib/mrp/derive.ts) -- isinya cuma data dummy seed.
 type Tab = "maklon" | "kain" | "kainPks" | "rib" | "ekspedisi" | "kerahManset";
 
 export default function ProcurementMasterDataPage() {
