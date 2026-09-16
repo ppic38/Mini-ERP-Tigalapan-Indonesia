@@ -6,12 +6,12 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { FilterBar } from "@/components/mrp/filter-bar";
 import { TransferMaterialModal, type TransferCandidate } from "@/components/mrp/transfer-material-modal";
 import { SetDeliveryModal } from "@/components/mrp/set-delivery-modal";
 import { WithdrawVendorModal } from "@/components/mrp/withdraw-vendor-modal";
 import { useMrpStore } from "@/lib/mrp/store";
 import {
-  formatDate,
   formatPcs,
   formatRupiah,
   maklonPoBadgeWithApproval,
@@ -80,6 +80,16 @@ export default function MaterialTrackingPage() {
   // menumpuk & membingungkan. Dipisah jadi 2 tab, murni pembungkus navigasi (isi/logic tiap
   // section tidak berubah).
   const [tab, setTab] = useState<"material" | "produksi-aktif">("material");
+  // Item revisi 2026-09-17 (owner: "Material Tracking: card-select, lalu breakdown warna/roll"):
+  // "Material per line" (dulu tabel flat, 1 baris per invoice) diganti kartu -- klik kartu untuk
+  // membuka rincian warna/roll invoice itu (dari colorEntries), checkbox tetap dipakai untuk
+  // bulk-select (Set Delivery / Pindahkan ke vendor lain) tanpa ikut membuka rincian.
+  const [expandedTrackingId, setExpandedTrackingId] = useState<string | null>(null);
+  const [mrpFilterTracking, setMrpFilterTracking] = useState("");
+  const [poFilterTracking, setPoFilterTracking] = useState("");
+  const [entitasFilterTracking, setEntitasFilterTracking] = useState("");
+  const [statusFilterTracking, setStatusFilterTracking] = useState("");
+  const [rollFilterTracking, setRollFilterTracking] = useState("");
 
   if (!mounted) return null;
 
@@ -163,53 +173,18 @@ export default function MaterialTrackingPage() {
   const transferEligibleInvoices = transferEligibleRows.map((r) => r.invoice!);
   const transferBlockedCount = selectedInvoiceOnly.length - transferEligibleInvoices.length;
 
-  // Dibatasi ke 6 kolom default (+ No. MRP di firstColumn = 7 total) — sebelumnya 10 kolom
-  // sekaligus nyala bikin tabel penuh & baris jadi bertumpuk-tumpuk (3 kolom tanggal terpisah,
-  // dsb). Sisanya tetap bisa dinyalakan lewat "Kolom" kalau perlu audit detail per tanggal.
-  // Item revisi 2026-09-08 (owner: "kasih sama urutan kolom untuk [Roll Diterima] dan [Status]"
-  // -- dikonfirmasi via AskUserQuestion): "Roll Diterima" (dulu posisi ke-4) direname jadi
-  // "Status Material (Roll)" & dipindah ke tepat SEBELUM "Status" (posisi terakhir) supaya kedua
-  // kolom terkait status ini bersebelahan, bukan terpisah jauh seperti sebelumnya. `key` internal
-  // TETAP "rollDiterima" (cuma label & posisi yang berubah) -- render function tidak disentuh.
-  const columns: ColumnDef<TrackingRow>[] = [
-    { key: "noPo", label: "No PO", default: true, render: (r) => <span className="font-mono font-medium">{r.poId}</span> },
-    { key: "supplierVendor", label: "Supplier → Vendor", default: true, render: (r) => r.supplierVendor },
-    { key: "roll", label: "Roll", default: true, align: "right", render: (r) => r.roll },
-    { key: "nilai", label: "Nilai", default: true, align: "right", render: (r) => (r.nilai != null ? formatRupiah(r.nilai) : "—") },
-    { key: "warna", label: "Warna", default: true, render: (r) => r.warna },
-    { key: "entitas", label: "Entitas", default: false, render: (r) => r.entitas },
-    { key: "kodeTransaksi", label: "Kode Transaksi", default: false, render: (r) => <span className="font-mono">{r.kodeTransaksi ?? "—"}</span> },
-    { key: "tglMrp", label: "Tanggal MRP", default: false, render: (r) => formatDate(r.tglMrp) },
-    { key: "tglInvoice", label: "Tanggal Invoice", default: false, render: (r) => formatDate(r.tglInvoice) },
-    { key: "tglPayment", label: "Tanggal Payment", default: false, render: (r) => formatDate(r.tglPayment) },
-    { key: "tglDelivery", label: "Tanggal Delivery", default: false, render: (r) => formatDate(r.tglDelivery) },
-    { key: "tglReceiving", label: "Tanggal Receiving", default: false, render: (r) => formatDate(r.tglReceiving) },
-    { key: "tglProduksi", label: "Tanggal Proses Produksi", default: false, render: (r) => formatDate(r.tglProduksi) },
-    {
-      key: "rollDiterima",
-      label: "Status Material (Roll)",
-      default: true,
-      align: "right",
-      render: (r) => {
-        if (!r.invoice) return "—";
-        const p = rollArrivalProgress(r.invoice);
-        if (p.total === 0) return "—";
-        const badge = rollArrivalStatusBadge(rollArrivalStatus(r.invoice));
-        return (
-          <span className="flex items-center justify-end gap-1.5">
-            <span className="font-mono">{`${p.arrived}/${p.total} roll`}</span>
-            <StatusPill tone={badge.tone}>{badge.label}</StatusPill>
-          </span>
-        );
-      },
-    },
-    {
-      key: "status",
-      label: "Status",
-      default: true,
-      render: (r) => <StatusPill tone={materialPoFullStatusBadge(r.status).tone}>{materialPoFullStatusBadge(r.status).label}</StatusPill>,
-    },
-  ];
+  const filteredRows = rows.filter(
+    (r) =>
+      (!mrpFilterTracking || r.mrpId === mrpFilterTracking) &&
+      (!poFilterTracking || r.poId === poFilterTracking) &&
+      (!entitasFilterTracking || r.entitas === entitasFilterTracking) &&
+      (!statusFilterTracking || materialPoFullStatusBadge(r.status).label === statusFilterTracking) &&
+      (!rollFilterTracking ||
+        (r.invoice &&
+          ((rollFilterTracking === "Belum" && rollArrivalStatus(r.invoice) === "BELUM") ||
+            (rollFilterTracking === "Parsial" && rollArrivalStatus(r.invoice) === "PARSIAL") ||
+            (rollFilterTracking === "Lengkap" && rollArrivalStatus(r.invoice) === "LENGKAP"))))
+  );
 
   // "PO Produksi aktif" -- kasus jarang tapi nyata: vendor tiba-tiba minta berhenti mid-produksi.
   // Cuma PO yang masih dalam tahap produksi aktif yang eligible (sama gate dengan
@@ -331,39 +306,84 @@ export default function MaterialTrackingPage() {
       )}
 
       {tab === "material" && (
-      <DataTable
-        title="Material per line"
-        columns={columns}
-        rows={rows}
-        keyOf={(r) => r.id}
-        firstColumnLabel="No. MRP"
-        firstColumnRender={(r) => (
-          <span className="flex items-center gap-2.5">
-            <Checkbox checked={selected.has(r.id)} onChange={() => toggle(r.id)} />
-            <span className="font-mono">{r.mrpId}</span>
-          </span>
-        )}
-        filterDefs={[
-          { label: "No MRP", options: Array.from(new Set(rows.map((r) => r.mrpId))), test: (r, v) => r.mrpId === v },
-          { label: "No PO", options: Array.from(new Set(rows.map((r) => r.poId))), test: (r, v) => r.poId === v },
-          { label: "Entitas", options: Array.from(new Set(rows.map((r) => r.entitas))), test: (r, v) => r.entitas === v },
-          {
-            label: "Status",
-            options: Array.from(new Set(rows.map((r) => materialPoFullStatusBadge(r.status).label))),
-            test: (r, v) => materialPoFullStatusBadge(r.status).label === v,
-          },
-          {
-            label: "Roll diterima",
-            options: ["Belum", "Parsial", "Lengkap"],
-            test: (r, v) => {
-              if (!r.invoice) return false;
-              const s = rollArrivalStatus(r.invoice);
-              return (v === "Belum" && s === "BELUM") || (v === "Parsial" && s === "PARSIAL") || (v === "Lengkap" && s === "LENGKAP");
+      <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
+        <div className="border-b border-border-subtle px-5 py-3 font-sans text-[13px] font-semibold text-text-primary">
+          Material per line ({filteredRows.length})
+        </div>
+        <FilterBar
+          filters={[
+            { label: "No. MRP", value: mrpFilterTracking, options: Array.from(new Set(rows.map((r) => r.mrpId))), onChange: setMrpFilterTracking },
+            { label: "No. PO", value: poFilterTracking, options: Array.from(new Set(rows.map((r) => r.poId))), onChange: setPoFilterTracking },
+            { label: "Entitas", value: entitasFilterTracking, options: Array.from(new Set(rows.map((r) => r.entitas))), onChange: setEntitasFilterTracking },
+            {
+              label: "Status",
+              value: statusFilterTracking,
+              options: Array.from(new Set(rows.map((r) => materialPoFullStatusBadge(r.status).label))),
+              onChange: setStatusFilterTracking,
             },
-          },
-        ]}
-        emptyText="Belum ada invoice material yang sudah dibayar Finance."
-      />
+            { label: "Roll diterima", value: rollFilterTracking, options: ["Belum", "Parsial", "Lengkap"], onChange: setRollFilterTracking },
+          ]}
+        />
+        {filteredRows.length === 0 && (
+          <div className="px-5 py-6 text-center font-sans text-xs text-text-muted">Belum ada invoice material yang sudah dibayar Finance.</div>
+        )}
+        <div className="grid grid-cols-1 gap-2.5 p-4 sm:grid-cols-2 lg:grid-cols-3">
+          {filteredRows.map((r) => {
+            const expanded = expandedTrackingId === r.id;
+            const progress = r.invoice ? rollArrivalProgress(r.invoice) : null;
+            const arrivalBadge = r.invoice ? rollArrivalStatusBadge(rollArrivalStatus(r.invoice)) : null;
+            const statusBadge = materialPoFullStatusBadge(r.status);
+            return (
+              <div
+                key={r.id}
+                className={"flex flex-col gap-1.5 rounded-lg border px-4 py-3 " + (expanded ? "border-action-primary bg-info-bg" : "border-border-subtle bg-white")}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2">
+                    <Checkbox checked={selected.has(r.id)} onChange={() => toggle(r.id)} />
+                    <span className="font-mono text-[12px] font-semibold text-text-primary">{r.mrpId}</span>
+                  </span>
+                  <StatusPill tone={statusBadge.tone}>{statusBadge.label}</StatusPill>
+                </div>
+                <button type="button" onClick={() => setExpandedTrackingId(expanded ? null : r.id)} className="flex flex-col gap-1 text-left">
+                  <span className="font-mono text-[11px] text-text-muted">{r.poId}</span>
+                  <span className="font-sans text-[11.5px] text-text-primary">{r.supplierVendor}</span>
+                  <div className="flex items-center justify-between font-sans text-[11.5px] text-text-muted">
+                    <span>{r.roll} roll</span>
+                    {progress && progress.total > 0 && arrivalBadge && (
+                      <span className="flex items-center gap-1">
+                        <span className="font-mono">
+                          {progress.arrived}/{progress.total}
+                        </span>
+                        <StatusPill tone={arrivalBadge.tone}>{arrivalBadge.label}</StatusPill>
+                      </span>
+                    )}
+                  </div>
+                  <span className="font-mono text-[12.5px] font-medium text-text-primary">{r.nilai != null ? formatRupiah(r.nilai) : "—"}</span>
+                </button>
+                {expanded && r.invoice && (
+                  <div className="mt-1.5 overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
+                    <div className="grid grid-cols-3 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                      <span>Warna / Lengan</span>
+                      <span className="text-right">Roll</span>
+                      <span className="text-right">Harga/Roll</span>
+                    </div>
+                    {r.invoice.colorEntries.map((c, i) => (
+                      <div key={i} className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+                        <span>
+                          {c.warna} · {c.lengan}
+                        </span>
+                        <span className="text-right font-mono">{c.rolls.length}</span>
+                        <span className="text-right font-mono">{formatRupiah(c.hargaPerRoll)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
       )}
 
       {deliveryOpen && (
