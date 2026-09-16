@@ -10,7 +10,7 @@ import { FilterBar } from "@/components/mrp/filter-bar";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatDate, formatRupiah, invoiceBadge, materialSupplierNamesForWarna } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
-import type { RawMaterialInvoice } from "@/lib/mrp/types";
+import type { MaterialPO, RawMaterialInvoice } from "@/lib/mrp/types";
 // Item 2.8: getInvoicePaymentProofAction dipanggil langsung (bukan lewat store), sama pola dengan
 // "Lampiran Invoice" di atas -- Procurement cuma BACA bukti ini untuk diserahkan ke vendor
 // material, tidak ada kontrol upload di sisi Procurement.
@@ -54,6 +54,11 @@ export function PayingVoucherMaterialPanel() {
   // yang sudah punya FilterBar lewat DataTable).
   const [poFilter, setPoFilter] = useState("");
   const [mrpFilter, setMrpFilter] = useState("");
+  // Item revisi 2026-09-17 (owner: "Paying Voucher & histori-nya hierarkis -- pilih supplier,
+  // baru vendor produksi"): navigasi 2 tingkat sebelum daftar PO/PV ditampilkan, supaya user
+  // tidak langsung disodori semua PO material dari semua supplier sekaligus.
+  const [pvSupplier, setPvSupplier] = useState<string | null>(null);
+  const [pvVendor, setPvVendor] = useState<string | null>(null);
 
   const pvHistoryColumns: ColumnDef<RawMaterialInvoice>[] = [
     // BUG FIX: kolom ini dulu menampilkan i.id (kode PV internal sistem, mis. "INV-206311") --
@@ -99,14 +104,141 @@ export function PayingVoucherMaterialPanel() {
   ];
 
   const openPOs = materialPOs.filter((po) => po.status !== "CANCELLED" && po.approved && po.invoicedRolls < po.rollCount);
-  const filteredOpenPOs = openPOs.filter((po) => (!poFilter || po.id === poFilter) && (!mrpFilter || po.mrpId === mrpFilter));
-  const selectedPo = openPOs.find((p) => p.id === selectedPoId) ?? null;
+
+  // Kelompokkan PO belum-invoice & histori PV jadi 2 tingkat: supplier -> vendor produksi ->
+  // { openPOs, invoices }. Dipakai untuk kartu navigasi di bawah DAN untuk membatasi
+  // list/tabel yang ditampilkan supaya konsisten dengan kartu yang diklik user.
+  const pvHierarchy = (() => {
+    const bySupplier = new Map<string, Map<string, { openPOs: MaterialPO[]; invoices: RawMaterialInvoice[] }>>();
+    const touch = (supplier: string, vendor: string) => {
+      if (!bySupplier.has(supplier)) bySupplier.set(supplier, new Map());
+      const vendorMap = bySupplier.get(supplier)!;
+      if (!vendorMap.has(vendor)) vendorMap.set(vendor, { openPOs: [], invoices: [] });
+      return vendorMap.get(vendor)!;
+    };
+    for (const po of openPOs) touch(po.supplier || "— Belum ada supplier —", po.vendorProduksi).openPOs.push(po);
+    for (const inv of invoices) touch(inv.supplier || "— Belum ada supplier —", inv.destinationVendor).invoices.push(inv);
+    return bySupplier;
+  })();
+
+  const pvSupplierSummaries = Array.from(pvHierarchy.entries())
+    .map(([supplier, vendorMap]) => {
+      let openCount = 0;
+      let historyCount = 0;
+      let historyTotal = 0;
+      for (const v of vendorMap.values()) {
+        openCount += v.openPOs.length;
+        historyCount += v.invoices.length;
+        historyTotal += v.invoices.reduce((sum, i) => sum + i.totalBiaya, 0);
+      }
+      return { supplier, vendorCount: vendorMap.size, openCount, historyCount, historyTotal };
+    })
+    .sort((a, b) => a.supplier.localeCompare(b.supplier, "id-ID"));
+
+  const pvVendorSummaries = pvSupplier
+    ? Array.from(pvHierarchy.get(pvSupplier)?.entries() ?? [])
+        .map(([vendor, data]) => ({
+          vendor,
+          vendorName: VENDOR_PRODUKSI[vendor]?.name ?? vendor,
+          openCount: data.openPOs.length,
+          historyCount: data.invoices.length,
+          historyTotal: data.invoices.reduce((sum, i) => sum + i.totalBiaya, 0),
+        }))
+        .sort((a, b) => a.vendorName.localeCompare(b.vendorName, "id-ID"))
+    : [];
+
+  const scopedOpenPOs = pvSupplier && pvVendor ? pvHierarchy.get(pvSupplier)?.get(pvVendor)?.openPOs ?? [] : [];
+  const scopedInvoices = pvSupplier && pvVendor ? pvHierarchy.get(pvSupplier)?.get(pvVendor)?.invoices ?? [] : [];
+  // Kolom "Supplier -> Vendor" jadi berlebihan begitu sudah dipilih lewat kartu di atas.
+  const pvHistoryColumnsScoped = pvHistoryColumns.filter((c) => c.key !== "supplierVendor");
+
+  const filteredOpenPOs = scopedOpenPOs.filter((po) => (!poFilter || po.id === poFilter) && (!mrpFilter || po.mrpId === mrpFilter));
+  const selectedPo = scopedOpenPOs.find((p) => p.id === selectedPoId) ?? null;
   const afterSubmitPo = afterSubmitPoId ? materialPOs.find((p) => p.id === afterSubmitPoId) : null;
   const closingPo = closingPoId ? materialPOs.find((p) => p.id === closingPoId) : null;
   const remainingAfter = afterSubmitPo ? afterSubmitPo.rollCount - afterSubmitPo.invoicedRolls : 0;
 
   return (
     <>
+      <div className="flex items-center gap-1.5 font-sans text-[11.5px]">
+        <button
+          type="button"
+          onClick={() => {
+            setPvSupplier(null);
+            setPvVendor(null);
+          }}
+          className={pvSupplier ? "font-semibold text-action-primary underline" : "font-semibold text-text-primary"}
+        >
+          Semua Supplier
+        </button>
+        {pvSupplier && (
+          <>
+            <span className="text-text-muted">/</span>
+            <button type="button" onClick={() => setPvVendor(null)} className={pvVendor ? "font-semibold text-action-primary underline" : "font-semibold text-text-primary"}>
+              {pvSupplier}
+            </button>
+          </>
+        )}
+        {pvVendor && (
+          <>
+            <span className="text-text-muted">/</span>
+            <span className="font-semibold text-text-primary">{VENDOR_PRODUKSI[pvVendor]?.name ?? pvVendor}</span>
+          </>
+        )}
+      </div>
+
+      {!pvSupplier && (
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+          {pvSupplierSummaries.map((s) => (
+            <button
+              key={s.supplier}
+              type="button"
+              onClick={() => setPvSupplier(s.supplier)}
+              className="flex flex-col gap-1.5 rounded-lg border border-border-subtle bg-surface-card px-4 py-3 text-left transition-colors hover:border-[#C7D0DB]"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-sans text-[13px] font-semibold text-text-primary">{s.supplier}</span>
+                {s.openCount > 0 && <StatusPill tone="warning">{s.openCount} belum invoice</StatusPill>}
+              </div>
+              <div className="flex items-center justify-between font-sans text-[11.5px] text-text-muted">
+                <span>{s.vendorCount} vendor produksi</span>
+                <span>{s.historyCount} PV</span>
+              </div>
+              <div className="font-mono text-[12.5px] font-medium text-text-primary">{formatRupiah(s.historyTotal)}</div>
+            </button>
+          ))}
+          {pvSupplierSummaries.length === 0 && (
+            <div className="col-span-full rounded-lg border border-dashed border-border-subtle bg-surface-card px-4 py-6 text-center font-sans text-[12px] text-text-muted">
+              Belum ada PO material atau PV.
+            </div>
+          )}
+        </div>
+      )}
+
+      {pvSupplier && !pvVendor && (
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+          {pvVendorSummaries.map((v) => (
+            <button
+              key={v.vendor}
+              type="button"
+              onClick={() => setPvVendor(v.vendor)}
+              className="flex flex-col gap-1.5 rounded-lg border border-border-subtle bg-surface-card px-4 py-3 text-left transition-colors hover:border-[#C7D0DB]"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-sans text-[13px] font-semibold text-text-primary">{v.vendorName}</span>
+                {v.openCount > 0 && <StatusPill tone="warning">{v.openCount} belum invoice</StatusPill>}
+              </div>
+              <div className="flex items-center justify-between font-sans text-[11.5px] text-text-muted">
+                <span>{v.historyCount} PV</span>
+                <span className="font-mono">{formatRupiah(v.historyTotal)}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {pvSupplier && pvVendor && (
+      <>
       <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
         <div className="border-b border-border-subtle px-5 py-3 font-sans text-[13px] font-semibold text-text-primary">
           PO material belum memiliki invoice ({filteredOpenPOs.length})
@@ -116,13 +248,13 @@ export function PayingVoucherMaterialPanel() {
             {
               label: "No. PO",
               value: poFilter,
-              options: Array.from(new Set(openPOs.map((po) => po.id))),
+              options: Array.from(new Set(scopedOpenPOs.map((po) => po.id))),
               onChange: setPoFilter,
             },
             {
               label: "No. MRP",
               value: mrpFilter,
-              options: Array.from(new Set(openPOs.map((po) => po.mrpId))),
+              options: Array.from(new Set(scopedOpenPOs.map((po) => po.mrpId))),
               onChange: setMrpFilter,
             },
           ]}
@@ -223,22 +355,25 @@ export function PayingVoucherMaterialPanel() {
       {/* Arsip/histori — dulu begitu PV diajukan, invoice-nya "hilang" dari layar (cuma nongol
          lagi kalau masih ada sisa roll belum tercover), jadi tidak ada bukti/arsip PV yang sudah
          pernah dibuat. Sekarang SEMUA invoice yang pernah dibuat tetap tercatat & terlihat di
-         sini, apa pun status lanjutannya. */}
+         sini, apa pun status lanjutannya -- dibatasi ke supplier+vendor yang dipilih lewat kartu
+         navigasi di atas (lihat pvHierarchy). */}
       <DataTable
         title="Riwayat Paying Voucher"
-        subtitle={`${invoices.length} PV tercatat — arsip semua PV yang pernah diajukan`}
-        columns={pvHistoryColumns}
-        rows={invoices}
+        subtitle={`${scopedInvoices.length} PV tercatat — arsip PV ${pvSupplier} → ${VENDOR_PRODUKSI[pvVendor]?.name ?? pvVendor}`}
+        columns={pvHistoryColumnsScoped}
+        rows={scopedInvoices}
         keyOf={(i) => i.id}
         firstColumnLabel="No. MRP"
         firstColumnRender={(i) => <span className="font-mono">{i.mrpId}</span>}
         filterDefs={[
-          { label: "No MRP", options: Array.from(new Set(invoices.map((i) => i.mrpId))), test: (i, v) => i.mrpId === v },
-          { label: "No PO", options: Array.from(new Set(invoices.map((i) => i.poId))), test: (i, v) => i.poId === v },
-          { label: "Status", options: Array.from(new Set(invoices.map((i) => invoiceBadge(i.status).label))), test: (i, v) => invoiceBadge(i.status).label === v },
+          { label: "No MRP", options: Array.from(new Set(scopedInvoices.map((i) => i.mrpId))), test: (i, v) => i.mrpId === v },
+          { label: "No PO", options: Array.from(new Set(scopedInvoices.map((i) => i.poId))), test: (i, v) => i.poId === v },
+          { label: "Status", options: Array.from(new Set(scopedInvoices.map((i) => invoiceBadge(i.status).label))), test: (i, v) => invoiceBadge(i.status).label === v },
         ]}
-        emptyText="Belum ada PV yang pernah diajukan."
+        emptyText="Belum ada PV yang pernah diajukan untuk kombinasi ini."
       />
+      </>
+      )}
 
       {closingPo && (
         <ClosePoReasonModal
