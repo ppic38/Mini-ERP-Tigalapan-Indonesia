@@ -24,9 +24,35 @@ export function PoMaklonPanel() {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
 
+  // Item revisi 2026-09-17 (owner: "PO Approval Finance -- Material & Maklon -- hierarkis per
+  // No. MRP"): sama pola dengan PoMaterialPanel di atas -- pilih MRP dulu, baru dikelompokkan per
+  // vendor produksi, approve per vendor (PO langsung hilang dari daftar pending begitu approved).
+  // TIDAK ada langkah isi entitas di sini (beda dari PO Material) -- PO Maklon di sistem ini
+  // memang tidak menggunakan entitas sama sekali (lihat catatan kolom "aksi"/comment di kolom
+  // entitas versi lama).
+  const [selectedMrpId, setSelectedMrpId] = useState<string>("");
+
   if (!mounted) return null;
 
   const pending = maklonPOs.filter((po) => !po.approved);
+  const pendingMrpIds = Array.from(new Set(pending.map((p) => p.mrpId)));
+  const selectable = mrpDetails.filter((d) => pendingMrpIds.includes(d.mrp.id));
+  // Dihitung langsung saat render (BUKAN lewat useEffect) supaya tidak menambah pelanggaran
+  // react-hooks/set-state-in-effect -- begitu MRP terpilih sudah tidak ada lagi di pendingMrpIds
+  // (semua PO-nya sudah di-approve), otomatis "jatuh" ke MRP pending pertama berikutnya.
+  const effectiveMrpId = selectedMrpId && pendingMrpIds.includes(selectedMrpId) ? selectedMrpId : pendingMrpIds[0] ?? "";
+  const scopedPending = pending.filter((p) => p.mrpId === effectiveMrpId);
+
+  const groupedByVendor = new Map<string, MaklonPO[]>();
+  for (const po of scopedPending) {
+    const arr = groupedByVendor.get(po.vendorProduksi) ?? [];
+    arr.push(po);
+    groupedByVendor.set(po.vendorProduksi, arr);
+  }
+
+  async function approveVendorGroup(pos: MaklonPO[]) {
+    for (const po of pos) await approveMaklonPo(po.id);
+  }
 
   const columns: ColumnDef<MaklonPO>[] = [
     { key: "noPo", label: "No PO", default: true, render: (p) => <span className="font-mono font-medium">{p.id}</span> },
@@ -87,6 +113,78 @@ export function PoMaklonPanel() {
           ))}
         </div>
       )}
+
+      <div className="flex items-center gap-3 rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
+        <div>
+          <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">No MRP (menunggu approval)</div>
+          <select
+            value={effectiveMrpId}
+            onChange={(e) => setSelectedMrpId(e.target.value)}
+            className="mt-1 rounded-md border border-[#DDE4EB] px-[11px] py-[9px] font-sans text-[12.5px] font-medium text-text-primary"
+          >
+            <option value="">— pilih MRP —</option>
+            {selectable.map((d) => (
+              <option key={d.mrp.id} value={d.mrp.id}>
+                {d.mrp.id} · {formatPcs(d.mrp.qty)} pcs
+              </option>
+            ))}
+          </select>
+        </div>
+        {scopedPending.length > 0 && (
+          <button
+            onClick={() => approveVendorGroup(scopedPending)}
+            className="ml-auto rounded-md bg-success px-3.5 py-[9px] font-sans text-xs font-semibold text-white"
+          >
+            Approve semua PO MRP ini ({scopedPending.length})
+          </button>
+        )}
+      </div>
+
+      {scopedPending.length === 0 && (
+        <div className="rounded-lg border border-border-subtle bg-surface-card px-5 py-8 text-center font-sans text-xs text-text-muted">
+          Tidak ada PO maklon menunggu approval saat ini.
+        </div>
+      )}
+
+      {scopedPending.length > 0 && (
+        <div className="overflow-hidden rounded-lg border border-border-subtle bg-[#EEF1F5]">
+          {Array.from(groupedByVendor.entries()).map(([vendor, pos]) => {
+            const vendorQtyTotal = pos.reduce((a, p) => a + p.qty, 0);
+            const vendorAmountTotal = pos.reduce((a, p) => a + p.amount, 0);
+            return (
+              <div key={vendor} className="border-b border-border-subtle last:border-b-0">
+                <div className="flex items-center gap-2.5 bg-[#DEE4EC] px-5 py-[11px] font-sans text-[11px] font-semibold text-text-primary">
+                  <span>→ {VENDOR_PRODUKSI[vendor]?.name ?? vendor}</span>
+                  <button
+                    onClick={() => approveVendorGroup(pos)}
+                    className="ml-auto rounded-md bg-success px-2.5 py-[6px] font-sans text-[11px] font-semibold text-white"
+                  >
+                    Approve semua PO vendor ini ({pos.length})
+                  </button>
+                </div>
+                <div className="flex flex-col gap-2.5 px-3.5 py-3">
+                  {pos.map((po) => (
+                    <div key={po.id} className="flex items-center gap-3 overflow-hidden rounded-md border border-[#D8DEE6] bg-white px-4 py-[11px] shadow-[0_1px_3px_rgba(11,19,27,.06)]">
+                      <span className="font-mono text-xs font-medium text-[#31414F]">{po.id}</span>
+                      <span className="font-sans text-xs text-[#31414F]">{formatPcs(po.qty)} pcs</span>
+                      <span className="ml-auto font-mono text-xs">{formatRupiah(po.amount)}</span>
+                      <Button onClick={() => approveMaklonPo(po.id)} variant="success" size="xs">
+                        Approve
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-4 bg-[#DEE4EC] px-5 py-[10px] font-sans text-[11px] font-semibold text-text-primary">
+                  <span>Total vendor {VENDOR_PRODUKSI[vendor]?.name ?? vendor}:</span>
+                  <span>Qty: {formatPcs(vendorQtyTotal)} pcs</span>
+                  <span>Total: {formatRupiah(vendorAmountTotal)}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <DataTable
         title="Semua PO Vendor Produksi"
         columns={columns}
