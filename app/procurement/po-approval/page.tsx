@@ -78,6 +78,11 @@ export default function PoApprovalPage() {
 
   const [selectedId, setSelectedId] = useState<string>("");
   const [drillVendor, setDrillVendor] = useState<string | null>(null);
+  // Item revisi 2026-09-17 (owner: "PO history: card list per supplier, klik untuk lihat vendor
+  // produksi") -- tabel PO Material lama (flat, 1 baris per PO) diganti kartu per supplier kain;
+  // klik kartu untuk membuka rincian PO milik supplier itu (termasuk vendor produksi mana yang
+  // menerima potongan bahannya).
+  const [expandedSupplierMaterial, setExpandedSupplierMaterial] = useState<string | null>(null);
   // Owner 2026-09-16: tabel Material dikelompokkan per kategori kain + checkbox bulk-assign
   // supplier untuk banyak warna sekaligus. State ini di-reset di onChange dropdown MRP di bawah
   // (bukan useEffect, supaya tidak melanggar react-hooks/set-state-in-effect) supaya centangan/
@@ -177,6 +182,35 @@ export default function PoApprovalPage() {
   // bawah yang memang sudah begini dari awal — filter Status tersedia kalau cuma mau lihat
   // yang masih pending.
   const allMaterialPOs = materialPOs.filter((p) => p.status !== "CANCELLED");
+
+  // Kartu per supplier (lihat catatan di deklarasi expandedSupplierMaterial): kelompokkan PO
+  // material berdasarkan supplier kain, hitung ringkasan (jumlah PO, total roll, total nilai, dan
+  // berapa vendor produksi berbeda yang menerima bahan dari supplier itu).
+  const materialSupplierSummaries = (() => {
+    const map = new Map<string, { pos: MaterialPO[]; vendors: Set<string> }>();
+    for (const p of allMaterialPOs) {
+      const key = p.supplier || "— Belum ada supplier —";
+      if (!map.has(key)) map.set(key, { pos: [], vendors: new Set() });
+      const entry = map.get(key)!;
+      entry.pos.push(p);
+      if (p.vendorProduksi) entry.vendors.add(p.vendorProduksi);
+    }
+    return Array.from(map.entries())
+      .map(([supplier, { pos, vendors }]) => ({
+        supplier,
+        pos,
+        vendorCount: vendors.size,
+        totalRoll: pos.reduce((sum, p) => sum + p.rollCount, 0),
+        totalNilai: pos.reduce((sum, p) => sum + p.amount, 0),
+      }))
+      .sort((a, b) => a.supplier.localeCompare(b.supplier, "id-ID"));
+  })();
+  const expandedSupplierPOs = materialSupplierSummaries.find((s) => s.supplier === expandedSupplierMaterial)?.pos ?? [];
+  // Kolom "Supplier → Vendor" diganti "Vendor Produksi" saja di rincian per-kartu -- suppliernya
+  // sudah jelas dari kartu yang diklik, jadi tidak perlu diulang di tiap baris.
+  const materialColumnsForSupplierCard: ColumnDef<MaterialPO>[] = materialColumns.map((c) =>
+    c.key === "vendorSupplier" ? { ...c, label: "Vendor Produksi", render: (p: MaterialPO) => VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi } : c
+  );
 
   const maklonColumns: ColumnDef<MaklonPO>[] = [
     { key: "noPo", label: "No PO", default: true, render: (p) => <span className="font-mono font-medium">{p.id}</span> },
@@ -600,30 +634,66 @@ export default function PoApprovalPage() {
         </div>
       )}
 
+      <div className="flex flex-col gap-3">
+        <div>
+          <div className="font-sans text-[13px] font-semibold text-text-primary">PO Material — per Supplier</div>
+          <div className="font-sans text-[11.5px] text-text-muted">
+            {materialSupplierSummaries.length > 0 ? `${materialSupplierSummaries.length} supplier · ${allMaterialPOs.length} PO material` : "Belum ada PO material yang dibuat."}
+          </div>
+        </div>
+        {materialSupplierSummaries.length > 0 && (
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {materialSupplierSummaries.map((s) => {
+              const active = expandedSupplierMaterial === s.supplier;
+              return (
+                <button
+                  key={s.supplier}
+                  type="button"
+                  onClick={() => setExpandedSupplierMaterial(active ? null : s.supplier)}
+                  className={
+                    "flex flex-col gap-1.5 rounded-lg border px-4 py-3 text-left transition-colors " +
+                    (active ? "border-action-primary bg-info-bg" : "border-border-subtle bg-surface-card hover:border-[#C7D0DB]")
+                  }
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-sans text-[13px] font-semibold text-text-primary">{s.supplier}</span>
+                    <StatusPill tone={active ? "info" : "neutral"}>{s.pos.length} PO</StatusPill>
+                  </div>
+                  <div className="flex items-center justify-between font-sans text-[11.5px] text-text-muted">
+                    <span>{s.totalRoll} roll</span>
+                    <span>{s.vendorCount} vendor produksi</span>
+                  </div>
+                  <div className="font-mono text-[12.5px] font-medium text-text-primary">{formatRupiah(s.totalNilai)}</div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {expandedSupplierMaterial && (
       <DataTable
-        title="PO Material — semua PO yang sudah dibuatkan"
-        subtitle={mrpSubtitle(allMaterialPOs)}
-        columns={materialColumns}
-        rows={allMaterialPOs}
+        title={`PO Material — ${expandedSupplierMaterial}`}
+        subtitle={mrpSubtitle(expandedSupplierPOs)}
+        columns={materialColumnsForSupplierCard}
+        rows={expandedSupplierPOs}
         keyOf={(p) => p.id}
         firstColumnLabel="No. MRP"
         firstColumnRender={(p) => <span className="font-mono">{p.mrpId}</span>}
         filterDefs={[
-          { label: "No MRP", options: Array.from(new Set(allMaterialPOs.map((p) => p.mrpId))), test: (p, v) => p.mrpId === v },
-          { label: "No PO", options: Array.from(new Set(allMaterialPOs.map((p) => p.id))), test: (p, v) => p.id === v },
+          { label: "No MRP", options: Array.from(new Set(expandedSupplierPOs.map((p) => p.mrpId))), test: (p, v) => p.mrpId === v },
+          { label: "No PO", options: Array.from(new Set(expandedSupplierPOs.map((p) => p.id))), test: (p, v) => p.id === v },
           {
             label: "Vendor produksi",
-            options: Array.from(new Set(allMaterialPOs.map((p) => VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi))),
+            options: Array.from(new Set(expandedSupplierPOs.map((p) => VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi))),
             test: (p, v) => (VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi) === v,
           },
-          { label: "Entitas", options: Array.from(new Set(allMaterialPOs.map((p) => p.entity))), test: (p, v) => p.entity === v },
+          { label: "Entitas", options: Array.from(new Set(expandedSupplierPOs.map((p) => p.entity))), test: (p, v) => p.entity === v },
           {
             label: "Status",
-            options: Array.from(new Set(allMaterialPOs.map((p) => materialPoFullStatusBadge(materialPoFullStatus(p, invoices, productionBatches, productionResults, mrpDetails, deliveryKolis, vendorInvoices, maklonPOs)).label))),
+            options: Array.from(new Set(expandedSupplierPOs.map((p) => materialPoFullStatusBadge(materialPoFullStatus(p, invoices, productionBatches, productionResults, mrpDetails, deliveryKolis, vendorInvoices, maklonPOs)).label))),
             test: (p, v) => materialPoFullStatusBadge(materialPoFullStatus(p, invoices, productionBatches, productionResults, mrpDetails, deliveryKolis, vendorInvoices, maklonPOs)).label === v,
           },
         ]}
-        emptyText="Belum ada PO material yang dibuat."
+        emptyText="Belum ada PO material untuk supplier ini."
         renderExpanded={(p) => {
           // Item revisi 2026-09-08 (owner: "list detail PO material... ada harga roll per/kg dan
           // harga per warnanya itu berapa nominalnya dan nominal total"): rate dihitung per WARNA
@@ -675,6 +745,8 @@ export default function PoApprovalPage() {
           );
         }}
       />
+        )}
+      </div>
 
       <DataTable
         title="PO Vendor Produksi — semua MRP yang sudah dibuatkan PO"
