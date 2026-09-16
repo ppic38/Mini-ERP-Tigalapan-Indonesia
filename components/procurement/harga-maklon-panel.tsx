@@ -18,31 +18,44 @@ export function HargaMaklonPanel() {
   const addRow = useMrpStore((s) => s.addHargaMaklonRow);
   const updateRow = useMrpStore((s) => s.updateHargaMaklonRow);
   const deleteRow = useMrpStore((s) => s.deleteHargaMaklonRow);
+  // Owner 2026-09-16: Kode/Nama Vendor tidak lagi diketik bebas -- pakai dropdown dari master
+  // vendor produksi yang SUDAH ADA (vendors_produksi, tabel yang sama dipakai login vendor & di
+  // seluruh app), bukan tabel baru. Pilih 1 vendor mengisi kodeVendor (id, mis. "BAYU"/"GI-01")
+  // & namaVendor (name, mis. "Bayu"/"Yogi 01") sekaligus -- kedua kolom itu TETAP dipertahankan
+  // (bukan cuma id) karena hargaMaklonRowMatchesVendor (lib/mrp/derive.ts) mencocokkan ke salah
+  // satu dari keduanya, dan baris data lama campur (sebagian match by kode, sebagian by nama).
+  const vendorProduksiList = useMrpStore((s) => s.vendorProduksiList);
   // Item revisi 2026-09-15 -- baris harus diklik "Edit" dulu sebelum bisa diketik (cegah salah ketik).
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const columns: ColumnDef<HargaMaklonRow>[] = [
     {
-      // default:false — Nama Vendor sudah cukup identifikasi manusiawi; kode vendor lebih ke
-      // field pencocokan teknis (lihat hargaMaklonRowMatchesVendor) — dipindah ke toggle "Kolom".
-      key: "kodeVendor",
-      label: "Kode Vendor",
-      default: false,
-      render: (r) => (
-        <EditableCell editing={editingId === r.id} display={r.kodeVendor || "—"}>
-          <input value={r.kodeVendor} onChange={(e) => updateRow(r.id, { kodeVendor: e.target.value })} className="input w-[90px]" />
-        </EditableCell>
-      ),
-    },
-    {
-      key: "namaVendor",
-      label: "Nama Vendor",
+      key: "vendor",
+      label: "Vendor Produksi",
       default: true,
-      render: (r) => (
-        <EditableCell editing={editingId === r.id} display={r.namaVendor || "—"}>
-          <input value={r.namaVendor} onChange={(e) => updateRow(r.id, { namaVendor: e.target.value })} className="input w-[150px]" />
-        </EditableCell>
-      ),
+      render: (r) => {
+        const matched = vendorProduksiList.find((v) => v.id === r.kodeVendor || v.name === r.namaVendor);
+        return (
+          <EditableCell editing={editingId === r.id} display={r.namaVendor || r.kodeVendor || "—"}>
+            <select
+              value={matched?.id ?? ""}
+              onChange={(e) => {
+                const v = vendorProduksiList.find((x) => x.id === e.target.value);
+                updateRow(r.id, { kodeVendor: v?.id ?? e.target.value, namaVendor: v?.name ?? e.target.value });
+              }}
+              className="input w-[150px]"
+            >
+              <option value="">— pilih vendor —</option>
+              {vendorProduksiList.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name}
+                </option>
+              ))}
+              {r.kodeVendor && !matched && <option value={r.kodeVendor}>{r.namaVendor || r.kodeVendor} (belum di master vendor)</option>}
+            </select>
+          </EditableCell>
+        );
+      },
     },
     {
       key: "tipeLengan",
