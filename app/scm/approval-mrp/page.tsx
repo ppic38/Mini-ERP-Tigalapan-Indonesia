@@ -114,7 +114,7 @@ export default function ScmApprovalMrpPage() {
       />
 
       <DataTable
-        title="Riwayat keputusan"
+        title="Riwayat Material Requirement Planning"
         columns={historyColumns}
         rows={history}
         keyOf={(d) => d.mrp.id}
