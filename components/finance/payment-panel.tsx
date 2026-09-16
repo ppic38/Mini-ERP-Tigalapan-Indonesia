@@ -107,10 +107,51 @@ export function PaymentPanel() {
   // B2: increment ini setelah "Bayar" sukses untuk memaksa DataTable menutup baris yang sedang
   // ter-expand (lihat collapseSignal di data-table.tsx) -- TIDAK mereset filter/kolom tabel.
   const [collapseSignal, setCollapseSignal] = useState(0);
+  // Item revisi 2026-09-17 (owner: "Finance Payment (Material & Maklon) hierarkis per No. MRP ->
+  // daftar supplier"): navigasi 2 tingkat sebelum daftar invoice & kotak "Bayar" ditampilkan.
+  const [paymentMrpId, setPaymentMrpId] = useState<string | null>(null);
+  const [paymentSupplier, setPaymentSupplier] = useState<string | null>(null);
 
   if (!mounted) return null;
 
-  const selectedList = invoices.filter((i) => selected.has(i.id));
+  const paymentHierarchy = (() => {
+    const byMrp = new Map<string, Map<string, RawMaterialInvoice[]>>();
+    for (const i of invoices) {
+      if (!byMrp.has(i.mrpId)) byMrp.set(i.mrpId, new Map());
+      const supplierMap = byMrp.get(i.mrpId)!;
+      const key = i.supplier || "— Belum ada supplier —";
+      if (!supplierMap.has(key)) supplierMap.set(key, []);
+      supplierMap.get(key)!.push(i);
+    }
+    return byMrp;
+  })();
+
+  const paymentMrpSummaries = Array.from(paymentHierarchy.entries())
+    .map(([mrpId, supplierMap]) => {
+      let readyToPay = 0;
+      let total = 0;
+      for (const list of supplierMap.values()) {
+        readyToPay += list.filter((i) => i.status === "INVOICED").length;
+        total += list.reduce((s, i) => s + i.totalBiaya, 0);
+      }
+      return { mrpId, supplierCount: supplierMap.size, invoiceCount: Array.from(supplierMap.values()).reduce((s, l) => s + l.length, 0), readyToPay, total };
+    })
+    .sort((a, b) => b.readyToPay - a.readyToPay || a.mrpId.localeCompare(b.mrpId, "id-ID"));
+
+  const paymentSupplierSummaries = paymentMrpId
+    ? Array.from(paymentHierarchy.get(paymentMrpId)?.entries() ?? [])
+        .map(([supplier, list]) => ({
+          supplier,
+          invoiceCount: list.length,
+          readyToPay: list.filter((i) => i.status === "INVOICED").length,
+          total: list.reduce((s, i) => s + i.totalBiaya, 0),
+        }))
+        .sort((a, b) => b.readyToPay - a.readyToPay || a.supplier.localeCompare(b.supplier, "id-ID"))
+    : [];
+
+  const scopedInvoices = paymentMrpId && paymentSupplier ? paymentHierarchy.get(paymentMrpId)?.get(paymentSupplier) ?? [] : [];
+
+  const selectedList = scopedInvoices.filter((i) => selected.has(i.id));
   const selectableToPay = selectedList.filter((i) => i.status === "INVOICED");
   const selectableToUnpay = selectedList.filter((i) => i.status === "PAID");
   // Saldo deposit cuma relevan kalau SEMUA invoice yang mau dibayar berasal dari supplier yang
@@ -386,6 +427,93 @@ export function PaymentPanel() {
          panduan panjang dihapus -- alur Bayar/Bukti Pembayaran sudah cukup jelas dari label kolom
          & tombol aksi sendiri. */}
 
+      <div className="flex items-center gap-1.5 font-sans text-[11.5px]">
+        <button
+          type="button"
+          onClick={() => {
+            setPaymentMrpId(null);
+            setPaymentSupplier(null);
+            setSelected(new Set());
+          }}
+          className={paymentMrpId ? "font-semibold text-action-primary underline" : "font-semibold text-text-primary"}
+        >
+          Semua No. MRP
+        </button>
+        {paymentMrpId && (
+          <>
+            <span className="text-text-muted">/</span>
+            <button
+              type="button"
+              onClick={() => {
+                setPaymentSupplier(null);
+                setSelected(new Set());
+              }}
+              className={paymentSupplier ? "font-semibold text-action-primary underline" : "font-semibold text-text-primary"}
+            >
+              {paymentMrpId}
+            </button>
+          </>
+        )}
+        {paymentSupplier && (
+          <>
+            <span className="text-text-muted">/</span>
+            <span className="font-semibold text-text-primary">{paymentSupplier}</span>
+          </>
+        )}
+      </div>
+
+      {!paymentMrpId && (
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+          {paymentMrpSummaries.map((m) => (
+            <button
+              key={m.mrpId}
+              type="button"
+              onClick={() => setPaymentMrpId(m.mrpId)}
+              className="flex flex-col gap-1.5 rounded-lg border border-border-subtle bg-surface-card px-4 py-3 text-left transition-colors hover:border-[#C7D0DB]"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-mono text-[12.5px] font-semibold text-text-primary">{m.mrpId}</span>
+                {m.readyToPay > 0 && <StatusPill tone="warning">{m.readyToPay} siap bayar</StatusPill>}
+              </div>
+              <div className="flex items-center justify-between font-sans text-[11.5px] text-text-muted">
+                <span>{m.supplierCount} supplier</span>
+                <span>{m.invoiceCount} invoice</span>
+              </div>
+              <div className="font-mono text-[12.5px] font-medium text-text-primary">{formatRupiah(m.total)}</div>
+            </button>
+          ))}
+          {paymentMrpSummaries.length === 0 && (
+            <div className="col-span-full rounded-lg border border-dashed border-border-subtle bg-surface-card px-4 py-6 text-center font-sans text-[12px] text-text-muted">
+              Belum ada invoice.
+            </div>
+          )}
+        </div>
+      )}
+
+      {paymentMrpId && !paymentSupplier && (
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+          {paymentSupplierSummaries.map((s) => (
+            <button
+              key={s.supplier}
+              type="button"
+              onClick={() => setPaymentSupplier(s.supplier)}
+              className="flex flex-col gap-1.5 rounded-lg border border-border-subtle bg-surface-card px-4 py-3 text-left transition-colors hover:border-[#C7D0DB]"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-sans text-[13px] font-semibold text-text-primary">{s.supplier}</span>
+                {s.readyToPay > 0 && <StatusPill tone="warning">{s.readyToPay} siap bayar</StatusPill>}
+              </div>
+              <div className="flex items-center justify-between font-sans text-[11.5px] text-text-muted">
+                <span>{s.invoiceCount} invoice</span>
+                <span className="font-mono">{formatRupiah(s.total)}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {paymentMrpId && paymentSupplier && (
+      <>
       {selected.size > 0 && (
         <div className="rounded-lg border border-[#CFE0EF] bg-info-bg p-4">
           <div className="flex items-center justify-between">
@@ -531,21 +659,20 @@ export function PaymentPanel() {
       )}
 
       <DataTable
-        title="Semua invoice material"
+        title={`Invoice material — ${paymentSupplier}`}
         columns={columns}
-        rows={invoices}
+        rows={scopedInvoices}
         keyOf={(i) => i.id}
         firstColumnLabel=""
         firstColumnRender={(i) => (
           <Checkbox checked={selected.has(i.id)} onChange={() => toggle(i.id)} disabled={i.status !== "INVOICED" && i.status !== "PAID"} />
         )}
         filterDefs={[
-          { label: "No MRP", options: Array.from(new Set(invoices.map((i) => i.mrpId))), test: (i, v) => i.mrpId === v },
-          { label: "No PO", options: Array.from(new Set(invoices.map((i) => i.poId))), test: (i, v) => i.poId === v },
-          { label: "Entitas", options: Array.from(new Set(invoices.map((i) => i.entity))), test: (i, v) => i.entity === v },
-          { label: "Status", options: Array.from(new Set(invoices.map((i) => i.status))), test: (i, v) => i.status === v },
+          { label: "No PO", options: Array.from(new Set(scopedInvoices.map((i) => i.poId))), test: (i, v) => i.poId === v },
+          { label: "Entitas", options: Array.from(new Set(scopedInvoices.map((i) => i.entity))), test: (i, v) => i.entity === v },
+          { label: "Status", options: Array.from(new Set(scopedInvoices.map((i) => i.status))), test: (i, v) => i.status === v },
         ]}
-        emptyText="Belum ada invoice. Input di halaman Paying Voucher (Invoice) terlebih dahulu."
+        emptyText="Belum ada invoice untuk supplier ini."
         collapseSignal={collapseSignal}
         // Item revisi 2026-09-06: klik baris untuk lihat detail material (rincian per warna + add
         // buy) DAN detail maklon (biaya PO Produksi terkait) sekaligus, supaya Finance bisa lihat
@@ -704,6 +831,8 @@ export function PaymentPanel() {
           );
         }}
       />
+      </>
+      )}
     </>
   );
 }

@@ -267,11 +267,60 @@ export function PaymentMaklonPanel() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [actionResult, setActionResult] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
+  // Item revisi 2026-09-17 (owner: "Finance Payment (Material & Maklon) hierarkis per No. MRP ->
+  // daftar supplier"): untuk Maklon, "supplier" itu vendor produksi sendiri (tidak ada supplier
+  // terpisah) -- navigasi 2 tingkat: pilih MRP dulu, baru vendor produksi.
+  const [paymentMrpId, setPaymentMrpId] = useState<string | null>(null);
+  const [paymentVendor, setPaymentVendor] = useState<string | null>(null);
 
   if (!mounted) return null;
 
-  const readyRows = [...vendorInvoices].filter((i) => i.status === "APPROVED").sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : -1));
-  const paidRows = [...vendorInvoices].filter((i) => i.status === "PAID").sort((a, b) => (a.paidAt ?? "" < (b.paidAt ?? "") ? 1 : -1));
+  // Cuma invoice yang relevan untuk pembayaran (siap dibayar/APPROVED atau sudah PAID) yang masuk
+  // navigasi -- status lain (submitted ke Procurement, rejected, dst.) tidak relevan di halaman
+  // Payment. Satu invoice BISA menyentuh lebih dari 1 MRP sekaligus (inv.lines multi-MRP) --
+  // dalam kasus itu invoice yang sama akan muncul di lebih dari 1 kartu MRP, sengaja (supaya
+  // tetap kelihatan dari MRP mana pun yang dibuka), bukan bug duplikasi data.
+  const payableInvoices = vendorInvoices.filter((i) => i.status === "APPROVED" || i.status === "PAID");
+  const maklonHierarchy = (() => {
+    const map = new Map<string, Map<string, VendorInvoice[]>>();
+    for (const inv of payableInvoices) {
+      const mrpIds = Array.from(new Set(inv.lines.map((l) => l.mrpId)));
+      for (const mrpId of mrpIds) {
+        if (!map.has(mrpId)) map.set(mrpId, new Map());
+        const vendorMap = map.get(mrpId)!;
+        if (!vendorMap.has(inv.vendorProduksi)) vendorMap.set(inv.vendorProduksi, []);
+        vendorMap.get(inv.vendorProduksi)!.push(inv);
+      }
+    }
+    return map;
+  })();
+
+  const paymentMrpSummaries = Array.from(maklonHierarchy.entries())
+    .map(([mrpId, vendorMap]) => {
+      let ready = 0;
+      let total = 0;
+      for (const list of vendorMap.values()) {
+        ready += list.filter((i) => i.status === "APPROVED").length;
+        total += list.reduce((s, i) => s + vendorInvoiceFinalAmount(i), 0);
+      }
+      return { mrpId, vendorCount: vendorMap.size, ready, total };
+    })
+    .sort((a, b) => b.ready - a.ready || a.mrpId.localeCompare(b.mrpId, "id-ID"));
+
+  const paymentVendorSummaries = paymentMrpId
+    ? Array.from(maklonHierarchy.get(paymentMrpId)?.entries() ?? [])
+        .map(([vendor, list]) => ({
+          vendor,
+          vendorName: VENDOR_PRODUKSI[vendor]?.name ?? vendor,
+          ready: list.filter((i) => i.status === "APPROVED").length,
+          total: list.reduce((s, i) => s + vendorInvoiceFinalAmount(i), 0),
+        }))
+        .sort((a, b) => b.ready - a.ready || a.vendorName.localeCompare(b.vendorName, "id-ID"))
+    : [];
+
+  const scopedInvoices = paymentMrpId && paymentVendor ? maklonHierarchy.get(paymentMrpId)?.get(paymentVendor) ?? [] : [];
+  const readyRows = [...scopedInvoices].filter((i) => i.status === "APPROVED").sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : -1));
+  const paidRows = [...scopedInvoices].filter((i) => i.status === "PAID").sort((a, b) => (a.paidAt ?? "" < (b.paidAt ?? "") ? 1 : -1));
 
   function toggle(id: string) {
     setActionResult(null);
@@ -414,6 +463,89 @@ export function PaymentMaklonPanel() {
 
   return (
     <>
+      <div className="flex items-center gap-1.5 font-sans text-[11.5px]">
+        <button
+          type="button"
+          onClick={() => {
+            setPaymentMrpId(null);
+            setPaymentVendor(null);
+            setSelected(new Set());
+          }}
+          className={paymentMrpId ? "font-semibold text-action-primary underline" : "font-semibold text-text-primary"}
+        >
+          Semua No. MRP
+        </button>
+        {paymentMrpId && (
+          <>
+            <span className="text-text-muted">/</span>
+            <button
+              type="button"
+              onClick={() => {
+                setPaymentVendor(null);
+                setSelected(new Set());
+              }}
+              className={paymentVendor ? "font-semibold text-action-primary underline" : "font-semibold text-text-primary"}
+            >
+              {paymentMrpId}
+            </button>
+          </>
+        )}
+        {paymentVendor && (
+          <>
+            <span className="text-text-muted">/</span>
+            <span className="font-semibold text-text-primary">{VENDOR_PRODUKSI[paymentVendor]?.name ?? paymentVendor}</span>
+          </>
+        )}
+      </div>
+
+      {!paymentMrpId && (
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+          {paymentMrpSummaries.map((m) => (
+            <button
+              key={m.mrpId}
+              type="button"
+              onClick={() => setPaymentMrpId(m.mrpId)}
+              className="flex flex-col gap-1.5 rounded-lg border border-border-subtle bg-surface-card px-4 py-3 text-left transition-colors hover:border-[#C7D0DB]"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-mono text-[12.5px] font-semibold text-text-primary">{m.mrpId}</span>
+                {m.ready > 0 && <StatusPill tone="warning">{m.ready} siap bayar</StatusPill>}
+              </div>
+              <div className="flex items-center justify-between font-sans text-[11.5px] text-text-muted">
+                <span>{m.vendorCount} vendor produksi</span>
+                <span className="font-mono">{formatRupiah(m.total)}</span>
+              </div>
+            </button>
+          ))}
+          {paymentMrpSummaries.length === 0 && (
+            <div className="col-span-full rounded-lg border border-dashed border-border-subtle bg-surface-card px-4 py-6 text-center font-sans text-[12px] text-text-muted">
+              Belum ada invoice vendor yang disetujui/dibayar.
+            </div>
+          )}
+        </div>
+      )}
+
+      {paymentMrpId && !paymentVendor && (
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+          {paymentVendorSummaries.map((v) => (
+            <button
+              key={v.vendor}
+              type="button"
+              onClick={() => setPaymentVendor(v.vendor)}
+              className="flex flex-col gap-1.5 rounded-lg border border-border-subtle bg-surface-card px-4 py-3 text-left transition-colors hover:border-[#C7D0DB]"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-sans text-[13px] font-semibold text-text-primary">{v.vendorName}</span>
+                {v.ready > 0 && <StatusPill tone="warning">{v.ready} siap bayar</StatusPill>}
+              </div>
+              <div className="font-mono text-[12.5px] font-medium text-text-primary">{formatRupiah(v.total)}</div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {paymentMrpId && paymentVendor && (
+      <>
       {actionResult && (
         <div className="flex items-center gap-2 rounded-lg border border-[#F0DFC2] bg-warning-bg px-5 py-[10px] font-sans text-xs font-medium text-warning-fg">
           {actionResult}
@@ -495,6 +627,8 @@ export function PaymentMaklonPanel() {
         )}
         emptyText="Belum ada invoice vendor yang telah dibayar."
       />
+      </>
+      )}
     </>
   );
 }
