@@ -771,6 +771,7 @@ export async function getFlowSnapshot(): Promise<FlowState> {
     resiGroupId: k.resi_group_id ?? undefined,
     noResi: k.no_resi ?? undefined,
     resiInvoicedAt: k.resi_invoiced_at ?? undefined,
+    wmsReceivedAt: k.wms_received_at ?? undefined,
   }));
 
   // ---- Vendor invoice ----

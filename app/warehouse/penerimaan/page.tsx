@@ -133,6 +133,20 @@ export default function WarehousePenerimaanPage() {
     { key: "invoice", label: "No Invoice Vendor", default: true, render: (g) => (g.invoiceIds.length > 0 ? g.invoiceIds.join(", ") : "—") },
     { key: "qty", label: "Total Qty", default: true, align: "right", render: (g) => formatPcs(g.totalQty) },
     {
+      // Item 2026-09-16 (integrasi WMS, migration 0041) -- status TERPISAH dari kolom "Status" di
+      // bawah (yang soal gate invoice/HPP): ini murni menandai barang sudah dicek fisik masuk di
+      // WMS atau belum, tidak memengaruhi boleh/tidaknya "Bongkar Koli".
+      key: "statusWms",
+      label: "Status WMS",
+      default: true,
+      render: (g) =>
+        g.wmsReceivedAt ? (
+          <span className="font-sans text-[10.5px] font-semibold text-success-fg">✓ Diterima WMS · {formatDate(g.wmsReceivedAt)}</span>
+        ) : (
+          <span className="font-sans text-[10.5px] text-text-muted">Belum dikonfirmasi WMS</span>
+        ),
+    },
+    {
       key: "status",
       label: "Status",
       default: true,

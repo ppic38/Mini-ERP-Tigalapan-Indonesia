@@ -3876,6 +3876,11 @@ export type WarehouseReceivableGroup = {
    *  disabled (lihat R9 di spec) -- baris TETAP tampil biar gudang tahu barang fisiknya sudah
    *  datang, cuma belum boleh dibongkar. */
   gateReason: string | null;
+  /** Migration 0041 -- status TERPISAH dari gate di atas, murni informasional: terisi kalau WMS
+   *  (aplikasi gudang eksternal) sudah mengonfirmasi koli-koli grup ini diterima fisik di sana.
+   *  TIDAK memengaruhi gateReason/tombol "Bongkar" sama sekali -- 2 hal yang independen sengaja
+   *  (owner 2026-09-16: gudang fisik vs pencatatan HPP/invoice ERP adalah proses yang berbeda). */
+  wmsReceivedAt?: string;
 };
 
 /** Baris HPP ini "kind"-nya REWORK kalau ditelusuri lewat reworkChunks (bukan roll chunk) --
@@ -4015,6 +4020,12 @@ export function warehouseReceivableGroups(
       totalNilai: items.reduce((s, i) => s + i.qty * i.hppPerItem, 0),
       items,
       gateReason,
+      // Terisi kalau SEMUA koli grup ini sudah ditandai WMS (bukan cuma sebagian) -- integrasi WMS
+      // menulis wms_received_at ke seluruh koli 1 resi group sekaligus (lihat migration 0041), jadi
+      // beda antar koli dalam grup yang sama seharusnya tidak pernah terjadi di data baru; kalau
+      // toh terjadi (data lama/race), tampilkan sebagai belum lengkap (undefined) daripada klaim
+      // status yang belum tentu benar untuk semua koli.
+      wmsReceivedAt: kolis.every((k) => k.wmsReceivedAt) ? kolis.map((k) => k.wmsReceivedAt).sort().at(-1) : undefined,
     });
   }
 

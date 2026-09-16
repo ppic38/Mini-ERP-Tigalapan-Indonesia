@@ -431,6 +431,12 @@ export type DeliveryKoli = {
   /** Menandai grup resi ini (semua koli dgn resiGroupId yang sama) SUDAH pernah dibuatkan invoice
    *  vendor lewat "Submit Invoice" (lihat submitResiGroupInvoiceAction) -- mencegah submit dobel. */
   resiInvoicedAt?: string;
+  /** Migration 0041 -- ditulis OTOMATIS oleh integrasi WMS (fungsi Supabase wms_integration_event,
+   *  bukan kode app ini) begitu WMS mengonfirmasi semua koli resi ini sudah diterima fisik di
+   *  gudang WMS. MURNI status informasional untuk portal Warehouse -- TIDAK memengaruhi gate
+   *  warehouseReceivableGroups/"Bongkar Koli" manapun (itu tetap terpisah, tetap manual, tetap
+   *  mensyaratkan invoice vendor lunas seperti sebelumnya). */
+  wmsReceivedAt?: string;
 };
 
 /** Spec Portal Warehouse (migration 0031) — 1 baris item hasil "Bongkar Koli" Warehouse, level
