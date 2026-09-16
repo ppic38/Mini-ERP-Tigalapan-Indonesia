@@ -61,6 +61,23 @@ export type MaterialGroupByWarna = {
  *  baris2 dalam 1 warna kebetulan sudah punya supplier BEDA (mis. sisa dari sebelum digabung),
  *  supplier pertama yang non-null dipakai sebagai representasi tampilan — begitu user pilih
  *  ulang, assignMaterialSupplier diterapkan ke semua rowIds sekaligus supaya konsisten lagi. */
+// Owner 2026-09-16 (PO Approval terlalu panjang kalau 1 MRP campur banyak kategori kain -- warna
+// "... WK MYNO"/"... 30S"/"... KID" dsb SEMUA ikut satu tabel Material tanpa pengelompokan): kategori
+// TIDAK tersimpan eksplisit di MaterialRow, cuma tersirat lewat akhiran nama warna (pola yang sama
+// dipakai KAIN_VARIANT_SUFFIXES di atas & data live Master Data Harga Kain) -- fungsi ini menebak
+// kategori MURNI untuk pengelompokan tampilan (filter/checkbox bulk-assign), TIDAK memengaruhi
+// hargaKainRateInfo atau perhitungan lain yang sudah ada.
+export const MATERIAL_KATEGORI_URUTAN = ["COMBED 24S", "COMBED 30S", "KIDS 24S", "PANJANG + RIB", "TUNIK 24S", "WANGKI MYNO"] as const;
+export function inferMaterialKategori(warna: string): (typeof MATERIAL_KATEGORI_URUTAN)[number] {
+  const w = warna.toUpperCase();
+  if (w.includes("WK MYNO") || w.includes("WANGKI")) return "WANGKI MYNO";
+  if (w.includes("TUNIK")) return "TUNIK 24S";
+  if (w.includes("RIB")) return "PANJANG + RIB";
+  if (w.includes("KID")) return "KIDS 24S";
+  if (w.includes("30S")) return "COMBED 30S";
+  return "COMBED 24S";
+}
+
 export function materialGroupsByWarna(materialRows: MaterialRow[]): MaterialGroupByWarna[] {
   const map = new Map<string, MaterialGroupByWarna>();
   // Baris qtyRoll 0 = kombinasi warna+lengan placeholder dari template Excel (tidak benar-benar

@@ -17,6 +17,8 @@ import {
   hargaKainRate,
   hargaKerahMansetRateInfo,
   hargaRibRateInfo,
+  inferMaterialKategori,
+  MATERIAL_KATEGORI_URUTAN,
   maklonPoBadgeWithApproval,
   maklonPoDeliveryProgress,
   maklonPoInvoiceLockedBy,
@@ -76,6 +78,13 @@ export default function PoApprovalPage() {
 
   const [selectedId, setSelectedId] = useState<string>("");
   const [drillVendor, setDrillVendor] = useState<string | null>(null);
+  // Owner 2026-09-16: tabel Material dikelompokkan per kategori kain + checkbox bulk-assign
+  // supplier untuk banyak warna sekaligus. State ini di-reset di onChange dropdown MRP di bawah
+  // (bukan useEffect, supaya tidak melanggar react-hooks/set-state-in-effect) supaya centangan/
+  // filter MRP sebelumnya tidak "nempel" ke MRP lain yang baru dipilih.
+  const [materialKategoriFilter, setMaterialKategoriFilter] = useState<string>("");
+  const [selectedWarna, setSelectedWarna] = useState<Set<string>>(new Set());
+  const [bulkSupplier, setBulkSupplier] = useState<string>("");
 
   // MRP baru bisa dibuatkan PO setelah disetujui SCM (lihat approvePpicMrp di lib/mrp/store.ts) —
   // ini gerbang yang sengaja ditambahkan supaya PPIC tidak langsung "tembus" ke Procurement tanpa
@@ -304,6 +313,9 @@ export default function PoApprovalPage() {
             onChange={(e) => {
               setSelectedId(e.target.value);
               setDrillVendor(null);
+              setMaterialKategoriFilter("");
+              setSelectedWarna(new Set());
+              setBulkSupplier("");
             }}
             className="mt-1 rounded-md border border-[#DDE4EB] px-[11px] py-[9px] font-sans text-[12.5px] font-medium text-text-primary"
           >
@@ -402,14 +414,70 @@ export default function PoApprovalPage() {
               // Kolom Warna diberi lebar minimum supaya nama warna tidak patah per kata (revisi
               // 2026-09-15, owner: tabel Material terlalu sempit).
               const cols = showKerahManset
-                ? "minmax(120px, 1.3fr) 44px 60px 64px 64px 104px 104px 104px minmax(150px, 1fr)"
-                : "minmax(140px, 1.5fr) 44px 60px 110px minmax(160px, 1fr)";
+                ? "20px minmax(120px, 1.3fr) 44px 60px 64px 64px 104px 104px 104px minmax(150px, 1fr)"
+                : "20px minmax(140px, 1.5fr) 44px 60px 110px minmax(160px, 1fr)";
+              // Owner 2026-09-16: kelompokkan per kategori kain (WANGKI MYNO/30S/KID/dsb sering
+              // campur dalam 1 MRP, lihat inferMaterialKategori) + filter kategori + checkbox
+              // bulk-assign supplier untuk banyak warna sekaligus (bukan 1-per-1 seperti dulu).
+              const kategoriHadir = MATERIAL_KATEGORI_URUTAN.filter((k) => materialGroups.some((g) => inferMaterialKategori(g.warna) === k));
+              const visibleGroups = materialKategoriFilter ? materialGroups.filter((g) => inferMaterialKategori(g.warna) === materialKategoriFilter) : materialGroups;
+              const groupsByKategori = MATERIAL_KATEGORI_URUTAN.map((k) => ({ kategori: k, groups: visibleGroups.filter((g) => inferMaterialKategori(g.warna) === k) })).filter(
+                (k) => k.groups.length > 0
+              );
+              function toggleWarna(warna: string) {
+                setSelectedWarna((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(warna)) next.delete(warna);
+                  else next.add(warna);
+                  return next;
+                });
+              }
+              function applyBulkSupplier() {
+                if (!bulkSupplier || selectedWarna.size === 0 || !detail) return;
+                const rowIds = materialGroups.filter((g) => selectedWarna.has(g.warna)).flatMap((g) => g.rowIds);
+                assignMaterialSupplier(detail.mrp.id, rowIds, bulkSupplier);
+                setSelectedWarna(new Set());
+                setBulkSupplier("");
+              }
               return (
                 <>
+                  {kategoriHadir.length > 1 && (
+                    <div className="flex items-center gap-1.5 border-b border-border-subtle px-4 py-2">
+                      <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Filter kategori:</span>
+                      <select value={materialKategoriFilter} onChange={(e) => setMaterialKategoriFilter(e.target.value)} className="input w-auto !py-1 !text-[11px]">
+                        <option value="">Semua kategori ({materialGroups.length} warna)</option>
+                        {kategoriHadir.map((k) => (
+                          <option key={k} value={k}>
+                            {k} ({materialGroups.filter((g) => inferMaterialKategori(g.warna) === k).length})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {selectedWarna.size > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle bg-info-bg px-4 py-2">
+                      <span className="font-sans text-[11px] font-semibold text-info-fg">{selectedWarna.size} warna dipilih —</span>
+                      <select value={bulkSupplier} onChange={(e) => setBulkSupplier(e.target.value)} className="input w-auto !py-1 !text-[11px]">
+                        <option value="">— samakan ke supplier —</option>
+                        {Array.from(new Set(Array.from(selectedWarna).flatMap((w) => materialSupplierNamesForWarna(hargaKain, w)))).map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                      <Button onClick={applyBulkSupplier} variant="primary" size="xs" disabled={!bulkSupplier}>
+                        Terapkan
+                      </Button>
+                      <Button onClick={() => setSelectedWarna(new Set())} variant="ghost" size="xs">
+                        Batal pilih
+                      </Button>
+                    </div>
+                  )}
                   <div
                     className="grid gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
                     style={{ gridTemplateColumns: cols }}
                   >
+                    <span />
                     <span>Warna</span>
                     <span className="text-right">Roll</span>
                     <span className="text-right">Rib kg</span>
@@ -420,7 +488,12 @@ export default function PoApprovalPage() {
                     {showKerahManset && <span className="text-right">Est. Manset (Rp)</span>}
                     <span>Vendor material</span>
                   </div>
-                  {materialGroups.map((g) => {
+                  {groupsByKategori.map(({ kategori, groups }) => (
+                    <div key={kategori}>
+                      {kategoriHadir.length > 1 && !materialKategoriFilter && (
+                        <div className="border-b border-border-subtle bg-[#FBFCFD] px-4 py-1.5 font-sans text-[10.5px] font-semibold text-text-muted">{kategori}</div>
+                      )}
+                      {groups.map((g) => {
                     // Dipersempit ke supplier yang benar-benar punya harga untuk warna ini di Harga
                     // Kain — supaya tidak bisa pilih kombinasi supplier+warna yang harganya tidak ada
                     // sama sekali (yang berujung PO jatuh ke fallback "Estimasi" pakai angka flat jauh
@@ -448,6 +521,7 @@ export default function PoApprovalPage() {
                     const mansetRate = hargaKerahMansetRateInfo(hargaKerahManset, kerahMansetSettings, g.supplier, "MANSET");
                     return (
                       <div key={g.warna} className="grid gap-x-3 items-center border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0" style={{ gridTemplateColumns: cols }}>
+                        <input type="checkbox" checked={selectedWarna.has(g.warna)} onChange={() => toggleWarna(g.warna)} className="h-3.5 w-3.5" aria-label={`Pilih warna ${g.warna}`} />
                         <span>{g.warna}</span>
                         <span className="text-right font-mono">{g.totalRoll}</span>
                         <span className="text-right font-mono">{g.totalRibKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>
@@ -510,13 +584,15 @@ export default function PoApprovalPage() {
                           ))}
                         </select>
                         {optionsForWarna.length === 0 && (
-                          <div className={(showKerahManset ? "col-span-9" : "col-span-5") + " -mt-1.5 pb-0.5 font-sans text-[10.5px] font-medium text-warning-fg"}>
+                          <div className={(showKerahManset ? "col-span-10" : "col-span-6") + " -mt-1.5 pb-0.5 font-sans text-[10.5px] font-medium text-warning-fg"}>
                             ⚠ Belum ada supplier dengan harga untuk warna {g.warna} di Master Data Harga Kain.
                           </div>
                         )}
                       </div>
                     );
                   })}
+                    </div>
+                  ))}
                 </>
               );
             })()}
