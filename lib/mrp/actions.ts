@@ -43,6 +43,8 @@ import {
   rollRemainingBySizeForMrp,
   resiGroupInvoiceLines,
   warehouseReceivableGroups,
+  hargaMaklonRateInfo,
+  vendorCumulativeQtyByLengan,
 } from "./derive";
 import { ENTITAS_LIST, VENDOR_PRODUKSI } from "./seed";
 import type { ParsedMrpImport } from "./parseImport";
@@ -3676,10 +3678,6 @@ export async function createVendorInvoiceAction(input: { vendorProduksi: string;
   await insertNotification(notif(`Invoice vendor baru ${id} menunggu review Procurement`, ["procurement"]));
 }
 
-function lineKeyLocal(mrpId: string, warna: string, lengan: Lengan, usia?: Usia): string {
-  return mrpId + "|" + warna + "|" + lengan + "|" + (usia ?? "");
-}
-
 /** Item 2026-09-11 (feedback: "ketika sudah final pengiriman nanti akan ada button submit
  *  invoice, jadi tidak ada lagi action apa2 di halaman Invoice & Payment", migration 0026) --
  *  pengganti alur "Create Invoice" manual (checkbox+qty+rate) yang DIHAPUS dari
@@ -3692,10 +3690,7 @@ function lineKeyLocal(mrpId: string, warna: string, lengan: Lengan, usia?: Usia)
  *  otomatis dari data manapun). Reuse `createVendorInvoiceAction` APA ADANYA (bukan menulis ulang
  *  logic insert invoice) untuk baris hasil gabungan qty riil + rate dari client, lalu tandai
  *  SEMUA koliIds `resi_invoiced_at` supaya grup yang sama tidak bisa disubmit dua kali. */
-export async function submitResiGroupInvoiceAction(
-  koliIds: string[],
-  rates: { mrpId: string; warna: string; lengan: Lengan; usia?: Usia; ratePerPc: number }[]
-): Promise<void> {
+export async function submitResiGroupInvoiceAction(koliIds: string[]): Promise<void> {
   const vendorId = await requireVendorSession();
   if (koliIds.length === 0) return;
   const db = supabaseServer();
@@ -3710,16 +3705,22 @@ export async function submitResiGroupInvoiceAction(
   const snapshot = await getFlowSnapshot();
   const lines = resiGroupInvoiceLines(koliIds, snapshot.deliveryKolis);
   if (lines.length === 0) return;
-  const rateMap = new Map(rates.map((r) => [lineKeyLocal(r.mrpId, r.warna, r.lengan, r.usia), r.ratePerPc]));
+  // Item revisi 2026-09-17 (owner: "kunci Harga Maklon di invoice vendor -- jangan bisa diketik
+  // manual"): rate per pc TIDAK PERNAH lagi dipercaya dari client -- dihitung ULANG di sini dari
+  // kapasitas kumulatif TRUE vendor ini (semua PO Produksi historisnya, lihat
+  // vendorCumulativeQtyByLengan) + tier Standar/PKS Master Data Harga Maklon
+  // (hargaMaklonRateInfo), PERSIS logika yang sama dipakai untuk badge estimasi di PO Approval
+  // Procurement -- sekarang dijadikan otoritatif untuk invoice sungguhan (sama prinsipnya dengan
+  // qty yang sudah lebih dulu tidak dipercaya dari client di action ini).
+  const cumulativeByLengan = vendorCumulativeQtyByLengan(vendorId, snapshot.mrpDetails);
   const invoiceLines = lines.map((l) => ({
     mrpId: l.mrpId,
     warna: l.warna,
     lengan: l.lengan,
     usia: l.usia,
     qty: l.qty,
-    ratePerPc: rateMap.get(lineKeyLocal(l.mrpId, l.warna, l.lengan, l.usia)) ?? 0,
+    ratePerPc: hargaMaklonRateInfo(snapshot.hargaMaklon, vendorId, l.lengan, cumulativeByLengan[l.lengan] ?? 0).rate,
   }));
-  if (invoiceLines.some((l) => !(l.ratePerPc > 0))) throw new Error("Rate per pc harus diisi (> 0) untuk semua baris.");
 
   await createVendorInvoiceAction({ vendorProduksi: vendorId, lines: invoiceLines });
 

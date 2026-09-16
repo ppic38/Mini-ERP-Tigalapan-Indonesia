@@ -329,7 +329,7 @@ type FlowActions = {
   deliverKoliResiGroup: (items: { koliId: string; beratKoli: number }[]) => Promise<void>;
   /** Lihat submitResiGroupInvoiceAction di actions.ts -- ganti alur "Create Invoice" manual lama
    *  (dihapus dari invoice-vendor-panel.tsx). */
-  submitResiGroupInvoice: (koliIds: string[], rates: { mrpId: string; warna: string; lengan: Lengan; usia?: Usia; ratePerPc: number }[]) => Promise<void>;
+  submitResiGroupInvoice: (koliIds: string[]) => Promise<void>;
   createVendorInvoice: (input: { vendorProduksi: string; lines: { mrpId: string; warna: string; lengan: Lengan; usia?: Usia; qty: number; ratePerPc: number }[]; note?: string }) => Promise<void>;
   setVendorInvoiceStatus: (invoiceId: string, status: VendorInvoice["status"]) => Promise<void>;
   addVendorInvoiceAdjustment: (invoiceId: string, input: { kind: VendorInvoiceAdjustmentKind; label: string; amount: number; note?: string }) => Promise<void>;
@@ -1034,8 +1034,8 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     await actions.deliverKoliResiGroupAction(items);
     backgroundRefresh();
   },
-  submitResiGroupInvoice: async (koliIds, rates) => {
-    await actions.submitResiGroupInvoiceAction(koliIds, rates);
+  submitResiGroupInvoice: async (koliIds) => {
+    await actions.submitResiGroupInvoiceAction(koliIds);
     backgroundRefresh();
   },
   createVendorInvoice: async (input) => {

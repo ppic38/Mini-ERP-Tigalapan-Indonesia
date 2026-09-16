@@ -15,11 +15,13 @@ import {
   formatDate,
   formatDecimal,
   formatRupiah,
+  hargaMaklonRateInfo,
   koliOngkirShare,
   mrpIdsWithClosedRolls,
   mrpIdsWithUnpackedFg,
   resiGroupInvoiceLines,
   rollRemainingBySizeForMrp,
+  vendorCumulativeQtyByLengan,
 } from "@/lib/mrp/derive";
 import { countPengirimanPendingForMrp, pendingMarker } from "@/lib/shell/badges";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -479,42 +481,39 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
     runPendingAction(groupKey, deliverKoliResiGroup(items));
   }
 
-  // Item 2026-09-11 (migration 0026, "Submit Invoice"): dialog kecil -- qty per baris OTOMATIS
-  // dari isi koli grup ini (read-only, dihitung ULANG server-side juga -- lihat
-  // submitResiGroupInvoiceAction), rate pre-filled dari default vendor tapi BISA diedit sebelum
-  // submit.
+  // Item revisi 2026-09-17 (owner: "kunci Harga Maklon di invoice vendor -- jangan bisa diketik
+  // manual, pakai rate Standar/PKS otomatis dari kapasitas kumulatif"): dulu rate per baris
+  // pre-filled dari vendorMeta.ratePerPc TAPI bisa diedit bebas sebelum submit -- sekarang
+  // read-only, dihitung dari kapasitas kumulatif TRUE vendor ini (semua PO Produksi historisnya,
+  // vendorCumulativeQtyByLengan) + tier Standar/PKS Master Data Harga Maklon (hargaMaklonRateInfo)
+  // -- server (submitResiGroupInvoiceAction) menghitung ULANG rate yang SAMA PERSIS, jadi ini
+  // murni pratinjau, bukan input yang dipercaya.
   const [invoiceDialogKoliIds, setInvoiceDialogKoliIds] = useState<string[] | null>(null);
-  const [invoiceRatesDraft, setInvoiceRatesDraft] = useState<Record<string, number>>({});
   const [invoiceSubmitting, setInvoiceSubmitting] = useState(false);
   const [invoiceError, setInvoiceError] = useState<string | null>(null);
-  const vendorMeta = VENDOR_PRODUKSI[vendorId];
+  const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
+  const mrpDetails = useMrpStore((s) => s.mrpDetails);
+  const cumulativeByLengan = vendorCumulativeQtyByLengan(vendorId, mrpDetails);
 
   function openInvoiceDialog(koliIds: string[]) {
-    const lines = resiGroupInvoiceLines(koliIds, deliveryKolis);
-    const rates: Record<string, number> = {};
-    for (const l of lines) rates[invoiceLineKeyLocal(l.mrpId, l.warna, l.lengan, l.usia)] = vendorMeta?.ratePerPc ?? 0;
-    setInvoiceRatesDraft(rates);
     setInvoiceDialogKoliIds(koliIds);
     setInvoiceError(null);
   }
   function closeInvoiceDialog() {
     setInvoiceDialogKoliIds(null);
-    setInvoiceRatesDraft({});
     setInvoiceError(null);
   }
   const invoiceDialogLines = invoiceDialogKoliIds ? resiGroupInvoiceLines(invoiceDialogKoliIds, deliveryKolis) : [];
-  const invoiceDialogTotal = invoiceDialogLines.reduce((s, l) => s + l.qty * (invoiceRatesDraft[invoiceLineKeyLocal(l.mrpId, l.warna, l.lengan, l.usia)] ?? 0), 0);
+  function rateForLine(l: { lengan: Lengan }): number {
+    return hargaMaklonRateInfo(hargaMaklon, vendorId, l.lengan, cumulativeByLengan[l.lengan] ?? 0).rate;
+  }
+  const invoiceDialogTotal = invoiceDialogLines.reduce((s, l) => s + l.qty * rateForLine(l), 0);
   async function submitInvoiceConfirm() {
     if (!invoiceDialogKoliIds || invoiceSubmitting) return;
-    if (invoiceDialogLines.some((l) => !(invoiceRatesDraft[invoiceLineKeyLocal(l.mrpId, l.warna, l.lengan, l.usia)] > 0))) {
-      setInvoiceError("Rate per pc harus diisi (> 0) untuk semua baris.");
-      return;
-    }
     setInvoiceSubmitting(true);
     setInvoiceError(null);
     try {
-      const rates = invoiceDialogLines.map((l) => ({ mrpId: l.mrpId, warna: l.warna, lengan: l.lengan, usia: l.usia, ratePerPc: invoiceRatesDraft[invoiceLineKeyLocal(l.mrpId, l.warna, l.lengan, l.usia)] }));
-      await submitResiGroupInvoice(invoiceDialogKoliIds, rates);
+      await submitResiGroupInvoice(invoiceDialogKoliIds);
       closeInvoiceDialog();
     } catch (e) {
       setInvoiceError(e instanceof Error ? e.message : "Gagal submit invoice.");
@@ -1009,9 +1008,10 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
         </div>
       )}
 
-      {/* Item 2026-09-11 (migration 0026): dialog "Submit Invoice" -- qty per baris OTOMATIS dari
-         isi koli grup ini (read-only di sini, dihitung ULANG server-side juga), rate pre-filled
-         dari default vendor tapi bisa diedit. */}
+      {/* Item 2026-09-11 (migration 0026), diperbarui 2026-09-17: dialog "Submit Invoice" -- qty
+         DAN rate per baris sekarang SAMA-SAMA read-only (dihitung ULANG server-side juga, lihat
+         submitResiGroupInvoiceAction) -- rate terkunci ke tier Standar/PKS Harga Maklon dari
+         kapasitas kumulatif vendor, tidak bisa lagi diketik manual. */}
       {invoiceDialogKoliIds && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0B131B]/45 p-4">
           {/* Item 2026-09-12 (user-reported, "ada element yang saling menutupi satu sama lain"):
@@ -1043,14 +1043,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                       </span>
                       <span>{l.lengan}</span>
                       <span className="text-right font-mono">{l.qty} pcs</span>
-                      <span className="flex justify-end">
-                        <NumberInput
-                          value={invoiceRatesDraft[key] ?? 0}
-                          currency
-                          onChange={(v) => setInvoiceRatesDraft((prev) => ({ ...prev, [key]: Math.max(0, v) }))}
-                          className="input w-[120px] text-right"
-                        />
-                      </span>
+                      <span className="text-right font-mono">{formatRupiah(rateForLine(l))}</span>
                     </div>
                   );
                 })}

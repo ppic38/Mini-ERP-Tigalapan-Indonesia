@@ -197,6 +197,26 @@ export function hargaMaklonRateInfo(hargaMaklon: HargaMaklonRow[], vendorKey: st
   return { rate: VENDOR_PRODUKSI[vendorKey]?.ratePerPc ?? 7000, source: "Estimasi", cumulativeQty };
 }
 
+/** Item revisi 2026-09-17 (owner: "kunci Harga Maklon di invoice vendor -- pakai rate Standar/PKS
+ *  otomatis dari kapasitas kumulatif vendor, bukan input manual"): kapasitas kumulatif TRUE dari
+ *  awal -- dijumlah dari aduanRows SEMUA MRP historis vendor ini (bukan cuma 1 PO/MRP yang sedang
+ *  dilihat, beda dari cara `maklonRateExplanation` dipakai di PO Approval yang cuma estimasi per-
+ *  PO) -- dikelompokkan per lengan karena tier PKS/Standar di Master Data Harga Maklon memang per
+ *  tipe lengan (lihat matchesLengan). Dipakai server-side (submitResiGroupInvoiceAction) supaya
+ *  rate invoice vendor produksi TIDAK BISA diketik manual lagi, sama prinsipnya dengan qty yang
+ *  sudah lebih dulu tidak dipercaya dari client di action itu.
+ */
+export function vendorCumulativeQtyByLengan(vendorKey: string, mrpDetails: MrpDetail[]): Partial<Record<Lengan, number>> {
+  const totals: Partial<Record<Lengan, number>> = {};
+  for (const detail of mrpDetails) {
+    for (const a of detail.aduanRows) {
+      if (a.vendor !== vendorKey) continue;
+      totals[a.lengan] = (totals[a.lengan] ?? 0) + a.qty;
+    }
+  }
+  return totals;
+}
+
 export function hargaMaklonRate(hargaMaklon: HargaMaklonRow[], vendorKey: string, lengan: Lengan, cumulativeQty: number): number {
   return hargaMaklonRateInfo(hargaMaklon, vendorKey, lengan, cumulativeQty).rate;
 }
