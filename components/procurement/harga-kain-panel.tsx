@@ -19,27 +19,39 @@ export function HargaKainPanel() {
   const addRow = useMrpStore((s) => s.addHargaKainRow);
   const updateRow = useMrpStore((s) => s.updateHargaKainRow);
   const deleteRow = useMrpStore((s) => s.deleteHargaKainRow);
+  // Migration 0042 (owner 2026-09-16: "supaya tidak ada typo penulisan") -- daftar pilihan
+  // dropdown, BUKAN foreign key. Pilih supplier di sini mengisi kodeSupplier+namaSupplier
+  // sekaligus dari Master Data "Supplier Kain"; baris lama yang sudah ada TETAP tampil apa
+  // adanya walau nama supplier-nya kebetulan belum/tidak ada di daftar itu.
+  const materialSuppliers = useMrpStore((s) => s.materialSuppliers);
   // Item revisi 2026-09-15 -- baris harus diklik "Edit" dulu sebelum bisa diketik (cegah salah ketik).
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const columns: ColumnDef<HargaKainRow>[] = [
     {
-      key: "kodeSupplier",
-      label: "Kode Supplier",
+      key: "supplier",
+      label: "Supplier",
       default: true,
       render: (r) => (
-        <EditableCell editing={editingId === r.id} display={r.kodeSupplier || "—"}>
-          <input value={r.kodeSupplier} onChange={(e) => updateRow(r.id, { kodeSupplier: e.target.value })} className="input w-[110px]" />
-        </EditableCell>
-      ),
-    },
-    {
-      key: "namaSupplier",
-      label: "Nama Supplier",
-      default: true,
-      render: (r) => (
-        <EditableCell editing={editingId === r.id} display={r.namaSupplier || "—"}>
-          <input value={r.namaSupplier} onChange={(e) => updateRow(r.id, { namaSupplier: e.target.value })} className="input w-[130px]" />
+        <EditableCell editing={editingId === r.id} display={r.namaSupplier || r.kodeSupplier || "—"}>
+          <select
+            value={r.kodeSupplier}
+            onChange={(e) => {
+              const sup = materialSuppliers.find((s) => s.kode === e.target.value);
+              updateRow(r.id, { kodeSupplier: sup?.kode ?? e.target.value, namaSupplier: sup?.nama ?? e.target.value });
+            }}
+            className="input w-[150px]"
+          >
+            <option value="">— pilih supplier —</option>
+            {materialSuppliers.map((s) => (
+              <option key={s.id} value={s.kode}>
+                {s.nama}
+              </option>
+            ))}
+            {/* Baris lama yang kode supplier-nya belum ada di Master Data Supplier Kain -- tetap
+                muncul sebagai opsi supaya nilainya tidak diam-diam berubah kosong saat diedit. */}
+            {r.kodeSupplier && !materialSuppliers.some((s) => s.kode === r.kodeSupplier) && <option value={r.kodeSupplier}>{r.namaSupplier || r.kodeSupplier} (belum di Master Data)</option>}
+          </select>
         </EditableCell>
       ),
     },

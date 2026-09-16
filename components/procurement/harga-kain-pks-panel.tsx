@@ -20,19 +20,33 @@ export function HargaKainPksPanel() {
   const addRow = useMrpStore((s) => s.addHargaKainPksRow);
   const updateRow = useMrpStore((s) => s.updateHargaKainPksRow);
   const deleteRow = useMrpStore((s) => s.deleteHargaKainPksRow);
+  // Migration 0042 -- daftar pilihan dropdown, sama seperti HargaKainPanel (lihat catatan lebih
+  // lengkap di file itu). SATU daftar dipakai bersama Harga Kain & Harga Kain PKS.
+  const materialSuppliers = useMrpStore((s) => s.materialSuppliers);
   // Item revisi 2026-09-15 -- baris harus diklik "Edit" dulu sebelum bisa diketik (cegah salah ketik).
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const columns: ColumnDef<HargaKainPksRow>[] = [
     {
       key: "kodeSupplier",
-      label: "Kode Supplier",
+      label: "Supplier",
       default: true,
-      render: (r) => (
-        <EditableCell editing={editingId === r.id} display={r.kodeSupplier || "—"}>
-          <input value={r.kodeSupplier} onChange={(e) => updateRow(r.id, { kodeSupplier: e.target.value })} className="input w-[110px]" />
-        </EditableCell>
-      ),
+      render: (r) => {
+        const matched = materialSuppliers.find((s) => s.kode === r.kodeSupplier);
+        return (
+          <EditableCell editing={editingId === r.id} display={matched?.nama ?? r.kodeSupplier ?? "—"}>
+            <select value={r.kodeSupplier} onChange={(e) => updateRow(r.id, { kodeSupplier: e.target.value })} className="input w-[150px]">
+              <option value="">— pilih supplier —</option>
+              {materialSuppliers.map((s) => (
+                <option key={s.id} value={s.kode}>
+                  {s.nama}
+                </option>
+              ))}
+              {r.kodeSupplier && !matched && <option value={r.kodeSupplier}>{r.kodeSupplier} (belum di Master Data)</option>}
+            </select>
+          </EditableCell>
+        );
+      },
     },
     {
       // Item revisi 2026-09-15 (owner): default DITAMPILKAN (dulu false/disembunyikan ke toggle

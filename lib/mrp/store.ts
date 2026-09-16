@@ -26,7 +26,7 @@ import type {
   WarehouseReceipt,
 } from "./types";
 import type { ParsedMrpImport } from "./parseImport";
-import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, SupplierRow, VendorProduksiMasterRow } from "./masterData";
+import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, MaterialSupplierRow, SupplierRow, VendorProduksiMasterRow } from "./masterData";
 import { localDateString } from "./derive";
 import * as rawActions from "./actions";
 
@@ -230,6 +230,9 @@ export type FlowState = {
   /** Master Data "Harga Kerah/Manset per Supplier" (migration 0038) -- sumber utama estimasi Rp
    *  Kerah/Manset di PO Approval lewat `hargaKerahMansetRateInfo` (lib/mrp/derive.ts). */
   hargaKerahManset: HargaKerahMansetRow[];
+  /** Master Data "Supplier Kain" (migration 0042) -- daftar pilihan dropdown untuk kode/nama
+   *  supplier di Harga Kain & Harga Kain PKS (owner 2026-09-16, cegah typo nama supplier). */
+  materialSuppliers: MaterialSupplierRow[];
   /** Kategori & kapasitas produksi PER MINGGU asli tiap vendor produksi (dari spreadsheet
    *  Procurement, lihat migration 0019_vendor_kapasitas_asli.sql) -- sumber utama untuk
    *  `vendorProduksiRows` (derive.ts) & kolom "Qty vs Kapasitas" di portal vendor
@@ -368,6 +371,8 @@ type FlowActions = {
   addHargaKerahMansetRow: () => Promise<void>;
   updateHargaKerahMansetRow: (id: string, patch: Partial<HargaKerahMansetRow>) => Promise<void>;
   deleteHargaKerahMansetRow: (id: string) => Promise<void>;
+  addMaterialSupplier: (kode: string, nama: string) => Promise<void>;
+  deleteMaterialSupplier: (id: string) => Promise<void>;
 
   setMaterialPoEntity: (poId: string, entitas: string) => Promise<void>;
   setMaterialPoColorEntity: (poId: string, warna: string, lengan: Lengan, entitas: string) => Promise<void>;
@@ -489,6 +494,7 @@ const emptyState: FlowState = {
   kerahMansetSettings: [],
   hargaRib: [],
   hargaKerahManset: [],
+  materialSuppliers: [],
   vendorProduksiList: [],
   hydrated: false,
   busy: false,
@@ -1240,6 +1246,22 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     } catch (err) {
       set({ hargaKerahManset: previous });
       window.alert("Gagal menghapus baris harga Kerah/Manset -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  addMaterialSupplier: async (kode, nama) => {
+    await actions.addMaterialSupplierAction(kode, nama);
+    backgroundRefresh();
+  },
+  deleteMaterialSupplier: async (id) => {
+    const previous = get().materialSuppliers;
+    set({ materialSuppliers: previous.filter((r) => r.id !== id) });
+    try {
+      await actions.deleteMaterialSupplierAction(id);
+    } catch (err) {
+      set({ materialSuppliers: previous });
+      window.alert("Gagal menghapus supplier -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();

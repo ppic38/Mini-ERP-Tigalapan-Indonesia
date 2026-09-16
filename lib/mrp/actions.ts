@@ -4189,6 +4189,25 @@ export async function deleteHargaKerahMansetRowAction(id: string): Promise<void>
   if (error) throw new Error(error.message);
 }
 
+// Master Data "Supplier Kain" (migration 0042) -- daftar pilihan dropdown Harga Kain/Kain PKS,
+// dipakai bersama (owner 2026-09-16). Cuma add/delete (tidak ada "update" -- kalau nama salah
+// ketik, hapus lalu tambah baris baru; baris harga_kain/harga_kain_pks lama TIDAK ikut berubah
+// otomatis karena kode_supplier/nama_supplier di situ tetap string bebas, bukan foreign key).
+export async function addMaterialSupplierAction(kode: string, nama: string): Promise<void> {
+  await requireMasterDataRole();
+  const trimmedKode = kode.trim();
+  const trimmedNama = nama.trim();
+  if (!trimmedKode || !trimmedNama) throw new Error("Kode dan nama supplier wajib diisi.");
+  const id = await nextReadableId("MSUP");
+  const { error } = await supabaseServer().from("material_suppliers").insert({ id, kode: trimmedKode, nama: trimmedNama });
+  if (error) throw new Error(error.message);
+}
+export async function deleteMaterialSupplierAction(id: string): Promise<void> {
+  await requireMasterDataRole();
+  const { error } = await supabaseServer().from("material_suppliers").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
 export async function addHargaKainPksRowAction(): Promise<void> {
   await requireMasterDataRole();
   const id = await nextReadableId("HKPKS");
