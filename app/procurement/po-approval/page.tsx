@@ -34,7 +34,7 @@ import {
   vendorProduksiRows,
 } from "@/lib/mrp/derive";
 import { countMaterialRowsWithoutSupplierForMrp, pendingMarker } from "@/lib/shell/badges";
-import { exportMaklonPoPdf, exportMaterialPoPdf } from "@/lib/mrp/exportPoPdf";
+import { exportMaklonPoPdf, exportMaterialPoPdf, exportMaterialPoPdfBatch } from "@/lib/mrp/exportPoPdf";
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { MaklonPO, MaterialPO } from "@/lib/mrp/types";
 
@@ -94,6 +94,30 @@ export default function PoApprovalPage() {
   const [expandedMrpMaterial, setExpandedMrpMaterial] = useState<string | null>(null);
   const [expandedSupplierMaterial, setExpandedSupplierMaterial] = useState<string | null>(null);
   const [expandedVendorMaterial, setExpandedVendorMaterial] = useState<string | null>(null);
+  // Item revisi 2026-09-17 (owner: "kolom Sumber di-hide-kan saja, jadikan fitur kolom yang bisa
+  // ditampilkan/di-hide seperti fitur kolom di ERP ini") -- tabel pohon PO Material ini custom
+  // HTML table (bukan DataTable/ColumnDef), jadi TIDAK otomatis dapat toggle "⊞ Kolom" bawaan
+  // DataTable (lihat components/mrp/data-table.tsx) -- ditiru manual di sini, cuma untuk kolom
+  // yang isinya baru muncul di leaf (level PO), bukan kolom "No MRP/Supplier/Vendor Produksi"
+  // (selalu tampil, sama seperti firstColumn di DataTable yang tidak bisa dimatikan).
+  const materialTreeColumns: { key: string; label: string; default: boolean }[] = [
+    { key: "jumlah", label: "Jumlah", default: true },
+    { key: "roll", label: "Roll", default: true },
+    { key: "nilai", label: "Nilai", default: true },
+    { key: "sumber", label: "Sumber", default: false },
+    { key: "status", label: "Status", default: true },
+    { key: "aksi", label: "Aksi", default: true },
+  ];
+  const [visibleMaterialCols, setVisibleMaterialCols] = useState<Set<string>>(new Set(materialTreeColumns.filter((c) => c.default).map((c) => c.key)));
+  const [materialColOpen, setMaterialColOpen] = useState(false);
+  function toggleMaterialCol(key: string) {
+    setVisibleMaterialCols((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
   // Revisi 2026-09-17 (owner: "PO Produksi juga digrouping, dari pilih No MRP dulu baru masuk ke
   // list vendor produksi") -- pilih No MRP dulu lewat tabel ringkas, baru tabel PO Vendor Produksi
   // (DataTable lama, lengkap dengan toggle Kolom/filter/expand rincian warna-lengan) muncul
@@ -245,11 +269,14 @@ export default function PoApprovalPage() {
     { key: "noPo", label: "No PO", default: true, render: (p) => <span className="font-mono font-medium">{p.id}</span> },
     { key: "vendor", label: "Vendor", default: true, render: (p) => VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi },
     { key: "qty", label: "Qty", default: true, align: "right", render: (p) => formatPcs(p.qty) + " pcs" },
+    { key: "nilai", label: "Nilai", default: true, align: "right", render: (p) => formatRupiah(p.amount) },
     {
-      key: "nilai",
-      label: "Nilai",
-      default: true,
-      align: "right",
+      key: "sumber",
+      label: "Sumber",
+      // Item revisi 2026-09-17 (owner): disembunyikan default, bisa ditampilkan lewat toggle
+      // "⊞ Kolom" bawaan DataTable (lihat components/mrp/data-table.tsx) -- konsisten dengan
+      // kolom "Sumber" di tabel pohon PO Material di atas yang juga default:false.
+      default: false,
       render: (p) => {
         // Rincian dihitung ulang dari aduanRows saat ini (via mrpDetails) — akurat untuk PO yang
         // belum pernah disesuaikan (kasus paling umum). Kalau PO ini sempat kena
@@ -257,12 +284,7 @@ export default function PoApprovalPage() {
         // efektif dipertahankan", lihat lib/mrp/store.ts) tapi rincian di sini bisa sedikit
         // meleset dari histori aslinya — tetap berguna sebagai gambaran umum.
         const aduanRows = mrpDetailFor(p.mrpId, mrpDetails)?.aduanRows.filter((a) => a.vendor === p.vendorProduksi) ?? [];
-        return (
-          <span className="flex items-center justify-end gap-1.5">
-            {formatRupiah(p.amount)}
-            <RateBadge explanation={maklonRateExplanation(hargaMaklon, p.vendorProduksi, aduanRows)} />
-          </span>
-        );
+        return <RateBadge explanation={maklonRateExplanation(hargaMaklon, p.vendorProduksi, aduanRows)} />;
       },
     },
     { key: "tglMrp", label: "Tanggal MRP", default: false, render: (p) => formatDate(mrpDetailFor(p.mrpId, mrpDetails)?.dates.created) },
@@ -672,7 +694,27 @@ export default function PoApprovalPage() {
 
       {tab === "material" && (
       <div className="overflow-hidden border border-border-subtle bg-surface-card">
-        <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">PO Material</div>
+        <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
+          <span className="font-sans text-[13px] font-semibold text-text-primary">PO Material</span>
+          <div className="relative ml-auto">
+            <button
+              onClick={() => setMaterialColOpen((v) => !v)}
+              className="rounded-md border border-[#CBD5DF] px-2.5 py-[6px] font-sans text-[11.5px] font-semibold text-action-primary"
+            >
+              ⊞ Kolom
+            </button>
+            {materialColOpen && (
+              <div className="absolute right-0 top-[110%] z-20 max-h-72 w-56 overflow-y-auto rounded-md border border-border-subtle bg-surface-card p-2 shadow-[0_8px_20px_rgba(11,19,27,.15)]">
+                {materialTreeColumns.map((c) => (
+                  <label key={c.key} className="flex items-center gap-2 rounded px-2 py-1.5 font-sans text-xs text-[#31414F] hover:bg-[#F7F9FB]">
+                    <input type="checkbox" checked={visibleMaterialCols.has(c.key)} onChange={() => toggleMaterialCol(c.key)} className="h-3.5 w-3.5 accent-accent-blue" />
+                    {c.label}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
         {materialMrpSummaries.length === 0 && (
           <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada PO material yang dibuat.</div>
         )}
@@ -682,11 +724,12 @@ export default function PoApprovalPage() {
           <thead>
             <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
               <th className="px-5 py-[9px] text-left">No MRP / Supplier / Vendor Produksi</th>
-              <th className="px-3 py-[9px] text-right">Jumlah</th>
-              <th className="px-3 py-[9px] text-right">Roll</th>
-              <th className="px-3 py-[9px] text-right">Nilai</th>
-              <th className="px-3 py-[9px] text-left">Status</th>
-              <th className="px-3 py-[9px] text-left">Aksi</th>
+              {visibleMaterialCols.has("jumlah") && <th className="px-3 py-[9px] text-right">Jumlah</th>}
+              {visibleMaterialCols.has("roll") && <th className="px-3 py-[9px] text-right">Roll</th>}
+              {visibleMaterialCols.has("nilai") && <th className="px-3 py-[9px] text-right">Nilai</th>}
+              {visibleMaterialCols.has("sumber") && <th className="px-3 py-[9px] text-left">Sumber</th>}
+              {visibleMaterialCols.has("status") && <th className="px-3 py-[9px] text-left">Status</th>}
+              {visibleMaterialCols.has("aksi") && <th className="px-3 py-[9px] text-left">Aksi</th>}
             </tr>
           </thead>
           <tbody>
@@ -707,13 +750,31 @@ export default function PoApprovalPage() {
                   <span className="mr-1.5 text-text-muted">{mrpActive ? "▾" : "▸"}</span>
                   <span className="font-mono font-semibold text-text-primary">{m.mrpId}</span>
                 </td>
-                <td className="px-3 py-[11px] text-right font-mono tabular-nums text-text-muted">{m.supplierCount} supplier</td>
-                <td className="px-3 py-[11px] text-right font-mono tabular-nums">{m.totalRoll}</td>
-                <td className="px-3 py-[11px] text-right font-mono tabular-nums font-medium">{formatRupiah(m.totalNilai)}</td>
-                <td className="px-3 py-[11px]">
-                  <StatusPill tone="neutral">{m.pos.length} PO</StatusPill>
-                </td>
-                <td className="px-3 py-[11px]" />
+                {visibleMaterialCols.has("jumlah") && <td className="px-3 py-[11px] text-right font-mono tabular-nums text-text-muted">{m.supplierCount} supplier</td>}
+                {visibleMaterialCols.has("roll") && <td className="px-3 py-[11px] text-right font-mono tabular-nums">{m.totalRoll}</td>}
+                {visibleMaterialCols.has("nilai") && <td className="px-3 py-[11px] text-right font-mono tabular-nums font-medium">{formatRupiah(m.totalNilai)}</td>}
+                {visibleMaterialCols.has("sumber") && <td className="px-3 py-[11px]" />}
+                {visibleMaterialCols.has("status") && (
+                  <td className="px-3 py-[11px]">
+                    <StatusPill tone="neutral">{m.pos.length} PO</StatusPill>
+                  </td>
+                )}
+                {visibleMaterialCols.has("aksi") && (
+                  <td className="px-3 py-[11px]">
+                    <Button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        exportMaterialPoPdfBatch(m.pos, mrpDetails, hargaKain, hargaKainPks, `PO-Material-${m.mrpId}.pdf`);
+                      }}
+                      disabled={m.pos.every((p) => !p.supplier)}
+                      title={m.pos.every((p) => !p.supplier) ? "Belum ada PO di MRP ini yang punya vendor material" : `Download semua ${m.pos.length} PO material MRP ini jadi 1 file`}
+                      variant="ghost"
+                      size="xs"
+                    >
+                      Download PO
+                    </Button>
+                  </td>
+                )}
               </tr>
               {mrpActive &&
                 supplierSummariesForMrp(m.pos).map((s) => {
@@ -733,13 +794,31 @@ export default function PoApprovalPage() {
                           <span className="mr-1.5 text-text-muted">{supplierActive ? "▾" : "▸"}</span>
                           <span className="font-medium text-text-primary">{s.supplier}</span>
                         </td>
-                        <td className="px-3 py-[10px] text-right font-mono tabular-nums text-text-muted">{s.vendorCount} vendor</td>
-                        <td className="px-3 py-[10px] text-right font-mono tabular-nums">{s.totalRoll}</td>
-                        <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(s.totalNilai)}</td>
-                        <td className="px-3 py-[10px]">
-                          <StatusPill tone="neutral">{s.pos.length} PO</StatusPill>
-                        </td>
-                        <td className="px-3 py-[10px]" />
+                        {visibleMaterialCols.has("jumlah") && <td className="px-3 py-[10px] text-right font-mono tabular-nums text-text-muted">{s.vendorCount} vendor</td>}
+                        {visibleMaterialCols.has("roll") && <td className="px-3 py-[10px] text-right font-mono tabular-nums">{s.totalRoll}</td>}
+                        {visibleMaterialCols.has("nilai") && <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(s.totalNilai)}</td>}
+                        {visibleMaterialCols.has("sumber") && <td className="px-3 py-[10px]" />}
+                        {visibleMaterialCols.has("status") && (
+                          <td className="px-3 py-[10px]">
+                            <StatusPill tone="neutral">{s.pos.length} PO</StatusPill>
+                          </td>
+                        )}
+                        {visibleMaterialCols.has("aksi") && (
+                          <td className="px-3 py-[10px]">
+                            <Button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                exportMaterialPoPdfBatch(s.pos, mrpDetails, hargaKain, hargaKainPks, `PO-Material-${m.mrpId}-${s.supplier}.pdf`);
+                              }}
+                              disabled={s.pos.every((p) => !p.supplier)}
+                              title={s.pos.every((p) => !p.supplier) ? "Belum ada vendor material untuk grup ini" : `Download semua ${s.pos.length} PO material supplier ini jadi 1 file`}
+                              variant="ghost"
+                              size="xs"
+                            >
+                              Download PO
+                            </Button>
+                          </td>
+                        )}
                       </tr>
                       {supplierActive &&
                         s.pos.map((p) => {
@@ -758,35 +837,39 @@ export default function PoApprovalPage() {
                                   <span className="font-medium text-text-primary">{VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi}</span>
                                   <span className="ml-1.5 font-mono text-[10.5px] text-text-muted">{p.id}</span>
                                 </td>
-                                <td className="px-3 py-[10px]" />
-                                <td className="px-3 py-[10px] text-right font-mono tabular-nums">{p.rollCount}</td>
-                                <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">
-                                  <span className="flex items-center justify-end gap-1.5">
-                                    {formatRupiah(p.amount)}
+                                {visibleMaterialCols.has("jumlah") && <td className="px-3 py-[10px]" />}
+                                {visibleMaterialCols.has("roll") && <td className="px-3 py-[10px] text-right font-mono tabular-nums">{p.rollCount}</td>}
+                                {visibleMaterialCols.has("nilai") && <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(p.amount)}</td>}
+                                {visibleMaterialCols.has("sumber") && (
+                                  <td className="px-3 py-[10px]">
                                     <RateBadge explanation={materialRateExplanation(hargaKain, hargaKainPks, p.supplier, p.colorBreakdown)} />
-                                  </span>
-                                </td>
-                                <td className="px-3 py-[10px]">
-                                  <StatusPill tone={statusInfo.tone}>{statusInfo.label}</StatusPill>
-                                </td>
-                                <td className="px-3 py-[10px]">
-                                  <Button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      exportMaterialPoPdf(p, mrpDetails, hargaKain, hargaKainPks);
-                                    }}
-                                    disabled={!p.supplier}
-                                    title={!p.supplier ? "Tetapkan vendor material dulu" : undefined}
-                                    variant="ghost"
-                                    size="xs"
-                                  >
-                                    Download PO
-                                  </Button>
-                                </td>
+                                  </td>
+                                )}
+                                {visibleMaterialCols.has("status") && (
+                                  <td className="px-3 py-[10px]">
+                                    <StatusPill tone={statusInfo.tone}>{statusInfo.label}</StatusPill>
+                                  </td>
+                                )}
+                                {visibleMaterialCols.has("aksi") && (
+                                  <td className="px-3 py-[10px]">
+                                    <Button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        exportMaterialPoPdf(p, mrpDetails, hargaKain, hargaKainPks);
+                                      }}
+                                      disabled={!p.supplier}
+                                      title={!p.supplier ? "Tetapkan vendor material dulu" : undefined}
+                                      variant="ghost"
+                                      size="xs"
+                                    >
+                                      Download PO
+                                    </Button>
+                                  </td>
+                                )}
                               </tr>
                               {vendorActive && (
                                 <tr>
-                                  <td colSpan={6} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
+                                  <td colSpan={1 + visibleMaterialCols.size} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
                                     {materialPoColorBreakdown(p)}
                                   </td>
                                 </tr>

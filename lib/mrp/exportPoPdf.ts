@@ -146,11 +146,15 @@ function drawSignatureBoxesSafe(doc: jsPDF, y: number, leftLabel: string, leftNa
   drawSignatureBoxes(doc, targetY, leftLabel, leftName, rightLabel, rightName);
 }
 
-/** Generate & download PDF Purchase Order — Bahan Baku (Material), format meniru dokumen PO
- *  lama user: header brand, kotak info 2 kolom, 1 tabel rincian per warna dengan header hijau,
- *  subtotal + total, kotak tanda tangan Procurement/Finance. */
-export function exportMaterialPoPdf(po: MaterialPO, mrpDetails: MrpDetail[], hargaKain: HargaKainRow[], hargaKainPks: HargaKainPksRow[]) {
-  const doc = new jsPDF({ unit: "pt", format: "a4" });
+/** Item revisi 2026-09-17 (owner: "download PO per level -- per MRP, per supplier, atau per satu
+ *  PO"): badan asli exportMaterialPoPdf (1 halaman lengkap 1 PO -- header, info grid, rincian,
+ *  RIB/Kerah/Manset, tanda tangan) diekstrak ke fungsi ini SUPAYA bisa dipanggil berkali-kali di
+ *  atas SATU instance jsPDF yang sama (1 PO = 1 halaman, digabung jadi 1 file multi-halaman),
+ *  bukan tiap PO bikin `new jsPDF()` + `.save()` sendiri-sendiri (dulu begitu -- lihat
+ *  exportMaterialPoPdf di bawah, sekarang cuma wrapper 1-PO di atas fungsi ini). TIDAK memanggil
+ *  `new jsPDF()`/`doc.save()` sama sekali -- itu tanggung jawab pemanggil (exportMaterialPoPdf
+ *  untuk 1 PO, exportMaterialPoPdfBatch untuk banyak PO sekaligus). */
+function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[], hargaKain: HargaKainRow[], hargaKainPks: HargaKainPksRow[]) {
   const vendorName = VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi;
   const mrpDetail = mrpDetailFor(po.mrpId, mrpDetails);
   const kategori = mrpDetail?.mrp.kategori ?? "—";
@@ -268,8 +272,31 @@ export function exportMaterialPoPdf(po: MaterialPO, mrpDetails: MrpDetail[], har
   if (manset.totalKg > 0) drawMaterialSection("MANSET", manset.rows, manset.totalKg);
 
   drawSignatureBoxesSafe(doc, y, "DIAJUKAN OLEH (PROCUREMENT)", "Tim Procurement", "DISETUJUI OLEH (FINANCE)", po.approved ? "Disetujui" : "Menunggu tanda tangan");
+}
 
+/** Generate & download PDF Purchase Order — Bahan Baku (Material) untuk SATU PO, format meniru
+ *  dokumen PO lama user: header brand, kotak info 2 kolom, 1 tabel rincian per warna dengan
+ *  header hijau, subtotal + total, kotak tanda tangan Procurement/Finance. */
+export function exportMaterialPoPdf(po: MaterialPO, mrpDetails: MrpDetail[], hargaKain: HargaKainRow[], hargaKainPks: HargaKainPksRow[]) {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  renderMaterialPoPage(doc, po, mrpDetails, hargaKain, hargaKainPks);
   doc.save(`PO-${po.id}.pdf`);
+}
+
+/** Item revisi 2026-09-17 (owner: "download PO per level -- per MRP, per supplier"): SEMUA `pos`
+ *  digambar ke SATU dokumen jsPDF, 1 halaman per PO (persis tata letak exportMaterialPoPdf),
+ *  digabung jadi 1 file PDF multi-halaman -- dipakai tombol "Download PO" di baris MRP (semua
+ *  supplier) & baris Supplier (semua PO supplier itu) di tabel pohon PO Material. No-op kalau
+ *  `pos` kosong (mis. grup tanpa PO sama sekali -- seharusnya tidak pernah terjadi dari UI, tapi
+ *  jaga-jaga). */
+export function exportMaterialPoPdfBatch(pos: MaterialPO[], mrpDetails: MrpDetail[], hargaKain: HargaKainRow[], hargaKainPks: HargaKainPksRow[], fileName: string) {
+  if (pos.length === 0) return;
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  pos.forEach((po, i) => {
+    if (i > 0) doc.addPage();
+    renderMaterialPoPage(doc, po, mrpDetails, hargaKain, hargaKainPks);
+  });
+  doc.save(fileName);
 }
 
 /** Generate & download PDF Purchase Order — Maklon Vendor, format sama dengan Bahan Baku tapi
