@@ -1,27 +1,24 @@
 "use client";
 
-import { useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { Fragment, useState } from "react";
 import { StatusPill } from "@/components/ui/status-pill";
+import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/mrp/number-input";
-import { KoliEkspedisiCard } from "@/components/mrp/koli-ekspedisi-card";
+import { viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
 import { useMrpStore } from "@/lib/mrp/store";
 import {
   formatPcs,
   formatRupiah,
   invoiceCategoryLabel,
   invoiceKoliBreakdown,
-  invoiceYieldSummary,
   mrpMetaFor,
-  productionYieldByWarna,
   productionYieldBySize,
   vendorInvoiceAdjustmentTotal,
   vendorInvoiceBadge,
   vendorInvoiceFinalAmount,
-  vendorInvoicePaymentStatus,
 } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
-import type { Lengan, VendorInvoiceAdjustmentKind } from "@/lib/mrp/types";
+import type { VendorInvoice, VendorInvoiceAdjustmentKind } from "@/lib/mrp/types";
 
 /** Panel "Invoice Vendor" — konten dipindah dari halaman standalone /procurement/invoice-vendor
  *  (sekarang jadi tab di Paying Voucher (Invoice), bareng "Invoice Material") supaya sidebar
@@ -48,14 +45,61 @@ export function InvoiceVendorReviewPanel() {
   const setVendorInvoiceStatus = useMrpStore((s) => s.setVendorInvoiceStatus);
 
   const [expandedInvoiceId, setExpandedInvoiceId] = useState("");
-  const [expandedMrpKey, setExpandedMrpKey] = useState("");
-  const [expandedWarnaKey, setExpandedWarnaKey] = useState("");
   const [adjKind, setAdjKind] = useState<VendorInvoiceAdjustmentKind>("DENDA");
   const [adjLabel, setAdjLabel] = useState("");
   const [adjAmount, setAdjAmount] = useState(0);
 
+  // Item revisi 2026-09-17 (owner: "Invoice Vendor buat konsep dan tampilannya seperti di Invoice
+  // Material") -- tabel pohon No MRP -> Vendor Produksi (leaf = 1 invoice vendor), gaya visual
+  // PERSIS tabel PO Material/Riwayat PV (border-collapse <table>, StatusPill, chevron ▸/▾, sama
+  // pola dengan components/procurement/paying-voucher-material-panel.tsx). Beda dari Invoice
+  // Material: tidak ada level "Supplier" (vendor produksi di Maklon tidak punya supplier terpisah,
+  // sama alasan dengan PO Maklon/Payment Maklon). Satu invoice BISA menyentuh >1 MRP sekaligus
+  // (inv.lines multi-MRP) -- dalam kasus itu invoice yang sama muncul di >1 kartu MRP, SENGAJA
+  // (supaya tetap kelihatan dari MRP mana pun yang dibuka), bukan bug duplikasi data -- pola sama
+  // dengan payment-maklon-panel.tsx.
+  const [expandedMrpTree, setExpandedMrpTree] = useState<string | null>(null);
+  const [expandedVendorTree, setExpandedVendorTree] = useState<string | null>(null);
+
   const pending = vendorInvoices.filter((i) => i.status === "SUBMITTED");
   const sorted = [...vendorInvoices].sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : -1));
+
+  const vendorTreeHierarchy = (() => {
+    const map = new Map<string, Map<string, VendorInvoice[]>>();
+    for (const inv of sorted) {
+      const mrpIds = Array.from(new Set(inv.lines.map((l) => l.mrpId)));
+      for (const mrpId of mrpIds) {
+        if (!map.has(mrpId)) map.set(mrpId, new Map());
+        const vendorMap = map.get(mrpId)!;
+        if (!vendorMap.has(inv.vendorProduksi)) vendorMap.set(inv.vendorProduksi, []);
+        vendorMap.get(inv.vendorProduksi)!.push(inv);
+      }
+    }
+    return map;
+  })();
+
+  const vendorMrpSummaries = Array.from(vendorTreeHierarchy.entries())
+    .map(([mrpId, vendorMap]) => {
+      let invoiceCount = 0;
+      let totalTagihan = 0;
+      for (const list of vendorMap.values()) {
+        invoiceCount += list.length;
+        totalTagihan += list.reduce((s, i) => s + vendorInvoiceFinalAmount(i), 0);
+      }
+      return { mrpId, vendorCount: vendorMap.size, invoiceCount, totalTagihan };
+    })
+    .sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID"));
+
+  function vendorSummariesForMrp(mrpId: string) {
+    return Array.from(vendorTreeHierarchy.get(mrpId)?.entries() ?? [])
+      .map(([vendor, invs]) => ({
+        vendor,
+        vendorName: VENDOR_PRODUKSI[vendor]?.name ?? vendor,
+        invs,
+        totalTagihan: invs.reduce((s, i) => s + vendorInvoiceFinalAmount(i), 0),
+      }))
+      .sort((a, b) => a.vendorName.localeCompare(b.vendorName, "id-ID"));
+  }
 
   function resetAdjForm() {
     setAdjLabel("");
@@ -93,89 +137,131 @@ export function InvoiceVendorReviewPanel() {
         </div>
       )}
 
-      <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
+      <div className="overflow-hidden border border-border-subtle bg-surface-card">
         <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Semua invoice vendor</div>
-        <div className="overflow-x-auto">
-          <div className="min-w-[920px]">
-            <div
-              className="grid items-center gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
-              style={{ gridTemplateColumns: "110px 1fr 100px 90px 130px 70px 110px 130px 90px 24px" }}
-            >
-              <span>No Invoice</span>
-              <span>Vendor</span>
-              <span>MRP</span>
-              <span className="text-right">Total qty</span>
-              <span className="text-right">Total tagihan</span>
-              <span className="text-right">Yield</span>
-              <span>Status</span>
-              <span>Status Payment</span>
-              <span>Tanggal</span>
-              <span />
-            </div>
-            {sorted.length === 0 && <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada invoice vendor.</div>}
-            {sorted.map((inv) => {
-              const invExpanded = expandedInvoiceId === inv.id;
-              const totalQtyInv = inv.lines.reduce((s, l) => s + l.qty, 0);
-              const payment = vendorInvoicePaymentStatus(inv);
-              const finalAmount = vendorInvoiceFinalAmount(inv);
-              const denda = vendorInvoiceAdjustmentTotal(inv, "DENDA");
-              const reward = vendorInvoiceAdjustmentTotal(inv, "REWARD");
-              const yieldSummary = invoiceYieldSummary(inv, mrpDetails, productionBatches, productionResults);
-              // Item 2026-09-10 (feedback: info lampiran ekspedisi sebelum "Setujui invoice") --
-              // cuma dihitung begitu baris ini di-expand (bukan tiap render semua invoice) supaya
-              // tidak ikut menjalankan hppRowsForInvoicePerRoll (lumayan berat, alokasi FIFO) utk
-              // baris yang collapsed.
-              const koliBreakdown = invExpanded
-                ? invoiceKoliBreakdown(inv, vendorInvoices, mrpDetails, staticMrps, productionBatches, productionResults, productionGroupMeta, rawInvoices, deliveryKolis, ekspedisiRates, itemSellingPrices)
-                : undefined;
-              return (
-                <div key={inv.id}>
-                  {/* Item 2026-09-12 (user-reported, tes user: "banyak yang miss sama simbol ini"
-                     -- chevron kecil di ujung kanan dulu satu-satunya petunjuk baris ini bisa
-                     diklik): SELURUH baris sekarang 1 elemen <button> yang bisa diklik di mana
-                     saja (dulu ada 2 <button> terpisah -- 1 badan baris + 1 chevron -- plus
-                     checkbox yang bikin area klik terasa terpecah). Checkbox "pilih untuk download
-                     lampiran" juga dihapus (fitur download lampiran dihapus total). */}
-                  <button
-                    onClick={() => setExpandedInvoiceId(invExpanded ? "" : inv.id)}
-                    title={inv.status === "SUBMITTED" ? "Klik untuk buka detail & Setujui invoice" : "Klik untuk buka detail"}
-                    className={
-                      "grid w-full items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] text-left font-sans text-xs text-[#31414F] hover:bg-[#F7F9FB] " +
-                      (inv.status === "SUBMITTED" && !invExpanded ? "bg-warning-bg/40" : "")
-                    }
-                    style={{ gridTemplateColumns: "110px 1fr 100px 90px 130px 70px 110px 130px 90px 24px" }}
-                  >
-                    <span className="font-mono font-medium">{inv.id}</span>
-                    <span>{VENDOR_PRODUKSI[inv.vendorProduksi]?.name ?? inv.vendorProduksi}</span>
-                    <span>{inv.lines.map((l) => l.mrpId).join(", ")}</span>
-                    <span className="text-right font-mono">{formatPcs(totalQtyInv)}</span>
-                    <span className="text-right">
-                      {/* BUG lama: kolom ini selalu nampilin inv.netTagihan mentah, jadi denda/
-                          reward yang ditambahkan Procurement (lihat panel "Denda / reward" di
-                          bawah) kelihatan seperti tidak berpengaruh sama sekali ke nilai invoice
-                          — padahal finalAmount (dipakai "Total tagihan akhir" di detail) sudah
-                          benar dihitung, cuma tidak pernah ditampilkan di baris ringkas ini. */}
-                      <div className="font-mono">{formatRupiah(finalAmount)}</div>
-                      {(denda > 0 || reward > 0) && (
-                        <div className="font-mono text-[10px] text-text-muted">
-                          net {formatRupiah(inv.netTagihan)}
-                          {denda > 0 && ` − denda ${formatRupiah(denda)}`}
-                          {reward > 0 && ` + reward ${formatRupiah(reward)}`}
-                        </div>
-                      )}
-                    </span>
-                    <span className="text-right font-mono">{yieldSummary.yieldPct.toFixed(1)}%</span>
-                    <span>
-                      <StatusPill tone={vendorInvoiceBadge(inv.status).tone}>{vendorInvoiceBadge(inv.status).label}</StatusPill>
-                    </span>
-                    <span>
-                      <StatusPill tone={payment.tone}>{payment.label}</StatusPill>
-                    </span>
-                    <span className="font-mono text-[11px] text-text-muted">{inv.submittedAt}</span>
-                    <span className="flex items-center justify-center text-text-muted">{invExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</span>
-                  </button>
-              {invExpanded && (
-                <div className="border-b border-[#F1F4F7] bg-[#FAFBFC] px-6 py-3">
+        {vendorMrpSummaries.length === 0 && <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada invoice vendor.</div>}
+        {vendorMrpSummaries.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
+                  <th className="px-5 py-[9px] text-left">No MRP / Vendor Produksi / No Invoice</th>
+                  <th className="px-3 py-[9px] text-right">Total Tagihan</th>
+                  <th className="px-3 py-[9px] text-left">Status</th>
+                  <th className="px-3 py-[9px] text-left">Tanggal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vendorMrpSummaries.map((m) => {
+                  const mrpActive = expandedMrpTree === m.mrpId;
+                  return (
+                    <Fragment key={m.mrpId}>
+                      <tr
+                        onClick={() => {
+                          const next = mrpActive ? null : m.mrpId;
+                          setExpandedMrpTree(next);
+                          setExpandedVendorTree(null);
+                          setExpandedInvoiceId("");
+                        }}
+                        className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] hover:bg-[#FAFBFC] " + (mrpActive ? "bg-info-bg" : "")}
+                      >
+                        <td className="px-5 py-[11px]">
+                          <span className="mr-1.5 text-text-muted">{mrpActive ? "▾" : "▸"}</span>
+                          <span className="font-mono font-semibold text-text-primary">{m.mrpId}</span>
+                          <span className="ml-1.5 font-sans text-[10.5px] text-text-muted">{m.vendorCount} vendor</span>
+                        </td>
+                        <td className="px-3 py-[11px] text-right font-mono tabular-nums font-medium">{formatRupiah(m.totalTagihan)}</td>
+                        <td className="px-3 py-[11px]">
+                          <StatusPill tone="neutral">{m.invoiceCount} invoice</StatusPill>
+                        </td>
+                        <td className="px-3 py-[11px]" />
+                      </tr>
+                      {mrpActive &&
+                        vendorSummariesForMrp(m.mrpId).map((v) => {
+                          const vendorKey = `${m.mrpId}::${v.vendor}`;
+                          const vendorActive = expandedVendorTree === vendorKey;
+                          return (
+                            <Fragment key={vendorKey}>
+                              <tr
+                                onClick={() => {
+                                  const next = vendorActive ? null : vendorKey;
+                                  setExpandedVendorTree(next);
+                                  setExpandedInvoiceId("");
+                                }}
+                                className={"cursor-pointer border-b border-[#F1F4F7] bg-[#FBFCFD] font-sans text-[11.5px] text-[#31414F] hover:bg-[#F2F5F8] " + (vendorActive ? "bg-info-bg" : "")}
+                              >
+                                <td className="py-[10px] pl-10 pr-3">
+                                  <span className="mr-1.5 text-text-muted">{vendorActive ? "▾" : "▸"}</span>
+                                  <span className="font-medium text-text-primary">{v.vendorName}</span>
+                                </td>
+                                <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(v.totalTagihan)}</td>
+                                <td className="px-3 py-[10px]">
+                                  <StatusPill tone="neutral">{v.invs.length} invoice</StatusPill>
+                                </td>
+                                <td className="px-3 py-[10px]" />
+                              </tr>
+                              {vendorActive &&
+                                v.invs.map((inv) => {
+                                  const invExpanded = expandedInvoiceId === inv.id;
+                                  const finalAmount = vendorInvoiceFinalAmount(inv);
+                                  const denda = vendorInvoiceAdjustmentTotal(inv, "DENDA");
+                                  const reward = vendorInvoiceAdjustmentTotal(inv, "REWARD");
+                                  // Item 2026-09-10 (feedback: info lampiran ekspedisi sebelum "Setujui
+                                  // invoice") -- cuma dihitung begitu baris ini di-expand (bukan tiap
+                                  // render semua invoice) supaya tidak ikut menjalankan
+                                  // hppRowsForInvoicePerRoll (lumayan berat, alokasi FIFO) utk baris
+                                  // yang collapsed.
+                                  const koliBreakdown = invExpanded
+                                    ? invoiceKoliBreakdown(inv, vendorInvoices, mrpDetails, staticMrps, productionBatches, productionResults, productionGroupMeta, rawInvoices, deliveryKolis, ekspedisiRates, itemSellingPrices)
+                                    : undefined;
+                                  return (
+                                    <Fragment key={inv.id}>
+                                      <tr
+                                        onClick={() => setExpandedInvoiceId(invExpanded ? "" : inv.id)}
+                                        title={inv.status === "SUBMITTED" ? "Klik untuk buka detail & Setujui invoice" : "Klik untuk buka detail"}
+                                        className={
+                                          "cursor-pointer border-b border-[#F1F4F7] font-sans text-[11.5px] text-[#31414F] hover:bg-[#FAFBFC] " +
+                                          (invExpanded ? "bg-info-bg" : inv.status === "SUBMITTED" ? "bg-warning-bg/40" : "")
+                                        }
+                                      >
+                                        <td className="py-[10px] pl-16 pr-3">
+                                          <div className="flex items-center">
+                                            <span className="mr-1.5 text-text-muted">{invExpanded ? "▾" : "▸"}</span>
+                                            <span className="font-mono font-medium text-text-primary">{inv.id}</span>
+                                          </div>
+                                          {/* Item revisi 2026-09-17 (owner: "jangan satu kolom begitu
+                                             dimuat semua" -- dulu inv.lines.map(mrpId).join(", ") tanpa
+                                             dedupe, jadi MRP yang sama muncul berkali-kali (1x per
+                                             baris warna/lengan) sekaligus numpuk di baris yang sama
+                                             dengan No Invoice): sekarang di-dedupe, dipindah ke baris
+                                             sendiri (bukan numpuk sebaris), dan MRP yang sedang dibuka
+                                             di pohon ini (m.mrpId) tidak diulang -- cuma MRP LAIN yang
+                                             invoice ini juga sentuh yang ditampilkan (kalau ada). */}
+                                          {Array.from(new Set(inv.lines.map((l) => l.mrpId)))
+                                            .filter((id) => id !== m.mrpId).length > 0 && (
+                                            <div className="mt-0.5 font-mono text-[10.5px] text-text-muted">
+                                              Juga di:{" "}
+                                              {Array.from(new Set(inv.lines.map((l) => l.mrpId)))
+                                                .filter((id) => id !== m.mrpId)
+                                                .join(", ")}
+                                            </div>
+                                          )}
+                                        </td>
+                                        <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">
+                                          {/* Item revisi 2026-09-17 (owner: "saya tidak ingin ada
+                                             tampilan net Rp... - denda Rp... di sini, berantakan" --
+                                             detail net/denda dipindah SELURUHNYA ke highlight
+                                             Denda/Reward di panel expand, kolom ini cuma nilai akhir). */}
+                                          {formatRupiah(finalAmount)}
+                                        </td>
+                                        <td className="px-3 py-[10px]">
+                                          <StatusPill tone={vendorInvoiceBadge(inv.status).tone}>{vendorInvoiceBadge(inv.status).label}</StatusPill>
+                                        </td>
+                                        <td className="px-3 py-[10px] font-mono text-[11px] text-text-muted">{inv.submittedAt}</td>
+                                      </tr>
+                                      {invExpanded && (
+                                        <tr>
+                                          <td colSpan={4} className="border-b border-[#F1F4F7] bg-[#FAFBFC] px-6 py-3">
                   <div className="rounded-md border border-[#E4E9EE] bg-white p-3">
                     <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Denda / reward sesuai kontrak</div>
                     {(inv.adjustments?.length ?? 0) > 0 && (
@@ -259,28 +345,34 @@ export function InvoiceVendorReviewPanel() {
                   </div>
 
                   {/* Item 2026-09-10 (feedback: "Tambahkan informasi mengenai lampiran ekspedisi
-                     dari vendor produksi sebelum mengajukan invoice maklon ke finance") -- 1
-                     kartu per koli yang mengirim barang invoice ini (lihat KoliEkspedisiCard),
-                     ditaruh SEBELUM "Setujui invoice" sudah kelihatan di atas supaya Procurement
-                     sempat cek lampiran ekspedisinya dulu sebelum approve. */}
+                     dari vendor produksi sebelum mengajukan invoice maklon ke finance") -- ditaruh
+                     SEBELUM "Setujui invoice" sudah kelihatan di atas supaya Procurement sempat
+                     cek lampiran ekspedisinya dulu sebelum approve. Revisi 2026-09-17 (owner:
+                     "lebih simpel, buat dalam bentuk button ... tulis saja Lampiran Resi") -- dulu
+                     1 kartu penuh per koli (KoliEkspedisiCard, semua field ekspedisi/resi/tanggal/
+                     catatan ditulis lengkap), sekarang 1 baris ringkas + 1 tombol per koli --
+                     komponen kartu itu SENGAJA tidak disentuh (masih dipakai apa adanya di
+                     payment-maklon-panel.tsx), di sini cukup panggil viewEkspedisiPhoto langsung. */}
                   {koliBreakdown && (
                     <div className="mt-3 rounded-md border border-[#E4E9EE] bg-white p-3">
                       <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Lampiran ekspedisi</div>
                       {koliBreakdown.groups.length === 0 && koliBreakdown.legacyRows.length === 0 && (
                         <div className="mt-1.5 font-sans text-[11.5px] text-text-muted">Belum ada data pengiriman untuk invoice ini.</div>
                       )}
-                      <div className="mt-1.5 flex flex-col gap-1.5">
+                      <div className="mt-1.5 flex flex-col gap-1">
                         {koliBreakdown.groups.map((g) => (
-                          <KoliEkspedisiCard
-                            key={g.koliId}
-                            koliId={g.koliId}
-                            noKoli={g.noKoli}
-                            ekspedisi={g.ekspedisi}
-                            deliveredAt={g.deliveredAt}
-                            ekspedisiNote={g.ekspedisiNote}
-                            ekspedisiNoteAt={g.ekspedisiNoteAt}
-                            noResi={g.noResi}
-                          />
+                          <div key={g.koliId} className="flex items-center justify-between gap-2 font-sans text-[11.5px] text-[#31414F]">
+                            <span>
+                              <span className="font-mono font-semibold">{g.noKoli}</span> · {g.ekspedisi || "—"} · {g.noResi || "—"}
+                            </span>
+                            {g.ekspedisiNoteAt ? (
+                              <Button onClick={() => viewEkspedisiPhoto(g.koliId)} variant="ghost" size="xs">
+                                Lampiran Resi
+                              </Button>
+                            ) : (
+                              <span className="font-sans text-[11px] text-text-muted">—</span>
+                            )}
+                          </div>
                         ))}
                       </div>
                       {koliBreakdown.legacyRows.length > 0 && (
@@ -291,126 +383,65 @@ export function InvoiceVendorReviewPanel() {
                     </div>
                   )}
 
+                  {/* Item revisi 2026-09-17 (owner: "langsung saja tampilkan tabel warna serta
+                     size, qty, nilainya, tidak usah yield"): dulu 2 klik berjenjang (klik MRP ->
+                     breakdown per warna dengan cutting/reject/rework/yield -> klik "By size" lagi
+                     -> breakdown per size) -- disederhanakan jadi 1 tabel Size/Qty/Nilai yang
+                     LANGSUNG tampil di bawah tiap baris MRP, tanpa klik apa pun. Nilai per size =
+                     qty (target/rencana MRP) x line.ratePerPc (rate per pc invoice ini) --
+                     line.amount sendiri (subtotal semua size) dipertahankan di baris header
+                     sebagai kontrol silang, seharusnya selalu sama dengan jumlah baris size. */}
                   <div className="mt-3 font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Lampiran — detail per MRP</div>
-                  <div className="mt-2 grid grid-cols-[1fr_100px_120px_20px] gap-2 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
-                    <span>MRP</span>
-                    <span className="text-right">Qty diinvoice</span>
-                    <span className="text-right">Nilai</span>
-                    <span />
-                  </div>
                   {inv.lines.map((line) => {
-                    const mrpKey = inv.id + "|" + line.mrpId + "|" + line.warna + "|" + line.lengan + "|" + (line.usia ?? "");
-                    const mrpExpanded = expandedMrpKey === mrpKey;
+                    const lineKey = inv.id + "|" + line.mrpId + "|" + line.warna + "|" + line.lengan + "|" + (line.usia ?? "");
                     const mrp = mrpMetaFor(line.mrpId, mrpDetails, staticMrps);
+                    const sizes = productionYieldBySize(line.mrpId, line.warna, line.lengan, mrpDetails, productionBatches, productionResults);
                     return (
-                      <div key={mrpKey}>
-                        {/* Item 2026-09-12 (user-reported, tes user: "user tidak tau kalau ternyata
-                           itu bisa diclick") -- dulu cuma teks biru tanpa ikon apa pun sebagai
-                           petunjuk, sekarang ditambah chevron (pola sama baris invoice di atas) +
-                           hover bg supaya jelas ini bisa diklik untuk buka breakdown per size. */}
-                        <button
-                          onClick={() => {
-                            setExpandedMrpKey(mrpExpanded ? "" : mrpKey);
-                            setExpandedWarnaKey("");
-                          }}
-                          title={mrpExpanded ? "Tutup breakdown per size" : "Klik untuk lihat breakdown per size"}
-                          className="grid w-full grid-cols-[1fr_100px_120px_20px] items-center gap-2 rounded-md border-t border-[#F1F4F7] py-1.5 text-left font-mono text-[11.5px] text-action-primary hover:bg-[#F2F5F8]"
-                        >
+                      <div key={lineKey} className="mt-2 overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
+                        <div className="flex items-center justify-between gap-2 bg-[#F2F4F7] px-3 py-1.5 font-mono text-[11px] text-text-primary">
                           <span>
                             {line.mrpId}{" "}
                             <span className="text-[#94A3B0]">
                               ({invoiceCategoryLabel(mrp, line.usia)} · {line.warna} · {line.lengan})
                             </span>
                           </span>
-                          <span className="text-right">{formatPcs(line.qty)}</span>
-                          <span className="text-right">{formatRupiah(line.amount)}</span>
-                          <span className="flex items-center justify-center text-[#94A3B0]">{mrpExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
-                        </button>
-                        {mrpExpanded && (
-                          <div className="ml-3 border-l border-[#DDE4EB] py-1.5 pl-3">
-                            {/* Item 18.5: "Qty PO/cutting" dipecah jadi 2 kolom terpisah -- "Qty PO"
-                                (rencana MRP, targetSizesForGroup) vs "Hasil Cutting" (aktual,
-                                cuttingSizesForGroup) -- dulu disamakan/di-label seolah 1 angka yang
-                                sama, padahal keduanya legitim beda begitu hasil cutting sudah diisi. */}
-                            <div className="grid grid-cols-8 gap-2 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                              <span>Warna / lengan</span>
-                              <span className="text-right">Qty PO</span>
-                              <span className="text-right">Hasil Cutting</span>
-                              <span className="text-right">Finish good</span>
-                              <span className="text-right">Reject</span>
-                              <span className="text-right">Rework</span>
-                              <span className="text-right">Yield</span>
-                              <span />
-                            </div>
-                            {/* BUG FIX (2026-09-10, owner-reported): productionYieldByWarna cuma difilter
-                                mrpId+vendorProduksi -- mengembalikan SEMUA warna/lengan yang punya batch
-                                produksi di MRP ini, bukan cuma warna/lengan baris invoice ini (`line`). Tanpa
-                                filter ini, warna LAIN yang kebetulan juga sedang cutting di MRP yang sama (mis.
-                                belum FG-confirmed sama sekali, belum pernah dikirim/diinvoice) ikut "bocor"
-                                muncul di breakdown baris invoice yang sebenarnya cuma untuk 1 warna/lengan. */}
-                            {productionYieldByWarna(line.mrpId, inv.vendorProduksi, mrpDetails, productionBatches, productionResults)
-                              .filter((r) => r.warna === line.warna && r.lengan === line.lengan)
-                              .map((r) => {
-                              const warnaKey = mrpKey + "|" + r.warna + "|" + r.lengan;
-                              const warnaExpanded = expandedWarnaKey === warnaKey;
-                              return (
-                                <div key={warnaKey}>
-                                  <button
-                                    onClick={() => setExpandedWarnaKey(warnaExpanded ? "" : warnaKey)}
-                                    className="grid w-full grid-cols-8 items-center gap-2 border-t border-[#F1F4F7] py-1.5 text-left font-sans text-[11px] text-[#31414F]"
-                                  >
-                                    <span>
-                                      {r.warna} · {r.lengan}
-                                    </span>
-                                    <span className="text-right font-mono">{r.target}</span>
-                                    <span className="text-right font-mono">{r.cutting}</span>
-                                    <span className="text-right font-mono">{r.finishGood}</span>
-                                    <span className="text-right font-mono text-danger-fg">{r.reject}</span>
-                                    <span className="text-right font-mono text-rework-fg">{r.rework}</span>
-                                    <span className="text-right font-mono">{r.yieldPct.toFixed(1)}%</span>
-                                    <span className="text-right font-semibold text-action-primary">{warnaExpanded ? "Sembunyikan" : "By size →"}</span>
-                                  </button>
-                                  {warnaExpanded && (
-                                    <div className="ml-3 border-l border-[#DDE4EB] pl-3">
-                                      <div className="grid grid-cols-7 gap-2 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                                        <span>Size</span>
-                                        <span className="text-right">Qty PO</span>
-                                        <span className="text-right">Hasil Cutting</span>
-                                        <span className="text-right">Finish good</span>
-                                        <span className="text-right">Reject</span>
-                                        <span className="text-right">Rework</span>
-                                        <span className="text-right">Yield</span>
-                                      </div>
-                                      {productionYieldBySize(line.mrpId, r.warna, r.lengan as Lengan, mrpDetails, productionBatches, productionResults).map((s) => (
-                                        <div key={s.size} className="grid grid-cols-7 items-center gap-2 border-t border-[#F1F4F7] py-1 font-mono text-[11px] text-[#31414F]">
-                                          <span>{s.size}</span>
-                                          <span className="text-right">{s.target}</span>
-                                          <span className="text-right">{s.cutting}</span>
-                                          <span className="text-right">{s.finishGood}</span>
-                                          <span className="text-right text-danger-fg">{s.reject}</span>
-                                          <span className="text-right text-rework-fg">{s.rework}</span>
-                                          <span className="text-right">{s.yieldPct.toFixed(1)}%</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
+                          <span>
+                            {formatPcs(line.qty)} pcs · {formatRupiah(line.amount)}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                          <span>Size</span>
+                          <span className="text-right">Qty</span>
+                          <span className="text-right">Nilai</span>
+                        </div>
+                        {sizes.length === 0 && <div className="border-t border-[#F1F4F7] px-3 py-2 font-sans text-[11.5px] text-text-muted">Belum ada rincian per size.</div>}
+                        {sizes.map((s) => (
+                          <div key={s.size} className="grid grid-cols-3 items-center gap-2 border-t border-[#F1F4F7] px-3 py-1.5 font-mono text-[11.5px] text-[#31414F]">
+                            <span>{s.size}</span>
+                            <span className="text-right">{s.target}</span>
+                            <span className="text-right">{formatRupiah(s.target * line.ratePerPc)}</span>
                           </div>
-                        )}
+                        ))}
                       </div>
                     );
                   })}
-                </div>
-              )}
-            </div>
-          );
-        })}
+                                          </td>
+                                        </tr>
+                                      )}
+                                    </Fragment>
+                                  );
+                                })}
+                            </Fragment>
+                          );
+                        })}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-        </div>
+        )}
       </div>
-
     </>
   );
 }
