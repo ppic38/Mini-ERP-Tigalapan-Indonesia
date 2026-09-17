@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { FilterBar } from "@/components/mrp/filter-bar";
 import { TransferMaterialModal, type TransferCandidate } from "@/components/mrp/transfer-material-modal";
 import { SetDeliveryModal } from "@/components/mrp/set-delivery-modal";
@@ -85,9 +84,12 @@ export default function MaterialTrackingPage() {
   // "pakai konsep row-tree seperti PO Material") -- "Material per line" dikelompokkan Supplier ->
   // Vendor Produksi (baris memanjang dalam SATU container, bukan kartu grid), klik baris invoice
   // (leaf) untuk membuka rincian warna/roll (dari colorEntries). Checkbox tetap dipakai untuk
-  // bulk-select (Set Delivery / Pindahkan ke vendor lain) tanpa ikut membuka rincian. Level "No
-  // MRP" sengaja dilewati -- FilterBar di bawah sudah punya filter No. MRP sendiri (konsisten
-  // dengan alasan yang sama di PO Material: /procurement/po-approval).
+  // bulk-select (Set Delivery / Pindahkan ke vendor lain) tanpa ikut membuka rincian.
+  // Revisi 2026-09-17 (owner: "belum ada grouping per MRP-nya") -- level "No MRP" TADINYA sengaja
+  // dilewati (FilterBar sudah punya filter No. MRP sendiri), tapi owner tetap mau tree 3 tingkat
+  // PERSIS PO Material: No MRP -> Supplier -> Vendor Produksi (leaf). FilterBar No. MRP
+  // dipertahankan (tetap berguna untuk lompat langsung ke 1 MRP tanpa scroll cari di tree).
+  const [expandedTrackingMrp, setExpandedTrackingMrp] = useState<string | null>(null);
   const [expandedTrackingSupplier, setExpandedTrackingSupplier] = useState<string | null>(null);
   const [expandedTrackingVendor, setExpandedTrackingVendor] = useState<string | null>(null);
   const [expandedTrackingId, setExpandedTrackingId] = useState<string | null>(null);
@@ -96,6 +98,16 @@ export default function MaterialTrackingPage() {
   const [entitasFilterTracking, setEntitasFilterTracking] = useState("");
   const [statusFilterTracking, setStatusFilterTracking] = useState("");
   const [rollFilterTracking, setRollFilterTracking] = useState("");
+  // Item revisi 2026-09-17 (owner: "buat konsep dan tampilannya seperti di Purchase Order,
+  // filternya sesuaikan dengan data dari main grouping -- begitu juga PO Produksi aktif") --
+  // dulu DataTable flat (1 baris per PO, filter/toggle kolom bawaan DataTable). Sekarang tabel
+  // pohon No MRP -> Vendor Produksi (leaf = 1 PO), gaya visual sama dengan PO Material/PO
+  // Produksi di app/procurement/po-approval/page.tsx -- filter dropdown eksplisit (No MRP,
+  // Status) menggantikan filterDefs DataTable, mengikuti level grouping yang ditampilkan.
+  const [expandedActiveMrp, setExpandedActiveMrp] = useState<string | null>(null);
+  const [expandedActiveVendor, setExpandedActiveVendor] = useState<string | null>(null);
+  const [activeMrpFilter, setActiveMrpFilter] = useState("");
+  const [activeStatusFilter, setActiveStatusFilter] = useState("");
 
   if (!mounted) return null;
 
@@ -193,25 +205,57 @@ export default function MaterialTrackingPage() {
             (rollFilterTracking === "Lengkap" && rollArrivalStatus(r.invoice) === "LENGKAP"))))
   );
 
-  // Pohon 2 tingkat (lihat catatan di deklarasi expandedTrackingSupplier): Supplier -> Vendor
+  // Item revisi 2026-09-17 (owner: "saya juga ingin ada status di MRP sampai ke vendor produksi
+  // mengenai apa2 yang belum diset delivery, merah/kuning kalau masih ada yang belum, hijau kalau
+  // sudah semuanya") -- badge ringkasan per grup (MRP/Supplier/Vendor), dihitung dari baris yang
+  // relevan (`r.invoice` ada) dan MASIH BELUM di-set delivery (status PAID tapi deliveredAt kosong
+  // -- gate yang sama dengan tombol "Set Delivery" di action bar). Merah = SEMUA baris di grup itu
+  // belum delivery, kuning = SEBAGIAN, hijau = semua sudah (atau tidak ada yang perlu delivery
+  // sama sekali, mis. grup isinya cuma baris yang sudah lewat tahap delivery).
+  function deliveryStatusBadge(rs: TrackingRow[]) {
+    const relevant = rs.filter((r) => !!r.invoice);
+    const pending = relevant.filter((r) => r.invoice!.status === "PAID" && !r.invoice!.deliveredAt).length;
+    if (pending === 0) return { tone: "success" as const, label: "Semua delivery" };
+    if (pending === relevant.length) return { tone: "danger" as const, label: `${pending} belum delivery` };
+    return { tone: "warning" as const, label: `${pending} belum delivery` };
+  }
+
+  // Pohon 3 tingkat (lihat catatan di deklarasi expandedTrackingMrp): No MRP -> Supplier -> Vendor
   // Produksi, leaf = baris invoice individual. Sama konsep dengan PO Material di
-  // /procurement/po-approval, MRP dilewati karena sudah ada FilterBar No. MRP di bawah.
-  const trackingSupplierSummaries = (() => {
+  // /procurement/po-approval.
+  const trackingMrpSummaries = (() => {
     const map = new Map<string, TrackingRow[]>();
     for (const r of filteredRows) {
+      if (!map.has(r.mrpId)) map.set(r.mrpId, []);
+      map.get(r.mrpId)!.push(r);
+    }
+    return Array.from(map.entries())
+      .map(([mrpId, rs]) => ({
+        mrpId,
+        rows: rs,
+        supplierCount: new Set(rs.map((r) => r.supplier)).size,
+        totalRoll: rs.reduce((sum, r) => sum + r.roll, 0),
+        totalNilai: rs.reduce((sum, r) => sum + (r.nilai ?? 0), 0),
+      }))
+      .sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID"));
+  })();
+
+  function trackingSupplierSummariesForMrp(rs: TrackingRow[]) {
+    const map = new Map<string, TrackingRow[]>();
+    for (const r of rs) {
       if (!map.has(r.supplier)) map.set(r.supplier, []);
       map.get(r.supplier)!.push(r);
     }
     return Array.from(map.entries())
-      .map(([supplier, rs]) => ({
+      .map(([supplier, srs]) => ({
         supplier,
-        rows: rs,
-        vendorCount: new Set(rs.map((r) => r.vendorProduksi)).size,
-        totalRoll: rs.reduce((sum, r) => sum + r.roll, 0),
-        totalNilai: rs.reduce((sum, r) => sum + (r.nilai ?? 0), 0),
+        rows: srs,
+        vendorCount: new Set(srs.map((r) => r.vendorProduksi)).size,
+        totalRoll: srs.reduce((sum, r) => sum + r.roll, 0),
+        totalNilai: srs.reduce((sum, r) => sum + (r.nilai ?? 0), 0),
       }))
       .sort((a, b) => a.supplier.localeCompare(b.supplier, "id-ID"));
-  })();
+  }
 
   function trackingVendorSummariesForSupplier(rs: TrackingRow[]) {
     const map = new Map<string, TrackingRow[]>();
@@ -230,38 +274,51 @@ export default function MaterialTrackingPage() {
       .sort((a, b) => a.vendorName.localeCompare(b.vendorName, "id-ID"));
   }
 
-  const TRACKING_TREE_COLS = "26px 22px minmax(220px, 1fr) 90px 90px 140px 160px 150px";
-
   // "PO Produksi aktif" -- kasus jarang tapi nyata: vendor tiba-tiba minta berhenti mid-produksi.
   // Cuma PO yang masih dalam tahap produksi aktif yang eligible (sama gate dengan
   // withdrawVendorProductionAction) -- PO yang sudah masuk Delivery/Invoice/Payment tidak ada lagi
   // yang bisa dipindahkan (Finish Good sudah selesai/dikirim, bukan WIP lagi).
   const activePOs = maklonPOs.filter((p) => p.approved && !p.closedAt && p.qty > 0 && MAKLON_PO_ACTIVE_STATUSES.includes(p.status));
-  const activePoColumns: ColumnDef<MaklonPO>[] = [
-    { key: "noPo", label: "No PO", default: true, render: (p) => <span className="font-mono font-medium">{p.id}</span> },
-    { key: "vendor", label: "Vendor", default: true, render: (p) => VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi },
-    { key: "qty", label: "Qty", default: true, align: "right", render: (p) => formatPcs(p.qty) + " pcs" },
-    { key: "nilai", label: "Nilai", default: true, align: "right", render: (p) => formatRupiah(p.amount) },
-    {
-      key: "status",
-      label: "Status",
-      default: true,
-      render: (p) => {
-        const badge = maklonPoBadgeWithApproval(p, vendorInvoices);
-        return <StatusPill tone={badge.tone}>{badge.label}</StatusPill>;
-      },
-    },
-    {
-      key: "aksi",
-      label: "Aksi",
-      default: true,
-      render: (p) => (
-        <Button onClick={() => setWithdrawTarget(p)} variant="danger" size="xs">
-          Vendor Berhenti Produksi →
-        </Button>
-      ),
-    },
-  ];
+
+  const filteredActivePOs = activePOs.filter(
+    (p) =>
+      (!activeMrpFilter || p.mrpId === activeMrpFilter) &&
+      (!activeStatusFilter || maklonPoBadgeWithApproval(p, vendorInvoices).label === activeStatusFilter)
+  );
+
+  const activeMrpSummaries = (() => {
+    const map = new Map<string, MaklonPO[]>();
+    for (const p of filteredActivePOs) {
+      if (!map.has(p.mrpId)) map.set(p.mrpId, []);
+      map.get(p.mrpId)!.push(p);
+    }
+    return Array.from(map.entries())
+      .map(([mrpId, pos]) => ({
+        mrpId,
+        pos,
+        vendorCount: new Set(pos.map((p) => p.vendorProduksi)).size,
+        totalQty: pos.reduce((sum, p) => sum + p.qty, 0),
+        totalNilai: pos.reduce((sum, p) => sum + p.amount, 0),
+      }))
+      .sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID"));
+  })();
+
+  function activeVendorSummariesForMrp(pos: MaklonPO[]) {
+    const map = new Map<string, MaklonPO[]>();
+    for (const p of pos) {
+      if (!map.has(p.vendorProduksi)) map.set(p.vendorProduksi, []);
+      map.get(p.vendorProduksi)!.push(p);
+    }
+    return Array.from(map.entries())
+      .map(([vendor, ps]) => ({
+        vendor,
+        vendorName: VENDOR_PRODUKSI[vendor]?.name ?? vendor,
+        pos: ps,
+        totalQty: ps.reduce((sum, p) => sum + p.qty, 0),
+        totalNilai: ps.reduce((sum, p) => sum + p.amount, 0),
+      }))
+      .sort((a, b) => a.vendorName.localeCompare(b.vendorName, "id-ID"));
+  }
 
   return (
     <AppShell
@@ -302,16 +359,115 @@ export default function MaterialTrackingPage() {
       </div>
 
       {tab === "produksi-aktif" && (
-        <DataTable
-          title="PO Produksi aktif"
-          subtitle="Vendor tiba-tiba berhenti mid-produksi? Pindahkan sisa pekerjaannya (bahan mentah + WIP belum Finish Good) ke vendor lain sekaligus."
-          columns={activePoColumns}
-          rows={activePOs}
-          keyOf={(p) => p.id}
-          firstColumnLabel="No. MRP"
-          firstColumnRender={(p) => <span className="font-mono">{p.mrpId}</span>}
-          emptyText="Tidak ada PO Produksi aktif."
-        />
+        <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
+          <div className="border-b border-border-subtle px-5 py-3">
+            <div className="font-sans text-[13px] font-semibold text-text-primary">PO Produksi aktif</div>
+            <div className="mt-0.5 font-sans text-[11px] text-text-muted">
+              Vendor tiba-tiba berhenti mid-produksi? Pindahkan sisa pekerjaannya (bahan mentah + WIP belum Finish Good) ke vendor lain sekaligus.
+            </div>
+          </div>
+          <FilterBar
+            filters={[
+              { label: "No. MRP", value: activeMrpFilter, options: Array.from(new Set(activePOs.map((p) => p.mrpId))), onChange: setActiveMrpFilter },
+              {
+                label: "Status",
+                value: activeStatusFilter,
+                options: Array.from(new Set(activePOs.map((p) => maklonPoBadgeWithApproval(p, vendorInvoices).label))),
+                onChange: setActiveStatusFilter,
+              },
+            ]}
+          />
+          {activeMrpSummaries.length === 0 && (
+            <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Tidak ada PO Produksi aktif.</div>
+          )}
+          {activeMrpSummaries.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
+                    <th className="px-5 py-[9px] text-left">No MRP / Vendor Produksi / No PO</th>
+                    <th className="px-3 py-[9px] text-right">Qty</th>
+                    <th className="px-3 py-[9px] text-right">Nilai</th>
+                    <th className="px-3 py-[9px] text-left">Status</th>
+                    <th className="px-3 py-[9px] text-left">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activeMrpSummaries.map((m) => {
+                    const mrpActive = expandedActiveMrp === m.mrpId;
+                    return (
+                      <Fragment key={m.mrpId}>
+                        <tr
+                          onClick={() => {
+                            const next = mrpActive ? null : m.mrpId;
+                            setExpandedActiveMrp(next);
+                            setExpandedActiveVendor(null);
+                          }}
+                          className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] hover:bg-[#FAFBFC] " + (mrpActive ? "bg-info-bg" : "")}
+                        >
+                          <td className="px-5 py-[11px]">
+                            <span className="mr-1.5 text-text-muted">{mrpActive ? "▾" : "▸"}</span>
+                            <span className="font-mono font-semibold text-text-primary">{m.mrpId}</span>
+                            <span className="ml-1.5 font-sans text-[10.5px] text-text-muted">{m.vendorCount} vendor</span>
+                          </td>
+                          <td className="px-3 py-[11px] text-right font-mono tabular-nums">{formatPcs(m.totalQty)} pcs</td>
+                          <td className="px-3 py-[11px] text-right font-mono tabular-nums font-medium">{formatRupiah(m.totalNilai)}</td>
+                          <td className="px-3 py-[11px]">
+                            <StatusPill tone="neutral">{m.pos.length} PO</StatusPill>
+                          </td>
+                          <td className="px-3 py-[11px]" />
+                        </tr>
+                        {mrpActive &&
+                          activeVendorSummariesForMrp(m.pos).map((v) => {
+                            const vendorKey = `${m.mrpId}::${v.vendor}`;
+                            const vendorActive = expandedActiveVendor === vendorKey;
+                            return (
+                              <Fragment key={vendorKey}>
+                                <tr
+                                  onClick={() => setExpandedActiveVendor(vendorActive ? null : vendorKey)}
+                                  className={"cursor-pointer border-b border-[#F1F4F7] bg-[#FBFCFD] font-sans text-[11.5px] text-[#31414F] hover:bg-[#F2F5F8] " + (vendorActive ? "bg-info-bg" : "")}
+                                >
+                                  <td className="py-[10px] pl-10 pr-3">
+                                    <span className="mr-1.5 text-text-muted">{vendorActive ? "▾" : "▸"}</span>
+                                    <span className="font-medium text-text-primary">{v.vendorName}</span>
+                                  </td>
+                                  <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatPcs(v.totalQty)} pcs</td>
+                                  <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(v.totalNilai)}</td>
+                                  <td className="px-3 py-[10px]">
+                                    <StatusPill tone="neutral">{v.pos.length} PO</StatusPill>
+                                  </td>
+                                  <td className="px-3 py-[10px]" />
+                                </tr>
+                                {vendorActive &&
+                                  v.pos.map((p) => {
+                                    const badge = maklonPoBadgeWithApproval(p, vendorInvoices);
+                                    return (
+                                      <tr key={p.id} className="border-b border-[#F1F4F7] font-sans text-[11.5px] text-[#31414F]">
+                                        <td className="py-[10px] pl-16 pr-3 font-mono font-medium text-text-primary">{p.id}</td>
+                                        <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatPcs(p.qty)} pcs</td>
+                                        <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(p.amount)}</td>
+                                        <td className="px-3 py-[10px]">
+                                          <StatusPill tone={badge.tone}>{badge.label}</StatusPill>
+                                        </td>
+                                        <td className="px-3 py-[10px]">
+                                          <Button onClick={() => setWithdrawTarget(p)} variant="danger" size="xs">
+                                            Vendor Berhenti Produksi →
+                                          </Button>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                              </Fragment>
+                            );
+                          })}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
 
       {withdrawTarget && (
@@ -375,78 +531,115 @@ export default function MaterialTrackingPage() {
         )}
         {filteredRows.length > 0 && (
         <div className="overflow-x-auto">
-        <div className="min-w-[1000px]">
-          <div
-            className="grid gap-x-2 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
-            style={{ gridTemplateColumns: TRACKING_TREE_COLS }}
-          >
-            <span />
-            <span />
-            <span>Supplier / Vendor Produksi / No PO</span>
-            <span className="text-right">Vendor</span>
-            <span className="text-right">Roll</span>
-            <span>Progress</span>
-            <span className="text-right">Nilai</span>
-            <span>Status</span>
-          </div>
-          {trackingSupplierSummaries.map((s) => {
-            const supplierActive = expandedTrackingSupplier === s.supplier;
+        <table className="w-full border-collapse">
+          <thead>
+            <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
+              <th className="px-5 py-[9px] text-left">No MRP / Supplier / Vendor Produksi / No PO</th>
+              <th className="px-3 py-[9px] text-right">Vendor</th>
+              <th className="px-3 py-[9px] text-right">Roll</th>
+              <th className="px-3 py-[9px] text-left">Progress</th>
+              <th className="px-3 py-[9px] text-right">Nilai</th>
+              <th className="px-3 py-[9px] text-left">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+          {trackingMrpSummaries.map((m) => {
+            const mrpActive = expandedTrackingMrp === m.mrpId;
             return (
-              <div key={s.supplier}>
-                <button
-                  type="button"
+              <Fragment key={m.mrpId}>
+                <tr
                   onClick={() => {
-                    const next = supplierActive ? null : s.supplier;
-                    setExpandedTrackingSupplier(next);
+                    const next = mrpActive ? null : m.mrpId;
+                    setExpandedTrackingMrp(next);
+                    setExpandedTrackingSupplier(null);
                     setExpandedTrackingVendor(null);
                     setExpandedTrackingId(null);
+                    // Item revisi 2026-09-17 (bug report owner: "keluar ke level luar tapi action
+                    // Set Delivery/Pindahkan masih stuck") -- checkbox yang sudah dipilih di dalam
+                    // grup ini SENGAJA tidak terikat ke expandedTracking* mana pun, jadi navigasi
+                    // pindah MRP/Supplier/Vendor TIDAK PERNAH otomatis membersihkannya kalau tidak
+                    // di-reset manual di sini -- sama pola dengan fix wizard PV di
+                    // paying-voucher-material-panel.tsx.
+                    setSelected(new Set());
                   }}
-                  className={
-                    "grid w-full items-center gap-x-2 border-b border-[#F1F4F7] px-4 py-[11px] text-left font-sans text-xs hover:bg-[#F7F9FB] " +
-                    (supplierActive ? "bg-info-bg" : "")
-                  }
-                  style={{ gridTemplateColumns: TRACKING_TREE_COLS }}
+                  className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] hover:bg-[#FAFBFC] " + (mrpActive ? "bg-info-bg" : "")}
                 >
-                  <span />
-                  <span className="text-text-muted">{supplierActive ? "▾" : "▸"}</span>
-                  <span className="font-semibold text-text-primary">{s.supplier}</span>
-                  <span className="text-right font-mono tabular-nums text-text-muted">{s.vendorCount}</span>
-                  <span className="text-right font-mono tabular-nums">{s.totalRoll}</span>
-                  <span />
-                  <span className="text-right font-mono tabular-nums font-medium">{formatRupiah(s.totalNilai)}</span>
-                  <span>
-                    <StatusPill tone="neutral">{s.rows.length} baris</StatusPill>
-                  </span>
-                </button>
-                {supplierActive &&
-                  trackingVendorSummariesForSupplier(s.rows).map((v) => {
-                    const vendorActive = expandedTrackingSupplier === s.supplier && expandedTrackingVendor === v.vendor;
+                  <td className="px-5 py-[11px]">
+                    <span className="mr-1.5 text-text-muted">{mrpActive ? "▾" : "▸"}</span>
+                    <span className="font-mono font-semibold text-text-primary">{m.mrpId}</span>
+                    <span className="ml-1.5 font-sans text-[10.5px] text-text-muted">{m.supplierCount} supplier</span>
+                  </td>
+                  <td className="px-3 py-[11px]" />
+                  <td className="px-3 py-[11px] text-right font-mono tabular-nums">{m.totalRoll}</td>
+                  <td className="px-3 py-[11px]" />
+                  <td className="px-3 py-[11px] text-right font-mono tabular-nums font-medium">{formatRupiah(m.totalNilai)}</td>
+                  <td className="px-3 py-[11px]">
+                    <div className="flex flex-col items-start gap-1">
+                      <StatusPill tone="neutral">{m.rows.length} baris</StatusPill>
+                      <StatusPill tone={deliveryStatusBadge(m.rows).tone}>{deliveryStatusBadge(m.rows).label}</StatusPill>
+                    </div>
+                  </td>
+                </tr>
+                {mrpActive &&
+                  trackingSupplierSummariesForMrp(m.rows).map((s) => {
+                    const supplierKey = `${m.mrpId}::${s.supplier}`;
+                    const supplierActive = expandedTrackingSupplier === supplierKey;
                     return (
-                      <div key={v.vendor}>
-                        <button
-                          type="button"
+                      <Fragment key={supplierKey}>
+                        <tr
+                          onClick={() => {
+                            const next = supplierActive ? null : supplierKey;
+                            setExpandedTrackingSupplier(next);
+                            setExpandedTrackingVendor(null);
+                            setExpandedTrackingId(null);
+                            setSelected(new Set());
+                          }}
+                          className={"cursor-pointer border-b border-[#F1F4F7] bg-[#FBFCFD] font-sans text-[11.5px] text-[#31414F] hover:bg-[#F2F5F8] " + (supplierActive ? "bg-info-bg" : "")}
+                        >
+                          <td className="py-[10px] pl-10 pr-3">
+                            <span className="mr-1.5 text-text-muted">{supplierActive ? "▾" : "▸"}</span>
+                            <span className="font-semibold text-text-primary">{s.supplier}</span>
+                          </td>
+                          <td className="px-3 py-[10px] text-right font-mono tabular-nums text-text-muted">{s.vendorCount}</td>
+                          <td className="px-3 py-[10px] text-right font-mono tabular-nums">{s.totalRoll}</td>
+                          <td className="px-3 py-[10px]" />
+                          <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(s.totalNilai)}</td>
+                          <td className="px-3 py-[10px]">
+                            <div className="flex flex-col items-start gap-1">
+                              <StatusPill tone="neutral">{s.rows.length} baris</StatusPill>
+                              <StatusPill tone={deliveryStatusBadge(s.rows).tone}>{deliveryStatusBadge(s.rows).label}</StatusPill>
+                            </div>
+                          </td>
+                        </tr>
+                        {supplierActive &&
+                  trackingVendorSummariesForSupplier(s.rows).map((v) => {
+                    const vendorActive = supplierActive && expandedTrackingVendor === v.vendor;
+                    return (
+                      <Fragment key={v.vendor}>
+                        <tr
                           onClick={() => {
                             const next = vendorActive ? null : v.vendor;
                             setExpandedTrackingVendor(next);
                             setExpandedTrackingId(null);
+                            setSelected(new Set());
                           }}
-                          className={
-                            "grid w-full items-center gap-x-2 border-b border-[#F1F4F7] bg-[#FBFCFD] py-[10px] pl-8 pr-4 text-left font-sans text-[11.5px] hover:bg-[#F2F5F8] " +
-                            (vendorActive ? "bg-info-bg" : "")
-                          }
-                          style={{ gridTemplateColumns: TRACKING_TREE_COLS }}
+                          className={"cursor-pointer border-b border-[#F1F4F7] bg-white font-sans text-[11.5px] text-[#31414F] hover:bg-[#F7F9FB] " + (vendorActive ? "bg-info-bg" : "")}
                         >
-                          <span />
-                          <span className="text-text-muted">{vendorActive ? "▾" : "▸"}</span>
-                          <span className="font-medium text-text-primary">{v.vendorName}</span>
-                          <span />
-                          <span className="text-right font-mono tabular-nums">{v.totalRoll}</span>
-                          <span />
-                          <span className="text-right font-mono tabular-nums font-medium">{formatRupiah(v.totalNilai)}</span>
-                          <span>
-                            <StatusPill tone="neutral">{v.rows.length} baris</StatusPill>
-                          </span>
-                        </button>
+                          <td className="py-[10px] pl-16 pr-3">
+                            <span className="mr-1.5 text-text-muted">{vendorActive ? "▾" : "▸"}</span>
+                            <span className="font-medium text-text-primary">{v.vendorName}</span>
+                          </td>
+                          <td className="px-3 py-[10px]" />
+                          <td className="px-3 py-[10px] text-right font-mono tabular-nums">{v.totalRoll}</td>
+                          <td className="px-3 py-[10px]" />
+                          <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(v.totalNilai)}</td>
+                          <td className="px-3 py-[10px]">
+                            <div className="flex flex-col items-start gap-1">
+                              <StatusPill tone="neutral">{v.rows.length} baris</StatusPill>
+                              <StatusPill tone={deliveryStatusBadge(v.rows).tone}>{deliveryStatusBadge(v.rows).label}</StatusPill>
+                            </div>
+                          </td>
+                        </tr>
                         {vendorActive &&
                           v.rows.map((r) => {
                             const expanded = expandedTrackingId === r.id;
@@ -454,27 +647,26 @@ export default function MaterialTrackingPage() {
                             const arrivalBadge = r.invoice ? rollArrivalStatusBadge(rollArrivalStatus(r.invoice)) : null;
                             const statusBadge = materialPoFullStatusBadge(r.status);
                             return (
-                              <div key={r.id}>
-                                <div
-                                  className={
-                                    "grid w-full cursor-pointer items-center gap-x-2 border-b border-[#F1F4F7] py-[10px] pl-14 pr-4 text-left font-sans text-[11.5px] hover:bg-[#F7F9FB] " +
-                                    (expanded ? "bg-info-bg" : "")
-                                  }
-                                  style={{ gridTemplateColumns: TRACKING_TREE_COLS }}
+                              <Fragment key={r.id}>
+                                <tr
+                                  onClick={() => setExpandedTrackingId(expanded ? null : r.id)}
+                                  className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-[11.5px] text-[#31414F] hover:bg-[#FAFBFC] " + (expanded ? "bg-info-bg" : "")}
                                 >
-                                  <span onClick={(e) => e.stopPropagation()}>
-                                    <Checkbox checked={selected.has(r.id)} onChange={() => toggle(r.id)} />
-                                  </span>
-                                  <span className="cursor-pointer text-text-muted" onClick={() => setExpandedTrackingId(expanded ? null : r.id)}>
-                                    {expanded ? "▾" : "▸"}
-                                  </span>
-                                  <span className="flex cursor-pointer flex-col" onClick={() => setExpandedTrackingId(expanded ? null : r.id)}>
-                                    <span className="font-medium text-text-primary">{r.poId}</span>
-                                    <span className="font-mono text-[10.5px] text-text-muted">{r.mrpId}</span>
-                                  </span>
-                                  <span />
-                                  <span className="text-right font-mono tabular-nums">{r.roll}</span>
-                                  <span>
+                                  <td className="py-[10px] pl-[88px] pr-3">
+                                    <span className="flex items-center gap-2">
+                                      <span onClick={(e) => e.stopPropagation()}>
+                                        <Checkbox checked={selected.has(r.id)} onChange={() => toggle(r.id)} />
+                                      </span>
+                                      <span className="mr-1.5 text-text-muted">{expanded ? "▾" : "▸"}</span>
+                                      <span className="flex flex-col">
+                                        <span className="font-medium text-text-primary">{r.poId}</span>
+                                        <span className="font-mono text-[10.5px] text-text-muted">{r.mrpId}</span>
+                                      </span>
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-[10px]" />
+                                  <td className="px-3 py-[10px] text-right font-mono tabular-nums">{r.roll}</td>
+                                  <td className="px-3 py-[10px]">
                                     {progress && progress.total > 0 && arrivalBadge ? (
                                       <span className="flex items-center gap-1">
                                         <span className="font-mono tabular-nums">
@@ -485,42 +677,48 @@ export default function MaterialTrackingPage() {
                                     ) : (
                                       <span className="text-text-muted">—</span>
                                     )}
-                                  </span>
-                                  <span className="text-right font-mono tabular-nums font-medium">{r.nilai != null ? formatRupiah(r.nilai) : "—"}</span>
-                                  <span>
+                                  </td>
+                                  <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{r.nilai != null ? formatRupiah(r.nilai) : "—"}</td>
+                                  <td className="px-3 py-[10px]">
                                     <StatusPill tone={statusBadge.tone}>{statusBadge.label}</StatusPill>
-                                  </span>
-                                </div>
+                                  </td>
+                                </tr>
                                 {expanded && r.invoice && (
-                                  <div className="border-b border-[#F1F4F7] bg-white py-3 pl-14 pr-4">
-                                    <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
-                                      <div className="grid grid-cols-3 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                                        <span>Warna / Lengan</span>
-                                        <span className="text-right">Roll</span>
-                                        <span className="text-right">Harga/Roll</span>
-                                      </div>
-                                      {r.invoice.colorEntries.map((c, i) => (
-                                        <div key={i} className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-                                          <span>
-                                            {c.warna} · {c.lengan}
-                                          </span>
-                                          <span className="text-right font-mono">{c.rolls.length}</span>
-                                          <span className="text-right font-mono">{formatRupiah(c.hargaPerRoll)}</span>
+                                  <tr>
+                                    <td colSpan={6} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-[88px]">
+                                      <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
+                                        <div className="grid grid-cols-3 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                                          <span>Warna / Lengan</span>
+                                          <span className="text-right">Roll</span>
+                                          <span className="text-right">Harga/Roll</span>
                                         </div>
-                                      ))}
-                                    </div>
-                                  </div>
+                                        {r.invoice.colorEntries.map((c, i) => (
+                                          <div key={i} className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+                                            <span>
+                                              {c.warna} · {c.lengan}
+                                            </span>
+                                            <span className="text-right font-mono">{c.rolls.length}</span>
+                                            <span className="text-right font-mono">{formatRupiah(c.hargaPerRoll)}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </td>
+                                  </tr>
                                 )}
-                              </div>
+                              </Fragment>
                             );
                           })}
-                      </div>
+                      </Fragment>
                     );
                   })}
-              </div>
+                      </Fragment>
+                    );
+                  })}
+              </Fragment>
             );
           })}
-        </div>
+          </tbody>
+        </table>
         </div>
         )}
       </div>
