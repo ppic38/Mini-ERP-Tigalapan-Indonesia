@@ -140,7 +140,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
   const invoices = useMrpStore((s) => s.invoices);
   const productionBatches = useMrpStore((s) => s.productionBatches);
-  const startProductionBatch = useMrpStore((s) => s.startProductionBatch);
+  const startProductionBatches = useMrpStore((s) => s.startProductionBatches);
   // updateBatchToCutting (versi single/lama) TIDAK lagi dipakai di sini -- saveGroup sekarang
   // pakai updateBatchesToCutting (1 round-trip utk semua roll grup, lihat komentar saveGroup di
   // bawah). Fungsi single-nya sendiri TIDAK dihapus dari store/actions (mungkin masih dibutuhkan
@@ -669,45 +669,44 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
 
   async function submitResting() {
     if (!selectedGroup || submitting) return;
-    // Dulu baris yang belum lengkap (mis. belum pilih code roll) di-skip DIAM-DIAM lalu semua
-    // baris (termasuk yang di-skip) langsung dihapus dari layar — user tidak sadar sebagian
-    // rollnya gagal tersimpan, cuma tahu belakangan dari "Total Roll Tersedia" yang ternyata
-    // masih sisa. Sekarang: baris yang berhasil disimpan dihapus, baris yang belum lengkap
-    // TETAP tampil supaya user bisa lengkapi & submit ulang.
+    // Baris yang belum lengkap (mis. belum pilih code roll) TIDAK ikut disimpan & TETAP tampil
+    // supaya user bisa lengkapi & submit ulang -- baris yang berhasil disimpan yang dihapus.
     //
-    // CATATAN: dulu startProductionBatch dipanggil tanpa `await` di dalam loop ini -- form
-    // langsung ditutup/dikosongkan sebelum panggilan-panggilan itu (dan refresh snapshot
-    // sesudahnya) benar-benar selesai, jadi tabel "Material dalam produksi" sempat tampak
-    // tidak berubah/kosong sampai halaman di-reload manual, padahal batch-nya sudah tersimpan
-    // di database (lihat catatan serupa di paying-voucher-wizard.tsx). Sekarang di-await satu
-    // per satu supaya UI baru dianggap selesai setelah semuanya benar-benar tersimpan.
+    // PERFORMA (owner-reported: tombol ini freeze tanpa tanda apa pun kalau isi banyak roll
+    // sekaligus) -- dulu startProductionBatch dipanggil SATU PER SATU dengan `await` berurutan di
+    // dalam loop (N roll = N round-trip browser<->server berurutan). Sekarang SEMUA baris valid
+    // dikumpulkan dulu, lalu dikirim SEKALIGUS lewat startProductionBatches (1 round-trip untuk
+    // semua roll, lihat store.ts/actions.ts) -- hasilnya langsung di-patch ke state begitu server
+    // selesai, tanpa perlu menunggu backgroundRefresh (snapshot 32-tabel).
     setSubmitting(true);
     // Kalau user tidak pernah sentuh field tanggal/jam resting secara manual, refresh ke waktu
     // SEKARANG persis sebelum disimpan — bukan waktu saat grup pertama kali dipilih tadi, yang
     // bisa saja sudah berselang cukup lama karena user lagi isi code roll/gramasi.
     const effectiveRestingAt = restingAtTouched ? restingAt : nowLocalDatetime();
     const remaining: CuttingLine[] = [];
-    let savedCount = 0;
+    const validLines: { aduanRowId: string; gramasi: number; codeRoll: string }[] = [];
+    for (const line of lines) {
+      if (!line.warna || !line.codeRoll) {
+        remaining.push(line);
+        continue;
+      }
+      const row = selectedGroup.rows.find((r) => r.warna === line.warna);
+      if (!row) {
+        remaining.push(line);
+        continue;
+      }
+      validLines.push({ aduanRowId: row.id, gramasi: line.gramasi, codeRoll: line.codeRoll });
+    }
     try {
-      for (const line of lines) {
-        if (!line.warna || !line.codeRoll) {
-          remaining.push(line);
-          continue;
-        }
-        const row = selectedGroup.rows.find((r) => r.warna === line.warna);
-        if (!row) {
-          remaining.push(line);
-          continue;
-        }
-        await startProductionBatch({ mrpId: selectedMrpId, aduanRowId: row.id, qtyRoll: 1, gramasi: line.gramasi, restingAt: toUtcIso(effectiveRestingAt), codeRoll: line.codeRoll });
-        savedCount++;
+      if (validLines.length > 0) {
+        await startProductionBatches({ mrpId: selectedMrpId, restingAt: toUtcIso(effectiveRestingAt), lines: validLines });
       }
     } finally {
       setSubmitting(false);
     }
     setSubmitNotice(
       remaining.length > 0
-        ? `${savedCount} roll berhasil di-resting. ${remaining.length} baris belum lengkap (pilih code roll dulu) — belum tersimpan.`
+        ? `${validLines.length} roll berhasil di-resting. ${remaining.length} baris belum lengkap (pilih code roll dulu) — belum tersimpan.`
         : null
     );
     setLines(remaining);

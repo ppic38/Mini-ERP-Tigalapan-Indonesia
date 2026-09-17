@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
@@ -50,6 +52,13 @@ const REMARK_BY_STATUS: Record<string, string> = {
 // susulan/PV pengganti klaim) muncul sebagai BEBERAPA baris top-level terpisah, tidak konsisten
 // dengan PO Produksi Saya. Sekarang disamakan: 1 baris = 1 PO material, rincian per invoice
 // (termasuk yang masih waiting-invoice) dipindah ke expand -- InvoiceSub di bawah.
+//
+// Item revisi 2026-09-17 lanjutan (owner: "grouping jadi level MRP dulu, baru per nomor invoice,
+// diklik baru tampil detail"): satu No. MRP bisa punya beberapa PO material (kelihatan di
+// screenshot -- MRP-W36 muncul 6x sebagai baris terpisah). Sekarang level top DataTable dikumpulkan
+// per MRP (MrpGroup), rincian per PO+invoice dipindah ke dalam expand (InvoiceListExpanded di
+// bawah) -- baris invoice di situ baru menampilkan detail (tanggal, warna, bukti) kalau diklik,
+// jadi ada 2 tingkat klik: buka grup MRP -> klik salah satu invoice/PO di dalamnya.
 type InvoiceSub = {
   invoiceId: string;
   colorDetail: { warna: string; lengan: Lengan; roll: number }[];
@@ -68,20 +77,121 @@ type InvoiceSub = {
   buktiBayarFileName?: string;
 };
 
-type Row = {
+type PoRow = {
   poId: string;
-  mrpId: string;
   supplier: string;
+  totalRoll: number;
+  waitingRoll: number;
+  invoices: InvoiceSub[];
+};
+
+type Row = {
+  mrpId: string;
+  poCount: number;
+  invoiceCount: number;
+  suppliers: string;
   totalRoll: number;
   waitingRoll: number;
   rollReceiving: number;
   rollProduksi: number;
   rollSisa: number;
   status: string;
-  invoices: InvoiceSub[];
+  pos: PoRow[];
 };
 
 const STATUS_RANK = ["WAITING_INVOICE", "INVOICED", "PAID", "DELIVERY", "RECEIVING", "WAITING_PRODUCTION", "PRODUCTION_DONE"];
+
+function InvoiceCard({ vendorId, inv }: { vendorId: string; inv: InvoiceSub }) {
+  return (
+    <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
+      <div className="grid grid-cols-4 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+        <span>Tgl Delivery</span>
+        <span>Tgl Receiving</span>
+        <span>Tgl Start Produksi</span>
+        <span>Target Done Produksi</span>
+      </div>
+      <div className="grid grid-cols-4 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+        <span>{formatDate(inv.deliveredAt)}</span>
+        <span>{formatDate(inv.receivedAt)}</span>
+        <span>{formatDate(inv.productionStart)}</span>
+        <span>{inv.receivedAt ? formatDate(addDays(inv.receivedAt, VENDOR_PRODUKSI[vendorId]?.productionLeadDays ?? 7)) : "—"}</span>
+      </div>
+      {inv.colorDetail.length > 0 && (
+        <>
+          <div className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+            <span>Warna</span>
+            <span>Lengan</span>
+            <span className="text-right">Roll</span>
+          </div>
+          {inv.colorDetail.map((c, i) => (
+            <div key={i} className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+              <span className="font-medium">{c.warna}</span>
+              <span>{c.lengan}</span>
+              <span className="text-right font-mono">{c.roll}</span>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+function InvoiceListExpanded({ vendorId, group }: { vendorId: string; group: Row }) {
+  const [openInvoiceId, setOpenInvoiceId] = useState<string | null>(null);
+
+  return (
+    <div className="flex flex-col gap-2.5">
+      {group.pos.map((po) =>
+        po.invoices.length === 0 ? (
+          <div key={po.poId} className="rounded-md border border-[#E4E8EE] bg-white px-3 py-2 font-sans text-[11.5px] text-text-muted">
+            <span className="font-mono font-medium text-text-primary">{po.poId}</span> — {po.waitingRoll} roll masih menunggu diinvoice supplier.
+          </div>
+        ) : (
+          po.invoices.map((inv) => {
+            const isOpen = openInvoiceId === inv.invoiceId;
+            return (
+              <div key={inv.invoiceId} className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
+                <button
+                  type="button"
+                  onClick={() => setOpenInvoiceId(isOpen ? null : inv.invoiceId)}
+                  className="flex w-full flex-wrap items-center gap-2 bg-[#F2F4F7] px-3 py-1.5 text-left font-sans text-[11px] font-medium text-text-primary"
+                >
+                  {isOpen ? <ChevronDown className="h-3.5 w-3.5 flex-none text-text-muted" /> : <ChevronRight className="h-3.5 w-3.5 flex-none text-text-muted" />}
+                  <span className="font-mono">{inv.invoiceId}</span>
+                  <span className="font-mono text-text-muted">({po.poId})</span>
+                  {inv.status === "WAITING_INVOICE" ? (
+                    <StatusPill tone="warning">WAITING INVOICE</StatusPill>
+                  ) : (
+                    <StatusPill tone={invoiceBadge(inv.status as RawMaterialInvoice["status"]).tone}>{invoiceBadge(inv.status as RawMaterialInvoice["status"]).label}</StatusPill>
+                  )}
+                  <span className="text-text-muted">{REMARK_BY_STATUS[inv.status] ?? "—"}</span>
+                  <span className="ml-auto font-mono text-text-muted">{inv.roll} roll</span>
+                </button>
+                {isOpen && (
+                  <div className="border-t border-[#F1F4F7] px-3 py-2">
+                    <div className="mb-2 flex flex-wrap items-center gap-3 font-sans text-[11px]">
+                      {inv.buktiPvDataUrl && (
+                        <button onClick={() => viewAndDownloadFile(inv.buktiPvDataUrl!)} className="font-semibold text-action-primary underline">
+                          Bukti PV
+                        </button>
+                      )}
+                      {inv.buktiBayarAt && (
+                        <button onClick={() => viewPaymentProof(inv.invoiceId)} className="font-semibold text-action-primary underline">
+                          Bukti Bayar
+                        </button>
+                      )}
+                    </div>
+                    <InvoiceCard vendorId={vendorId} inv={inv} />
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )
+      )}
+    </div>
+  );
+}
 
 function PoMaterialContent({ vendorId }: { vendorId: string }) {
   const materialPOs = useMrpStore((s) => s.materialPOs);
@@ -96,7 +206,7 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
     return groupRows.find((g) => g.mrpId === mrpId && g.warna === warna && g.lengan === lengan);
   }
 
-  const rows: Row[] = myPOs.map((p): Row => {
+  const poRows: (PoRow & { mrpId: string })[] = myPOs.map((p) => {
     const poInvoices = myInvoices.filter((i) => i.poId === p.id);
     const invoiceSubs: InvoiceSub[] = poInvoices.map((i) => {
       // Hanya warna yang benar-benar sudah diterima (ada roll receipt) yang ditampilkan di label Warna.
@@ -128,32 +238,45 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
         buktiBayarFileName: i.buktiBayarFileName,
       };
     });
-    const waitingRoll = p.rollCount - p.invoicedRolls;
-    const status =
-      invoiceSubs.length > 0
-        ? invoiceSubs.reduce((best, x) => (STATUS_RANK.indexOf(x.status) > STATUS_RANK.indexOf(best) ? x.status : best), invoiceSubs[0].status)
-        : "WAITING_INVOICE";
     return {
       poId: p.id,
       mrpId: p.mrpId,
       supplier: p.supplier,
       totalRoll: p.rollCount,
-      waitingRoll,
-      rollReceiving: invoiceSubs.reduce((s, x) => s + x.rollReceiving, 0),
-      rollProduksi: invoiceSubs.reduce((s, x) => s + x.rollProduksi, 0),
-      rollSisa: invoiceSubs.reduce((s, x) => s + x.rollSisa, 0),
-      status,
+      waitingRoll: p.rollCount - p.invoicedRolls,
       invoices: invoiceSubs,
     };
   });
 
-  // Item revisi 2026-09-17: kolom sekarang di level PO (bukan per invoice/event lagi, lihat
-  // catatan Row/InvoiceSub di atas) -- konsisten dengan PO Produksi Saya yang juga 1 baris = 1 PO
-  // dengan kolom ringkasan + expand untuk rincian. "Bukti Invoice/Pembayaran" & tanggal per-event
-  // dipindah ke rincian per invoice di renderExpanded, karena 1 PO sekarang bisa punya >1 invoice.
+  // Item revisi 2026-09-17 lanjutan: dikumpulkan per No. MRP (bukan per PO lagi) -- 1 No. MRP bisa
+  // punya beberapa PO material, semuanya sekarang jadi 1 baris top-level, rinciannya (per PO, per
+  // invoice) ada di InvoiceListExpanded lewat expand baris.
+  const rows: Row[] = Array.from(new Set(poRows.map((p) => p.mrpId))).map((mrpId): Row => {
+    const pos = poRows.filter((p) => p.mrpId === mrpId);
+    const allInvoices = pos.flatMap((p) => p.invoices);
+    const status =
+      allInvoices.length > 0
+        ? allInvoices.reduce((best, x) => (STATUS_RANK.indexOf(x.status) > STATUS_RANK.indexOf(best) ? x.status : best), allInvoices[0].status)
+        : "WAITING_INVOICE";
+    return {
+      mrpId,
+      poCount: pos.length,
+      invoiceCount: allInvoices.length,
+      suppliers: Array.from(new Set(pos.map((p) => p.supplier))).join(", "),
+      totalRoll: pos.reduce((s, p) => s + p.totalRoll, 0),
+      waitingRoll: pos.reduce((s, p) => s + p.waitingRoll, 0),
+      rollReceiving: allInvoices.reduce((s, x) => s + x.rollReceiving, 0),
+      rollProduksi: allInvoices.reduce((s, x) => s + x.rollProduksi, 0),
+      rollSisa: allInvoices.reduce((s, x) => s + x.rollSisa, 0),
+      status,
+      pos,
+    };
+  });
+
+  // Item revisi 2026-09-17: kolom sekarang di level No. MRP (bukan per PO/invoice lagi, lihat
+  // catatan Row/PoRow/InvoiceSub di atas) -- rincian per PO & per invoice dipindah ke expand.
   const columns: ColumnDef<Row>[] = [
-    { key: "noPo", label: "No PO", default: false, render: (r) => <span className="font-mono font-medium">{r.poId}</span> },
-    { key: "supplier", label: "Supplier", default: false, render: (r) => r.supplier },
+    { key: "supplier", label: "Supplier", default: false, render: (r) => r.suppliers },
     { key: "totalRoll", label: "Total roll PO", default: true, align: "right", render: (r) => r.totalRoll + " roll" },
     { key: "waitingRoll", label: "Belum diinvoice", default: true, align: "right", render: (r) => (r.waitingRoll > 0 ? r.waitingRoll + " roll" : "—") },
     { key: "rollReceiving", label: "Qty roll receiving", default: true, align: "right", render: (r) => r.rollReceiving },
@@ -171,7 +294,8 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
         ),
     },
     { key: "remark", label: "Remark", default: false, render: (r) => REMARK_BY_STATUS[r.status] ?? "—" },
-    { key: "invoiceCount", label: "Jumlah Invoice", default: false, align: "right", render: (r) => r.invoices.length },
+    { key: "poCount", label: "Jumlah PO", default: false, align: "right", render: (r) => r.poCount },
+    { key: "invoiceCount", label: "Jumlah Invoice", default: false, align: "right", render: (r) => r.invoiceCount },
   ];
 
   return (
@@ -181,7 +305,7 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
       activeHref="/vendor-maklon/po-material"
       breadcrumb={["Dashboard", "PO Material Saya"]}
       title="PO Material Saya"
-      subtitle={`${rows.length} baris material yang ditujukan ke vendor Anda, sudah disetujui Finance`}
+      subtitle={`${rows.length} No. MRP material yang ditujukan ke vendor Anda, sudah disetujui Finance`}
       roleOverride={VENDOR_PRODUKSI[vendorId]?.name ?? vendorId}
       entityOverride="Vendor Produksi"
     >
@@ -189,78 +313,16 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
         title="PO material tujuan saya"
         columns={columns}
         rows={rows}
-        keyOf={(r) => r.poId}
+        keyOf={(r) => r.mrpId}
         firstColumnLabel="No. MRP"
         firstColumnRender={(r) => <span className="font-mono">{r.mrpId}</span>}
         filterDefs={[
           { label: "No MRP", options: Array.from(new Set(rows.map((r) => r.mrpId))), test: (r, v) => r.mrpId === v },
-          { label: "No PO", options: Array.from(new Set(rows.map((r) => r.poId))), test: (r, v) => r.poId === v },
+          { label: "No PO", options: Array.from(new Set(poRows.map((p) => p.poId))), test: (r, v) => r.pos.some((p) => p.poId === v) },
           { label: "Status", options: Array.from(new Set(rows.map((r) => r.status))), test: (r, v) => r.status === v },
         ]}
         emptyText="Belum ada PO material yang disetujui Finance untuk vendor Anda."
-        renderExpanded={(r) =>
-          r.invoices.length === 0 ? (
-            <div className="font-sans text-[11.5px] text-text-muted">
-              Belum ada invoice untuk PO ini — {r.waitingRoll} roll masih menunggu diinvoice supplier.
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2.5">
-              {r.invoices.map((inv) => (
-                <div key={inv.invoiceId} className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
-                  <div className="flex flex-wrap items-center gap-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[11px] font-medium text-text-primary">
-                    <span className="font-mono">{inv.invoiceId}</span>
-                    {inv.status === "WAITING_INVOICE" ? (
-                      <StatusPill tone="warning">WAITING INVOICE</StatusPill>
-                    ) : (
-                      <StatusPill tone={invoiceBadge(inv.status as RawMaterialInvoice["status"]).tone}>{invoiceBadge(inv.status as RawMaterialInvoice["status"]).label}</StatusPill>
-                    )}
-                    <span className="text-text-muted">{REMARK_BY_STATUS[inv.status] ?? "—"}</span>
-                    <div className="ml-auto flex items-center gap-2">
-                      {inv.buktiPvDataUrl && (
-                        <button onClick={() => viewAndDownloadFile(inv.buktiPvDataUrl!)} className="font-semibold text-action-primary underline">
-                          Bukti PV
-                        </button>
-                      )}
-                      {inv.buktiBayarAt && (
-                        <button onClick={() => viewPaymentProof(inv.invoiceId)} className="font-semibold text-action-primary underline">
-                          Bukti Bayar
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-4 gap-x-2 border-t border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                    <span>Tgl Delivery</span>
-                    <span>Tgl Receiving</span>
-                    <span>Tgl Start Produksi</span>
-                    <span>Target Done Produksi</span>
-                  </div>
-                  <div className="grid grid-cols-4 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-                    <span>{formatDate(inv.deliveredAt)}</span>
-                    <span>{formatDate(inv.receivedAt)}</span>
-                    <span>{formatDate(inv.productionStart)}</span>
-                    <span>{inv.receivedAt ? formatDate(addDays(inv.receivedAt, VENDOR_PRODUKSI[vendorId]?.productionLeadDays ?? 7)) : "—"}</span>
-                  </div>
-                  {inv.colorDetail.length > 0 && (
-                    <>
-                      <div className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                        <span>Warna</span>
-                        <span>Lengan</span>
-                        <span className="text-right">Roll</span>
-                      </div>
-                      {inv.colorDetail.map((c, i) => (
-                        <div key={i} className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-                          <span className="font-medium">{c.warna}</span>
-                          <span>{c.lengan}</span>
-                          <span className="text-right font-mono">{c.roll}</span>
-                        </div>
-                      ))}
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
-          )
-        }
+        renderExpanded={(r) => <InvoiceListExpanded vendorId={vendorId} group={r} />}
       />
     </AppShell>
   );

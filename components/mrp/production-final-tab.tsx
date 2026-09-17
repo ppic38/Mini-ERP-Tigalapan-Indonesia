@@ -99,12 +99,14 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
                   <StatusPill tone="locked">PO DITUTUP</StatusPill>
                 </span>
                 <button
+                  // reopenProductionPo sudah optimistic penuh di store.ts -- tidak perlu lagi
+                  // isPending/teks "Membuka…" (dulu redundant, tetap sempat kelihatan sesaat
+                  // walau state lokal sudah berubah seketika).
                   onClick={() => runAction(selectedMaklonPo.id, reopenProductionPo(selectedMaklonPo.id))}
-                  disabled={isPending(selectedMaklonPo.id)}
                   title="Buka kembali gerbang Pengiriman untuk PO ini -- grup warna/lengan yang sudah terlanjur dikunci Close PO tetap terkunci (buka satu-satu lewat 'Buka kunci ↺' kalau perlu diperbaiki)"
-                  className="rounded-md border border-[#CBD5DF] bg-white px-3 py-[9px] font-sans text-[11.5px] font-semibold text-action-primary disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-md border border-[#CBD5DF] bg-white px-3 py-[9px] font-sans text-[11.5px] font-semibold text-action-primary"
                 >
-                  {isPending(selectedMaklonPo.id) ? "Membuka…" : "Buka kembali PO"}
+                  Buka kembali PO
                 </button>
               </span>
             ) : (
@@ -246,23 +248,24 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
                     >
                       {expanded ? "Sembunyikan" : "Lihat by size →"}
                     </button>
+                    {/* undoProductionGroupDone & markProductionGroupDone sudah optimistic penuh di
+                       store.ts -- isPending/teks "Membuka…"/"Menyimpan…" dilepas (redundant,
+                       cuma bikin sempat kelihatan walau state lokal sudah berubah seketika). */}
                     {isPoClosed ? null : isDone ? (
                       <button
                         onClick={() => runAction(groupKey, undoProductionGroupDone(groupKey))}
-                        disabled={isPending(groupKey)}
                         title="Buka kunci grup ini supaya Finish Good/Reject/Rework bisa dibuka lagi (mulai dari tab Finish Good)"
-                        className="rounded-md border border-[#CBD5DF] bg-white px-3 py-[6px] font-sans text-[11px] font-semibold text-action-primary disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-md border border-[#CBD5DF] bg-white px-3 py-[6px] font-sans text-[11px] font-semibold text-action-primary"
                       >
-                        {isPending(groupKey) ? "Membuka…" : "Buka kunci ↺"}
+                        Buka kunci ↺
                       </button>
                     ) : isFgConfirmed ? (
                       <button
                         onClick={confirmAndMarkDone}
-                        disabled={isPending(groupKey)}
                         title={openClaims.length > 0 ? `${openClaims.length} klaim material grup ini belum selesai -- akan diminta konfirmasi dulu` : undefined}
-                        className="rounded-md bg-action-primary px-3 py-[6px] font-sans text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-md bg-action-primary px-3 py-[6px] font-sans text-[11px] font-semibold text-white"
                       >
-                        {isPending(groupKey) ? "Menyimpan…" : openClaims.length > 0 ? `Selesai Produksi ⚠ ${openClaims.length} klaim aktif` : "Selesai Produksi"}
+                        {openClaims.length > 0 ? `Selesai Produksi ⚠ ${openClaims.length} klaim aktif` : "Selesai Produksi"}
                       </button>
                     ) : (
                       <span className="font-sans text-[10.5px] text-text-muted">Selesaikan dulu Finish Good (tab Finish Good)</span>

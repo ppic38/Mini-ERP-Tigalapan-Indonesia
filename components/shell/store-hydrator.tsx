@@ -21,7 +21,13 @@ const MIN_REFETCH_INTERVAL_MS = 5_000;
 // tab balik tetap trigger fetch instan lewat listener focus/visibilitychange di bawah, BUKAN nunggu
 // interval). Jadi dalam pemakaian normal (orang aktif klik-klik/pindah tab) dampaknya nyaris tidak
 // terasa -- cuma kasus tab didiamkan total yang tertunda dari maks 30 detik jadi maks 2 menit.
-const POLL_INTERVAL_MS = 120_000;
+//
+// Revisi 2026-09-17 (owner: lanjutan penghematan egress, terutama akibat sesi testing/dev lokal
+// yang ikut memakai project Supabase production yang sama) -- dinaikkan lagi dari 2 menit ke 1 jam.
+// Trade-off SAMA PERSIS seperti revisi di atas, cuma makin lama: tab yang didiamkan TOTAL (tidak
+// pernah pindah/fokus ulang) baru lihat perubahan user/tab lain setelah maks 1 jam alih-alih 2
+// menit -- (a)/(b)/(c) di atas TETAP tidak terpengaruh sama sekali.
+const POLL_INTERVAL_MS = 3_600_000;
 
 /** Mount sekali di root layout (lihat app/layout.tsx). Mengisi useMrpStore dari Supabase lewat
  *  getFlowSnapshotAction (Server Action), menggantikan zustand `persist`/localStorage yang lama.

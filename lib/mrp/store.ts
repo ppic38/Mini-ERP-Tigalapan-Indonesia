@@ -315,7 +315,10 @@ type FlowActions = {
   /** Item 13 (feedback batch 2026-09-10): klaim fisik (shading/kotor/dll) untuk roll yang sudah
    *  masuk resting -- lihat submitCuttingDefectClaimAction. */
   submitCuttingDefectClaim: (batchIds: string[], note: string, photo: { dataUrl: string; fileName?: string }) => Promise<{ claimed: number; skipped: string[] }>;
-  startProductionBatch: (input: { mrpId: string; aduanRowId: string; qtyRoll: number; gramasi: number; restingAt: string; codeRoll?: string }) => Promise<void>;
+  /** PERFORMA (owner-reported, tombol "Resting" freeze): lihat startProductionBatchesAction di
+   *  actions.ts -- SATU aksi untuk >=1 roll sekaligus (dulu startProductionBatch dipanggil
+   *  berurutan per roll dari production-cutting-tab.tsx, sudah dihapus dari sini). */
+  startProductionBatches: (input: { mrpId: string; restingAt: string; lines: { aduanRowId: string; gramasi: number; codeRoll?: string }[] }) => Promise<void>;
   // "WASTE" SENGAJA tidak termasuk di sini -- item 19: "Buang ke Sisa" (satu-satunya jalur dulu
   // bikin entri WASTE) sudah dihapus, jadi kind di sini praktis selalu "FG"/"REJECT" saja.
   submitProductionResult: (input: { mrpId: string; vendorProduksi: string; warna: string; lengan: Lengan; kind: "FG" | "REJECT"; sizeQty: Record<string, number>; note?: string }) => Promise<void>;
@@ -1004,24 +1007,58 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     backgroundRefresh();
     return result;
   },
-  startProductionBatch: async (input) => {
-    await actions.startProductionBatchAction(input);
+  // PERFORMA (owner-reported: tombol "Resting" freeze tanpa tanda apa pun untuk beberapa roll
+  // sekaligus) -- startProductionBatchesAction mengembalikan ProductionBatch yang baru dibuat
+  // (id readable-nya baru diketahui setelah insert, tidak bisa ditebak optimistic SEBELUM itu),
+  // jadi di-patch LANGSUNG dari hasil nyatanya (pola sama sendPoToFinance/updateBatchToCutting)
+  // -- SATU round-trip untuk semua roll, bukan N berurutan seperti startProductionBatch (lama).
+  startProductionBatches: async (input) => {
+    const created = await actions.startProductionBatchesAction(input);
+    set({ productionBatches: [...get().productionBatches, ...created] });
     backgroundRefresh();
   },
   submitProductionResult: async (input) => {
     await actions.submitProductionResultAction(input);
     backgroundRefresh();
   },
+  // Optimistic PATCH sebelum tulisnya selesai (pola sama markRollArrived) -- fgSizeQty & closedAt
+  // 100% deterministik dari argumen (batchId, fgSizeQty) yang dioper, tidak ada nilai yang baru
+  // pasti setelah server selesai (beda dari confirmFgDone yang menghitung reject otomatis).
   closeProductionBatch: async (batchId, fgSizeQty) => {
-    await actions.closeProductionBatchAction(batchId, fgSizeQty);
+    const previous = get().productionBatches;
+    set({
+      productionBatches: previous.map((b) => (b.id === batchId ? { ...b, fgSizeQty, closedAt: b.closedAt ?? localDateString(new Date()) } : b)),
+    });
+    try {
+      await actions.closeProductionBatchAction(batchId, fgSizeQty);
+    } catch (err) {
+      set({ productionBatches: previous });
+      window.alert("Gagal menutup roll -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
     backgroundRefresh();
   },
+  // Optimistic PATCH -- sama seperti closeProductionBatch di atas, sizeQty deterministik dari
+  // argumen (server REPLACE penuh, bukan merge, jadi client meniru persis).
   saveFgProgress: async (batchId, sizeQty) => {
-    await actions.saveFgProgressAction(batchId, sizeQty);
+    const previous = get().productionBatches;
+    set({ productionBatches: previous.map((b) => (b.id === batchId ? { ...b, fgSizeQty: sizeQty } : b)) });
+    try {
+      await actions.saveFgProgressAction(batchId, sizeQty);
+    } catch (err) {
+      set({ productionBatches: previous });
+      window.alert("Gagal menyimpan progres FG -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
     backgroundRefresh();
   },
+  // PERFORMA: createDeliveryKoliAction mengembalikan DeliveryKoli yang baru dibuat (id-nya baru
+  // pasti setelah server generate, tidak bisa ditebak optimistic SEBELUM itu -- pola sama
+  // startProductionBatches di atas) -- di-patch LANGSUNG dari hasil nyatanya, tanpa menunggu
+  // backgroundRefresh (snapshot 32-tabel) cuma untuk koli baru ini muncul.
   createDeliveryKoli: async (input) => {
-    await actions.createDeliveryKoliAction(input);
+    const created = await actions.createDeliveryKoliAction(input);
+    set({ deliveryKolis: [...get().deliveryKolis, created] });
     backgroundRefresh();
   },
   // TIDAK dibuat optimistic -- foto lampiran belum tentu valid (divalidasi server) & melibatkan
@@ -1034,12 +1071,43 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // delivered_at, TIDAK throw) kalau ekspedisi belum ter-set sama sekali (lihat
   // lib/mrp/actions.ts, mirip alasan markKoliDeliveredAction lama). Kalau di-optimistic, UI bisa
   // terlanjur bilang "terkirim" padahal server sebenarnya menolak tanpa error yang bisa ditangkap.
+  // Optimistic PATCH -- beratKoli & deliveredAt 100% deterministik dari argumen (items sudah
+  // punya beratKoli tiap koli, server cuma menulis apa adanya + guard kepemilikan/ekspedisi yang
+  // sudah pasti terpenuhi begitu tombol ini kelihatan di UI).
   deliverKoliResiGroup: async (items) => {
-    await actions.deliverKoliResiGroupAction(items);
+    const idSet = new Set(items.map((it) => it.koliId));
+    const beratByKoli = new Map(items.map((it) => [it.koliId, it.beratKoli]));
+    const previous = get().deliveryKolis;
+    const deliveredAt = localDateString(new Date());
+    set({
+      deliveryKolis: previous.map((k) => (idSet.has(k.id) ? { ...k, beratKoli: beratByKoli.get(k.id), deliveredAt } : k)),
+    });
+    try {
+      await actions.deliverKoliResiGroupAction(items);
+    } catch (err) {
+      set({ deliveryKolis: previous });
+      window.alert("Gagal delivery koli -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
     backgroundRefresh();
   },
+  // Optimistic PATCH -- cuma flag `resiInvoicedAt` (dipakai halaman Pengiriman utk menyembunyikan
+  // grup ini dari daftar "belum invoice") yang di-patch di sini; invoice vendor BARU-nya sendiri
+  // (id, qty per baris) baru pasti setelah server selesai (dihitung ulang dari snapshot fresh,
+  // lihat submitResiGroupInvoiceAction) -- tapi itu tidak perlu tampil SEKETIKA di halaman vendor
+  // ini (baru relevan di Procurement/Finance), jadi cukup backgroundRefresh yang membawanya nanti.
   submitResiGroupInvoice: async (koliIds) => {
-    await actions.submitResiGroupInvoiceAction(koliIds);
+    const idSet = new Set(koliIds);
+    const previous = get().deliveryKolis;
+    const resiInvoicedAt = localDateString(new Date());
+    set({ deliveryKolis: previous.map((k) => (idSet.has(k.id) ? { ...k, resiInvoicedAt } : k)) });
+    try {
+      await actions.submitResiGroupInvoiceAction(koliIds);
+    } catch (err) {
+      set({ deliveryKolis: previous });
+      window.alert("Gagal submit invoice -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
     backgroundRefresh();
   },
   createVendorInvoice: async (input) => {
@@ -1663,16 +1731,51 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     }
     backgroundRefresh();
   },
+  // TIDAK dibuat optimistic -- confirmFgDoneAction menghitung reject OTOMATIS (selisih hasil
+  // cutting vs FG, baru pasti setelah server selesai) & menutup sisa roll terbuka grup ini
+  // (autoCloseOpenBatchesForGroup) -- angka yang ditampilkan sebelum server selesai berisiko salah
+  // untuk data paling sensitif (reject/HPP). Tombolnya TETAP menunjukkan status berjalan ("Menyimpan…")
+  // di komponennya (production-result-panel.tsx/production-final-tab.tsx) -- keputusan disengaja.
   confirmFgDone: async (groupKey, mrpId, vendorProduksi, warna, lengan) => {
     await actions.confirmFgDoneAction(groupKey, mrpId, vendorProduksi, warna, lengan);
     backgroundRefresh();
   },
+  // Optimistic PATCH -- kebalikan confirmFgDone, tapi di sini cuma perlu MENGOSONGKAN
+  // fgConfirmedAt (tidak ada angka baru yang dihitung), jadi aman ditebak di client. Guard server
+  // (done_at TAHAP 2 sudah terisi / rework-waste sudah tercatat) tetap ditegakkan di
+  // undoFgConfirmAction -- kalau ditolak, rollback + alert seperti biasa.
   undoFgConfirm: async (groupKey) => {
-    await actions.undoFgConfirmAction(groupKey);
+    const previous = get().productionGroupMeta;
+    set({ productionGroupMeta: previous.map((m) => (m.groupKey === groupKey ? { ...m, fgConfirmedAt: undefined } : m)) });
+    try {
+      await actions.undoFgConfirmAction(groupKey);
+    } catch (err) {
+      set({ productionGroupMeta: previous });
+      window.alert("Gagal membuka kunci Finish Good -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
     backgroundRefresh();
   },
+  // Optimistic PATCH -- TAHAP 2 cuma mengunci (`done_at`), TIDAK menghitung apa pun lagi (reject
+  // sudah selesai di TAHAP 1/confirmFgDone) -- lihat komentar markProductionGroupDoneAction.
+  // Guard server (fg_confirmed_at TAHAP 1 harus sudah terisi) sudah pasti terpenuhi begitu tombol
+  // ini kelihatan di UI (isFgConfirmed), tapi tetap ditegakkan ulang di server sebagai jaring aman.
   markProductionGroupDone: async (groupKey, mrpId, vendorProduksi, warna, lengan) => {
-    await actions.markProductionGroupDoneAction(groupKey, mrpId, vendorProduksi, warna, lengan);
+    const previous = get().productionGroupMeta;
+    const doneAt = localDateString(new Date());
+    const exists = previous.some((m) => m.groupKey === groupKey);
+    set({
+      productionGroupMeta: exists
+        ? previous.map((m) => (m.groupKey === groupKey ? { ...m, doneAt } : m))
+        : [...previous, { groupKey, mrpId, vendorProduksi, warna, lengan, doneAt }],
+    });
+    try {
+      await actions.markProductionGroupDoneAction(groupKey, mrpId, vendorProduksi, warna, lengan);
+    } catch (err) {
+      set({ productionGroupMeta: previous });
+      window.alert("Gagal mengunci Selesai Produksi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
     backgroundRefresh();
   },
   undoProductionGroupDone: async (groupKey) => {

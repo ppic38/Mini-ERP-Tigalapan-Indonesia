@@ -54,6 +54,7 @@ import type {
   AduanPolaRow,
   ColorBreakdown,
   ColorEntry,
+  DeliveryKoli,
   DeliveryKoliItem,
   Lengan,
   MaklonPO,
@@ -2851,6 +2852,61 @@ export async function startProductionBatchAction(input: { mrpId: string; aduanRo
   if (error) throw new Error(error.message);
 }
 
+/** PERFORMA (owner-reported: tombol "Resting" freeze tanpa tanda apa pun kalau user isi banyak
+ *  roll sekaligus -- submitResting di production-cutting-tab.tsx dulu memanggil
+ *  startProductionBatchAction SATU PER SATU dengan `await` berurutan, jadi N roll = N round-trip
+ *  client<->server BERURUTAN sebelum tombolnya "selesai"). Pengganti: SEMUA baris di-insert dalam
+ *  SATU pemanggilan Server Action (masih N query ke DB, tapi cuma 1 round-trip browser<->server) --
+ *  pola sama seperti updateBatchesToCuttingAction (dulu juga per-baris, disatukan untuk alasan
+ *  sama). Mengembalikan ProductionBatch yang baru dibuat (lengkap, termasuk id readable-nya) supaya
+ *  store.ts bisa nge-patch LANGSUNG ke state (pola sama updateBatchToCuttingAction/sendPoToFinance)
+ *  tanpa menunggu backgroundRefresh (snapshot 32-tabel) untuk baris ini muncul. */
+export async function startProductionBatchesAction(input: {
+  mrpId: string;
+  restingAt: string;
+  lines: { aduanRowId: string; gramasi: number; codeRoll?: string }[];
+}): Promise<ProductionBatch[]> {
+  await requireVendorSession();
+  const db = supabaseServer();
+  const createdAt = today();
+  const created: ProductionBatch[] = [];
+  for (const line of input.lines) {
+    const { data: aduanRow } = await db.from("aduan_pola_rows").select("vendor,kode,warna,lengan").eq("id", line.aduanRowId).single();
+    if (!aduanRow) throw new Error("Baris Aduan Pola tidak ditemukan.");
+    const id = await nextReadableId("BATCH");
+    const { error } = await db.from("production_batches").insert({
+      id,
+      mrp_id: input.mrpId,
+      vendor_produksi: aduanRow.vendor,
+      aduan_row_id: line.aduanRowId,
+      kode: aduanRow.kode,
+      warna: aduanRow.warna,
+      lengan: aduanRow.lengan,
+      qty_roll: 1,
+      gramasi: line.gramasi,
+      resting_at: input.restingAt,
+      created_at: createdAt,
+      code_roll: line.codeRoll ?? null,
+    });
+    if (error) throw new Error(error.message);
+    created.push({
+      id,
+      mrpId: input.mrpId,
+      vendorProduksi: aduanRow.vendor,
+      aduanRowId: line.aduanRowId,
+      kode: aduanRow.kode,
+      warna: aduanRow.warna,
+      lengan: aduanRow.lengan,
+      qtyRoll: 1,
+      gramasi: line.gramasi,
+      restingAt: input.restingAt,
+      createdAt,
+      codeRoll: line.codeRoll,
+    });
+  }
+  return created;
+}
+
 /** Item 14 (feedback batch 2026-09-10, owner: "Tambahkan fitur untuk bisa edit hasil input ulang
  *  (takutnya salah isi jam resting atau qty cutting)") -- edit `resting_at` batch yang sudah ada,
  *  dipanggil dari modal "Input/Perbaiki Hasil Cutting" (production-cutting-tab.tsx) saat dibuka
@@ -3550,12 +3606,19 @@ async function clampDeliveryItemsBySourceBatch(items: DeliveryKoliItem[], mrpId:
     .filter((it) => it.qty > 0);
 }
 
-export async function createDeliveryKoliAction(input: { mrpId: string; vendorProduksi: string; ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }): Promise<void> {
+/** PERFORMA (owner-reported: tombol "Simpan koli" terasa nge-freeze): mengembalikan DeliveryKoli
+ *  yang baru dibuat (id-nya baru diketahui SETELAH nextReadableId di sini, jadi tidak bisa
+ *  ditebak optimistic di client SEBELUM ini selesai -- lihat catatan serupa di
+ *  addVendorInvoiceAdjustment/store.ts) supaya store.ts bisa langsung nge-patch state DARI HASIL
+ *  NYATA ini (pola sama updateBatchToCuttingAction/sendPoToFinanceAction), TANPA menunggu
+ *  backgroundRefresh (snapshot 32-tabel) cuma untuk koli baru ini muncul di daftar. */
+export async function createDeliveryKoliAction(input: { mrpId: string; vendorProduksi: string; ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }): Promise<DeliveryKoli> {
   await requireVendorSession();
   const db = supabaseServer();
   const items = await clampDeliveryItemsBySourceBatch(input.items, input.mrpId, input.vendorProduksi, undefined);
   const id = await nextReadableId("KOLI");
-  const { error } = await db.from("delivery_kolis").insert({ id, mrp_id: input.mrpId, vendor_produksi: input.vendorProduksi, ekspedisi: input.ekspedisi, no_koli: input.noKoli, created_at: today() });
+  const createdAt = today();
+  const { error } = await db.from("delivery_kolis").insert({ id, mrp_id: input.mrpId, vendor_produksi: input.vendorProduksi, ekspedisi: input.ekspedisi, no_koli: input.noKoli, created_at: createdAt });
   if (error) throw new Error(error.message);
   if (items.length > 0) {
     // BUG FIX SEKALIAN (ditemukan saat menambah `source_batch_id`, migration 0024): insert ini dulu
@@ -3571,6 +3634,7 @@ export async function createDeliveryKoliAction(input: { mrpId: string; vendorPro
       .insert(items.map((it) => ({ delivery_koli_id: id, warna: it.warna, lengan: it.lengan, size: it.size, qty: it.qty, kind: it.kind, usia: it.usia ?? null, source_batch_id: it.sourceBatchId ?? null })));
     if (itemsErr) throw new Error(itemsErr.message);
   }
+  return { id, mrpId: input.mrpId, vendorProduksi: input.vendorProduksi, ekspedisi: input.ekspedisi, noKoli: input.noKoli, items, createdAt };
 }
 
 /** Item 2026-09-11 (feedback: "Checkbox Koli yang mau dikirim (disamakan ekspedisinya - jadi satu

@@ -301,12 +301,14 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                         {kind === "FG" &&
                           (isFgConfirmed ? (
                             !isFinalDone && (
+                              // undoFgConfirm sudah optimistic penuh di store.ts -- isPending/teks
+                              // "Membuka…" dilepas (redundant, sempat kelihatan walau state lokal
+                              // sudah berubah seketika).
                               <button
                                 onClick={() => runAction(groupKey, undoFgConfirm(groupKey))}
-                                disabled={isPending(groupKey)}
-                                className="font-sans text-[10.5px] font-semibold text-action-primary underline disabled:cursor-not-allowed disabled:opacity-50"
+                                className="font-sans text-[10.5px] font-semibold text-action-primary underline"
                               >
-                                {isPending(groupKey) ? "Membuka…" : "Buka kunci ↺"}
+                                Buka kunci ↺
                               </button>
                             )
                           ) : (
@@ -490,8 +492,11 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                 </div>
                               )}
                               <div className="flex items-center gap-2 border-t border-[#EEF1F4] px-3 py-2.5">
-                                <Button onClick={() => runAction(quickSaveKey, saveSizeTotals())} disabled={isPending(quickSaveKey) || sizesToShow.length === 0} variant="accent" size="sm">
-                                  {isPending(quickSaveKey) ? "Menyimpan…" : "Simpan →"}
+                                {/* saveFgProgress & closeProductionBatch (dipanggil saveSizeTotals)
+                                   sudah optimistic penuh di store.ts -- isPending/teks "Menyimpan…"
+                                   dilepas, disabled cukup dari sizesToShow saja. */}
+                                <Button onClick={() => runAction(quickSaveKey, saveSizeTotals())} disabled={sizesToShow.length === 0} variant="accent" size="sm">
+                                  Simpan →
                                 </Button>
                                 {/* Item 2026-09-12 (user-reported): "Tutup Roll" sempat disalahartikan
                                    sebagai cara menyelesaikan produksi -- padahal aksi itu murni
@@ -579,18 +584,19 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                     {b.closedAt ? <StatusPill tone="success">Ditutup</StatusPill> : <StatusPill tone="neutral">Terbuka</StatusPill>}
                                   </span>
                                   <span className="text-right">
+                                    {/* closeProductionBatch sudah optimistic penuh -- isPending/teks
+                                       "Menutup…" dilepas. */}
                                     {!b.closedAt && (
                                       <button
                                         onClick={() => runAction(closeKey, closeProductionBatch(b.id, b.fgSizeQty ?? {}))}
-                                        disabled={isPending(closeKey)}
                                         title={
                                           totalFg < totalTarget
                                             ? `Sisa ${totalTarget - totalFg} pcs roll ini akan tercatat reject saat grup "Selesai Produksi".`
                                             : undefined
                                         }
-                                        className="font-sans text-[10.5px] font-semibold text-action-primary underline disabled:cursor-not-allowed disabled:opacity-50"
+                                        className="font-sans text-[10.5px] font-semibold text-action-primary underline"
                                       >
-                                        {isPending(closeKey) ? "Menutup…" : "Tutup Roll"}
+                                        Tutup Roll
                                       </button>
                                     )}
                                   </span>

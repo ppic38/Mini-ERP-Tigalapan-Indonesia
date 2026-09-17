@@ -697,12 +697,16 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
         )}
 
         <div className="mt-3">
+          {/* updateDeliveryKoli sudah optimistic penuh & createDeliveryKoli sekarang langsung
+             di-patch dari hasil nyata server (1 round-trip, bukan lagi nunggu backgroundRefresh
+             snapshot penuh) -- teks "Menyimpan…" dilepas, `disabled` cukup dipertahankan diam-diam
+             (cegah dobel klik) tanpa indikator terlihat, sama seperti tombol "Resting". */}
           <button
             onClick={submit}
             disabled={submitting}
             className="rounded-md bg-action-primary px-3.5 py-2 font-sans text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {submitting ? "Menyimpan…" : editingKoliId ? "Update koli" : "Simpan koli"}
+            {editingKoliId ? "Update koli" : "Simpan koli"}
           </button>
         </div>
       </div>
@@ -847,9 +851,11 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     <div className="px-3 py-2.5">
                       {/* Item 2026-09-12 (user-reported): variant disamakan ke "primary" (solid
                          biru) supaya terlihat sama tegas seperti tombol "Simpan koli" -- dulu
-                         "success" (outline putih) gampang terlewat/dikira kurang penting. */}
-                      <Button onClick={() => doDeliveryGroup(groupKey, kolis)} disabled={!allWeighed || isPending(groupKey)} variant="primary" size="xs">
-                        {isPending(groupKey) ? "Mengirim…" : `Delivery → (${kolis.length} koli)`}
+                         "success" (outline putih) gampang terlewat/dikira kurang penting.
+                         deliverKoliResiGroup sudah optimistic penuh di store.ts -- isPending/teks
+                         "Mengirim…" dilepas. */}
+                      <Button onClick={() => doDeliveryGroup(groupKey, kolis)} disabled={!allWeighed} variant="primary" size="xs">
+                        {`Delivery → (${kolis.length} koli)`}
                       </Button>
                     </div>
                   </div>
@@ -1058,8 +1064,10 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
               <button onClick={closeInvoiceDialog} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary">
                 Batal
               </button>
+              {/* submitResiGroupInvoice sudah optimistic penuh -- teks "Mengirim…" dilepas,
+                 `disabled` tetap dipertahankan diam-diam (cegah dobel klik). */}
               <Button onClick={submitInvoiceConfirm} disabled={invoiceSubmitting} variant="primary" size="sm">
-                {invoiceSubmitting ? "Mengirim…" : "Submit Invoice"}
+                Submit Invoice
               </Button>
             </div>
           </div>
