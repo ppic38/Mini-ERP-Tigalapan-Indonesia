@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import * as XLSX from "xlsx";
 import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Button } from "@/components/ui/button";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatDate, formatPcs, formatRupiah, hppRowsForInvoicePerRoll, mrpMetaFor, type HppRow } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -172,72 +171,6 @@ function MrpHppDetailTable({ rows }: { rows: HppTableRow[] }) {
   );
 }
 
-/** Drill-down 2 langkah (requirement D butir 19) — state lokal per baris MRP (di dalam
- *  `renderExpanded`, `components/mrp/data-table.tsx` TIDAK mendukung nested expand & tidak boleh
- *  diubah untuk task ini). Langkah 1: daftar vendor produksi MRP ini (urut alfabetis by
- *  vendorLabel), klik salah satu -> langkah 2: `MrpHppDetailTable` untuk vendor itu + tombol
- *  kembali. Default TIDAK auto-select walau cuma 1 vendor -- alur selalu 2 langkah. Collapse lalu
- *  expand ulang mereset state ini ke langkah 1 karena komponen di-unmount/mount ulang oleh
- *  DataTable. */
-function MrpVendorDrilldown({ mrp }: { mrp: MrpHppSummary }) {
-  const [selectedVendor, setSelectedVendor] = useState<string | null>(null);
-
-  const vendorsSorted = [...mrp.vendors].sort((a, b) => (a.vendorLabel < b.vendorLabel ? -1 : a.vendorLabel > b.vendorLabel ? 1 : 0));
-  const selected = selectedVendor ? vendorsSorted.find((v) => v.vendorProduksi === selectedVendor) : undefined;
-
-  if (selected) {
-    return (
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => setSelectedVendor(null)}
-            className="font-sans text-[11px] font-semibold text-brand-fg hover:underline"
-          >
-            ← Ganti vendor
-          </button>
-          <span className="font-sans text-[11.5px] font-semibold text-text-primary">{selected.vendorLabel}</span>
-        </div>
-        <MrpHppDetailTable rows={selected.itemRows} />
-      </div>
-    );
-  }
-
-  return (
-    <div className="overflow-x-auto rounded-md border border-[#E4E9EE] bg-white">
-      <table className="w-full min-w-[560px] border-collapse">
-        <thead>
-          <tr className="border-b border-[#E4E9EE] bg-[#F2F5F8] font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-            <th className="px-3 py-2 text-left">Vendor Produksi</th>
-            <th className="px-3 py-2 text-right">Total FG</th>
-            <th className="px-3 py-2 text-right">Rata-rata HPP/pc</th>
-          </tr>
-        </thead>
-        <tbody>
-          {vendorsSorted.map((v) => (
-            <tr
-              key={v.vendorProduksi}
-              onClick={() => setSelectedVendor(v.vendorProduksi)}
-              className="cursor-pointer border-b border-[#EEF1F4] font-sans text-[11.5px] text-[#31414F] last:border-b-0 hover:bg-[#F7F9FB]"
-            >
-              <td className="px-3 py-1.5 font-semibold text-text-primary">{v.vendorLabel}</td>
-              <td className="px-3 py-1.5 text-right font-mono">{formatPcs(v.totalFg)}</td>
-              <td className="px-3 py-1.5 text-right font-mono">{formatRupiah(v.avgHpp)}</td>
-            </tr>
-          ))}
-          {vendorsSorted.length === 0 && (
-            <tr>
-              <td colSpan={3} className="px-3 py-4 text-center font-sans text-[11.5px] text-text-muted">
-                Belum ada vendor untuk MRP ini.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 export default function FinanceLaporanHppPage() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -252,6 +185,14 @@ export default function FinanceLaporanHppPage() {
   const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
   const ekspedisiRates = useMrpStore((s) => s.ekspedisiRates);
   const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
+
+  // Revisi 2026-09-17 (owner: "grouping per level MRP dulu, baru pilih vendor produksi, baru
+  // tampil detailnya") -- dulu pakai DataTable + drill-down 2 langkah terpisah (MrpVendorDrilldown,
+  // dengan tombol "Ganti vendor") di dalam 1 slot renderExpanded. Sekarang tabel pohon native
+  // (<table>) 2 tingkat inline, gaya visual sama dengan tree PO Material/PO Maklon: MRP -> Vendor
+  // Produksi (leaf), klik vendor untuk membuka MrpHppDetailTable persis di bawah baris itu.
+  const [expandedMrpHpp, setExpandedMrpHpp] = useState<string | null>(null);
+  const [expandedVendorHpp, setExpandedVendorHpp] = useState<string | null>(null);
 
   if (!mounted) return null;
 
@@ -385,36 +326,7 @@ export default function FinanceLaporanHppPage() {
     };
   });
 
-  /** Ringkasan kolom "Vendor Produksi" di baris utama (requirement D butir 17): 0 vendor -> "—",
-   *  1 vendor -> nama vendor itu, ≥2 vendor -> "{n} vendor · nama1, nama2, …" (alfabetis supaya
-   *  stabil antar-render). */
-  function vendorSummaryLabel(m: MrpHppSummary): string {
-    if (m.vendors.length === 0) return "—";
-    const names = [...m.vendors].map((v) => v.vendorLabel).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-    if (names.length === 1) return names[0];
-    return `${names.length} vendor · ${names.join(", ")}`;
-  }
-
-  const mrpColumns: ColumnDef<MrpHppSummary>[] = [
-    { key: "vendor", label: "Vendor Produksi", default: true, render: (m) => vendorSummaryLabel(m) },
-    { key: "totalFg", label: "Total FG", default: true, align: "right", render: (m) => formatPcs(m.totalFg) },
-    { key: "avgHpp", label: "Rata-rata HPP/pc", default: true, align: "right", render: (m) => formatRupiah(m.avgHpp) },
-    { key: "biayaProduksi", label: "Total Biaya Produksi", default: true, align: "right", render: (m) => formatRupiah(m.totalBiayaProduksi) },
-    { key: "cogsBahan", label: "Total COGS Bahan", default: true, align: "right", render: (m) => formatRupiah(m.totalCogsBahan) },
-    { key: "ongkir", label: "Total Ongkir", default: true, align: "right", render: (m) => formatRupiah(m.totalOngkir) },
-    {
-      key: "download",
-      label: "Laporan",
-      default: true,
-      render: (m) => (
-        <span onClick={(e) => e.stopPropagation()}>
-          <Button onClick={() => downloadMrpHpp(m)} variant="ghost" size="xs">
-            Download
-          </Button>
-        </span>
-      ),
-    },
-  ];
+  const mrpRowsSorted = [...mrpRows].sort((a, b) => (a.mrpId < b.mrpId ? 1 : a.mrpId > b.mrpId ? -1 : 0));
 
   return (
     <AppShell
@@ -430,17 +342,106 @@ export default function FinanceLaporanHppPage() {
         <KpiCard label="Total COGS bahan" value={formatRupiah(totalCogsBahan)} sub={`+ ${formatRupiah(totalOngkir)} ongkir (otomatis)`} accent="teal" />
       </div>
 
-      <DataTable
-        title="Laporan HPP per MRP"
-        subtitle="Klik baris untuk pilih vendor produksi, lalu lihat rincian per item"
-        columns={mrpColumns}
-        rows={mrpRows}
-        keyOf={(m) => m.mrpId}
-        firstColumnLabel="No. MRP"
-        firstColumnRender={(m) => <span className="font-mono">{m.mrpLabel || m.mrpId}</span>}
-        renderExpanded={(m) => <MrpVendorDrilldown mrp={m} />}
-        emptyText="Belum ada data HPP — buat invoice vendor dulu di halaman Invoice Vendor."
-      />
+      <div className="overflow-hidden border border-border-subtle bg-surface-card">
+        <div className="border-b border-border-subtle px-4 py-3">
+          <div className="font-sans text-[13px] font-semibold text-text-primary">Laporan HPP per MRP</div>
+          <div className="font-sans text-[11.5px] text-text-muted">Klik baris No. MRP untuk pilih vendor produksi, lalu lihat rincian per item.</div>
+        </div>
+        {mrpRowsSorted.length === 0 && (
+          <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada data HPP — buat invoice vendor dulu di halaman Invoice Vendor.</div>
+        )}
+        {mrpRowsSorted.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
+                  <th className="px-5 py-[9px] text-left">No MRP / Vendor Produksi</th>
+                  <th className="px-3 py-[9px] text-right">Total FG</th>
+                  <th className="px-3 py-[9px] text-right">Rata-rata HPP/pc</th>
+                  <th className="px-3 py-[9px] text-right">Total Biaya Produksi</th>
+                  <th className="px-3 py-[9px] text-right">Total COGS Bahan</th>
+                  <th className="px-3 py-[9px] text-right">Total Ongkir</th>
+                  <th className="px-3 py-[9px] text-left">Laporan</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mrpRowsSorted.map((m) => {
+                  const mrpActive = expandedMrpHpp === m.mrpId;
+                  const vendorsSorted = [...m.vendors].sort((a, b) => (a.vendorLabel < b.vendorLabel ? -1 : a.vendorLabel > b.vendorLabel ? 1 : 0));
+                  return (
+                    <Fragment key={m.mrpId}>
+                      <tr
+                        onClick={() => {
+                          const next = mrpActive ? null : m.mrpId;
+                          setExpandedMrpHpp(next);
+                          setExpandedVendorHpp(null);
+                        }}
+                        className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] hover:bg-[#FAFBFC] " + (mrpActive ? "bg-info-bg" : "")}
+                      >
+                        <td className="px-5 py-[11px]">
+                          <span className="mr-1.5 text-text-muted">{mrpActive ? "▾" : "▸"}</span>
+                          <span className="font-mono font-semibold text-text-primary">{m.mrpLabel || m.mrpId}</span>
+                          <span className="ml-1.5 font-sans text-[10.5px] text-text-muted">{m.vendors.length} vendor</span>
+                        </td>
+                        <td className="px-3 py-[11px] text-right font-mono tabular-nums">{formatPcs(m.totalFg)}</td>
+                        <td className="px-3 py-[11px] text-right font-mono tabular-nums">{formatRupiah(m.avgHpp)}</td>
+                        <td className="px-3 py-[11px] text-right font-mono tabular-nums">{formatRupiah(m.totalBiayaProduksi)}</td>
+                        <td className="px-3 py-[11px] text-right font-mono tabular-nums">{formatRupiah(m.totalCogsBahan)}</td>
+                        <td className="px-3 py-[11px] text-right font-mono tabular-nums">{formatRupiah(m.totalOngkir)}</td>
+                        <td className="px-3 py-[11px]">
+                          <span onClick={(e) => e.stopPropagation()}>
+                            <Button onClick={() => downloadMrpHpp(m)} variant="ghost" size="xs">
+                              Download
+                            </Button>
+                          </span>
+                        </td>
+                      </tr>
+                      {mrpActive &&
+                        vendorsSorted.map((v) => {
+                          const vendorKey = `${m.mrpId}::${v.vendorProduksi}`;
+                          const vendorActive = expandedVendorHpp === vendorKey;
+                          return (
+                            <Fragment key={vendorKey}>
+                              <tr
+                                onClick={() => setExpandedVendorHpp(vendorActive ? null : vendorKey)}
+                                className={"cursor-pointer border-b border-[#F1F4F7] bg-[#FBFCFD] font-sans text-[11.5px] text-[#31414F] hover:bg-[#F2F5F8] " + (vendorActive ? "bg-info-bg" : "")}
+                              >
+                                <td className="py-[10px] pl-10 pr-3">
+                                  <span className="mr-1.5 text-text-muted">{vendorActive ? "▾" : "▸"}</span>
+                                  <span className="font-medium text-text-primary">{v.vendorLabel}</span>
+                                </td>
+                                <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatPcs(v.totalFg)}</td>
+                                <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatRupiah(v.avgHpp)}</td>
+                                <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatRupiah(v.totalBiayaProduksi)}</td>
+                                <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatRupiah(v.totalCogsBahan)}</td>
+                                <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatRupiah(v.totalOngkir)}</td>
+                                <td className="px-3 py-[10px]" />
+                              </tr>
+                              {vendorActive && (
+                                <tr>
+                                  <td colSpan={7} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-10">
+                                    <MrpHppDetailTable rows={v.itemRows} />
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
+                          );
+                        })}
+                      {mrpActive && vendorsSorted.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="border-b border-[#F1F4F7] bg-white px-5 py-4 pl-10 font-sans text-[11.5px] text-text-muted">
+                            Belum ada vendor untuk MRP ini.
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </AppShell>
   );
 }

@@ -4,16 +4,21 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/mrp/number-input";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
-import { EditableCell } from "@/components/mrp/editable-cell";
+import { MasterDataFormModal, ModalField } from "@/components/mrp/master-data-form-modal";
 import { formatRupiah } from "@/lib/mrp/derive";
 import { useMrpStore } from "@/lib/mrp/store";
 import type { HargaKainRow } from "@/lib/mrp/masterData";
+
+type Draft = { namaSupplier: string; kategori: string; warna: string; hargaPerKg: number };
+const EMPTY_DRAFT: Draft = { namaSupplier: "", kategori: "", warna: "", hargaPerKg: 0 };
 
 /** Master Data — Harga Kain/Material flat per kg, per supplier + kategori + warna. Bisa 468+
  *  baris (dari sheet asli) — pakai filterDefs DataTable untuk menyaring. DIPAKAI LIVE oleh
  *  `hargaKainRateInfo` (lib/mrp/derive.ts) untuk estimasi harga PO Material di PO Approval,
  *  Finance PO Material, export PDF PO, dan modal PV Pengganti -- fallback "Standar" kalau tidak
- *  ada tingkatan tonase Harga Kain PKS yang cocok untuk warna/supplier/berat pesanan itu. */
+ *  ada tingkatan tonase Harga Kain PKS yang cocok untuk warna/supplier/berat pesanan itu.
+ *  Revisi 2026-09-17: "+ Tambah baris"/"Edit" inline diganti popup form, sama pola dengan
+ *  HargaMaklonPanel (lihat MasterDataFormModal). */
 export function HargaKainPanel() {
   const rows = useMrpStore((s) => s.hargaKain);
   const addRow = useMrpStore((s) => s.addHargaKainRow);
@@ -21,79 +26,69 @@ export function HargaKainPanel() {
   const deleteRow = useMrpStore((s) => s.deleteHargaKainRow);
   // Migration 0042 (owner 2026-09-16: "supaya tidak ada typo penulisan") -- daftar pilihan
   // dropdown, BUKAN foreign key. Pilih supplier di sini mengisi kodeSupplier+namaSupplier
-  // sekaligus dari Master Data "Supplier Kain"; baris lama yang sudah ada TETAP tampil apa
+  // sekaligus dari Master Data "Vendor & Supplier"; baris lama yang sudah ada TETAP tampil apa
   // adanya walau nama supplier-nya kebetulan belum/tidak ada di daftar itu.
   const materialSuppliers = useMrpStore((s) => s.materialSuppliers);
-  // Item revisi 2026-09-15 -- baris harus diklik "Edit" dulu sebelum bisa diketik (cegah salah ketik).
-  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const [mode, setMode] = useState<"add" | "edit" | null>(null);
+  const [editingRow, setEditingRow] = useState<HargaKainRow | null>(null);
+  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  function openAdd() {
+    setDraft(EMPTY_DRAFT);
+    setEditingRow(null);
+    setError("");
+    setMode("add");
+  }
+  function openEdit(r: HargaKainRow) {
+    setDraft({ namaSupplier: r.namaSupplier, kategori: r.kategori, warna: r.warna, hargaPerKg: r.hargaPerKg });
+    setEditingRow(r);
+    setError("");
+    setMode("edit");
+  }
+
+  async function handleSave() {
+    setError("");
+    const supplier = materialSuppliers.find((s) => s.nama === draft.namaSupplier);
+    if (!supplier) {
+      setError("Pilih supplier dulu.");
+      return;
+    }
+    if (!draft.warna.trim()) {
+      setError("Warna wajib diisi.");
+      return;
+    }
+    // kodeSupplier di harga_kain TETAP kolom teks lama (bukan foreign key, lihat masterData.ts) --
+    // diisi SAMA dengan nama supplier (kode tidak ada lagi konsepnya di Master Data Vendor &
+    // Supplier sejak migration 0043).
+    const payload = { kodeSupplier: supplier.nama, namaSupplier: supplier.nama, kategori: draft.kategori.trim(), warna: draft.warna.trim(), hargaPerKg: draft.hargaPerKg };
+    setSaving(true);
+    try {
+      if (mode === "edit" && editingRow) await updateRow(editingRow.id, payload);
+      else await addRow(payload);
+      setMode(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
 
   const columns: ColumnDef<HargaKainRow>[] = [
-    {
-      key: "supplier",
-      label: "Supplier",
-      default: true,
-      render: (r) => (
-        <EditableCell editing={editingId === r.id} display={r.namaSupplier || r.kodeSupplier || "—"}>
-          <select
-            value={r.kodeSupplier}
-            onChange={(e) => {
-              const sup = materialSuppliers.find((s) => s.kode === e.target.value);
-              updateRow(r.id, { kodeSupplier: sup?.kode ?? e.target.value, namaSupplier: sup?.nama ?? e.target.value });
-            }}
-            className="input w-[150px]"
-          >
-            <option value="">— pilih supplier —</option>
-            {materialSuppliers.map((s) => (
-              <option key={s.id} value={s.kode}>
-                {s.nama}
-              </option>
-            ))}
-            {/* Baris lama yang kode supplier-nya belum ada di Master Data Supplier Kain -- tetap
-                muncul sebagai opsi supaya nilainya tidak diam-diam berubah kosong saat diedit. */}
-            {r.kodeSupplier && !materialSuppliers.some((s) => s.kode === r.kodeSupplier) && <option value={r.kodeSupplier}>{r.namaSupplier || r.kodeSupplier} (belum di Master Data)</option>}
-          </select>
-        </EditableCell>
-      ),
-    },
-    {
-      key: "kategori",
-      label: "Kategori",
-      default: true,
-      render: (r) => (
-        <EditableCell editing={editingId === r.id} display={r.kategori || "—"}>
-          <input value={r.kategori} onChange={(e) => updateRow(r.id, { kategori: e.target.value })} className="input w-[110px]" />
-        </EditableCell>
-      ),
-    },
-    {
-      key: "warna",
-      label: "Warna",
-      default: true,
-      render: (r) => (
-        <EditableCell editing={editingId === r.id} display={r.warna || "—"}>
-          <input value={r.warna} onChange={(e) => updateRow(r.id, { warna: e.target.value })} className="input w-[140px]" />
-        </EditableCell>
-      ),
-    },
-    {
-      key: "hargaPerKg",
-      label: "Harga per kg",
-      default: true,
-      align: "right",
-      render: (r) => (
-        <EditableCell editing={editingId === r.id} display={formatRupiah(r.hargaPerKg)}>
-          <NumberInput value={r.hargaPerKg} onChange={(v) => updateRow(r.id, { hargaPerKg: v })} currency commitOnBlurOnly className="input w-[110px] text-right" />
-        </EditableCell>
-      ),
-    },
+    { key: "supplier", label: "Supplier", default: true, render: (r) => r.namaSupplier || r.kodeSupplier || "—" },
+    { key: "kategori", label: "Kategori", default: true, render: (r) => r.kategori || "—" },
+    { key: "warna", label: "Warna", default: true, render: (r) => r.warna || "—" },
+    { key: "hargaPerKg", label: "Harga per kg", default: true, align: "right", render: (r) => formatRupiah(r.hargaPerKg) },
     {
       key: "aksi",
       label: "Aksi",
       default: true,
       render: (r) => (
         <div className="flex items-center gap-1.5">
-          <Button onClick={() => setEditingId(editingId === r.id ? null : r.id)} variant={editingId === r.id ? "success" : "ghost"} size="xs">
-            {editingId === r.id ? "Simpan" : "Edit"}
+          <Button onClick={() => openEdit(r)} variant="ghost" size="xs">
+            Edit
           </Button>
           <Button onClick={() => deleteRow(r.id)} variant="danger" size="xs">
             Hapus
@@ -104,28 +99,52 @@ export function HargaKainPanel() {
   ];
 
   return (
-    <DataTable
-      title="Harga Kain / Material"
-      subtitle={`Harga flat per kg — ${rows.length} baris. DIPAKAI LIVE untuk estimasi harga PO Material di PO Approval/export PDF PO -- kalah prioritas dari Harga Kain PKS kalau berat pesanan cocok salah satu tingkatan tonase di sana.`}
-      headerActions={
-        <Button onClick={addRow} variant="dashed" size="sm">
-          + Tambah baris
-        </Button>
-      }
-      columns={columns}
-      rows={rows}
-      keyOf={(r) => r.id}
-      alwaysShowKey={editingId}
-      firstColumnLabel="No."
-      firstColumnRender={(r) => <span className="font-mono text-[11px] text-text-muted">{rows.indexOf(r) + 1}</span>}
-      search={{ placeholder: "Cari warna/supplier…", getText: (r) => `${r.warna} ${r.namaSupplier} ${r.kodeSupplier} ${r.kategori}` }}
-      filterDefs={[
-        { label: "Kode Supplier", options: Array.from(new Set(rows.map((r) => r.kodeSupplier).filter(Boolean))).sort((a, b) => a.localeCompare(b, "id-ID")), test: (r, v) => r.kodeSupplier === v },
-        { label: "Kategori", options: Array.from(new Set(rows.map((r) => r.kategori).filter(Boolean))).sort((a, b) => a.localeCompare(b, "id-ID")), test: (r, v) => r.kategori === v },
-        { label: "Warna", options: Array.from(new Set(rows.map((r) => r.warna).filter(Boolean))).sort((a, b) => a.localeCompare(b, "id-ID")), test: (r, v) => r.warna === v },
-      ]}
-      emptyText='Belum ada data — klik "+ Tambah baris".'
-      bodyMaxHeight="60vh"
-    />
+    <>
+      <DataTable
+        title="Harga Kain / Material"
+        subtitle={`Harga flat per kg — ${rows.length} baris. DIPAKAI LIVE untuk estimasi harga PO Material di PO Approval/export PDF PO -- kalah prioritas dari Harga Kain PKS kalau berat pesanan cocok salah satu tingkatan tonase di sana.`}
+        headerActions={
+          <Button onClick={openAdd} variant="dashed" size="sm">
+            + Tambah Data
+          </Button>
+        }
+        columns={columns}
+        rows={rows}
+        keyOf={(r) => r.id}
+        firstColumnLabel="No."
+        firstColumnRender={(r) => <span className="font-mono text-[11px] text-text-muted">{rows.indexOf(r) + 1}</span>}
+        search={{ placeholder: "Cari warna/supplier…", getText: (r) => `${r.warna} ${r.namaSupplier} ${r.kodeSupplier} ${r.kategori}` }}
+        filterDefs={[
+          { label: "Supplier", options: Array.from(new Set(rows.map((r) => r.namaSupplier).filter(Boolean))).sort((a, b) => a.localeCompare(b, "id-ID")), test: (r, v) => r.namaSupplier === v },
+          { label: "Kategori", options: Array.from(new Set(rows.map((r) => r.kategori).filter(Boolean))).sort((a, b) => a.localeCompare(b, "id-ID")), test: (r, v) => r.kategori === v },
+          { label: "Warna", options: Array.from(new Set(rows.map((r) => r.warna).filter(Boolean))).sort((a, b) => a.localeCompare(b, "id-ID")), test: (r, v) => r.warna === v },
+        ]}
+        emptyText='Belum ada data — klik "+ Tambah Data".'
+        bodyMaxHeight="60vh"
+      />
+      {mode && (
+        <MasterDataFormModal title={mode === "add" ? "Tambah Harga Kain" : "Edit Harga Kain"} onCancel={() => setMode(null)} onSave={handleSave} saving={saving} error={error}>
+          <ModalField label="Supplier">
+            <select value={draft.namaSupplier} onChange={(e) => setDraft({ ...draft, namaSupplier: e.target.value })} className="input w-full">
+              <option value="">— pilih supplier —</option>
+              {materialSuppliers.map((s) => (
+                <option key={s.id} value={s.nama}>
+                  {s.nama}
+                </option>
+              ))}
+            </select>
+          </ModalField>
+          <ModalField label="Kategori">
+            <input value={draft.kategori} onChange={(e) => setDraft({ ...draft, kategori: e.target.value })} className="input w-full" />
+          </ModalField>
+          <ModalField label="Warna">
+            <input value={draft.warna} onChange={(e) => setDraft({ ...draft, warna: e.target.value })} className="input w-full" />
+          </ModalField>
+          <ModalField label="Harga per kg">
+            <NumberInput value={draft.hargaPerKg} onChange={(v) => setDraft({ ...draft, hargaPerKg: v })} currency className="input w-full" />
+          </ModalField>
+        </MasterDataFormModal>
+      )}
+    </>
   );
 }

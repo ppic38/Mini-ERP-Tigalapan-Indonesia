@@ -959,10 +959,11 @@ export async function getFlowSnapshot(): Promise<FlowState> {
     hargaKerahPerKg: Number(r.harga_kerah_per_kg),
     hargaMansetPerKg: Number(r.harga_manset_per_kg),
   }));
-  // Master Data "Supplier Kain" (migration 0042) -- daftar pilihan dropdown Harga Kain/Kain PKS.
+  // Master Data "Vendor & Supplier" > Supplier Material (migration 0042, kolom `kode` dihapus di
+  // 0043 -- lihat catatan di masterData.ts) -- daftar pilihan dropdown Harga Kain/Kain PKS/RIB/
+  // Kerah-Manset.
   const materialSuppliers: MaterialSupplierRow[] = (materialSupplierRows.data ?? []).map((r) => ({
     id: r.id,
-    kode: r.kode,
     nama: r.nama,
   }));
   // Master Data "Kerah/Manset" (konversi pcs->kg + harga/kg, migration 0036) -- `kg_per_pcs`/

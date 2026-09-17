@@ -345,15 +345,15 @@ type FlowActions = {
   markAllNotificationsRead: (ids: string[]) => Promise<void>;
   dismissNotification: (id: string) => Promise<void>;
 
-  addHargaMaklonRow: () => Promise<void>;
+  addHargaMaklonRow: (data: Omit<HargaMaklonRow, "id">) => Promise<void>;
   updateHargaMaklonRow: (id: string, patch: Partial<HargaMaklonRow>) => Promise<void>;
   deleteHargaMaklonRow: (id: string) => Promise<void>;
   replaceHargaMaklon: (rows: HargaMaklonRow[]) => Promise<void>;
-  addHargaKainRow: () => Promise<void>;
+  addHargaKainRow: (data: Omit<HargaKainRow, "id">) => Promise<void>;
   updateHargaKainRow: (id: string, patch: Partial<HargaKainRow>) => Promise<void>;
   deleteHargaKainRow: (id: string) => Promise<void>;
   replaceHargaKain: (rows: HargaKainRow[]) => Promise<void>;
-  addHargaKainPksRow: () => Promise<void>;
+  addHargaKainPksRow: (data: Omit<HargaKainPksRow, "id">) => Promise<void>;
   updateHargaKainPksRow: (id: string, patch: Partial<HargaKainPksRow>) => Promise<void>;
   deleteHargaKainPksRow: (id: string) => Promise<void>;
   replaceHargaKainPks: (rows: HargaKainPksRow[]) => Promise<void>;
@@ -365,17 +365,17 @@ type FlowActions = {
   updateSupplier: (id: string, nama: string) => Promise<void>;
   deleteSupplier: (id: string) => Promise<void>;
   replaceSupplier: (rows: SupplierRow[]) => Promise<void>;
-  addEkspedisiRateRow: () => Promise<void>;
+  addEkspedisiRateRow: (data: Omit<EkspedisiRateRow, "id">) => Promise<void>;
   updateEkspedisiRateRow: (id: string, patch: Partial<EkspedisiRateRow>) => Promise<void>;
   deleteEkspedisiRateRow: (id: string) => Promise<void>;
   updateKerahMansetSetting: (kind: "KERAH" | "MANSET", patch: Partial<Pick<KerahMansetSettingRow, "kgPerPcs" | "hargaPerKg">>) => Promise<void>;
-  addHargaRibRow: () => Promise<void>;
+  addHargaRibRow: (data: Omit<HargaRibRow, "id">) => Promise<void>;
   updateHargaRibRow: (id: string, patch: Partial<HargaRibRow>) => Promise<void>;
   deleteHargaRibRow: (id: string) => Promise<void>;
-  addHargaKerahMansetRow: () => Promise<void>;
+  addHargaKerahMansetRow: (data: Omit<HargaKerahMansetRow, "id">) => Promise<void>;
   updateHargaKerahMansetRow: (id: string, patch: Partial<HargaKerahMansetRow>) => Promise<void>;
   deleteHargaKerahMansetRow: (id: string) => Promise<void>;
-  addMaterialSupplier: (kode: string, nama: string) => Promise<void>;
+  addMaterialSupplier: (nama: string) => Promise<void>;
   deleteMaterialSupplier: (id: string) => Promise<void>;
 
   setMaterialPoEntity: (poId: string, entitas: string) => Promise<void>;
@@ -1134,8 +1134,8 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     backgroundRefresh();
   },
 
-  addHargaMaklonRow: async () => {
-    await actions.addHargaMaklonRowAction();
+  addHargaMaklonRow: async (data) => {
+    await actions.addHargaMaklonRowAction(data);
     backgroundRefresh();
   },
   updateHargaMaklonRow: async (id, patch) => {
@@ -1166,8 +1166,8 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     await actions.replaceHargaMaklonAction(rows);
     backgroundRefresh();
   },
-  addHargaKainRow: async () => {
-    await actions.addHargaKainRowAction();
+  addHargaKainRow: async (data) => {
+    await actions.addHargaKainRowAction(data);
     backgroundRefresh();
   },
   updateHargaKainRow: async (id, patch) => {
@@ -1198,8 +1198,8 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     await actions.replaceHargaKainAction(rows);
     backgroundRefresh();
   },
-  addHargaRibRow: async () => {
-    await actions.addHargaRibRowAction();
+  addHargaRibRow: async (data) => {
+    await actions.addHargaRibRowAction(data);
     backgroundRefresh();
   },
   updateHargaRibRow: async (id, patch) => {
@@ -1226,8 +1226,8 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     }
     backgroundRefresh();
   },
-  addHargaKerahMansetRow: async () => {
-    await actions.addHargaKerahMansetRowAction();
+  addHargaKerahMansetRow: async (data) => {
+    await actions.addHargaKerahMansetRowAction(data);
     backgroundRefresh();
   },
   updateHargaKerahMansetRow: async (id, patch) => {
@@ -1254,8 +1254,8 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     }
     backgroundRefresh();
   },
-  addMaterialSupplier: async (kode, nama) => {
-    await actions.addMaterialSupplierAction(kode, nama);
+  addMaterialSupplier: async (nama) => {
+    await actions.addMaterialSupplierAction(nama);
     backgroundRefresh();
   },
   deleteMaterialSupplier: async (id) => {
@@ -1270,8 +1270,8 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     }
     backgroundRefresh();
   },
-  addHargaKainPksRow: async () => {
-    await actions.addHargaKainPksRowAction();
+  addHargaKainPksRow: async (data) => {
+    await actions.addHargaKainPksRowAction(data);
     backgroundRefresh();
   },
   updateHargaKainPksRow: async (id, patch) => {
@@ -1366,8 +1366,8 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     await actions.replaceSupplierAction(rows);
     backgroundRefresh();
   },
-  addEkspedisiRateRow: async () => {
-    await actions.addEkspedisiRateAction();
+  addEkspedisiRateRow: async (data) => {
+    await actions.addEkspedisiRateAction(data);
     backgroundRefresh();
   },
   updateEkspedisiRateRow: async (id, patch) => {

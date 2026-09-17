@@ -1,28 +1,42 @@
--- Master Data "Supplier Kain" (owner 2026-09-16: nama supplier di Harga Kain/Harga Kain PKS
+-- Master Data "Supplier Material" (owner 2026-09-16: nama supplier di Harga Kain/Harga Kain PKS
 -- selama ini diketik bebas per baris -- rawan typo, mis. "KNITTO" vs "Knitto" jadi dianggap
--- supplier beda). Tabel ini SATU daftar dipakai bersama Harga Kain & Harga Kain PKS (BUKAN
--- Harga Maklon -- itu sudah punya master sendiri, tabel vendors_produksi yang sudah ada).
--- kode_supplier/nama_supplier di harga_kain/harga_kain_pks TETAP kolom teks apa adanya (tidak
--- diubah jadi foreign key -- data lama 468+439 baris tidak perlu migrasi ulang), tabel ini murni
--- SUMBER PILIHAN untuk UI (dropdown), dicocokkan by name di kode aplikasi.
+-- supplier beda). Tabel ini SATU daftar dipakai bersama Harga Kain, Harga Kain PKS, Harga RIB &
+-- Harga Kerah/Manset (BUKAN Harga Maklon -- itu sudah punya master sendiri, tabel vendors_produksi
+-- yang sudah ada). kode_supplier/nama_supplier di harga_kain/harga_kain_pks/harga_rib/
+-- harga_kerah_manset TETAP kolom teks apa adanya (tidak diubah jadi foreign key -- data lama tidak
+-- perlu migrasi ulang), tabel ini murni SUMBER PILIHAN untuk UI (dropdown), dicocokkan BY NAMA di
+-- kode aplikasi.
+--
+-- Revisi 2026-09-17 (owner: "supplier tidak ada kodenya, langsung nama"): tabel ini SENGAJA
+-- dibuat langsung tanpa kolom "kode" (versi awal migration ini sempat punya kolom kode + migration
+-- 0043 terpisah yang men-drop-nya lagi -- keduanya DIGABUNG jadi file ini karena migration lama
+-- itu belum sempat dijalankan owner sebelum revisi ini, lihat 0043 yang sekarang kosong/dihapus).
 create table material_suppliers (
   id text primary key,
-  kode text not null unique,
-  nama text not null
+  nama text not null unique
 );
 
 alter table material_suppliers enable row level security;
 
--- Seed dari kode_supplier unik yang SUDAH ADA di harga_kain (2026-09-16) -- supaya dropdown baru
--- ini langsung cocok dengan data yang sudah berjalan, tidak ada supplier "hilang" dari pilihan.
-insert into material_suppliers (id, kode, nama) values
-  ('MSUP-000001', 'KNITTO', 'KNITTO'),
-  ('MSUP-000002', 'FABRIKU', 'FABRIKU'),
-  ('MSUP-000003', 'TEBEKA', 'TEBEKA'),
-  ('MSUP-000004', 'NIRWANA', 'NIRWANA'),
-  ('MSUP-000005', 'MULIA LESTARI', 'MULIA LESTARI'),
-  ('MSUP-000006', 'ALMEGATEX', 'ALMEGATEX'),
-  ('MSUP-000007', 'DN TEXTILE', 'DN TEXTILE');
+-- Seed dari nama_supplier unik yang SUDAH ADA di harga_kain -- supaya dropdown baru ini langsung
+-- cocok dengan data yang sudah berjalan, tidak ada supplier "hilang" dari pilihan. 7 nama umum
+-- di-seed manual dulu (id stabil/dikenal), sisanya di-backfill otomatis dari harga_kain di bawah.
+insert into material_suppliers (id, nama) values
+  ('MSUP-000001', 'KNITTO'),
+  ('MSUP-000002', 'FABRIKU'),
+  ('MSUP-000003', 'TEBEKA'),
+  ('MSUP-000004', 'NIRWANA'),
+  ('MSUP-000005', 'MULIA LESTARI'),
+  ('MSUP-000006', 'ALMEGATEX'),
+  ('MSUP-000007', 'DN TEXTILE');
+
+insert into material_suppliers (id, nama)
+select next_readable_id('MSUP'), x.nama_supplier
+from (
+  select distinct trim(nama_supplier) as nama_supplier from harga_kain where nama_supplier is not null and trim(nama_supplier) <> ''
+  except
+  select nama from material_suppliers
+) x;
 
 -- Redefine get_flow_snapshot_raw() -- isi UTUH disalin dari 0041_wms_koli_receipt_status.sql
 -- (terakhir yang me-redefine fungsi ini), TIDAK ada entri lama yang di-drop, cuma tambah 1 entri

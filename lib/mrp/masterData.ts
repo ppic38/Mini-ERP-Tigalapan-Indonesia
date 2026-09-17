@@ -119,12 +119,15 @@ export type HargaKerahMansetRow = {
   hargaMansetPerKg: number;
 };
 
-/** Master Data "Supplier Kain" (migration 0042) -- SATU daftar dipakai bersama Harga Kain & Harga
- *  Kain PKS (owner 2026-09-16: "supaya tidak ada typo penulisan"). Harga Maklon TIDAK memakai ini
- *  -- vendor produksi sudah punya master sendiri (VendorProduksiMasterRow / tabel vendors_produksi).
- *  kode_supplier/nama_supplier di HargaKainRow/HargaKainPksRow TETAP string bebas (bukan foreign
- *  key) -- tabel ini murni SUMBER PILIHAN dropdown, dicocokkan by value di UI. */
-export type MaterialSupplierRow = { id: string; kode: string; nama: string };
+/** Master Data "Vendor & Supplier" > Supplier Material (migration 0042, kolom `kode` dihapus di
+ *  0043 -- owner 2026-09-17: "supplier tidak ada kodenya, langsung nama"). SATU daftar dipakai
+ *  bersama Harga Kain, Harga Kain PKS, Harga RIB & Harga Kerah/Manset (owner 2026-09-16: "supaya
+ *  tidak ada typo penulisan"). Harga Maklon TIDAK memakai ini -- vendor produksi sudah punya
+ *  master sendiri (VendorProduksiMasterRow / tabel vendors_produksi). kode_supplier/nama_supplier
+ *  di HargaKainRow/HargaKainPksRow/HargaRibRow/HargaKerahMansetRow TETAP string bebas (bukan
+ *  foreign key) -- tabel ini murni SUMBER PILIHAN dropdown, dicocokkan BY NAMA di UI (kode_supplier
+ *  pada baris-baris itu diisi sama dengan nama saat create/edit lewat panel, lihat masing-masing). */
+export type MaterialSupplierRow = { id: string; nama: string };
 
 /** Revisi 2026-09-06: data ASLI vendor produksi dari spreadsheet Procurement (kategori & kapasitas
  *  produksi PER MINGGU) -- sumbernya kolom `kategori`/`base_capacity` di tabel `vendors_produksi`

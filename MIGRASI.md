@@ -1,5 +1,17 @@
 # Migrasi Project — Status & Riwayat
 
+## Master Data "Supplier Material" -- migration 0042 (2026-09-17)
+Owner cek langsung di Supabase: migration `0042_material_suppliers.sql` (dan file `0043` yang
+sempat ada terpisah) **BELUM PERNAH DIJALANKAN** -- tabel `material_suppliers` tidak ada sama
+sekali. `0043` (yang tadinya men-drop kolom `kode`) sudah **DIGABUNG ke dalam 0042** (owner:
+"supplier tidak ada kodenya, langsung nama" -- diputuskan SEBELUM 0042 sempat dijalankan sama
+sekali, jadi tabel langsung dibuat tanpa kolom `kode` dari awal, tidak perlu 2 migration
+terpisah). File `0043_material_suppliers_drop_kode.sql` sudah dihapus dari `supabase/migrations/`.
+**Owner sudah diberi SQL gabungan ini untuk dijalankan manual di SQL Editor Supabase** (isinya
+persis sama dengan `supabase/migrations/0042_material_suppliers.sql` versi terbaru) -- kalau
+sesi baru dibuka dan owner lapor dropdown "Supplier Material" masih kosong di halaman Master Data
+> Vendor & Supplier, migration ini yang perlu dicek/dijalankan dulu.
+
 ## Integrasi WMS (2026-09-16, dikerjakan di sesi terpisah)
 Repo baru `ppic38/WMS-Tigalapan-Indonesia` (dev lain, sumber `D:\WMS38\WMS38-Komputer\source`),
 Vercel `ppic-38/wms-tigalapan-indonesia`, deploy: https://wms-tigalapan-indonesia.vercel.app.

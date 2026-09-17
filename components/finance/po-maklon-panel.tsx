@@ -194,7 +194,13 @@ export function PoMaklonPanel() {
       )}
 
       <div className="overflow-hidden border border-border-subtle bg-surface-card">
-        <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Semua PO Vendor Produksi</div>
+        <div className="border-b border-border-subtle px-4 py-3">
+          <div className="font-sans text-[13px] font-semibold text-text-primary">Semua PO Vendor Produksi</div>
+          {/* Revisi 2026-09-17 (owner: "yang atas buat approve, yang bawah cuma buat cek status yang
+             sudah diapprove"): dulu tabel ini ikut punya tombol Approve per baris (duplikat dengan
+             alur approve di atas) -- sekarang murni status checker, read-only. */}
+          <div className="font-sans text-[11.5px] text-text-muted">Cek status semua PO (yang sudah di-approve akan hilang dari daftar approval di atas).</div>
+        </div>
         {allMrpSummaries.length === 0 && <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada PO vendor produksi.</div>}
         {allMrpSummaries.length > 0 && (
           <div className="overflow-x-auto">
@@ -205,7 +211,6 @@ export function PoMaklonPanel() {
                   <th className="px-3 py-[9px] text-right">Qty</th>
                   <th className="px-3 py-[9px] text-right">Nilai</th>
                   <th className="px-3 py-[9px] text-left">Status</th>
-                  <th className="px-3 py-[9px] text-left">Aksi</th>
                 </tr>
               </thead>
               <tbody>
@@ -232,7 +237,6 @@ export function PoMaklonPanel() {
                         <td className="px-3 py-[11px]">
                           <StatusPill tone="neutral">{m.pos.length} PO</StatusPill>
                         </td>
-                        <td className="px-3 py-[11px]" />
                       </tr>
                       {mrpActive &&
                         allVendorSummariesForMrp(m.pos).map((v) => {
@@ -257,7 +261,6 @@ export function PoMaklonPanel() {
                                 <td className="px-3 py-[10px]">
                                   <StatusPill tone="neutral">{v.pos.length} PO</StatusPill>
                                 </td>
-                                <td className="px-3 py-[10px]" />
                               </tr>
                               {vendorActive &&
                                 v.pos.map((p) => {
@@ -275,26 +278,10 @@ export function PoMaklonPanel() {
                                         <td className="px-3 py-[10px]">
                                           <StatusPill tone={badge.tone}>{badge.label}</StatusPill>
                                         </td>
-                                        <td className="px-3 py-[10px]">
-                                          {p.approved ? (
-                                            "—"
-                                          ) : (
-                                            <Button
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                approveMaklonPo(p.id);
-                                              }}
-                                              variant="success"
-                                              size="xs"
-                                            >
-                                              Approve
-                                            </Button>
-                                          )}
-                                        </td>
                                       </tr>
                                       {poActive && (
                                         <tr>
-                                          <td colSpan={5} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
+                                          <td colSpan={4} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
                                             {p.cancelledLines.length > 0 && (
                                               <div className="mb-2 rounded-md border border-[#EFC9C4] bg-danger-bg px-3 py-2 font-sans text-[11px] leading-[1.5] text-danger-fg">
                                                 <div className="font-semibold">Cancel Line (dari Procurement)</div>

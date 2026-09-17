@@ -1,7 +1,10 @@
 "use client";
 
-/** Sub-tab horizontal reusable — presentational saja, state aktif dikontrol parent. */
-export type TabItem = { key: string; label: string; badge?: number };
+/** Sub-tab horizontal reusable — presentational saja, state aktif dikontrol parent.
+ *  `accent` (revisi 2026-09-17, owner: "highlight teksnya jadi warna biru" untuk tab referensi
+ *  penting seperti "Vendor & Supplier") -- tab itu SELALU tampil teks biru (bukan abu-abu default
+ *  saat tidak aktif) supaya menonjol dari tab lain, terlepas dari sedang aktif atau tidak. */
+export type TabItem = { key: string; label: string; badge?: number; accent?: boolean };
 
 export function Tabs({
   items,
@@ -22,7 +25,7 @@ export function Tabs({
             onClick={() => onChange(item.key)}
             className={
               "relative flex items-center gap-1.5 border-b-2 px-3.5 py-2.5 font-sans text-[12.5px] font-semibold " +
-              (isActive ? "border-accent-blue text-action-primary" : "border-transparent text-text-muted")
+              (isActive ? "border-accent-blue text-action-primary" : item.accent ? "border-transparent text-action-primary" : "border-transparent text-text-muted")
             }
           >
             {item.label}

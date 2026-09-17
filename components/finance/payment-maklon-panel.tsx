@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
@@ -267,23 +267,32 @@ export function PaymentMaklonPanel() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [actionResult, setActionResult] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
-  // Item revisi 2026-09-17 (owner: "Finance Payment (Material & Maklon) hierarkis per No. MRP ->
-  // daftar supplier"): untuk Maklon, "supplier" itu vendor produksi sendiri (tidak ada supplier
-  // terpisah) -- navigasi 2 tingkat: pilih MRP dulu, baru vendor produksi.
-  const [paymentMrpId, setPaymentMrpId] = useState<string | null>(null);
-  const [paymentVendor, setPaymentVendor] = useState<string | null>(null);
+  // Revisi 2026-09-17 (owner: "ikuti konsep PO Approval -- filter MRP untuk yang akan dipayment,
+  // begitu dibayar turun ke tabel di bawah yang di-grouping per MRP", diterapkan sama seperti
+  // payment-panel.tsx materi): bagian ATAS = dropdown "No MRP (siap dibayar)" + DataTable invoice
+  // APPROVED (checkbox + "Bayar Penuh"). Bagian BAWAH = tabel pohon riwayat (MRP -> Vendor
+  // Produksi) untuk invoice yang SUDAH PAID -- state navigasinya independen dari selector atas.
+  const [selectedMrpId, setSelectedMrpId] = useState<string>("");
+  const [expandedMrpHistory, setExpandedMrpHistory] = useState<string | null>(null);
+  const [expandedVendorHistory, setExpandedVendorHistory] = useState<string | null>(null);
 
   if (!mounted) return null;
 
-  // Cuma invoice yang relevan untuk pembayaran (siap dibayar/APPROVED atau sudah PAID) yang masuk
-  // navigasi -- status lain (submitted ke Procurement, rejected, dst.) tidak relevan di halaman
-  // Payment. Satu invoice BISA menyentuh lebih dari 1 MRP sekaligus (inv.lines multi-MRP) --
-  // dalam kasus itu invoice yang sama akan muncul di lebih dari 1 kartu MRP, sengaja (supaya
-  // tetap kelihatan dari MRP mana pun yang dibuka), bukan bug duplikasi data.
-  const payableInvoices = vendorInvoices.filter((i) => i.status === "APPROVED" || i.status === "PAID");
-  const maklonHierarchy = (() => {
+  // Satu invoice BISA menyentuh lebih dari 1 MRP sekaligus (inv.lines multi-MRP) -- dalam kasus
+  // itu invoice yang sama akan muncul di lebih dari 1 grup MRP, sengaja (supaya tetap kelihatan
+  // dari MRP mana pun yang dibuka), bukan bug duplikasi data.
+  const readyInvoices = vendorInvoices.filter((i) => i.status === "APPROVED");
+  const readyMrpIds = Array.from(new Set(readyInvoices.flatMap((i) => Array.from(new Set(i.lines.map((l) => l.mrpId)))))).sort((a, b) => b.localeCompare(a, "id-ID"));
+  const effectiveMrpId = selectedMrpId && readyMrpIds.includes(selectedMrpId) ? selectedMrpId : readyMrpIds[0] ?? "";
+  const readyRows = readyInvoices
+    .filter((i) => i.lines.some((l) => l.mrpId === effectiveMrpId))
+    .sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : -1));
+
+  // Riwayat (bagian bawah) -- SEMUA invoice PAID, dikelompokkan MRP -> Vendor Produksi.
+  const paidInvoices = vendorInvoices.filter((i) => i.status === "PAID");
+  const historyHierarchy = (() => {
     const map = new Map<string, Map<string, VendorInvoice[]>>();
-    for (const inv of payableInvoices) {
+    for (const inv of paidInvoices) {
       const mrpIds = Array.from(new Set(inv.lines.map((l) => l.mrpId)));
       for (const mrpId of mrpIds) {
         if (!map.has(mrpId)) map.set(mrpId, new Map());
@@ -294,33 +303,25 @@ export function PaymentMaklonPanel() {
     }
     return map;
   })();
-
-  const paymentMrpSummaries = Array.from(maklonHierarchy.entries())
-    .map(([mrpId, vendorMap]) => {
-      let ready = 0;
-      let total = 0;
-      for (const list of vendorMap.values()) {
-        ready += list.filter((i) => i.status === "APPROVED").length;
-        total += list.reduce((s, i) => s + vendorInvoiceFinalAmount(i), 0);
-      }
-      return { mrpId, vendorCount: vendorMap.size, ready, total };
-    })
-    .sort((a, b) => b.ready - a.ready || a.mrpId.localeCompare(b.mrpId, "id-ID"));
-
-  const paymentVendorSummaries = paymentMrpId
-    ? Array.from(maklonHierarchy.get(paymentMrpId)?.entries() ?? [])
-        .map(([vendor, list]) => ({
-          vendor,
-          vendorName: VENDOR_PRODUKSI[vendor]?.name ?? vendor,
-          ready: list.filter((i) => i.status === "APPROVED").length,
-          total: list.reduce((s, i) => s + vendorInvoiceFinalAmount(i), 0),
-        }))
-        .sort((a, b) => b.ready - a.ready || a.vendorName.localeCompare(b.vendorName, "id-ID"))
-    : [];
-
-  const scopedInvoices = paymentMrpId && paymentVendor ? maklonHierarchy.get(paymentMrpId)?.get(paymentVendor) ?? [] : [];
-  const readyRows = [...scopedInvoices].filter((i) => i.status === "APPROVED").sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : -1));
-  const paidRows = [...scopedInvoices].filter((i) => i.status === "PAID").sort((a, b) => (a.paidAt ?? "" < (b.paidAt ?? "") ? 1 : -1));
+  const historyMrpSummaries = Array.from(historyHierarchy.entries())
+    .map(([mrpId, vendorMap]) => ({
+      mrpId,
+      vendorCount: vendorMap.size,
+      invoiceCount: Array.from(vendorMap.values()).reduce((s, l) => s + l.length, 0),
+      total: Array.from(vendorMap.values()).reduce((s, l) => s + l.reduce((s2, i) => s2 + vendorInvoiceFinalAmount(i), 0), 0),
+    }))
+    .sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID"));
+  function historyVendorSummariesForMrp(mrpId: string) {
+    return Array.from(historyHierarchy.get(mrpId)?.entries() ?? [])
+      .map(([vendor, list]) => ({
+        vendor,
+        vendorName: VENDOR_PRODUKSI[vendor]?.name ?? vendor,
+        list: [...list].sort((a, b) => (a.paidAt ?? "" < (b.paidAt ?? "") ? 1 : -1)),
+        invoiceCount: list.length,
+        total: list.reduce((s, i) => s + vendorInvoiceFinalAmount(i), 0),
+      }))
+      .sort((a, b) => a.vendorName.localeCompare(b.vendorName, "id-ID"));
+  }
 
   function toggle(id: string) {
     setActionResult(null);
@@ -461,91 +462,53 @@ export function PaymentMaklonPanel() {
     },
   ];
 
+  function renderInvoiceLinesDetail(inv: VendorInvoice) {
+    return (
+      <InvoiceLinesDetail
+        inv={inv}
+        vendorInvoices={vendorInvoices}
+        mrpDetails={mrpDetails}
+        staticMrps={staticMrps}
+        productionBatches={productionBatches}
+        productionResults={productionResults}
+        productionGroupMeta={productionGroupMeta}
+        rawInvoices={rawInvoices}
+        deliveryKolis={deliveryKolis}
+        ekspedisiRates={ekspedisiRates}
+        itemSellingPrices={itemSellingPrices}
+      />
+    );
+  }
+
   return (
     <>
-      <div className="flex items-center gap-1.5 font-sans text-[11.5px]">
-        <button
-          type="button"
-          onClick={() => {
-            setPaymentMrpId(null);
-            setPaymentVendor(null);
-            setSelected(new Set());
-          }}
-          className={paymentMrpId ? "font-semibold text-action-primary underline" : "font-semibold text-text-primary"}
-        >
-          Semua No. MRP
-        </button>
-        {paymentMrpId && (
-          <>
-            <span className="text-text-muted">/</span>
-            <button
-              type="button"
-              onClick={() => {
-                setPaymentVendor(null);
-                setSelected(new Set());
-              }}
-              className={paymentVendor ? "font-semibold text-action-primary underline" : "font-semibold text-text-primary"}
-            >
-              {paymentMrpId}
-            </button>
-          </>
-        )}
-        {paymentVendor && (
-          <>
-            <span className="text-text-muted">/</span>
-            <span className="font-semibold text-text-primary">{VENDOR_PRODUKSI[paymentVendor]?.name ?? paymentVendor}</span>
-          </>
-        )}
+      <div className="flex items-center gap-3 rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
+        <div>
+          <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">No MRP (siap dibayar)</div>
+          <select
+            value={effectiveMrpId}
+            onChange={(e) => {
+              setSelectedMrpId(e.target.value);
+              setSelected(new Set());
+            }}
+            className="mt-1 rounded-md border border-[#DDE4EB] px-[11px] py-[9px] font-sans text-[12.5px] font-medium text-text-primary"
+          >
+            <option value="">— pilih MRP —</option>
+            {readyMrpIds.map((id) => (
+              <option key={id} value={id}>
+                {id} · {readyInvoices.filter((i) => i.lines.some((l) => l.mrpId === id)).length} invoice siap bayar
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
-      {!paymentMrpId && (
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-          {paymentMrpSummaries.map((m) => (
-            <button
-              key={m.mrpId}
-              type="button"
-              onClick={() => setPaymentMrpId(m.mrpId)}
-              className="flex flex-col gap-1.5 rounded-lg border border-border-subtle bg-surface-card px-4 py-3 text-left transition-colors hover:border-[#C7D0DB]"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-mono text-[12.5px] font-semibold text-text-primary">{m.mrpId}</span>
-                {m.ready > 0 && <StatusPill tone="warning">{m.ready} siap bayar</StatusPill>}
-              </div>
-              <div className="flex items-center justify-between font-sans text-[11.5px] text-text-muted">
-                <span>{m.vendorCount} vendor produksi</span>
-                <span className="font-mono">{formatRupiah(m.total)}</span>
-              </div>
-            </button>
-          ))}
-          {paymentMrpSummaries.length === 0 && (
-            <div className="col-span-full rounded-lg border border-dashed border-border-subtle bg-surface-card px-4 py-6 text-center font-sans text-[12px] text-text-muted">
-              Belum ada invoice vendor yang disetujui/dibayar.
-            </div>
-          )}
+      {!effectiveMrpId && (
+        <div className="rounded-lg border border-border-subtle bg-surface-card px-5 py-8 text-center font-sans text-xs text-text-muted">
+          Tidak ada invoice vendor yang siap dibayar saat ini.
         </div>
       )}
 
-      {paymentMrpId && !paymentVendor && (
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-          {paymentVendorSummaries.map((v) => (
-            <button
-              key={v.vendor}
-              type="button"
-              onClick={() => setPaymentVendor(v.vendor)}
-              className="flex flex-col gap-1.5 rounded-lg border border-border-subtle bg-surface-card px-4 py-3 text-left transition-colors hover:border-[#C7D0DB]"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-sans text-[13px] font-semibold text-text-primary">{v.vendorName}</span>
-                {v.ready > 0 && <StatusPill tone="warning">{v.ready} siap bayar</StatusPill>}
-              </div>
-              <div className="font-mono text-[12.5px] font-medium text-text-primary">{formatRupiah(v.total)}</div>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {paymentMrpId && paymentVendor && (
-      <>
       {actionResult && (
         <div className="flex items-center gap-2 rounded-lg border border-[#F0DFC2] bg-warning-bg px-5 py-[10px] font-sans text-xs font-medium text-warning-fg">
           {actionResult}
@@ -571,64 +534,111 @@ export function PaymentMaklonPanel() {
         </div>
       )}
 
-      <DataTable
-        title="Invoice vendor siap dibayar"
-        columns={readyColumns}
-        rows={readyRows}
-        keyOf={(inv) => inv.id}
-        firstColumnLabel="No Invoice"
-        firstColumnRender={(inv) => (
-          <span className="flex items-center gap-2.5">
-            <span onClick={(e) => e.stopPropagation()}>
-              <Checkbox checked={selected.has(inv.id)} onChange={() => toggle(inv.id)} />
+      {effectiveMrpId && (
+        <DataTable
+          title={`Invoice vendor siap dibayar — ${effectiveMrpId}`}
+          columns={readyColumns}
+          rows={readyRows}
+          keyOf={(inv) => inv.id}
+          firstColumnLabel="No Invoice"
+          firstColumnRender={(inv) => (
+            <span className="flex items-center gap-2.5">
+              <span onClick={(e) => e.stopPropagation()}>
+                <Checkbox checked={selected.has(inv.id)} onChange={() => toggle(inv.id)} />
+              </span>
+              <span className="font-mono font-medium">{inv.id}</span>
             </span>
-            <span className="font-mono font-medium">{inv.id}</span>
-          </span>
-        )}
-        renderExpanded={(inv) => (
-          <InvoiceLinesDetail
-            inv={inv}
-            vendorInvoices={vendorInvoices}
-            mrpDetails={mrpDetails}
-            staticMrps={staticMrps}
-            productionBatches={productionBatches}
-            productionResults={productionResults}
-            productionGroupMeta={productionGroupMeta}
-            rawInvoices={rawInvoices}
-            deliveryKolis={deliveryKolis}
-            ekspedisiRates={ekspedisiRates}
-            itemSellingPrices={itemSellingPrices}
-          />
-        )}
-        emptyText="Belum ada invoice vendor yang disetujui Procurement."
-      />
-
-      <DataTable
-        title="Invoice vendor telah dibayar"
-        columns={paidColumns}
-        rows={paidRows}
-        keyOf={(inv) => inv.id}
-        firstColumnLabel="No Invoice"
-        firstColumnRender={(inv) => <span className="font-mono font-medium">{inv.id}</span>}
-        renderExpanded={(inv) => (
-          <InvoiceLinesDetail
-            inv={inv}
-            vendorInvoices={vendorInvoices}
-            mrpDetails={mrpDetails}
-            staticMrps={staticMrps}
-            productionBatches={productionBatches}
-            productionResults={productionResults}
-            productionGroupMeta={productionGroupMeta}
-            rawInvoices={rawInvoices}
-            deliveryKolis={deliveryKolis}
-            ekspedisiRates={ekspedisiRates}
-            itemSellingPrices={itemSellingPrices}
-          />
-        )}
-        emptyText="Belum ada invoice vendor yang telah dibayar."
-      />
-      </>
+          )}
+          renderExpanded={renderInvoiceLinesDetail}
+          emptyText="Belum ada invoice vendor yang disetujui Procurement untuk MRP ini."
+        />
       )}
+
+      {/* Revisi 2026-09-17 (owner: "jika sudah dipayment maka turun ke tabel di bawah, mencakup
+         konsep grouping MRP"): begitu invoice APPROVED dibayar (PAID), otomatis hilang dari daftar
+         "siap dibayar" di atas & muncul di sini -- tabel pohon MRP -> Vendor Produksi, MENCAKUP
+         SEMUA MRP (bukan cuma yang lagi dipilih di dropdown atas), murni status/histori (tidak ada
+         checkbox -- Payment Maklon tidak punya alur "Batalkan Bayar"). */}
+      <div className="overflow-hidden border border-border-subtle bg-surface-card">
+        <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Riwayat Pembayaran</div>
+        {historyMrpSummaries.length === 0 && (
+          <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada invoice vendor yang telah dibayar.</div>
+        )}
+        {historyMrpSummaries.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
+                  <th className="px-5 py-[9px] text-left">No MRP / Vendor Produksi</th>
+                  <th className="px-3 py-[9px] text-right">Invoice</th>
+                  <th className="px-3 py-[9px] text-right">Nilai</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historyMrpSummaries.map((m) => {
+                  const mrpActive = expandedMrpHistory === m.mrpId;
+                  return (
+                    <Fragment key={m.mrpId}>
+                      <tr
+                        onClick={() => {
+                          const next = mrpActive ? null : m.mrpId;
+                          setExpandedMrpHistory(next);
+                          setExpandedVendorHistory(null);
+                        }}
+                        className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] hover:bg-[#FAFBFC] " + (mrpActive ? "bg-info-bg" : "")}
+                      >
+                        <td className="px-5 py-[11px]">
+                          <span className="mr-1.5 text-text-muted">{mrpActive ? "▾" : "▸"}</span>
+                          <span className="font-mono font-semibold text-text-primary">{m.mrpId}</span>
+                          <span className="ml-1.5 font-sans text-[10.5px] text-text-muted">{m.vendorCount} vendor produksi</span>
+                        </td>
+                        <td className="px-3 py-[11px] text-right font-mono tabular-nums">{m.invoiceCount}</td>
+                        <td className="px-3 py-[11px] text-right font-mono tabular-nums font-medium">{formatRupiah(m.total)}</td>
+                      </tr>
+                      {mrpActive &&
+                        historyVendorSummariesForMrp(m.mrpId).map((v) => {
+                          const vendorKey = `${m.mrpId}::${v.vendor}`;
+                          const vendorActive = expandedVendorHistory === vendorKey;
+                          return (
+                            <Fragment key={vendorKey}>
+                              <tr
+                                onClick={() => setExpandedVendorHistory(vendorActive ? null : vendorKey)}
+                                className={"cursor-pointer border-b border-[#F1F4F7] bg-[#FBFCFD] font-sans text-[11.5px] text-[#31414F] hover:bg-[#F2F5F8] " + (vendorActive ? "bg-info-bg" : "")}
+                              >
+                                <td className="py-[10px] pl-10 pr-3">
+                                  <span className="mr-1.5 text-text-muted">{vendorActive ? "▾" : "▸"}</span>
+                                  <span className="font-medium text-text-primary">{v.vendorName}</span>
+                                </td>
+                                <td className="px-3 py-[10px] text-right font-mono tabular-nums">{v.invoiceCount}</td>
+                                <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(v.total)}</td>
+                              </tr>
+                              {vendorActive && (
+                                <tr>
+                                  <td colSpan={3} className="border-b border-[#F1F4F7] bg-white px-4 py-4 pl-10">
+                                    <DataTable
+                                      title="Invoice vendor telah dibayar"
+                                      columns={paidColumns}
+                                      rows={v.list}
+                                      keyOf={(inv) => inv.id}
+                                      firstColumnLabel="No Invoice"
+                                      firstColumnRender={(inv) => <span className="font-mono font-medium">{inv.id}</span>}
+                                      renderExpanded={renderInvoiceLinesDetail}
+                                      emptyText="Belum ada invoice vendor yang telah dibayar."
+                                    />
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
+                          );
+                        })}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </>
   );
 }

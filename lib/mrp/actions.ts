@@ -4105,10 +4105,25 @@ async function requireMasterDataRole() {
 // dari Supabase di-fetch ulang, nilai lama muncul lagi (kelihatan seperti "edit hilang sendiri").
 // Sekarang setiap panggilan Supabase di sini dicek errornya dan di-throw dengan pesan jelas, sama
 // seperti pola actions.ts lain (mis. finalizeHppForInvoiceAction lama, replaceHargaKainAction dst).
-export async function addHargaMaklonRowAction(): Promise<void> {
+// Revisi 2026-09-17 (owner: "tambah/edit lewat popup form, bukan baris kosong dulu baru diisi") --
+// dulu addXRowAction() TANPA argumen (insert baris KOSONG, diisi belakangan lewat updateXRowAction
+// satu-per-satu field saat user klik "Edit" di tabel) -- sekarang terima payload lengkap dari
+// modal form, langsung insert dengan nilai final (baris kosong tidak pernah ada di DB sama sekali).
+export async function addHargaMaklonRowAction(data: Omit<HargaMaklonRow, "id">): Promise<void> {
   await requireMasterDataRole();
   const id = await nextReadableId("HMKL");
-  const { error } = await supabaseServer().from("harga_maklon").insert({ id, kode_vendor: "", nama_vendor: "", tipe_lengan: "PDK", jenis_harga: "Standar", harga: 0 });
+  const { error } = await supabaseServer()
+    .from("harga_maklon")
+    .insert({
+      id,
+      kode_vendor: data.kodeVendor,
+      nama_vendor: data.namaVendor,
+      tipe_lengan: data.tipeLengan,
+      jenis_harga: data.jenisHarga,
+      kapasitas_min: data.kapasitasMin ?? null,
+      kapasitas_max: data.kapasitasMax ?? null,
+      harga: data.harga,
+    });
   if (error) throw new Error(error.message);
 }
 export async function updateHargaMaklonRowAction(id: string, patch: Partial<HargaMaklonRow>): Promise<void> {
@@ -4142,10 +4157,12 @@ export async function replaceHargaMaklonAction(rows: HargaMaklonRow[]): Promise<
   if (error) throw new Error(error.message);
 }
 
-export async function addHargaKainRowAction(): Promise<void> {
+export async function addHargaKainRowAction(data: Omit<HargaKainRow, "id">): Promise<void> {
   await requireMasterDataRole();
   const id = await nextReadableId("HKAIN");
-  const { error } = await supabaseServer().from("harga_kain").insert({ id, kode_supplier: "", nama_supplier: "", kategori: "", warna: "", harga_per_kg: 0 });
+  const { error } = await supabaseServer()
+    .from("harga_kain")
+    .insert({ id, kode_supplier: data.kodeSupplier, nama_supplier: data.namaSupplier, kategori: data.kategori, warna: data.warna, harga_per_kg: data.hargaPerKg });
   if (error) throw new Error(error.message);
 }
 export async function updateHargaKainRowAction(id: string, patch: Partial<HargaKainRow>): Promise<void> {
@@ -4176,10 +4193,12 @@ export async function replaceHargaKainAction(rows: HargaKainRow[]): Promise<void
 }
 
 // Master Data "Harga RIB" (per supplier + warna, migration 0037) -- pola sama seperti Harga Kain.
-export async function addHargaRibRowAction(): Promise<void> {
+export async function addHargaRibRowAction(data: Omit<HargaRibRow, "id">): Promise<void> {
   await requireMasterDataRole();
   const id = await nextReadableId("HRIB");
-  const { error } = await supabaseServer().from("harga_rib").insert({ id, kode_supplier: "", nama_supplier: "", warna: "", harga_per_kg: 0 });
+  const { error } = await supabaseServer()
+    .from("harga_rib")
+    .insert({ id, kode_supplier: data.kodeSupplier, nama_supplier: data.namaSupplier, warna: data.warna, harga_per_kg: data.hargaPerKg });
   if (error) throw new Error(error.message);
 }
 export async function updateHargaRibRowAction(id: string, patch: Partial<HargaRibRow>): Promise<void> {
@@ -4199,10 +4218,12 @@ export async function deleteHargaRibRowAction(id: string): Promise<void> {
 }
 
 // Master Data "Harga Kerah/Manset per Supplier" (migration 0038) -- satu baris per supplier.
-export async function addHargaKerahMansetRowAction(): Promise<void> {
+export async function addHargaKerahMansetRowAction(data: Omit<HargaKerahMansetRow, "id">): Promise<void> {
   await requireMasterDataRole();
   const id = await nextReadableId("HKM");
-  const { error } = await supabaseServer().from("harga_kerah_manset").insert({ id, kode_supplier: "", nama_supplier: "", harga_kerah_per_kg: 0, harga_manset_per_kg: 0 });
+  const { error } = await supabaseServer()
+    .from("harga_kerah_manset")
+    .insert({ id, kode_supplier: data.kodeSupplier, nama_supplier: data.namaSupplier, harga_kerah_per_kg: data.hargaKerahPerKg, harga_manset_per_kg: data.hargaMansetPerKg });
   if (error) throw new Error(error.message);
 }
 export async function updateHargaKerahMansetRowAction(id: string, patch: Partial<HargaKerahMansetRow>): Promise<void> {
@@ -4225,13 +4246,12 @@ export async function deleteHargaKerahMansetRowAction(id: string): Promise<void>
 // dipakai bersama (owner 2026-09-16). Cuma add/delete (tidak ada "update" -- kalau nama salah
 // ketik, hapus lalu tambah baris baru; baris harga_kain/harga_kain_pks lama TIDAK ikut berubah
 // otomatis karena kode_supplier/nama_supplier di situ tetap string bebas, bukan foreign key).
-export async function addMaterialSupplierAction(kode: string, nama: string): Promise<void> {
+export async function addMaterialSupplierAction(nama: string): Promise<void> {
   await requireMasterDataRole();
-  const trimmedKode = kode.trim();
   const trimmedNama = nama.trim();
-  if (!trimmedKode || !trimmedNama) throw new Error("Kode dan nama supplier wajib diisi.");
+  if (!trimmedNama) throw new Error("Nama supplier wajib diisi.");
   const id = await nextReadableId("MSUP");
-  const { error } = await supabaseServer().from("material_suppliers").insert({ id, kode: trimmedKode, nama: trimmedNama });
+  const { error } = await supabaseServer().from("material_suppliers").insert({ id, nama: trimmedNama });
   if (error) throw new Error(error.message);
 }
 export async function deleteMaterialSupplierAction(id: string): Promise<void> {
@@ -4240,10 +4260,21 @@ export async function deleteMaterialSupplierAction(id: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
-export async function addHargaKainPksRowAction(): Promise<void> {
+export async function addHargaKainPksRowAction(data: Omit<HargaKainPksRow, "id">): Promise<void> {
   await requireMasterDataRole();
   const id = await nextReadableId("HKPKS");
-  const { error } = await supabaseServer().from("harga_kain_pks").insert({ id, kode_supplier: "", kategori: "", warna: "", satuan: "TON", harga_per_kg: 0 });
+  const { error } = await supabaseServer()
+    .from("harga_kain_pks")
+    .insert({
+      id,
+      kode_supplier: data.kodeSupplier,
+      kategori: data.kategori,
+      warna: data.warna,
+      satuan: data.satuan,
+      tonase_min: data.tonaseMin ?? null,
+      tonase_max: data.tonaseMax ?? null,
+      harga_per_kg: data.hargaPerKg,
+    });
   if (error) throw new Error(error.message);
 }
 export async function updateHargaKainPksRowAction(id: string, patch: Partial<HargaKainPksRow>): Promise<void> {
@@ -4333,12 +4364,14 @@ export async function replaceSupplierAction(rows: SupplierRow[]): Promise<void> 
 
 // Master Data "Ekspedisi" (tarif ongkir flat per kg, DIPAKAI LIVE, lihat masterData.ts) -- tanpa
 // replaceXAction (tidak ada import Google Sheets untuk tabel ini, lihat spec).
-export async function addEkspedisiRateAction(): Promise<void> {
+// Revisi 2026-09-17: dulu insert placeholder (nama = id sendiri, lihat catatan lama) karena baris
+// dibuat KOSONG dulu baru diisi lewat "Edit" -- sekarang nama asli sudah wajib diisi di modal form
+// SEBELUM baris ini pernah dipanggil, jadi tidak ada lagi risiko 2 baris kosong bentrok constraint
+// unique(nama).
+export async function addEkspedisiRateAction(data: Omit<EkspedisiRateRow, "id">): Promise<void> {
   await requireMasterDataRole();
   const id = await nextReadableId("EKS");
-  // Placeholder nama = id itu sendiri (bukan "") -- constraint unique(nama) di DB akan menolak 2
-  // baris kosong sekaligus kalau user klik "+ Tambah baris" berulang sebelum mengisi nama asli.
-  const { error } = await supabaseServer().from("ekspedisi_rates").insert({ id, nama: id, price_per_kg: 0 });
+  const { error } = await supabaseServer().from("ekspedisi_rates").insert({ id, nama: data.nama, price_per_kg: data.pricePerKg });
   if (error) throw new Error(error.message);
 }
 export async function updateEkspedisiRateAction(id: string, patch: Partial<EkspedisiRateRow>): Promise<void> {

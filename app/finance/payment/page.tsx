@@ -27,7 +27,7 @@ function FinancePaymentContent() {
     <AppShell role="finance" activeHref="/finance/payment" breadcrumb={["Dashboard", "Payment"]} title="Payment">
       <Tabs
         items={[
-          { key: "material", label: "Payment", badge: materialBadge },
+          { key: "material", label: "Payment Material", badge: materialBadge },
           { key: "maklon", label: "Payment Maklon", badge: maklonBadge },
         ]}
         active={tab}

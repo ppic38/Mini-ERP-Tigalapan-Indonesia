@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Checkbox } from "@/components/ui/checkbox";
 import { NumberInput } from "@/components/mrp/number-input";
@@ -107,16 +107,34 @@ export function PaymentPanel() {
   // B2: increment ini setelah "Bayar" sukses untuk memaksa DataTable menutup baris yang sedang
   // ter-expand (lihat collapseSignal di data-table.tsx) -- TIDAK mereset filter/kolom tabel.
   const [collapseSignal, setCollapseSignal] = useState(0);
-  // Item revisi 2026-09-17 (owner: "Finance Payment (Material & Maklon) hierarkis per No. MRP ->
-  // daftar supplier"): navigasi 2 tingkat sebelum daftar invoice & kotak "Bayar" ditampilkan.
-  const [paymentMrpId, setPaymentMrpId] = useState<string | null>(null);
-  const [paymentSupplier, setPaymentSupplier] = useState<string | null>(null);
+  // Revisi 2026-09-17 (owner: "ikuti konsep PO Approval -- filter MRP untuk yang akan dipayment,
+  // begitu dibayar turun ke tabel di bawah yang di-grouping per MRP"): dipecah jadi 2 bagian
+  // seperti po-material-panel.tsx -- bagian ATAS (dropdown "No MRP (siap dibayar)" + DataTable
+  // invoice berstatus INVOICED, checkbox + kotak Bayar) SAMA PERSIS pola "No MRP (menunggu
+  // approval)" di PO Approval; bagian BAWAH tabel pohon riwayat (MRP -> Supplier -> invoice) untuk
+  // invoice yang SUDAH lewat status INVOICED (PAID/DELIVERY/RECEIVING/dst) -- state navigasinya
+  // sengaja dipisah dari selector atas supaya keduanya independen (sama seperti selectedMrpId vs
+  // expandedMrpApproved di po-material-panel.tsx).
+  const [selectedMrpId, setSelectedMrpId] = useState<string>("");
+  const [expandedMrpHistory, setExpandedMrpHistory] = useState<string | null>(null);
+  const [expandedSupplierHistory, setExpandedSupplierHistory] = useState<string | null>(null);
 
   if (!mounted) return null;
 
-  const paymentHierarchy = (() => {
+  const readyInvoices = invoices.filter((i) => i.status === "INVOICED");
+  const readyMrpIds = Array.from(new Set(readyInvoices.map((i) => i.mrpId))).sort((a, b) => b.localeCompare(a, "id-ID"));
+  // Dihitung langsung saat render (bukan lewat useEffect, sama pola dengan po-maklon-panel.tsx) --
+  // begitu MRP terpilih sudah tidak ada lagi invoice siap-bayarnya (semua sudah dibayar), otomatis
+  // "jatuh" ke MRP siap-bayar pertama berikutnya.
+  const effectiveMrpId = selectedMrpId && readyMrpIds.includes(selectedMrpId) ? selectedMrpId : readyMrpIds[0] ?? "";
+  const scopedReadyInvoices = readyInvoices.filter((i) => i.mrpId === effectiveMrpId);
+
+  // Riwayat (bagian bawah) -- SEMUA invoice yang statusnya sudah lewat INVOICED (siap-bayar sudah
+  // ditangani di bagian atas), dikelompokkan MRP -> Supplier untuk tabel pohon status/histori.
+  const historyInvoices = invoices.filter((i) => i.status !== "INVOICED");
+  const historyHierarchy = (() => {
     const byMrp = new Map<string, Map<string, RawMaterialInvoice[]>>();
-    for (const i of invoices) {
+    for (const i of historyInvoices) {
       if (!byMrp.has(i.mrpId)) byMrp.set(i.mrpId, new Map());
       const supplierMap = byMrp.get(i.mrpId)!;
       const key = i.supplier || "— Belum ada supplier —";
@@ -125,33 +143,22 @@ export function PaymentPanel() {
     }
     return byMrp;
   })();
+  const historyMrpSummaries = Array.from(historyHierarchy.entries())
+    .map(([mrpId, supplierMap]) => ({
+      mrpId,
+      supplierCount: supplierMap.size,
+      invoiceCount: Array.from(supplierMap.values()).reduce((s, l) => s + l.length, 0),
+      total: Array.from(supplierMap.values()).reduce((s, l) => s + l.reduce((s2, i) => s2 + i.totalBiaya, 0), 0),
+    }))
+    .sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID"));
 
-  const paymentMrpSummaries = Array.from(paymentHierarchy.entries())
-    .map(([mrpId, supplierMap]) => {
-      let readyToPay = 0;
-      let total = 0;
-      for (const list of supplierMap.values()) {
-        readyToPay += list.filter((i) => i.status === "INVOICED").length;
-        total += list.reduce((s, i) => s + i.totalBiaya, 0);
-      }
-      return { mrpId, supplierCount: supplierMap.size, invoiceCount: Array.from(supplierMap.values()).reduce((s, l) => s + l.length, 0), readyToPay, total };
-    })
-    .sort((a, b) => b.readyToPay - a.readyToPay || a.mrpId.localeCompare(b.mrpId, "id-ID"));
+  function historySupplierSummariesForMrp(mrpId: string) {
+    return Array.from(historyHierarchy.get(mrpId)?.entries() ?? [])
+      .map(([supplier, list]) => ({ supplier, list, invoiceCount: list.length, total: list.reduce((s, i) => s + i.totalBiaya, 0) }))
+      .sort((a, b) => a.supplier.localeCompare(b.supplier, "id-ID"));
+  }
 
-  const paymentSupplierSummaries = paymentMrpId
-    ? Array.from(paymentHierarchy.get(paymentMrpId)?.entries() ?? [])
-        .map(([supplier, list]) => ({
-          supplier,
-          invoiceCount: list.length,
-          readyToPay: list.filter((i) => i.status === "INVOICED").length,
-          total: list.reduce((s, i) => s + i.totalBiaya, 0),
-        }))
-        .sort((a, b) => b.readyToPay - a.readyToPay || a.supplier.localeCompare(b.supplier, "id-ID"))
-    : [];
-
-  const scopedInvoices = paymentMrpId && paymentSupplier ? paymentHierarchy.get(paymentMrpId)?.get(paymentSupplier) ?? [] : [];
-
-  const selectedList = scopedInvoices.filter((i) => selected.has(i.id));
+  const selectedList = invoices.filter((i) => selected.has(i.id));
   const selectableToPay = selectedList.filter((i) => i.status === "INVOICED");
   const selectableToUnpay = selectedList.filter((i) => i.status === "PAID");
   // Saldo deposit cuma relevan kalau SEMUA invoice yang mau dibayar berasal dari supplier yang
@@ -425,99 +432,216 @@ export function PaymentPanel() {
     },
   ];
 
+  // Item revisi 2026-09-06: klik baris untuk lihat detail material (rincian per warna + add buy)
+  // DAN detail maklon (biaya PO Produksi terkait) sekaligus -- diekstrak jadi fungsi biasa (dulu
+  // inline di dalam satu-satunya DataTable) supaya bisa dipakai ULANG di dua DataTable terpisah
+  // (siap-bayar di atas & riwayat di bawah, lihat revisi 2026-09-17) tanpa duplikasi ~150 baris.
+  function renderInvoiceDetail(i: RawMaterialInvoice) {
+    const relatedMaklon = maklonPOs.find((p) => p.mrpId === i.mrpId && p.vendorProduksi === i.destinationVendor);
+    const materialSubtotal = i.colorEntries.reduce((a, c) => a + c.hargaPerRoll * c.rolls.reduce((s, w) => s + w, 0), 0);
+    const addBuyTotal = i.addBuys.reduce((a, b) => a + b.totalHarga, 0);
+    const claimCreditForRow = i.sourceClaimId ? vendorDepositCreditForClaim(i.sourceClaimId, vendorDeposits) : 0;
+    const claimSelisihForRow = i.totalBiaya - claimCreditForRow;
+    const outstandingForRow = outstandingAmountForInvoice(i, vendorDeposits);
+    const creditAlreadyAppliedForRow = i.totalBiaya - outstandingForRow;
+    return (
+      <div className="flex flex-col gap-3">
+        {i.sourceClaimId && (
+          <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
+            <div className="bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Detail Klaim (PV Pengganti)</div>
+            <div className="grid grid-cols-2 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+              <span>PO Reference (lama)</span>
+              <span className="text-right font-mono">{claimKeySourceInvoiceId(i.sourceClaimId)}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+              <span>PO Terbaru (PV pengganti ini)</span>
+              <span className="text-right font-mono">{i.id}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+              <span>Pembayaran sebelumnya (nilai PV lama)</span>
+              <span className="text-right font-mono">{formatRupiah(claimCreditForRow)}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+              <span>Nilai PV pengganti ini</span>
+              <span className="text-right font-mono">{formatRupiah(i.totalBiaya)}</span>
+            </div>
+            <div className={"grid grid-cols-2 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] font-semibold " + (claimSelisihForRow < 0 ? "bg-success-bg text-success-fg" : "bg-warning-bg text-warning-fg")}>
+              <span>Selisih{claimSelisihForRow < 0 ? " (jadi saldo deposit)" : " (kekurangan dibayar)"}</span>
+              <span className="text-right font-mono">
+                {claimSelisihForRow >= 0 ? "+" : "−"}
+                {formatRupiah(Math.abs(claimSelisihForRow))}
+              </span>
+            </div>
+          </div>
+        )}
+        <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
+          <div className="bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Detail Material — {i.id}</div>
+          {/* BUG FIX 2026-09-07: kolom "Harga/roll" dulu salah label -- field-nya (ColorEntry.
+              hargaPerRoll) ITU HARGA PER KG (lihat label input aslinya "Harga / kg" di
+              paying-voucher-wizard.tsx), dan Subtotal SUDAH DIHITUNG benar (harga x TOTAL KG
+              semua roll warna itu, bukan x jumlah roll) -- cuma labelnya menyesatkan seolah
+              dikali jumlah roll. Sekarang jumlah roll & total berat (kg) ditampilkan sebagai
+              2 kolom terpisah supaya kelihatan jelas subtotal = Total Berat x Harga/Kg. */}
+          <div className="grid grid-cols-5 gap-x-2 border-t border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+            <span>Warna / lengan</span>
+            <span className="text-right">Roll</span>
+            <span className="text-right">Total Berat (kg)</span>
+            <span className="text-right">Harga/Kg</span>
+            <span className="text-right">Subtotal</span>
+          </div>
+          {i.colorEntries.map((c, idx) => {
+            const totalKg = c.rolls.reduce((s, w) => s + w, 0);
+            return (
+              <div key={idx} className="grid grid-cols-5 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+                <span className="font-medium">
+                  {c.warna} · {c.lengan}
+                </span>
+                <span className="text-right font-mono">{c.rolls.length}</span>
+                <span className="text-right font-mono">{formatDecimal(totalKg)}</span>
+                <span className="text-right font-mono">{formatRupiah(c.hargaPerRoll)}</span>
+                <span className="text-right font-mono">{formatRupiah(c.hargaPerRoll * totalKg)}</span>
+              </div>
+            );
+          })}
+          {i.addBuys.length > 0 && (
+            <>
+              <div className="grid grid-cols-5 gap-x-2 border-t border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                <span>Add buy</span>
+                <span />
+                <span className="text-right">Berat (kg)</span>
+                <span className="text-right">Harga/Kg</span>
+                <span className="text-right">Subtotal</span>
+              </div>
+              {i.addBuys.map((b) => (
+                <div key={b.id} className="grid grid-cols-5 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+                  <span className="font-medium">
+                    {b.item} · {b.warna}
+                  </span>
+                  <span />
+                  <span className="text-right font-mono">{formatDecimal(b.beratKg)}</span>
+                  <span className="text-right font-mono">{b.hargaPerKg != null ? formatRupiah(b.hargaPerKg) : "—"}</span>
+                  <span className="text-right font-mono">{formatRupiah(b.totalHarga)}</span>
+                </div>
+              ))}
+            </>
+          )}
+          <div className="grid grid-cols-5 gap-x-2 border-t-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[11.5px] font-semibold text-info-fg">
+            <span>Material + add buy</span>
+            <span />
+            <span />
+            <span />
+            <span className="text-right font-mono">{formatRupiah(materialSubtotal + addBuyTotal)}</span>
+          </div>
+          {i.diskon > 0 && (
+            <div className="grid grid-cols-5 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-danger-fg">
+              <span>Diskon</span>
+              <span />
+              <span />
+              <span />
+              <span className="text-right font-mono">-{formatRupiah(i.diskon)}</span>
+            </div>
+          )}
+          <div className="grid grid-cols-5 gap-x-2 border-t-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[12px] font-bold text-info-fg">
+            <span>Nilai PV ini</span>
+            <span />
+            <span />
+            <span />
+            <span className="text-right font-mono">{formatRupiah(i.totalBiaya)}</span>
+          </div>
+          {/* Revisi 2026-09-07: "Total yang harus dibayar" dulu SELALU sama dengan nilai PV
+              mentah (i.totalBiaya) -- salah untuk PV pengganti klaim yang kreditnya sudah
+              diterapkan (auto atau manual), karena tagihan RIIL yang perlu dibayar sudah
+              dikurangi kredit itu (lihat outstandingAmountForInvoice). Baris "Nilai PV ini" di
+              atas tetap tampilkan nilai ASLI (untuk histori/HPP), baris ini baru tunjukkan
+              sisa tagihan RIIL yang dipakai kotak "Bayar" -- cuma beda kalau ada kredit yang
+              sudah diterapkan, kalau tidak ada dua baris ini akan sama persis. */}
+          {creditAlreadyAppliedForRow > 0.5 && (
+            <div className="grid grid-cols-5 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-success-fg">
+              <span>Sudah ditutup kredit retur PV lama</span>
+              <span />
+              <span />
+              <span />
+              <span className="text-right font-mono">−{formatRupiah(creditAlreadyAppliedForRow)}</span>
+            </div>
+          )}
+          <div className="grid grid-cols-5 gap-x-2 border-t-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[12px] font-bold text-info-fg">
+            <span>Total yang harus dibayar (invoice ini)</span>
+            <span />
+            <span />
+            <span />
+            <span className="text-right font-mono">{formatRupiah(outstandingForRow)}</span>
+          </div>
+        </div>
+        <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
+          <div className="bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+            Detail Maklon (PO Produksi terkait)
+          </div>
+          {relatedMaklon ? (
+            <div className="grid grid-cols-3 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+              <span className="font-mono font-medium">{relatedMaklon.id}</span>
+              <span>{VENDOR_PRODUKSI[relatedMaklon.vendorProduksi]?.name ?? relatedMaklon.vendorProduksi}</span>
+              <span className="text-right font-mono">Biaya maklon: {formatRupiah(relatedMaklon.amount)}</span>
+            </div>
+          ) : (
+            <div className="border-t border-[#F1F4F7] px-3 py-2 font-sans text-[11.5px] text-text-muted">Belum ada PO Produksi terkait untuk MRP/vendor ini.</div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       {/* Item 5 (feedback batch 2026-09-10, owner: "Hilangkan saja yang teks guide itu"): banner
          panduan panjang dihapus -- alur Bayar/Bukti Pembayaran sudah cukup jelas dari label kolom
          & tombol aksi sendiri. */}
 
-      <div className="flex items-center gap-1.5 font-sans text-[11.5px]">
-        <button
-          type="button"
-          onClick={() => {
-            setPaymentMrpId(null);
-            setPaymentSupplier(null);
-            setSelected(new Set());
-          }}
-          className={paymentMrpId ? "font-semibold text-action-primary underline" : "font-semibold text-text-primary"}
-        >
-          Semua No. MRP
-        </button>
-        {paymentMrpId && (
-          <>
-            <span className="text-text-muted">/</span>
-            <button
-              type="button"
-              onClick={() => {
-                setPaymentSupplier(null);
-                setSelected(new Set());
-              }}
-              className={paymentSupplier ? "font-semibold text-action-primary underline" : "font-semibold text-text-primary"}
-            >
-              {paymentMrpId}
-            </button>
-          </>
-        )}
-        {paymentSupplier && (
-          <>
-            <span className="text-text-muted">/</span>
-            <span className="font-semibold text-text-primary">{paymentSupplier}</span>
-          </>
-        )}
+      <div className="flex items-center gap-3 rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
+        <div>
+          <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">No MRP (siap dibayar)</div>
+          <select
+            value={effectiveMrpId}
+            onChange={(e) => {
+              setSelectedMrpId(e.target.value);
+              setSelected(new Set());
+            }}
+            className="mt-1 rounded-md border border-[#DDE4EB] px-[11px] py-[9px] font-sans text-[12.5px] font-medium text-text-primary"
+          >
+            <option value="">— pilih MRP —</option>
+            {readyMrpIds.map((id) => (
+              <option key={id} value={id}>
+                {id} · {readyInvoices.filter((i) => i.mrpId === id).length} invoice siap bayar
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
-      {!paymentMrpId && (
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-          {paymentMrpSummaries.map((m) => (
-            <button
-              key={m.mrpId}
-              type="button"
-              onClick={() => setPaymentMrpId(m.mrpId)}
-              className="flex flex-col gap-1.5 rounded-lg border border-border-subtle bg-surface-card px-4 py-3 text-left transition-colors hover:border-[#C7D0DB]"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-mono text-[12.5px] font-semibold text-text-primary">{m.mrpId}</span>
-                {m.readyToPay > 0 && <StatusPill tone="warning">{m.readyToPay} siap bayar</StatusPill>}
-              </div>
-              <div className="flex items-center justify-between font-sans text-[11.5px] text-text-muted">
-                <span>{m.supplierCount} supplier</span>
-                <span>{m.invoiceCount} invoice</span>
-              </div>
-              <div className="font-mono text-[12.5px] font-medium text-text-primary">{formatRupiah(m.total)}</div>
-            </button>
-          ))}
-          {paymentMrpSummaries.length === 0 && (
-            <div className="col-span-full rounded-lg border border-dashed border-border-subtle bg-surface-card px-4 py-6 text-center font-sans text-[12px] text-text-muted">
-              Belum ada invoice.
-            </div>
-          )}
+      {!effectiveMrpId && (
+        <div className="rounded-lg border border-border-subtle bg-surface-card px-5 py-8 text-center font-sans text-xs text-text-muted">
+          Tidak ada invoice yang siap dibayar saat ini.
         </div>
       )}
 
-      {paymentMrpId && !paymentSupplier && (
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-          {paymentSupplierSummaries.map((s) => (
-            <button
-              key={s.supplier}
-              type="button"
-              onClick={() => setPaymentSupplier(s.supplier)}
-              className="flex flex-col gap-1.5 rounded-lg border border-border-subtle bg-surface-card px-4 py-3 text-left transition-colors hover:border-[#C7D0DB]"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-sans text-[13px] font-semibold text-text-primary">{s.supplier}</span>
-                {s.readyToPay > 0 && <StatusPill tone="warning">{s.readyToPay} siap bayar</StatusPill>}
-              </div>
-              <div className="flex items-center justify-between font-sans text-[11.5px] text-text-muted">
-                <span>{s.invoiceCount} invoice</span>
-                <span className="font-mono">{formatRupiah(s.total)}</span>
-              </div>
-            </button>
-          ))}
-        </div>
+      {effectiveMrpId && (
+        <DataTable
+          title={`Invoice siap dibayar — ${effectiveMrpId}`}
+          columns={columns}
+          rows={scopedReadyInvoices}
+          keyOf={(i) => i.id}
+          firstColumnLabel=""
+          firstColumnRender={(i) => <Checkbox checked={selected.has(i.id)} onChange={() => toggle(i.id)} />}
+          filterDefs={[
+            { label: "No PO", options: Array.from(new Set(scopedReadyInvoices.map((i) => i.poId))), test: (i, v) => i.poId === v },
+            { label: "Supplier", options: Array.from(new Set(scopedReadyInvoices.map((i) => i.supplier))), test: (i, v) => i.supplier === v },
+            { label: "Entitas", options: Array.from(new Set(scopedReadyInvoices.map((i) => i.entity))), test: (i, v) => i.entity === v },
+          ]}
+          emptyText="Tidak ada invoice siap dibayar untuk MRP ini."
+          collapseSignal={collapseSignal}
+          renderExpanded={renderInvoiceDetail}
+        />
       )}
 
-      {paymentMrpId && paymentSupplier && (
-      <>
       {selected.size > 0 && (
         <div className="rounded-lg border border-[#CFE0EF] bg-info-bg p-4">
           <div className="flex items-center justify-between">
@@ -662,181 +786,102 @@ export function PaymentPanel() {
         </div>
       )}
 
-      <DataTable
-        title={`Invoice material — ${paymentSupplier}`}
-        columns={columns}
-        rows={scopedInvoices}
-        keyOf={(i) => i.id}
-        firstColumnLabel=""
-        firstColumnRender={(i) => (
-          <Checkbox checked={selected.has(i.id)} onChange={() => toggle(i.id)} disabled={i.status !== "INVOICED" && i.status !== "PAID"} />
+      {/* Revisi 2026-09-17 (owner: "jika sudah dipayment maka turun ke tabel di bawah, mencakup
+         konsep grouping MRP"): begitu invoice keluar dari status INVOICED (dibayar), otomatis
+         hilang dari daftar "siap dibayar" di atas & muncul di sini -- tabel pohon MRP -> Supplier,
+         MENCAKUP SEMUA MRP (bukan cuma yang lagi dipilih di dropdown atas), murni status/histori. */}
+      <div className="overflow-hidden border border-border-subtle bg-surface-card">
+        <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Riwayat Pembayaran</div>
+        {historyMrpSummaries.length === 0 && (
+          <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada invoice yang sudah dibayar.</div>
         )}
-        filterDefs={[
-          { label: "No PO", options: Array.from(new Set(scopedInvoices.map((i) => i.poId))), test: (i, v) => i.poId === v },
-          { label: "Entitas", options: Array.from(new Set(scopedInvoices.map((i) => i.entity))), test: (i, v) => i.entity === v },
-          { label: "Status", options: Array.from(new Set(scopedInvoices.map((i) => i.status))), test: (i, v) => i.status === v },
-        ]}
-        emptyText="Belum ada invoice untuk supplier ini."
-        collapseSignal={collapseSignal}
-        // Item revisi 2026-09-06: klik baris untuk lihat detail material (rincian per warna + add
-        // buy) DAN detail maklon (biaya PO Produksi terkait) sekaligus, supaya Finance bisa lihat
-        // apa yang sebenarnya harus dibayar tanpa pindah halaman.
-        renderExpanded={(i) => {
-          const relatedMaklon = maklonPOs.find((p) => p.mrpId === i.mrpId && p.vendorProduksi === i.destinationVendor);
-          const materialSubtotal = i.colorEntries.reduce((a, c) => a + c.hargaPerRoll * c.rolls.reduce((s, w) => s + w, 0), 0);
-          const addBuyTotal = i.addBuys.reduce((a, b) => a + b.totalHarga, 0);
-          const claimCreditForRow = i.sourceClaimId ? vendorDepositCreditForClaim(i.sourceClaimId, vendorDeposits) : 0;
-          const claimSelisihForRow = i.totalBiaya - claimCreditForRow;
-          const outstandingForRow = outstandingAmountForInvoice(i, vendorDeposits);
-          const creditAlreadyAppliedForRow = i.totalBiaya - outstandingForRow;
-          return (
-            <div className="flex flex-col gap-3">
-              {i.sourceClaimId && (
-                <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
-                  <div className="bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Detail Klaim (PV Pengganti)</div>
-                  <div className="grid grid-cols-2 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-                    <span>PO Reference (lama)</span>
-                    <span className="text-right font-mono">{claimKeySourceInvoiceId(i.sourceClaimId)}</span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-                    <span>PO Terbaru (PV pengganti ini)</span>
-                    <span className="text-right font-mono">{i.id}</span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-                    <span>Pembayaran sebelumnya (nilai PV lama)</span>
-                    <span className="text-right font-mono">{formatRupiah(claimCreditForRow)}</span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-                    <span>Nilai PV pengganti ini</span>
-                    <span className="text-right font-mono">{formatRupiah(i.totalBiaya)}</span>
-                  </div>
-                  <div className={"grid grid-cols-2 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] font-semibold " + (claimSelisihForRow < 0 ? "bg-success-bg text-success-fg" : "bg-warning-bg text-warning-fg")}>
-                    <span>Selisih{claimSelisihForRow < 0 ? " (jadi saldo deposit)" : " (kekurangan dibayar)"}</span>
-                    <span className="text-right font-mono">
-                      {claimSelisihForRow >= 0 ? "+" : "−"}
-                      {formatRupiah(Math.abs(claimSelisihForRow))}
-                    </span>
-                  </div>
-                </div>
-              )}
-              <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
-                <div className="bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Detail Material — {i.id}</div>
-                {/* BUG FIX 2026-09-07: kolom "Harga/roll" dulu salah label -- field-nya (ColorEntry.
-                    hargaPerRoll) ITU HARGA PER KG (lihat label input aslinya "Harga / kg" di
-                    paying-voucher-wizard.tsx), dan Subtotal SUDAH DIHITUNG benar (harga x TOTAL KG
-                    semua roll warna itu, bukan x jumlah roll) -- cuma labelnya menyesatkan seolah
-                    dikali jumlah roll. Sekarang jumlah roll & total berat (kg) ditampilkan sebagai
-                    2 kolom terpisah supaya kelihatan jelas subtotal = Total Berat x Harga/Kg. */}
-                <div className="grid grid-cols-5 gap-x-2 border-t border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                  <span>Warna / lengan</span>
-                  <span className="text-right">Roll</span>
-                  <span className="text-right">Total Berat (kg)</span>
-                  <span className="text-right">Harga/Kg</span>
-                  <span className="text-right">Subtotal</span>
-                </div>
-                {i.colorEntries.map((c, idx) => {
-                  const totalKg = c.rolls.reduce((s, w) => s + w, 0);
+        {historyMrpSummaries.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
+                  <th className="px-5 py-[9px] text-left">No MRP / Supplier</th>
+                  <th className="px-3 py-[9px] text-right">Invoice</th>
+                  <th className="px-3 py-[9px] text-right">Nilai</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historyMrpSummaries.map((m) => {
+                  const mrpActive = expandedMrpHistory === m.mrpId;
                   return (
-                    <div key={idx} className="grid grid-cols-5 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-                      <span className="font-medium">
-                        {c.warna} · {c.lengan}
-                      </span>
-                      <span className="text-right font-mono">{c.rolls.length}</span>
-                      <span className="text-right font-mono">{formatDecimal(totalKg)}</span>
-                      <span className="text-right font-mono">{formatRupiah(c.hargaPerRoll)}</span>
-                      <span className="text-right font-mono">{formatRupiah(c.hargaPerRoll * totalKg)}</span>
-                    </div>
+                    <Fragment key={m.mrpId}>
+                      <tr
+                        onClick={() => {
+                          const next = mrpActive ? null : m.mrpId;
+                          setExpandedMrpHistory(next);
+                          setExpandedSupplierHistory(null);
+                        }}
+                        className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] hover:bg-[#FAFBFC] " + (mrpActive ? "bg-info-bg" : "")}
+                      >
+                        <td className="px-5 py-[11px]">
+                          <span className="mr-1.5 text-text-muted">{mrpActive ? "▾" : "▸"}</span>
+                          <span className="font-mono font-semibold text-text-primary">{m.mrpId}</span>
+                          <span className="ml-1.5 font-sans text-[10.5px] text-text-muted">{m.supplierCount} supplier</span>
+                        </td>
+                        <td className="px-3 py-[11px] text-right font-mono tabular-nums">{m.invoiceCount}</td>
+                        <td className="px-3 py-[11px] text-right font-mono tabular-nums font-medium">{formatRupiah(m.total)}</td>
+                      </tr>
+                      {mrpActive &&
+                        historySupplierSummariesForMrp(m.mrpId).map((s) => {
+                          const supplierKey = `${m.mrpId}::${s.supplier}`;
+                          const supplierActive = expandedSupplierHistory === supplierKey;
+                          return (
+                            <Fragment key={supplierKey}>
+                              <tr
+                                onClick={() => setExpandedSupplierHistory(supplierActive ? null : supplierKey)}
+                                className={"cursor-pointer border-b border-[#F1F4F7] bg-[#FBFCFD] font-sans text-[11.5px] text-[#31414F] hover:bg-[#F2F5F8] " + (supplierActive ? "bg-info-bg" : "")}
+                              >
+                                <td className="py-[10px] pl-10 pr-3">
+                                  <span className="mr-1.5 text-text-muted">{supplierActive ? "▾" : "▸"}</span>
+                                  <span className="font-medium text-text-primary">{s.supplier}</span>
+                                </td>
+                                <td className="px-3 py-[10px] text-right font-mono tabular-nums">{s.invoiceCount}</td>
+                                <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(s.total)}</td>
+                              </tr>
+                              {supplierActive && (
+                                <tr>
+                                  <td colSpan={3} className="border-b border-[#F1F4F7] bg-white px-4 py-4 pl-10">
+                                    <DataTable
+                                      title={`Invoice material — ${s.supplier}`}
+                                      columns={columns}
+                                      rows={s.list}
+                                      keyOf={(i) => i.id}
+                                      firstColumnLabel=""
+                                      // Revisi 2026-09-17 (owner: "hilangkan checkbox kalau memang sudah tidak
+                                      // bisa ada action apa-apa lagi (sudah dibayar & diterima vendor
+                                      // produksi)") -- checkbox HANYA untuk status PAID (masih bisa
+                                      // "Batalkan Bayar"); DELIVERY/RECEIVING/dst sudah tidak ada aksi apa
+                                      // pun di halaman ini, jadi tidak ditampilkan sama sekali (bukan
+                                      // sekadar di-disable).
+                                      firstColumnRender={(i) => (i.status === "PAID" ? <Checkbox checked={selected.has(i.id)} onChange={() => toggle(i.id)} /> : null)}
+                                      filterDefs={[
+                                        { label: "No PO", options: Array.from(new Set(s.list.map((i) => i.poId))), test: (i, v) => i.poId === v },
+                                        { label: "Entitas", options: Array.from(new Set(s.list.map((i) => i.entity))), test: (i, v) => i.entity === v },
+                                        { label: "Status", options: Array.from(new Set(s.list.map((i) => i.status))), test: (i, v) => i.status === v },
+                                      ]}
+                                      emptyText="Belum ada invoice untuk supplier ini."
+                                      collapseSignal={collapseSignal}
+                                      renderExpanded={renderInvoiceDetail}
+                                    />
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
+                          );
+                        })}
+                    </Fragment>
                   );
                 })}
-                {i.addBuys.length > 0 && (
-                  <>
-                    <div className="grid grid-cols-5 gap-x-2 border-t border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                      <span>Add buy</span>
-                      <span />
-                      <span className="text-right">Berat (kg)</span>
-                      <span className="text-right">Harga/Kg</span>
-                      <span className="text-right">Subtotal</span>
-                    </div>
-                    {i.addBuys.map((b) => (
-                      <div key={b.id} className="grid grid-cols-5 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-                        <span className="font-medium">
-                          {b.item} · {b.warna}
-                        </span>
-                        <span />
-                        <span className="text-right font-mono">{formatDecimal(b.beratKg)}</span>
-                        <span className="text-right font-mono">{b.hargaPerKg != null ? formatRupiah(b.hargaPerKg) : "—"}</span>
-                        <span className="text-right font-mono">{formatRupiah(b.totalHarga)}</span>
-                      </div>
-                    ))}
-                  </>
-                )}
-                <div className="grid grid-cols-5 gap-x-2 border-t-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[11.5px] font-semibold text-info-fg">
-                  <span>Material + add buy</span>
-                  <span />
-                  <span />
-                  <span />
-                  <span className="text-right font-mono">{formatRupiah(materialSubtotal + addBuyTotal)}</span>
-                </div>
-                {i.diskon > 0 && (
-                  <div className="grid grid-cols-5 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-danger-fg">
-                    <span>Diskon</span>
-                    <span />
-                    <span />
-                    <span />
-                    <span className="text-right font-mono">-{formatRupiah(i.diskon)}</span>
-                  </div>
-                )}
-                <div className="grid grid-cols-5 gap-x-2 border-t-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[12px] font-bold text-info-fg">
-                  <span>Nilai PV ini</span>
-                  <span />
-                  <span />
-                  <span />
-                  <span className="text-right font-mono">{formatRupiah(i.totalBiaya)}</span>
-                </div>
-                {/* Revisi 2026-09-07: "Total yang harus dibayar" dulu SELALU sama dengan nilai PV
-                   mentah (i.totalBiaya) -- salah untuk PV pengganti klaim yang kreditnya sudah
-                   diterapkan (auto atau manual), karena tagihan RIIL yang perlu dibayar sudah
-                   dikurangi kredit itu (lihat outstandingAmountForInvoice). Baris "Nilai PV ini" di
-                   atas tetap tampilkan nilai ASLI (untuk histori/HPP), baris ini baru tunjukkan
-                   sisa tagihan RIIL yang dipakai kotak "Bayar" -- cuma beda kalau ada kredit yang
-                   sudah diterapkan, kalau tidak ada dua baris ini akan sama persis. */}
-                {creditAlreadyAppliedForRow > 0.5 && (
-                  <div className="grid grid-cols-5 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-success-fg">
-                    <span>Sudah ditutup kredit retur PV lama</span>
-                    <span />
-                    <span />
-                    <span />
-                    <span className="text-right font-mono">−{formatRupiah(creditAlreadyAppliedForRow)}</span>
-                  </div>
-                )}
-                <div className="grid grid-cols-5 gap-x-2 border-t-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[12px] font-bold text-info-fg">
-                  <span>Total yang harus dibayar (invoice ini)</span>
-                  <span />
-                  <span />
-                  <span />
-                  <span className="text-right font-mono">{formatRupiah(outstandingForRow)}</span>
-                </div>
-              </div>
-              <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
-                <div className="bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                  Detail Maklon (PO Produksi terkait)
-                </div>
-                {relatedMaklon ? (
-                  <div className="grid grid-cols-3 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-                    <span className="font-mono font-medium">{relatedMaklon.id}</span>
-                    <span>{VENDOR_PRODUKSI[relatedMaklon.vendorProduksi]?.name ?? relatedMaklon.vendorProduksi}</span>
-                    <span className="text-right font-mono">Biaya maklon: {formatRupiah(relatedMaklon.amount)}</span>
-                  </div>
-                ) : (
-                  <div className="border-t border-[#F1F4F7] px-3 py-2 font-sans text-[11.5px] text-text-muted">Belum ada PO Produksi terkait untuk MRP/vendor ini.</div>
-                )}
-              </div>
-            </div>
-          );
-        }}
-      />
-      </>
-      )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </>
   );
 }
