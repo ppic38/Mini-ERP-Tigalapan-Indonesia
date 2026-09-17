@@ -79,7 +79,11 @@ export function ClaimReplacementBundleModal({
 
   const allRatesFilled = groupOrder.every((g) => rates[g] > 0);
   const allBeratFilled = claims.every((c) => (berat[c.key] ?? 0) > 0);
-  const canSubmit = allRatesFilled && allBeratFilled && !submitting;
+  // Item revisi 2026-09-17 (owner: "action create invoice tidak bisa dilakukan kalau tidak upload
+  // lampiran invoice") -- Bukti Invoice dulu opsional (tidak ikut canSubmit), sekarang wajib, sama
+  // pola dengan claim-replacement-modal.tsx (server juga menegakkan ulang, lihat
+  // createClaimReplacementInvoiceBundleAction).
+  const canSubmit = allRatesFilled && allBeratFilled && !!buktiDataUrl && !submitting;
 
   let totalKredit = 0;
   let totalNilaiBaru = 0;
@@ -174,7 +178,9 @@ export function ClaimReplacementBundleModal({
             );
           })}
 
-          <label className="mt-3 block font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Bukti Invoice (PDF) — 1 untuk seluruh PV gabungan</label>
+          <label className="mt-3 block font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+            Bukti Invoice (PDF) — 1 untuk seluruh PV gabungan <span className="text-danger-fg">*wajib</span>
+          </label>
           <input
             type="file"
             accept="application/pdf"

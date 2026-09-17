@@ -574,6 +574,12 @@ export async function bookInvoiceAction(
   input: { colorEntries: ColorEntry[]; addBuys: AddBuyItem[]; diskon: number; kodeTransaksi: string; noInvoiceVendor: string; buktiPvDataUrl?: string; buktiPvFileName?: string }
 ): Promise<void> {
   await requireInternalRole(await requireSession(), "procurement");
+  // Item revisi 2026-09-17 (owner: "action create invoice/payment invoice tidak bisa dilakukan
+  // kalau tidak upload lampiran invoice/bukti pembayaran"): dulu CUMA dicek client-side
+  // (canSubmit di paying-voucher-wizard.tsx) -- server percaya begitu saja kalau field ini kosong
+  // (`?? null`). Sekarang ditegakkan ULANG di sini, sama prinsipnya dengan qty/rate yang sudah
+  // lebih dulu tidak dipercaya dari client di action-action lain.
+  if (!input.buktiPvDataUrl) throw new Error("Bukti Paying Voucher (PDF) wajib diupload sebelum invoice bisa diajukan.");
   const db = supabaseServer();
   const { data: po, error: poErr } = await db.from("material_pos").select("*").eq("id", poId).single();
   if (poErr || !po) throw new Error("PO material tidak ditemukan.");
@@ -1056,12 +1062,30 @@ export async function withdrawVendorProductionAction(mrpId: string, fromVendor: 
   await insertNotification(notif(`Anda menerima tambahan produksi untuk ${mrpId} (vendor sebelumnya berhenti produksi) — cek tab Cutting/Finish Good.`, ["vendorMaklon"], toVendor));
 }
 
-export async function setInvoicesPaidAction(invoiceIds: string[], paid: boolean): Promise<void> {
+export async function setInvoicesPaidAction(invoiceIds: string[], paid: boolean, proof?: { dataUrl: string; fileName?: string }): Promise<void> {
   await requireInternalRole(await requireSession(), "finance");
+  // Item revisi 2026-09-17 (owner: "action payment invoice tidak bisa dilakukan kalau tidak
+  // upload bukti pembayaran"): dulu action ini & setInvoicePaymentProofAction dipanggil terpisah
+  // dari client (payment-panel.tsx) -- client SUDAH menggerbang lewat canPay (!!proofDataUrl),
+  // tapi SERVER-nya sendiri tidak pernah menolak kalau proof-nya kosong (bisa dipanggil langsung
+  // tanpa lewat UI). Sekarang ditegakkan ULANG di sini: menandai PAID (bukan "Batalkan Bayar")
+  // WAJIB menyertakan bukti, dan disimpan dalam operasi yang SAMA (bukan 2 round-trip terpisah
+  // lagi) supaya tidak ada celah invoice sempat PAID tanpa bukti walau cuma sesaat.
+  if (paid && !proof?.dataUrl) throw new Error("Bukti pembayaran (PDF) wajib diupload sebelum invoice bisa ditandai lunas.");
   const db = supabaseServer();
   const { data: invoices } = await db.from("raw_material_invoices").select("id,status,po_id").in("id", invoiceIds);
+  const uploadedAt = nowIso();
   for (const inv of invoices ?? []) {
-    if (paid && inv.status === "INVOICED") await db.from("raw_material_invoices").update({ status: "PAID", paid_at: today() }).eq("id", inv.id);
+    if (paid && inv.status === "INVOICED") {
+      await db.from("raw_material_invoices").update({ status: "PAID", paid_at: today() }).eq("id", inv.id);
+      if (proof) {
+        const { error: proofErr } = await db
+          .from("invoice_payment_proofs")
+          .upsert({ invoice_id: inv.id, data_url: proof.dataUrl, file_name: proof.fileName ?? null, uploaded_at: uploadedAt });
+        if (proofErr) throw new Error(`Gagal menyimpan bukti pembayaran: ${proofErr.message}`);
+        await db.from("raw_material_invoices").update({ bukti_bayar_at: uploadedAt, bukti_bayar_file_name: proof.fileName ?? null }).eq("id", inv.id);
+      }
+    }
     // Item 2: "Batalkan Bayar" SENGAJA tidak menghapus invoice_payment_proofs -- file itu bukti
     // audit yang sudah pernah diserahkan, dan Status pill sudah cukup menunjukkan status aslinya
     // sekarang (INVOICED lagi). Menghapusnya cuma menghilangkan jejak tanpa manfaat.
@@ -2063,6 +2087,10 @@ export async function createClaimReplacementInvoiceAction(
   const parsed = parseClaimKey(key);
   if (!parsed) throw new Error("Klaim tidak valid.");
   if (!(rateBaru > 0) || !(beratBaruKg > 0)) throw new Error("Rate & berat roll pengganti harus lebih dari 0.");
+  // Item revisi 2026-09-17 (owner): PV pengganti TETAP invoice sungguhan -- lampiran wajib sama
+  // seperti bookInvoiceAction, dulu opsional di sini (`?? null`) & di UI (claim-replacement-modal.tsx
+  // canSubmit tidak mengecek field ini sama sekali).
+  if (!buktiInvoiceDataUrl) throw new Error("Bukti PV pengganti (PDF) wajib diupload.");
   const db = supabaseServer();
 
   // A7 (flow bertahap 2026-09-11): step 1 ("Terima Klaim", lihat acceptMaterialClaimAction) wajib
@@ -2252,6 +2280,9 @@ export async function createClaimReplacementInvoiceBundleAction(
   if (keys.length < 2) {
     throw new Error("Pilih minimal 2 klaim untuk PV gabungan -- kalau cuma 1, pakai tombol 'Buat PV Pengganti' biasa.");
   }
+  // Item revisi 2026-09-17 (owner): sama seperti createClaimReplacementInvoiceAction (versi
+  // single) -- lampiran wajib, tidak lagi opsional.
+  if (!buktiInvoiceDataUrl) throw new Error("Bukti PV pengganti (PDF) wajib diupload.");
   const parsedList = keys.map((key) => ({ key, parsed: parseClaimKey(key) }));
   for (const { key, parsed } of parsedList) {
     if (!parsed) throw new Error(`Klaim tidak valid: ${key}`);

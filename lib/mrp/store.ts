@@ -287,7 +287,11 @@ type FlowActions = {
     poId: string,
     input: { colorEntries: ColorEntry[]; addBuys: AddBuyItem[]; diskon: number; kodeTransaksi: string; noInvoiceVendor: string; buktiPvDataUrl?: string; buktiPvFileName?: string }
   ) => Promise<void>;
-  setInvoicesPaid: (invoiceIds: string[], paid: boolean) => Promise<void>;
+  /** Item revisi 2026-09-17 (owner: "action payment invoice tidak bisa dilakukan kalau tidak
+   *  upload bukti pembayaran") -- `proof` WAJIB diisi kalau `paid` true (server menegakkan ulang,
+   *  lihat setInvoicesPaidAction); tetap opsional/diabaikan kalau `paid` false ("Batalkan Bayar"
+   *  tidak butuh bukti apa pun). */
+  setInvoicesPaid: (invoiceIds: string[], paid: boolean, proof?: { dataUrl: string; fileName?: string }) => Promise<void>;
   // Item 2.6: getter-nya (getInvoicePaymentProofAction) SENGAJA tidak dilewatkan lewat store --
   // sama seperti getMaterialClaimPhotoAction, payload-nya on-demand murni, dipanggil langsung dari
   // komponen (lihat payment-panel.tsx / paying-voucher-material-panel.tsx).
@@ -782,20 +786,20 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // Patch di-cek dengan guard status yang PERSIS SAMA dengan setInvoicesPaidAction (cuma
   // transisi INVOICED->PAID / PAID->INVOICED yang valid) -- supaya tidak optimistically
   // mem-"bayar" invoice yang statusnya sebenarnya tidak akan berubah di server.
-  setInvoicesPaid: async (invoiceIds, paid) => {
+  setInvoicesPaid: async (invoiceIds, paid, proof) => {
     const idSet = new Set(invoiceIds);
     const previous = get().invoices;
     const now = localDateString(new Date());
     set({
       invoices: previous.map((i) => {
         if (!idSet.has(i.id)) return i;
-        if (paid && i.status === "INVOICED") return { ...i, status: "PAID", paidAt: now };
+        if (paid && i.status === "INVOICED") return { ...i, status: "PAID", paidAt: now, buktiBayarAt: proof ? now : i.buktiBayarAt, buktiBayarFileName: proof?.fileName ?? i.buktiBayarFileName };
         if (!paid && i.status === "PAID") return { ...i, status: "INVOICED", paidAt: undefined };
         return i;
       }),
     });
     try {
-      await actions.setInvoicesPaidAction(invoiceIds, paid);
+      await actions.setInvoicesPaidAction(invoiceIds, paid, proof);
     } catch (err) {
       set({ invoices: previous });
       window.alert("Gagal mengubah status pembayaran -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));

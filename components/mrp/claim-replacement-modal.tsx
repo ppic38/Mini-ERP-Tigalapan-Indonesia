@@ -41,7 +41,11 @@ export function ClaimReplacementModal({
 
   const beratLama = claim.grossKg;
   const preview = claimReplacementValue(rateBaru, beratBaru, rateLama, beratLama);
-  const canSubmit = rateBaru > 0 && beratBaru > 0 && !submitting;
+  // Item revisi 2026-09-17 (owner: "action create invoice tidak bisa dilakukan kalau tidak upload
+  // lampiran invoice"): dulu Bukti Invoice opsional di sini (tidak ikut canSubmit sama sekali) --
+  // sekarang wajib, sama pola dengan canSubmit di paying-voucher-wizard.tsx (server juga sudah
+  // menegakkan ulang, lihat createClaimReplacementInvoiceAction).
+  const canSubmit = rateBaru > 0 && beratBaru > 0 && !!buktiDataUrl && !submitting;
 
   async function handleFile(file: File | null) {
     setBuktiError("");
@@ -106,7 +110,9 @@ export function ClaimReplacementModal({
             </div>
           </div>
 
-          <label className="mt-3 block font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Bukti Invoice (PDF)</label>
+          <label className="mt-3 block font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+            Bukti Invoice (PDF) <span className="text-danger-fg">*wajib</span>
+          </label>
           <input
             type="file"
             accept="application/pdf"

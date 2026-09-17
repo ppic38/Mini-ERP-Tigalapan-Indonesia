@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Button } from "@/components/ui/button";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { MaklonPoWarnaLenganTable } from "@/components/mrp/maklon-po-warna-lengan-table";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatPcs, formatRupiah, maklonPoBadgeWithApproval } from "@/lib/mrp/derive";
@@ -32,6 +31,13 @@ export function PoMaklonPanel() {
   // entitas versi lama).
   const [selectedMrpId, setSelectedMrpId] = useState<string>("");
 
+  // Item revisi 2026-09-17 (owner: "bungkus/grouping tabel Semua PO Vendor Produksi seperti di PO
+  // Approval Material") -- dulu DataTable flat 1 baris per PO. Sekarang tabel pohon 2 tingkat
+  // (No MRP -> Vendor Produksi, leaf = 1 PO), gaya visual sama dengan tree Purchase Order.
+  const [expandedMrpAll, setExpandedMrpAll] = useState<string | null>(null);
+  const [expandedVendorAll, setExpandedVendorAll] = useState<string | null>(null);
+  const [expandedPoAll, setExpandedPoAll] = useState<string | null>(null);
+
   if (!mounted) return null;
 
   const pending = maklonPOs.filter((po) => !po.approved);
@@ -54,46 +60,44 @@ export function PoMaklonPanel() {
     for (const po of pos) await approveMaklonPo(po.id);
   }
 
-  const columns: ColumnDef<MaklonPO>[] = [
-    { key: "noPo", label: "No PO", default: true, render: (p) => <span className="font-mono font-medium">{p.id}</span> },
-    { key: "vendor", label: "Vendor", default: true, render: (p) => VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi },
-    { key: "qty", label: "Qty", default: true, align: "right", render: (p) => formatPcs(p.qty) },
-    { key: "nilai", label: "Nilai", default: true, align: "right", render: (p) => formatRupiah(p.amount) },
-    // Entitas SENGAJA tidak ditampilkan di sini — beda dari PO Material, PO Maklon di sistem ini
-    // tidak menggunakan entitas sama sekali (bukan cuma "belum ditentukan").
-    {
-      key: "status",
-      label: "Status",
-      default: true,
-      render: (p) => {
-        const badge = maklonPoBadgeWithApproval(p, vendorInvoices);
-        return <StatusPill tone={badge.tone}>{badge.label}</StatusPill>;
-      },
-    },
-    {
-      // default:false — dibatasi ke 7 kolom total (termasuk No. MRP), dan kolom ini hampir
-      // selalu "—" kecuali ada line yang dibatalkan Procurement — cukup dicek lewat toggle "Kolom".
-      key: "cancelLines",
-      label: "Cancel Line (dari Procurement)",
-      default: false,
-      render: (p) =>
-        p.cancelledLines.length ? (
-          <div className="flex flex-col gap-1">
-            {p.cancelledLines.map((c, i) => (
-              <div key={i} className="text-danger-fg">
-                {c.warna ? `${c.warna} · ${c.lengan} — ` : ""}
-                {c.rolls} roll{c.pcs ? ` (${c.pcs} pcs)` : ""}: {c.note}
-              </div>
-            ))}
-          </div>
-        ) : (
-          "—"
-        ),
-    },
-    { key: "aksi", label: "Aksi", default: true, render: (p) => (p.approved ? "—" : <Button onClick={() => approveMaklonPo(p.id)} variant="success" size="xs">Approve</Button>) },
-  ];
-
   const recentCancellations = maklonPOs.flatMap((p) => p.cancelledLines.map((c) => ({ po: p, c })));
+
+  // Pohon 2 tingkat untuk "Semua PO Vendor Produksi": No MRP -> Vendor Produksi (leaf = 1 PO) --
+  // sama pola dengan tree PO Material Finance (po-material-panel.tsx), tidak ada level Supplier
+  // (Maklon tidak punya supplier terpisah).
+  const allMrpSummaries = (() => {
+    const map = new Map<string, MaklonPO[]>();
+    for (const p of maklonPOs) {
+      if (!map.has(p.mrpId)) map.set(p.mrpId, []);
+      map.get(p.mrpId)!.push(p);
+    }
+    return Array.from(map.entries())
+      .map(([mrpId, pos]) => ({
+        mrpId,
+        pos,
+        vendorCount: new Set(pos.map((p) => p.vendorProduksi)).size,
+        totalQty: pos.reduce((sum, p) => sum + p.qty, 0),
+        totalNilai: pos.reduce((sum, p) => sum + p.amount, 0),
+      }))
+      .sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID"));
+  })();
+
+  function allVendorSummariesForMrp(pos: MaklonPO[]) {
+    const map = new Map<string, MaklonPO[]>();
+    for (const p of pos) {
+      if (!map.has(p.vendorProduksi)) map.set(p.vendorProduksi, []);
+      map.get(p.vendorProduksi)!.push(p);
+    }
+    return Array.from(map.entries())
+      .map(([vendor, ps]) => ({
+        vendor,
+        vendorName: VENDOR_PRODUKSI[vendor]?.name ?? vendor,
+        pos: ps,
+        totalQty: ps.reduce((sum, p) => sum + p.qty, 0),
+        totalNilai: ps.reduce((sum, p) => sum + p.amount, 0),
+      }))
+      .sort((a, b) => a.vendorName.localeCompare(b.vendorName, "id-ID"));
+  }
 
   return (
     <>
@@ -102,7 +106,11 @@ export function PoMaklonPanel() {
           Approve akan memindahkan PO ke dashboard produksi vendor terkait, dan PO material terkait berpindah ke Paying Voucher (Invoice) dengan status <b>waiting invoice</b>.
         </div>
       )}
-      {recentCancellations.length > 0 && (
+      {/* Item revisi 2026-09-17 (owner: "hide saja untuk saat ini, siapa tau masih dibutuhkan
+         kedepannya, jadi sisa dipanggil lagi") -- disembunyikan, BUKAN dihapus. recentCancellations
+         di atas tetap dihitung (biar gampang dipanggil balik nanti, tinggal ganti `false` jadi
+         kondisi aslinya). */}
+      {false && recentCancellations.length > 0 && (
         <div className="rounded-lg border border-[#EFC9C4] bg-danger-bg px-5 py-3 font-sans text-[11.5px] leading-[1.5] text-danger-fg">
           <div className="font-semibold">Notifikasi: PO material terkait ditutup oleh Procurement</div>
           {recentCancellations.map(({ po, c }, i) => (
@@ -185,38 +193,146 @@ export function PoMaklonPanel() {
         </div>
       )}
 
-      <DataTable
-        title="Semua PO Vendor Produksi"
-        columns={columns}
-        rows={maklonPOs}
-        keyOf={(p) => p.id}
-        firstColumnLabel="No. MRP"
-        firstColumnRender={(p) => <span className="font-mono">{p.mrpId}</span>}
-        filterDefs={[
-          { label: "No MRP", options: Array.from(new Set(maklonPOs.map((p) => p.mrpId))), test: (p, v) => p.mrpId === v },
-          { label: "No PO", options: Array.from(new Set(maklonPOs.map((p) => p.id))), test: (p, v) => p.id === v },
-          {
-            label: "Status",
-            options: Array.from(new Set(maklonPOs.map((p) => maklonPoBadgeWithApproval(p, vendorInvoices).label))),
-            test: (p, v) => maklonPoBadgeWithApproval(p, vendorInvoices).label === v,
-          },
-        ]}
-        emptyText="Belum ada PO vendor produksi."
-        // Item 4 (feedback batch 2026-09-10, owner: "lebih detail ke tipe lengan juga untuk
-        // qty-nya (panjang pendek) serta estimasi harga per warna dan tipe lengan") -- dulu tabel
-        // detail di sini lebih polos (warna·lengan 1 baris, tanpa harga, lewat
-        // maklonPoWarnaBreakdown). Diganti MaklonPoWarnaLenganTable, komponen yang sama dengan
-        // yang dipakai Procurement > PO Approval untuk PO Maklon yang sama -- qty Pendek/Panjang
-        // dipisah + harga per pc masing-masing.
-        renderExpanded={(p) => (
-          <MaklonPoWarnaLenganTable
-            vendorProduksi={p.vendorProduksi}
-            amount={p.amount}
-            aduanRows={mrpDetails.find((d) => d.mrp.id === p.mrpId)?.aduanRows.filter((a) => a.vendor === p.vendorProduksi) ?? []}
-            hargaMaklon={hargaMaklon}
-          />
+      <div className="overflow-hidden border border-border-subtle bg-surface-card">
+        <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Semua PO Vendor Produksi</div>
+        {allMrpSummaries.length === 0 && <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada PO vendor produksi.</div>}
+        {allMrpSummaries.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
+                  <th className="px-5 py-[9px] text-left">No MRP / Vendor Produksi / No PO</th>
+                  <th className="px-3 py-[9px] text-right">Qty</th>
+                  <th className="px-3 py-[9px] text-right">Nilai</th>
+                  <th className="px-3 py-[9px] text-left">Status</th>
+                  <th className="px-3 py-[9px] text-left">Aksi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allMrpSummaries.map((m) => {
+                  const mrpActive = expandedMrpAll === m.mrpId;
+                  return (
+                    <Fragment key={m.mrpId}>
+                      <tr
+                        onClick={() => {
+                          const next = mrpActive ? null : m.mrpId;
+                          setExpandedMrpAll(next);
+                          setExpandedVendorAll(null);
+                          setExpandedPoAll(null);
+                        }}
+                        className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] hover:bg-[#FAFBFC] " + (mrpActive ? "bg-info-bg" : "")}
+                      >
+                        <td className="px-5 py-[11px]">
+                          <span className="mr-1.5 text-text-muted">{mrpActive ? "▾" : "▸"}</span>
+                          <span className="font-mono font-semibold text-text-primary">{m.mrpId}</span>
+                          <span className="ml-1.5 font-sans text-[10.5px] text-text-muted">{m.vendorCount} vendor</span>
+                        </td>
+                        <td className="px-3 py-[11px] text-right font-mono tabular-nums">{formatPcs(m.totalQty)} pcs</td>
+                        <td className="px-3 py-[11px] text-right font-mono tabular-nums font-medium">{formatRupiah(m.totalNilai)}</td>
+                        <td className="px-3 py-[11px]">
+                          <StatusPill tone="neutral">{m.pos.length} PO</StatusPill>
+                        </td>
+                        <td className="px-3 py-[11px]" />
+                      </tr>
+                      {mrpActive &&
+                        allVendorSummariesForMrp(m.pos).map((v) => {
+                          const vendorKey = `${m.mrpId}::${v.vendor}`;
+                          const vendorActive = expandedVendorAll === vendorKey;
+                          return (
+                            <Fragment key={vendorKey}>
+                              <tr
+                                onClick={() => {
+                                  const next = vendorActive ? null : vendorKey;
+                                  setExpandedVendorAll(next);
+                                  setExpandedPoAll(null);
+                                }}
+                                className={"cursor-pointer border-b border-[#F1F4F7] bg-[#FBFCFD] font-sans text-[11.5px] text-[#31414F] hover:bg-[#F2F5F8] " + (vendorActive ? "bg-info-bg" : "")}
+                              >
+                                <td className="py-[10px] pl-10 pr-3">
+                                  <span className="mr-1.5 text-text-muted">{vendorActive ? "▾" : "▸"}</span>
+                                  <span className="font-medium text-text-primary">{v.vendorName}</span>
+                                </td>
+                                <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatPcs(v.totalQty)} pcs</td>
+                                <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(v.totalNilai)}</td>
+                                <td className="px-3 py-[10px]">
+                                  <StatusPill tone="neutral">{v.pos.length} PO</StatusPill>
+                                </td>
+                                <td className="px-3 py-[10px]" />
+                              </tr>
+                              {vendorActive &&
+                                v.pos.map((p) => {
+                                  const poActive = expandedPoAll === p.id;
+                                  const badge = maklonPoBadgeWithApproval(p, vendorInvoices);
+                                  return (
+                                    <Fragment key={p.id}>
+                                      <tr
+                                        onClick={() => setExpandedPoAll(poActive ? null : p.id)}
+                                        className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-[11.5px] text-[#31414F] hover:bg-[#FAFBFC] " + (poActive ? "bg-info-bg" : "")}
+                                      >
+                                        <td className="py-[10px] pl-16 pr-3 font-mono font-medium text-text-primary">{p.id}</td>
+                                        <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatPcs(p.qty)} pcs</td>
+                                        <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(p.amount)}</td>
+                                        <td className="px-3 py-[10px]">
+                                          <StatusPill tone={badge.tone}>{badge.label}</StatusPill>
+                                        </td>
+                                        <td className="px-3 py-[10px]">
+                                          {p.approved ? (
+                                            "—"
+                                          ) : (
+                                            <Button
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                approveMaklonPo(p.id);
+                                              }}
+                                              variant="success"
+                                              size="xs"
+                                            >
+                                              Approve
+                                            </Button>
+                                          )}
+                                        </td>
+                                      </tr>
+                                      {poActive && (
+                                        <tr>
+                                          <td colSpan={5} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
+                                            {p.cancelledLines.length > 0 && (
+                                              <div className="mb-2 rounded-md border border-[#EFC9C4] bg-danger-bg px-3 py-2 font-sans text-[11px] leading-[1.5] text-danger-fg">
+                                                <div className="font-semibold">Cancel Line (dari Procurement)</div>
+                                                {p.cancelledLines.map((c, i) => (
+                                                  <div key={i}>
+                                                    {c.warna ? `${c.warna} · ${c.lengan} — ` : ""}
+                                                    {c.rolls} roll{c.pcs ? ` (${c.pcs} pcs)` : ""}: {c.note}
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
+                                            {/* Item 4 (feedback batch 2026-09-10, owner: "lebih detail ke tipe lengan juga
+                                               untuk qty-nya (panjang pendek) serta estimasi harga per warna dan tipe
+                                               lengan") -- MaklonPoWarnaLenganTable, komponen yang sama dengan yang dipakai
+                                               Procurement > PO Approval untuk PO Maklon yang sama. */}
+                                            <MaklonPoWarnaLenganTable
+                                              vendorProduksi={p.vendorProduksi}
+                                              amount={p.amount}
+                                              aduanRows={mrpDetails.find((d) => d.mrp.id === p.mrpId)?.aduanRows.filter((a) => a.vendor === p.vendorProduksi) ?? []}
+                                              hargaMaklon={hargaMaklon}
+                                            />
+                                          </td>
+                                        </tr>
+                                      )}
+                                    </Fragment>
+                                  );
+                                })}
+                            </Fragment>
+                          );
+                        })}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
-      />
+      </div>
     </>
   );
 }

@@ -235,8 +235,12 @@ export function PaymentPanel() {
   async function handlePay() {
     if (!proofDataUrl) return;
     const ids = selectableToPay.map((i) => i.id);
-    await setInvoicesPaid(ids, true);
-    await setInvoicePaymentProof(ids, proofDataUrl, proofFileName);
+    // Item revisi 2026-09-17 (owner: "action payment tidak bisa dilakukan kalau tidak upload
+    // bukti pembayaran"): proof sekarang dikirim BERSAMAAN dengan penandaan lunas (1 panggilan,
+    // bukan 2 round-trip terpisah lagi) -- server (setInvoicesPaidAction) menolak menandai PAID
+    // sama sekali kalau proof-nya kosong, jadi tidak ada lagi celah invoice sempat PAID tanpa
+    // bukti walau cuma sesaat di antara 2 await terpisah.
+    await setInvoicesPaid(ids, true, { dataUrl: proofDataUrl, fileName: proofFileName });
     // Revisi 2026-09-06: pakai saldo deposit HANYA kalau Finance benar-benar mengisi jumlahnya
     // (default 0, tidak pernah auto) -- di-clamp lagi ke depositCap di sini sebagai jaring
     // pengaman terakhir sebelum dikirim (server sendiri tetap validasi ulang, lihat
