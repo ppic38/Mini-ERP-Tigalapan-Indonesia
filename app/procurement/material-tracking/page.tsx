@@ -37,7 +37,8 @@ type TrackingRow = {
   kind: "invoice" | "pending";
   mrpId: string;
   poId: string;
-  supplierVendor: string;
+  supplier: string;
+  vendorProduksi: string;
   roll: number;
   nilai: number | null;
   warna: string;
@@ -80,10 +81,15 @@ export default function MaterialTrackingPage() {
   // menumpuk & membingungkan. Dipisah jadi 2 tab, murni pembungkus navigasi (isi/logic tiap
   // section tidak berubah).
   const [tab, setTab] = useState<"material" | "produksi-aktif">("material");
-  // Item revisi 2026-09-17 (owner: "Material Tracking: card-select, lalu breakdown warna/roll"):
-  // "Material per line" (dulu tabel flat, 1 baris per invoice) diganti kartu -- klik kartu untuk
-  // membuka rincian warna/roll invoice itu (dari colorEntries), checkbox tetap dipakai untuk
-  // bulk-select (Set Delivery / Pindahkan ke vendor lain) tanpa ikut membuka rincian.
+  // Revisi 2026-09-17 (owner: "Material Tracking: card-select, lalu breakdown warna/roll", lalu
+  // "pakai konsep row-tree seperti PO Material") -- "Material per line" dikelompokkan Supplier ->
+  // Vendor Produksi (baris memanjang dalam SATU container, bukan kartu grid), klik baris invoice
+  // (leaf) untuk membuka rincian warna/roll (dari colorEntries). Checkbox tetap dipakai untuk
+  // bulk-select (Set Delivery / Pindahkan ke vendor lain) tanpa ikut membuka rincian. Level "No
+  // MRP" sengaja dilewati -- FilterBar di bawah sudah punya filter No. MRP sendiri (konsisten
+  // dengan alasan yang sama di PO Material: /procurement/po-approval).
+  const [expandedTrackingSupplier, setExpandedTrackingSupplier] = useState<string | null>(null);
+  const [expandedTrackingVendor, setExpandedTrackingVendor] = useState<string | null>(null);
   const [expandedTrackingId, setExpandedTrackingId] = useState<string | null>(null);
   const [mrpFilterTracking, setMrpFilterTracking] = useState("");
   const [poFilterTracking, setPoFilterTracking] = useState("");
@@ -131,7 +137,8 @@ export default function MaterialTrackingPage() {
       kind: "invoice",
       mrpId: i.mrpId,
       poId: i.poId,
-      supplierVendor: `${i.supplier} → ${VENDOR_PRODUKSI[i.destinationVendor]?.name ?? i.destinationVendor}`,
+      supplier: i.supplier || "— Belum ada supplier —",
+      vendorProduksi: i.destinationVendor,
       roll: i.qtyReady,
       nilai: i.totalBiaya,
       warna: i.colorEntries.map((c) => c.warna).join(", ") || "—",
@@ -185,6 +192,45 @@ export default function MaterialTrackingPage() {
             (rollFilterTracking === "Parsial" && rollArrivalStatus(r.invoice) === "PARSIAL") ||
             (rollFilterTracking === "Lengkap" && rollArrivalStatus(r.invoice) === "LENGKAP"))))
   );
+
+  // Pohon 2 tingkat (lihat catatan di deklarasi expandedTrackingSupplier): Supplier -> Vendor
+  // Produksi, leaf = baris invoice individual. Sama konsep dengan PO Material di
+  // /procurement/po-approval, MRP dilewati karena sudah ada FilterBar No. MRP di bawah.
+  const trackingSupplierSummaries = (() => {
+    const map = new Map<string, TrackingRow[]>();
+    for (const r of filteredRows) {
+      if (!map.has(r.supplier)) map.set(r.supplier, []);
+      map.get(r.supplier)!.push(r);
+    }
+    return Array.from(map.entries())
+      .map(([supplier, rs]) => ({
+        supplier,
+        rows: rs,
+        vendorCount: new Set(rs.map((r) => r.vendorProduksi)).size,
+        totalRoll: rs.reduce((sum, r) => sum + r.roll, 0),
+        totalNilai: rs.reduce((sum, r) => sum + (r.nilai ?? 0), 0),
+      }))
+      .sort((a, b) => a.supplier.localeCompare(b.supplier, "id-ID"));
+  })();
+
+  function trackingVendorSummariesForSupplier(rs: TrackingRow[]) {
+    const map = new Map<string, TrackingRow[]>();
+    for (const r of rs) {
+      if (!map.has(r.vendorProduksi)) map.set(r.vendorProduksi, []);
+      map.get(r.vendorProduksi)!.push(r);
+    }
+    return Array.from(map.entries())
+      .map(([vendor, vrs]) => ({
+        vendor,
+        vendorName: VENDOR_PRODUKSI[vendor]?.name ?? vendor,
+        rows: vrs,
+        totalRoll: vrs.reduce((sum, r) => sum + r.roll, 0),
+        totalNilai: vrs.reduce((sum, r) => sum + (r.nilai ?? 0), 0),
+      }))
+      .sort((a, b) => a.vendorName.localeCompare(b.vendorName, "id-ID"));
+  }
+
+  const TRACKING_TREE_COLS = "26px 22px minmax(220px, 1fr) 90px 90px 140px 160px 150px";
 
   // "PO Produksi aktif" -- kasus jarang tapi nyata: vendor tiba-tiba minta berhenti mid-produksi.
   // Cuma PO yang masih dalam tahap produksi aktif yang eligible (sama gate dengan
@@ -327,62 +373,156 @@ export default function MaterialTrackingPage() {
         {filteredRows.length === 0 && (
           <div className="px-5 py-6 text-center font-sans text-xs text-text-muted">Belum ada invoice material yang sudah dibayar Finance.</div>
         )}
-        <div className="grid grid-cols-1 gap-2.5 p-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filteredRows.map((r) => {
-            const expanded = expandedTrackingId === r.id;
-            const progress = r.invoice ? rollArrivalProgress(r.invoice) : null;
-            const arrivalBadge = r.invoice ? rollArrivalStatusBadge(rollArrivalStatus(r.invoice)) : null;
-            const statusBadge = materialPoFullStatusBadge(r.status);
+        {filteredRows.length > 0 && (
+        <div className="overflow-x-auto">
+        <div className="min-w-[1000px]">
+          <div
+            className="grid gap-x-2 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
+            style={{ gridTemplateColumns: TRACKING_TREE_COLS }}
+          >
+            <span />
+            <span />
+            <span>Supplier / Vendor Produksi / No PO</span>
+            <span className="text-right">Vendor</span>
+            <span className="text-right">Roll</span>
+            <span>Progress</span>
+            <span className="text-right">Nilai</span>
+            <span>Status</span>
+          </div>
+          {trackingSupplierSummaries.map((s) => {
+            const supplierActive = expandedTrackingSupplier === s.supplier;
             return (
-              <div
-                key={r.id}
-                className={"flex flex-col gap-1.5 rounded-lg border px-4 py-3 " + (expanded ? "border-action-primary bg-info-bg" : "border-border-subtle bg-white")}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-2">
-                    <Checkbox checked={selected.has(r.id)} onChange={() => toggle(r.id)} />
-                    <span className="font-mono text-[12px] font-semibold text-text-primary">{r.mrpId}</span>
+              <div key={s.supplier}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = supplierActive ? null : s.supplier;
+                    setExpandedTrackingSupplier(next);
+                    setExpandedTrackingVendor(null);
+                    setExpandedTrackingId(null);
+                  }}
+                  className={
+                    "grid w-full items-center gap-x-2 border-b border-[#F1F4F7] px-4 py-[11px] text-left font-sans text-xs hover:bg-[#F7F9FB] " +
+                    (supplierActive ? "bg-info-bg" : "")
+                  }
+                  style={{ gridTemplateColumns: TRACKING_TREE_COLS }}
+                >
+                  <span />
+                  <span className="text-text-muted">{supplierActive ? "▾" : "▸"}</span>
+                  <span className="font-semibold text-text-primary">{s.supplier}</span>
+                  <span className="text-right font-mono tabular-nums text-text-muted">{s.vendorCount}</span>
+                  <span className="text-right font-mono tabular-nums">{s.totalRoll}</span>
+                  <span />
+                  <span className="text-right font-mono tabular-nums font-medium">{formatRupiah(s.totalNilai)}</span>
+                  <span>
+                    <StatusPill tone="neutral">{s.rows.length} baris</StatusPill>
                   </span>
-                  <StatusPill tone={statusBadge.tone}>{statusBadge.label}</StatusPill>
-                </div>
-                <button type="button" onClick={() => setExpandedTrackingId(expanded ? null : r.id)} className="flex flex-col gap-1 text-left">
-                  <span className="font-mono text-[11px] text-text-muted">{r.poId}</span>
-                  <span className="font-sans text-[11.5px] text-text-primary">{r.supplierVendor}</span>
-                  <div className="flex items-center justify-between font-sans text-[11.5px] text-text-muted">
-                    <span>{r.roll} roll</span>
-                    {progress && progress.total > 0 && arrivalBadge && (
-                      <span className="flex items-center gap-1">
-                        <span className="font-mono">
-                          {progress.arrived}/{progress.total}
-                        </span>
-                        <StatusPill tone={arrivalBadge.tone}>{arrivalBadge.label}</StatusPill>
-                      </span>
-                    )}
-                  </div>
-                  <span className="font-mono text-[12.5px] font-medium text-text-primary">{r.nilai != null ? formatRupiah(r.nilai) : "—"}</span>
                 </button>
-                {expanded && r.invoice && (
-                  <div className="mt-1.5 overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
-                    <div className="grid grid-cols-3 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                      <span>Warna / Lengan</span>
-                      <span className="text-right">Roll</span>
-                      <span className="text-right">Harga/Roll</span>
-                    </div>
-                    {r.invoice.colorEntries.map((c, i) => (
-                      <div key={i} className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-                        <span>
-                          {c.warna} · {c.lengan}
-                        </span>
-                        <span className="text-right font-mono">{c.rolls.length}</span>
-                        <span className="text-right font-mono">{formatRupiah(c.hargaPerRoll)}</span>
+                {supplierActive &&
+                  trackingVendorSummariesForSupplier(s.rows).map((v) => {
+                    const vendorActive = expandedTrackingSupplier === s.supplier && expandedTrackingVendor === v.vendor;
+                    return (
+                      <div key={v.vendor}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = vendorActive ? null : v.vendor;
+                            setExpandedTrackingVendor(next);
+                            setExpandedTrackingId(null);
+                          }}
+                          className={
+                            "grid w-full items-center gap-x-2 border-b border-[#F1F4F7] bg-[#FBFCFD] py-[10px] pl-8 pr-4 text-left font-sans text-[11.5px] hover:bg-[#F2F5F8] " +
+                            (vendorActive ? "bg-info-bg" : "")
+                          }
+                          style={{ gridTemplateColumns: TRACKING_TREE_COLS }}
+                        >
+                          <span />
+                          <span className="text-text-muted">{vendorActive ? "▾" : "▸"}</span>
+                          <span className="font-medium text-text-primary">{v.vendorName}</span>
+                          <span />
+                          <span className="text-right font-mono tabular-nums">{v.totalRoll}</span>
+                          <span />
+                          <span className="text-right font-mono tabular-nums font-medium">{formatRupiah(v.totalNilai)}</span>
+                          <span>
+                            <StatusPill tone="neutral">{v.rows.length} baris</StatusPill>
+                          </span>
+                        </button>
+                        {vendorActive &&
+                          v.rows.map((r) => {
+                            const expanded = expandedTrackingId === r.id;
+                            const progress = r.invoice ? rollArrivalProgress(r.invoice) : null;
+                            const arrivalBadge = r.invoice ? rollArrivalStatusBadge(rollArrivalStatus(r.invoice)) : null;
+                            const statusBadge = materialPoFullStatusBadge(r.status);
+                            return (
+                              <div key={r.id}>
+                                <div
+                                  className={
+                                    "grid w-full cursor-pointer items-center gap-x-2 border-b border-[#F1F4F7] py-[10px] pl-14 pr-4 text-left font-sans text-[11.5px] hover:bg-[#F7F9FB] " +
+                                    (expanded ? "bg-info-bg" : "")
+                                  }
+                                  style={{ gridTemplateColumns: TRACKING_TREE_COLS }}
+                                >
+                                  <span onClick={(e) => e.stopPropagation()}>
+                                    <Checkbox checked={selected.has(r.id)} onChange={() => toggle(r.id)} />
+                                  </span>
+                                  <span className="cursor-pointer text-text-muted" onClick={() => setExpandedTrackingId(expanded ? null : r.id)}>
+                                    {expanded ? "▾" : "▸"}
+                                  </span>
+                                  <span className="flex cursor-pointer flex-col" onClick={() => setExpandedTrackingId(expanded ? null : r.id)}>
+                                    <span className="font-medium text-text-primary">{r.poId}</span>
+                                    <span className="font-mono text-[10.5px] text-text-muted">{r.mrpId}</span>
+                                  </span>
+                                  <span />
+                                  <span className="text-right font-mono tabular-nums">{r.roll}</span>
+                                  <span>
+                                    {progress && progress.total > 0 && arrivalBadge ? (
+                                      <span className="flex items-center gap-1">
+                                        <span className="font-mono tabular-nums">
+                                          {progress.arrived}/{progress.total}
+                                        </span>
+                                        <StatusPill tone={arrivalBadge.tone}>{arrivalBadge.label}</StatusPill>
+                                      </span>
+                                    ) : (
+                                      <span className="text-text-muted">—</span>
+                                    )}
+                                  </span>
+                                  <span className="text-right font-mono tabular-nums font-medium">{r.nilai != null ? formatRupiah(r.nilai) : "—"}</span>
+                                  <span>
+                                    <StatusPill tone={statusBadge.tone}>{statusBadge.label}</StatusPill>
+                                  </span>
+                                </div>
+                                {expanded && r.invoice && (
+                                  <div className="border-b border-[#F1F4F7] bg-white py-3 pl-14 pr-4">
+                                    <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
+                                      <div className="grid grid-cols-3 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                                        <span>Warna / Lengan</span>
+                                        <span className="text-right">Roll</span>
+                                        <span className="text-right">Harga/Roll</span>
+                                      </div>
+                                      {r.invoice.colorEntries.map((c, i) => (
+                                        <div key={i} className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+                                          <span>
+                                            {c.warna} · {c.lengan}
+                                          </span>
+                                          <span className="text-right font-mono">{c.rolls.length}</span>
+                                          <span className="text-right font-mono">{formatRupiah(c.hargaPerRoll)}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                       </div>
-                    ))}
-                  </div>
-                )}
+                    );
+                  })}
               </div>
             );
           })}
         </div>
+        </div>
+        )}
       </div>
       )}
 
