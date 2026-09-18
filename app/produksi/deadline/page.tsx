@@ -70,7 +70,7 @@ function DeadlineTable({ po }: { po: MaklonPO }) {
   return (
     <div className="overflow-hidden rounded-md border border-[#E4E9EE] bg-white">
       <div className="bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-        Deadline per warna/lengan — bahan diterima + {VENDOR_PRODUKSI[po.vendorProduksi]?.productionLeadDays ?? 7} hari
+        Deadline per warna/lengan — bahan diterima + {VENDOR_PRODUKSI[po.vendorProduksi]?.productionLeadDays ?? 7} hari. Bar Cutting/FG dibanding target rencana; angka paling kanan = efisiensi FG dari cutting AKTUAL.
       </div>
       <div className="divide-y divide-[#F1F4F7]">
         {rows.map((r) => {
@@ -99,6 +99,12 @@ function DeadlineTable({ po }: { po: MaklonPO }) {
                   </span>
                   <span className="w-[80px] flex-none text-right font-mono text-[10.5px] text-text-muted">{formatPcs(r.finishGood)}/{formatPcs(r.target)}</span>
                 </span>
+              </span>
+              <span
+                title="Finish Good dibagi hasil cutting AKTUAL (bukan target rencana) -- kalau cutting sendiri belum capai target, angka ini tetap menunjukkan efisiensi konversi cutting->baju yang sebenarnya, terlepas dari cutting-nya kurang/lebih dari rencana."
+                className="w-[70px] flex-none text-right font-mono text-[11px] font-semibold text-[#31414F]"
+              >
+                {r.cutting > 0 ? `${((r.finishGood / r.cutting) * 100).toFixed(0)}%` : "—"}
               </span>
               <StatusPill tone={status.tone} className="flex-none">
                 {status.label}
