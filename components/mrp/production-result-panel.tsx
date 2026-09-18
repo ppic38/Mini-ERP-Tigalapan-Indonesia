@@ -30,7 +30,7 @@ import type { ProductionResult } from "@/lib/mrp/types";
 // kunci input FG, tapi BELUM mengunci Rework/Waste (itu tahap 2, tab Final Produksi, lihat
 // production-final-tab.tsx). Dua tahap terpisah supaya reject yang baru dihitung masih sempat
 // dirework sebelum benar-benar final.
-const FG_COLUMNS = "minmax(170px,1.3fr) minmax(190px,1.5fr) minmax(150px,1fr) minmax(160px,1fr)";
+const FG_COLUMNS = "minmax(170px,1.2fr) minmax(300px,2.2fr) minmax(130px,0.9fr) minmax(170px,1fr)";
 // REJECT: tiap angka (target/awal/sisa) tetap bermakna terpisah, jadi tetap kolom angka
 // masing-masing. Kolom "Sisa/Waste" DIHAPUS (item 19 -- "Buang ke Sisa" dihapus dari flow).
 const REJECT_COLUMNS = "minmax(170px,1.3fr) minmax(130px,0.9fr) minmax(110px,0.7fr) minmax(110px,0.7fr) minmax(130px,0.9fr)";
@@ -131,6 +131,27 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
   // hasil rework itu punya baris sendiri yang bisa di-"Selesai Produksi"-kan juga.
   const groups = selectedMrpId ? warnaLenganGroupsWithFg(selectedMrpId, vendorId, productionBatches, productionResults) : [];
   const gridColumns = kind === "FG" ? FG_COLUMNS : REJECT_COLUMNS;
+  // Revisi 2026-09-19 (owner: "Selesai Produksi di paling kanan, level judul tabel"): tombol pindah
+  // ke header tabel Finish Good -- menutup SEMUA grup warna/lengan MRP ini yang belum "FG Selesai"
+  // sekaligus (action per grup-nya sama persis: confirmFgDone). Kalau ada >1 grup, per-baris masih
+  // ada tombol "Selesai" kecil supaya 1 warna bisa diselesaikan lebih dulu.
+  const pendingFgGroups =
+    kind === "FG" && selectedMrpId
+      ? groups.filter((g) => !productionGroupMetaFor(selectedMrpId + "|" + g.warna + "|" + g.lengan, productionGroupMeta)?.fgConfirmedAt)
+      : [];
+  function finishAllGroups() {
+    if (pendingFgGroups.length === 0) return;
+    if (
+      pendingFgGroups.length > 1 &&
+      !window.confirm(`Selesaikan produksi ${pendingFgGroups.length} warna/lengan sekaligus? Roll yang masih terbuka otomatis ditutup & selisihnya jadi reject (bisa dibuka kunci lagi per baris).`)
+    ) {
+      return;
+    }
+    runAction(
+      "fg-all:" + selectedMrpId,
+      Promise.all(pendingFgGroups.map((g) => confirmFgDone(selectedMrpId + "|" + g.warna + "|" + g.lengan, selectedMrpId, vendorId, g.warna, g.lengan)))
+    );
+  }
 
   function toggleGroup(warna: string, lengan: string) {
     const key = selectedMrpId + "|" + warna + "|" + lengan;
@@ -193,13 +214,26 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
 
       {selectedMrpId && (
         <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-          <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">
-            {title} — {selectedMrpId}
+          <div className="flex items-center justify-between gap-3 border-b border-border-subtle px-4 py-3">
+            <span className="font-sans text-[13px] font-semibold text-text-primary">
+              {title} — {selectedMrpId}
+            </span>
+            {kind === "FG" && pendingFgGroups.length > 0 && (
+              <Button
+                onClick={finishAllGroups}
+                disabled={isPending("fg-all:" + selectedMrpId)}
+                variant="primary"
+                size="sm"
+                title="Kunci FG — roll yang masih terbuka otomatis ditutup pakai FG yang sudah diisi, lalu selisihnya jadi reject"
+              >
+                {isPending("fg-all:" + selectedMrpId) ? "Menyimpan…" : pendingFgGroups.length > 1 ? `Selesai Produksi (${pendingFgGroups.length})` : "Selesai Produksi"}
+              </Button>
+            )}
           </div>
           <div className="overflow-x-auto">
             <div className="min-w-[820px]">
               <div
-                className="grid items-center gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
+                className="grid items-center gap-x-3 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
                 style={{ gridTemplateColumns: gridColumns }}
               >
                 <span>Warna / lengan</span>
@@ -275,55 +309,49 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                       ) : (
                         <>
                           <div className="flex flex-col gap-1">
-                            <div className="flex items-baseline gap-1 font-mono text-[12px]">
-                              <span className="font-semibold text-[#31414F]">{totalRecorded}</span>
-                              <span className="text-text-muted">/ {totalTarget} pcs</span>
+                            {/* Revisi 2026-09-19: bar progres di SAMPING KANAN qty finish good (satu baris). */}
+                            <div className="flex items-center gap-3">
+                              <div className="flex shrink-0 items-baseline gap-1 font-mono text-[12px]">
+                                <span className="font-semibold text-[#31414F]">{totalRecorded}</span>
+                                <span className="text-text-muted">/ {totalTarget} pcs</span>
+                              </div>
+                              <span className="h-1.5 min-w-[80px] max-w-[160px] flex-1 overflow-hidden rounded-full bg-[#EEF0F3]">
+                                <span className="block h-full rounded-full bg-success" style={{ width: `${progressPct}%` }} />
+                              </span>
+                              <span className="w-9 shrink-0 font-mono text-[10.5px] text-text-muted">{progressPct}%</span>
                             </div>
                             {!!fgSplit?.rework && (
                               <span className="font-mono text-[10px] text-text-muted">
                                 ({fgSplit.murni} murni + {fgSplit.rework} dari rework)
                               </span>
                             )}
-                            <div className="flex items-center gap-1.5">
-                              <span className="h-1.5 w-full max-w-[130px] flex-1 overflow-hidden rounded-full bg-[#EEF0F3]">
-                                <span className="block h-full rounded-full bg-success" style={{ width: `${progressPct}%` }} />
-                              </span>
-                              <span className="font-mono text-[10.5px] text-text-muted">{progressPct}%</span>
-                            </div>
                           </div>
                           <span className="font-mono text-[11px] text-text-muted">{targetDoneAt ? formatDate(targetDoneAt) : "— (belum ada material diterima)"}</span>
                         </>
                       )}
-                      <span className="flex flex-col items-end gap-1 text-right">
-                        <button onClick={() => toggleGroup(g.warna, g.lengan)} className="font-sans text-[11px] font-semibold text-action-primary">
+                      <span className="flex items-center justify-end gap-2">
+                        {kind === "FG" && isFgConfirmed && !isFinalDone && (
+                          // undoFgConfirm sudah optimistic penuh di store.ts -- isPending/teks
+                          // "Membuka…" dilepas (redundant, sempat kelihatan walau state lokal
+                          // sudah berubah seketika).
+                          <Button onClick={() => runAction(groupKey, undoFgConfirm(groupKey))} variant="muted" size="xs">
+                            Buka kunci ↺
+                          </Button>
+                        )}
+                        {kind === "FG" && !isFgConfirmed && pendingFgGroups.length > 1 && (
+                          <Button
+                            onClick={() => runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan))}
+                            disabled={isPending(groupKey)}
+                            variant="primary"
+                            size="xs"
+                            title="Selesaikan HANYA warna/lengan ini"
+                          >
+                            {isPending(groupKey) ? "Menyimpan…" : "Selesai"}
+                          </Button>
+                        )}
+                        <Button onClick={() => toggleGroup(g.warna, g.lengan)} variant="accent" size="xs">
                           {expanded ? "Sembunyikan" : "Lihat by size →"}
-                        </button>
-                        {kind === "FG" &&
-                          (isFgConfirmed ? (
-                            !isFinalDone && (
-                              // undoFgConfirm sudah optimistic penuh di store.ts -- isPending/teks
-                              // "Membuka…" dilepas (redundant, sempat kelihatan walau state lokal
-                              // sudah berubah seketika).
-                              <button
-                                onClick={() => runAction(groupKey, undoFgConfirm(groupKey))}
-                                className="font-sans text-[10.5px] font-semibold text-action-primary underline"
-                              >
-                                Buka kunci ↺
-                              </button>
-                            )
-                          ) : (
-                            <button
-                              onClick={() => runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan))}
-                              disabled={isPending(groupKey)}
-                              title="Kunci FG grup ini -- roll yang masih terbuka otomatis ditutup pakai FG yang sudah diisi, lalu selisihnya jadi reject"
-                              className={
-                                "flex-none rounded-md px-2.5 py-[5px] font-sans text-[11px] font-semibold text-white disabled:cursor-not-allowed " +
-                                ("bg-action-primary" + (isPending(groupKey) ? " opacity-50" : ""))
-                              }
-                            >
-                              {isPending(groupKey) ? "Menyimpan…" : "Selesai Produksi"}
-                            </button>
-                          ))}
+                        </Button>
                       </span>
                     </div>
                     {expanded && !isFgConfirmed && kind === "REJECT" && (
@@ -655,7 +683,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
         <div className="overflow-x-auto">
           <div className={kind === "REJECT" ? "min-w-[900px]" : "min-w-[600px]"}>
             <div
-              className="grid items-center gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
+              className="grid items-center gap-x-3 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
               style={{
                 gridTemplateColumns:
                   kind === "REJECT"
