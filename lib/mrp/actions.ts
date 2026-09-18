@@ -1393,7 +1393,12 @@ export async function receiveRawMaterialRollAction(
   // Item 13: setiap kali roll ini ditimbang (baik pertama kali, edit di "Sudah ditimbang - belum
   // dikonfirmasi", ATAU claim baru dari roll yang tadinya SUDAH dikonfirmasi -- item 13.6) status
   // konfirmasinya SELALU kembali kosong -- cuma confirmRollWeighAction yang boleh mengisinya lagi.
-  const update: Record<string, unknown> = { net_kg: netKg, weigh_confirmed_at: null };
+  // Revisi 2026-09-19 (owner: "hilangkan fitur konfirmasi, langsung penimbangan saja"): tahap
+  // "Konfirmasi" DIHAPUS dari UI -- menyimpan hasil timbang yang BUKAN klaim (dalam toleransi atau
+  // lebih berat) SEKALIGUS mengisi weigh_confirmed_at (roll langsung masuk pool Resting). Roll yang
+  // claimable tetap null (alur klaim/retur tidak berubah). confirmRollWeighAction dibiarkan ada
+  // (tidak dipakai UI lagi).
+  const update: Record<string, unknown> = { net_kg: netKg, weigh_confirmed_at: claim ? null : nowIso() };
   if (codeRoll && codeRoll.trim()) update.code_roll = codeRoll.trim();
   const claimKey = `${invoiceId}|${warna}|${lengan}|${rollIndex}`;
   if (!claim) {

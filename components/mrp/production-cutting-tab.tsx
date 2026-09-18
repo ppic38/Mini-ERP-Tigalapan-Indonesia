@@ -135,6 +135,9 @@ const CUTTING_SESSION_COLUMNS =
 // roll | Gramasi | Cutting | Hasil Aduan/Yield.
 const CUTTING_BATCH_COLUMNS = "minmax(150px,1fr) minmax(130px,0.8fr) minmax(90px,0.5fr) minmax(160px,1fr) minmax(230px,1.4fr)";
 
+// Kolom tabel Timbang roll: Roll | Code Roll | Berat kotor | Berat bersih | Selisih | Aksi.
+const WEIGH_GRID = "minmax(90px,0.6fr) minmax(130px,1fr) minmax(110px,0.9fr) minmax(120px,0.9fr) minmax(140px,1fr) minmax(90px,0.7fr)";
+
 export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
@@ -149,7 +152,6 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   const updateBatchesToCutting = useMrpStore((s) => s.updateBatchesToCutting);
   const updateBatchRestingAt = useMrpStore((s) => s.updateBatchRestingAt);
   const receiveRawMaterialRoll = useMrpStore((s) => s.receiveRawMaterialRoll);
-  const confirmRollWeigh = useMrpStore((s) => s.confirmRollWeigh);
   const submitCuttingDefectClaim = useMrpStore((s) => s.submitCuttingDefectClaim);
   const materialClaimResolutions = useMrpStore((s) => s.materialClaimResolutions);
   const materialClaimReturRequests = useMrpStore((s) => s.materialClaimReturRequests);
@@ -216,9 +218,6 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   // Item 4.5: catatan non-blocking begitu roll over-weight (di luar toleransi TAPI lebih BERAT,
   // bukan klaim) disimpan langsung.
   const [overWeightNotice, setOverWeightNotice] = useState<string | null>(null);
-  // Item 13.2/13.5: notifikasi hasil "Konfirmasi (n)" per grup -- ada yang di-skip (belum
-  // ditimbang/masih claimable) atau tidak.
-  const [confirmNotice, setConfirmNotice] = useState<string | null>(null);
   // Item 13.6: seksi "Riwayat timbang -- sudah dikonfirmasi" dibuat collapsible (default
   // tertutup) supaya tidak menyita layar -- ini murni read-only + tombol "Ajukan Claim".
   const [confirmedExpanded, setConfirmedExpanded] = useState(false);
@@ -412,6 +411,11 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   const pendingRows = selectedMrpId ? pendingWeighRolls(selectedMrpId, vendorId, invoices, productionBatches, claimDicts) : [];
   const unconfirmedRows = selectedMrpId ? weighedUnconfirmedRolls(selectedMrpId, vendorId, invoices, productionBatches) : [];
   const confirmedRows = selectedMrpId ? confirmedWeighedRolls(selectedMrpId, vendorId, invoices, productionBatches) : [];
+  // Revisi 2026-09-19 (owner: "hilangkan fitur konfirmasi"): daftar "Sudah ditimbang — belum
+  // dikonfirmasi" DIHAPUS -- roll legacy yang masih tersangkut di status itu (ditimbang sebelum
+  // perubahan ini) digabung ke daftar Timbang roll supaya bisa disimpan ulang (Simpan = langsung
+  // terkonfirmasi). Kedua daftar saling lepas (klaim aktif vs bukan), jadi aman digabung.
+  const weighRows = [...pendingRows, ...unconfirmedRows];
   function weighKey(r: PendingWeighRoll): string {
     return `${r.invoiceId}|${r.warna}|${r.lengan}|${r.rollIndex}`;
   }
@@ -522,17 +526,6 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
       toCommit.push(r);
     }
     await Promise.all(toCommit.map((r) => commitWeigh(r, weighDraft[weighKey(r)] ?? r.netKg ?? r.grossKg)));
-  }
-  // Item 13.5: "Konfirmasi (n)" per grup -- panggil confirmRollWeighAction untuk semua roll grup
-  // sekaligus, server yang menentukan mana yang benar-benar lolos (net_kg terisi & tidak claimable).
-  async function confirmGroup(rows: PendingWeighRoll[]) {
-    const items = rows.map((r) => ({ invoiceId: r.invoiceId, warna: r.warna, lengan: r.lengan, rollIndex: r.rollIndex }));
-    const result = await confirmRollWeigh(items);
-    setConfirmNotice(
-      result.skipped.length > 0
-        ? `${result.confirmed} roll dikonfirmasi. ${result.skipped.length} roll dilewati (belum ditimbang atau masih claimable).`
-        : `${result.confirmed} roll dikonfirmasi.`
-    );
   }
   function resetClaimPhotoState() {
     setClaimPhotoDataUrl(null);
@@ -778,40 +771,36 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
         {readyMrps.length === 0 && <div className="mt-2 font-sans text-xs text-text-muted">Belum ada MRP dengan bahan siap dan pekerjaan belum selesai.</div>}
       </div>
 
-      {selectedMrpId && (pendingRows.length > 0 || unconfirmedRows.length > 0 || confirmedRows.length > 0) && (
+      {selectedMrpId && (weighRows.length > 0 || confirmedRows.length > 0) && (
         <div className="rounded-lg border border-[#CFE0EF] bg-info-bg px-4 py-2.5 font-sans text-[11px] leading-[1.5] text-info-fg">
-          Timbang → Konfirmasi → baru bisa dipilih di Resting. Claim tetap bisa diajukan setelah dikonfirmasi selama roll belum dipotong.
+          Timbang → Simpan → roll langsung bisa dipilih di Resting. Claim tetap bisa diajukan setelah ditimbang selama roll belum dipotong.
         </div>
       )}
 
-      {selectedMrpId && pendingRows.length > 0 && (
-        <div className="w-full overflow-x-auto rounded-lg border border-[#F0DFC2] bg-warning-bg">
-          <div className="border-b border-[#F0DFC2] px-4 py-3 font-sans text-[13px] font-semibold text-warning-fg">
-            Timbang roll — {pendingRows.length} roll perlu ditimbang atau ditimbang ulang
+      {selectedMrpId && weighRows.length > 0 && (
+        <div className="w-full overflow-x-auto rounded-lg border border-[#CFE0EF] bg-info-bg">
+          <div className="border-b border-[#CFE0EF] px-4 py-3 font-sans text-[13px] font-semibold text-info-fg">
+            Timbang roll — {weighRows.length} roll perlu ditimbang atau ditimbang ulang
           </div>
-          <div className="border-b border-[#F0DFC2] bg-white/60 px-4 py-2 font-sans text-[11px] leading-[1.5] text-warning-fg">
-            Roll yang sudah disimpan pindah ke panel &quot;Sudah ditimbang — belum dikonfirmasi&quot; di bawah. Roll yang selisih beratnya kurang dari
+          <div className="border-b border-[#CFE0EF] bg-white/60 px-4 py-2 font-sans text-[11px] leading-[1.5] text-info-fg">
+            Roll yang sudah disimpan langsung masuk ke Resting (tidak ada konfirmasi lagi). Roll yang selisih beratnya kurang dari
             toleransi (claim) TERKUNCI (tidak bisa ditimbang ulang) sampai proses retur ke Procurement selesai.
           </div>
           {weighError && (
-            <div className="border-b border-[#F0DFC2] bg-danger-bg px-4 py-2 font-sans text-[11px] leading-[1.5] text-danger-fg">{weighError}</div>
+            <div className="border-b border-[#CFE0EF] bg-danger-bg px-4 py-2 font-sans text-[11px] leading-[1.5] text-danger-fg">{weighError}</div>
           )}
           {overWeightNotice && (
-            <div className="border-b border-[#F0DFC2] bg-info-bg px-4 py-2 font-sans text-[11px] leading-[1.5] text-info-fg">{overWeightNotice}</div>
+            <div className="border-b border-[#CFE0EF] bg-white/60 px-4 py-2 font-sans text-[11px] leading-[1.5] text-info-fg">{overWeightNotice}</div>
           )}
-          {groupByWarnaLengan(pendingRows).map((g) => {
-            // Prefiks "pending:" -- groupByWarnaLengan dipakai bareng untuk pendingRows DAN
-            // unconfirmedRows di bawah dengan key yang sama (warna|lengan), jadi tanpa prefiks
-            // toggle expand satu daftar bisa ikut nge-expand daftar yang lain kalau warna/lengan-nya
-            // sama-sama muncul di kedua daftar.
+          {groupByWarnaLengan(weighRows).map((g) => {
             const weighKeyGroup = "pending:" + g.key;
             const weighExpanded = expandedWeighGroups.has(weighKeyGroup);
             return (
-            <div key={g.key} className="border-b border-[#F0DFC2] last:border-b-0">
+            <div key={g.key} className="border-b border-[#CFE0EF] last:border-b-0">
               <div className="flex items-center justify-between gap-2 bg-white/50 px-4 py-2">
                 <button
                   onClick={() => toggleWeighGroupExpanded(weighKeyGroup)}
-                  className="flex items-center gap-1.5 font-sans text-[12px] font-semibold text-warning-fg"
+                  className="flex items-center gap-1.5 font-sans text-[12px] font-semibold text-info-fg"
                 >
                   <span className={"transition-transform " + (weighExpanded ? "rotate-90" : "")}>›</span>
                   {g.warna} · {g.lengan} ({g.rows.length})
@@ -832,15 +821,14 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               {weighExpanded && (
               <>
               <div
-                className="grid min-w-[820px] gap-x-3 border-b border-[#F0DFC2] bg-white/40 px-4 py-[7px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
-                style={{ gridTemplateColumns: "minmax(70px,0.6fr) minmax(120px,0.9fr) minmax(110px,0.9fr) minmax(110px,0.9fr) minmax(120px,1fr) minmax(110px,0.8fr) minmax(110px,0.9fr)" }}
+                className="grid min-w-[760px] gap-x-3 border-b border-[#CFE0EF] bg-white/40 px-4 py-[7px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
+                style={{ gridTemplateColumns: WEIGH_GRID }}
               >
                 <span>Roll</span>
                 <span>Code Roll</span>
                 <span className="text-right">Berat kotor (kg)</span>
                 <span className="text-right">Berat bersih (kg)</span>
                 <span className="text-right">Selisih</span>
-                <span>Toleransi</span>
                 <span>Aksi</span>
               </div>
               {g.rows.map((r) => {
@@ -913,8 +901,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                       </div>
                     )}
                     <div
-                      className="grid min-w-[820px] items-center gap-x-3 bg-white px-4 py-[11px] font-sans text-xs text-[#31414F]"
-                      style={{ gridTemplateColumns: "minmax(70px,0.6fr) minmax(120px,0.9fr) minmax(110px,0.9fr) minmax(110px,0.9fr) minmax(120px,1fr) minmax(110px,0.8fr) minmax(110px,0.9fr)" }}
+                      className="grid min-w-[760px] items-center gap-x-3 bg-white px-4 py-[11px] font-sans text-xs text-[#31414F]"
+                      style={{ gridTemplateColumns: WEIGH_GRID }}
                     >
                       <span className="font-mono font-medium">
                         Roll {r.rollIndex + 1}
@@ -944,11 +932,6 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         {formatDecimal(variance.diff)} kg ({variance.pct.toFixed(1)}%)
                       </span>
                       <span>
-                        <StatusPill tone={variance.withinTolerance ? "success" : variance.claimable ? "danger" : "warning"}>
-                          {variance.withinTolerance ? "SESUAI" : "DI LUAR TOLERANSI"}
-                        </StatusPill>
-                      </span>
-                      <span>
                         {locked ? (
                           <span className="font-sans text-[10.5px] font-semibold text-text-muted">🔒 Terkunci</span>
                         ) : (
@@ -969,87 +952,13 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
         </div>
       )}
 
-      {selectedMrpId && unconfirmedRows.length > 0 && (
-        <div className="w-full overflow-x-auto rounded-lg border border-[#CFE0EF] bg-info-bg">
-          <div className="border-b border-[#CFE0EF] px-4 py-3 font-sans text-[13px] font-semibold text-info-fg">
-            Sudah ditimbang — belum dikonfirmasi ({unconfirmedRows.length})
-          </div>
-          {confirmNotice && (
-            <div className="border-b border-[#CFE0EF] bg-white/60 px-4 py-2 font-sans text-[11px] leading-[1.5] text-info-fg">{confirmNotice}</div>
-          )}
-          {groupByWarnaLengan(unconfirmedRows).map((g) => {
-            const weighKeyGroup = "unconfirmed:" + g.key;
-            const weighExpanded = expandedWeighGroups.has(weighKeyGroup);
-            return (
-            <div key={g.key} className="border-b border-[#CFE0EF] last:border-b-0">
-              <div className="flex items-center justify-between gap-2 bg-white/50 px-4 py-2">
-                <button
-                  onClick={() => toggleWeighGroupExpanded(weighKeyGroup)}
-                  className="flex items-center gap-1.5 font-sans text-[12px] font-semibold text-info-fg"
-                >
-                  <span className={"transition-transform " + (weighExpanded ? "rotate-90" : "")}>›</span>
-                  {g.warna} · {g.lengan} ({g.rows.length})
-                </button>
-                <Button onClick={() => confirmGroup(g.rows)} variant="success" size="xs">
-                  Konfirmasi ({g.rows.length}) →
-                </Button>
-              </div>
-              {weighExpanded && (
-              <>
-              <div
-                className="grid min-w-[760px] gap-x-3 border-b border-[#CFE0EF] bg-white/40 px-4 py-[7px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
-                style={{ gridTemplateColumns: "minmax(70px,0.6fr) minmax(120px,0.9fr) minmax(110px,0.9fr) minmax(110px,0.9fr) minmax(120px,1fr) minmax(110px,0.9fr)" }}
-              >
-                <span>Roll</span>
-                <span>Code Roll</span>
-                <span className="text-right">Berat kotor (kg)</span>
-                <span className="text-right">Berat bersih (kg)</span>
-                <span className="text-right">Selisih</span>
-                <span>Aksi</span>
-              </div>
-              {g.rows.map((r) => {
-                const key = weighKey(r);
-                const netVal = weighDraft[key] ?? r.netKg ?? r.grossKg;
-                const variance = weightVariance(r.grossKg, netVal);
-                return (
-                  <div
-                    key={key}
-                    className="grid min-w-[760px] items-center gap-x-3 border-b border-[#F1F4F7] bg-white px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0"
-                    style={{ gridTemplateColumns: "minmax(70px,0.6fr) minmax(120px,0.9fr) minmax(110px,0.9fr) minmax(110px,0.9fr) minmax(120px,1fr) minmax(110px,0.9fr)" }}
-                  >
-                    <span className="font-mono font-medium">Roll {r.rollIndex + 1}</span>
-                    <span className="font-mono text-[11px]">{r.codeRoll || "—"}</span>
-                    <span className="text-right font-mono">{formatDecimal(r.grossKg)}</span>
-                    <span className="flex justify-end">
-                      <NumberInput value={netVal} decimals={2} onChange={(v) => setWeighDraft((prev) => ({ ...prev, [key]: v }))} className="input w-[100px] text-right" />
-                    </span>
-                    <span className={"text-right font-mono " + (variance.claimable ? "text-danger-fg" : "text-success-fg")}>
-                      {variance.diff >= 0 ? "+" : ""}
-                      {formatDecimal(variance.diff)} kg ({variance.pct.toFixed(1)}%)
-                    </span>
-                    <span>
-                      <Button onClick={() => saveWeigh(r)} variant="primary" size="xs">
-                        Simpan
-                      </Button>
-                    </span>
-                  </div>
-                );
-              })}
-              </>
-              )}
-            </div>
-            );
-          })}
-        </div>
-      )}
-
       {selectedMrpId && confirmedRows.length > 0 && (
         <div className="w-full overflow-x-auto rounded-lg border border-border-subtle bg-surface-card">
           <button
             onClick={() => setConfirmedExpanded((v) => !v)}
             className="flex w-full items-center justify-between border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary"
           >
-            Riwayat timbang — sudah dikonfirmasi ({confirmedRows.length})
+            Riwayat timbang — sudah ditimbang ({confirmedRows.length})
             <span className="font-sans text-[11px] font-semibold text-action-primary">{confirmedExpanded ? "Sembunyikan" : "Lihat →"}</span>
           </button>
           {confirmedExpanded && (
@@ -1061,7 +970,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               <span>Roll</span>
               <span>Code Roll</span>
               <span className="text-right">Berat bersih (kg)</span>
-              <span>Dikonfirmasi</span>
+              <span>Ditimbang</span>
               <span>Aksi</span>
             </div>
           )}

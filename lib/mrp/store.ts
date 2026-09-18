@@ -960,6 +960,8 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     const previousClaimReturReceipts = get().materialClaimReturReceipts;
     if (!claim) {
       const trimmedCodeRoll = codeRoll?.trim() || undefined;
+      const nowD = new Date();
+      const weighedNow = `${localDateString(nowD)} ${String(nowD.getHours()).padStart(2, "0")}:${String(nowD.getMinutes()).padStart(2, "0")}`;
       set({
         invoices: previousInvoices.map((inv) => {
           if (inv.id !== invoiceId) return inv;
@@ -974,7 +976,9 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
             // receiveRawMaterialRollAction); weighConfirmedAt SELALU direset tiap ditimbang ulang
             // (item 13, mirror update.weigh_confirmed_at = null yang tanpa syarat di server).
             claimPhotoAt: undefined,
-            weighConfirmedAt: undefined,
+            // Revisi 2026-09-19: tahap Konfirmasi dihapus -- simpan timbang non-klaim = langsung
+            // terkonfirmasi (mirror weigh_confirmed_at: nowIso() di receiveRawMaterialRollAction).
+            weighConfirmedAt: weighedNow,
           };
           return { ...inv, rollReceipts: { ...inv.rollReceipts, [colorKey]: arr } };
         }),
