@@ -500,6 +500,7 @@ export async function getFlowSnapshot(): Promise<FlowState> {
       lengan: c.lengan,
       rollCount: Number(c.roll_count),
       entitas: c.entitas ?? undefined,
+      originalRollCount: c.original_roll_count == null ? undefined : Number(c.original_roll_count),
     }));
     const invoicedByColor: Record<string, number> = {};
     for (const row of invoicedByColorByPo[p.id] ?? []) invoicedByColor[row.color_key] = Number(row.invoiced_rolls);

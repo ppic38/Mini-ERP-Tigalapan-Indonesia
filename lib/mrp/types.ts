@@ -67,7 +67,17 @@ export type Mrp = {
 
 export type MaterialPoStatus = "WAITING_INVOICE" | "INVOICE" | "PAYMENT" | "DELIVERY_MATERIAL" | "PROSES_PRODUKSI" | "CANCELLED";
 
-export type ColorBreakdown = { warna: string; lengan: Lengan; rollCount: number; entitas?: string };
+export type ColorBreakdown = {
+  warna: string;
+  lengan: Lengan;
+  rollCount: number;
+  entitas?: string;
+  /** Item 2026-09-18 (fitur "Bulatkan Roll") -- terisi HANYA kalau rollCount baris ini sedang
+   *  dalam kondisi dibulatkan (roll asli dari import berbentuk pecahan, mis. 4.98 dibulatkan jadi
+   *  5) -- dipakai untuk mengembalikan ke pecahan semula (revert) selama PO belum di-approve
+   *  Finance. undefined = belum pernah dibulatkan (baik karena memang bulat, atau belum disentuh). */
+  originalRollCount?: number;
+};
 
 export type MaterialPO = {
   id: string;

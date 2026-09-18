@@ -509,6 +509,7 @@ function mapMaterialPoRow(p: any, colorRows: any[], invoicedRows: any[]): Materi
     lengan: c.lengan,
     rollCount: Number(c.roll_count),
     entitas: c.entitas ?? undefined,
+    originalRollCount: c.original_roll_count == null ? undefined : Number(c.original_roll_count),
   }));
   const invoicedByColor: Record<string, number> = {};
   for (const row of invoicedRows) invoicedByColor[row.color_key] = Number(row.invoiced_rolls);
@@ -563,6 +564,73 @@ async function fetchUnapprovedMaterialPos(db: SupabaseClient, scope: { mrpId: st
   const invoicedByPo = new Map<string, typeof invoicedRes.data>();
   for (const i of invoicedRes.data ?? []) invoicedByPo.set(i.material_po_id, [...(invoicedByPo.get(i.material_po_id) ?? []), i]);
   return rows.map((p) => mapMaterialPoRow(p, colorByPo.get(p.id) ?? [], invoicedByPo.get(p.id) ?? []));
+}
+
+/** Fitur "Bulatkan Roll" (owner 2026-09-18): roll_count di material_po_color_breakdown kadang
+ *  pecahan (mis. 4.98) -- apa adanya dari kolom "QTY ROLL" sheet Aduan Pola Excel yang di-upload
+ *  (parseImport.ts TIDAK membulatkan), bukan bug. Owner ingin bisa membulatkan PO yang SUDAH
+ *  terbuat, tapi tetap bisa dikembalikan ke pecahan semula SELAMA Finance belum approve PO itu --
+ *  scope KEDUA fungsi di bawah SELALU `!approved && status!=CANCELLED` (lewat
+ *  fetchUnapprovedMaterialPos yang sudah ada), jadi PO yang sudah di-approve otomatis tidak
+ *  pernah tersentuh sama sekali, tidak perlu guard tambahan.
+ *
+ *  Nilai asli disimpan di original_roll_count (migration 0047) SELAMA proses pembulatan aktif --
+ *  null berarti "tidak sedang dibulatkan" (baik karena memang bulat, atau belum disentuh/sudah
+ *  dikembalikan). material_pos.roll_count/available_rolls ikut disesuaikan ke SUM roll_count baru
+ *  supaya tetap konsisten (invoiced_rolls dibiarkan apa adanya -- PO belum approved harusnya belum
+ *  pernah diinvoice, tapi tetap dihitung dari situ untuk jaga-jaga). */
+export async function roundMaterialPoRollCountsAction(): Promise<{ affectedPoIds: string[] }> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const db = supabaseServer();
+  const pos = await fetchUnapprovedMaterialPos(db, undefined);
+  const affectedPoIds: string[] = [];
+  for (const po of pos) {
+    const toRound = po.colorBreakdown.filter((c) => c.originalRollCount == null && !Number.isInteger(c.rollCount));
+    if (toRound.length === 0) continue;
+    affectedPoIds.push(po.id);
+    await Promise.all(
+      toRound.map((c) =>
+        db
+          .from("material_po_color_breakdown")
+          .update({ roll_count: Math.round(c.rollCount), original_roll_count: c.rollCount })
+          .eq("material_po_id", po.id)
+          .eq("warna", c.warna)
+          .eq("lengan", c.lengan)
+      )
+    );
+    const newRollCount = po.colorBreakdown.reduce((sum, c) => sum + (toRound.includes(c) ? Math.round(c.rollCount) : c.rollCount), 0);
+    const { error } = await db.from("material_pos").update({ roll_count: newRollCount, available_rolls: newRollCount - po.invoicedRolls }).eq("id", po.id);
+    if (error) throw new Error(error.message);
+  }
+  return { affectedPoIds };
+}
+
+/** Kembalikan ke pecahan semula (kebalikan roundMaterialPoRollCountsAction) -- lihat catatan di
+ *  atas untuk penjelasan lengkap & alasan scope `!approved`. */
+export async function revertMaterialPoRollRoundingAction(): Promise<{ affectedPoIds: string[] }> {
+  await requireInternalRole(await requireSession(), "procurement");
+  const db = supabaseServer();
+  const pos = await fetchUnapprovedMaterialPos(db, undefined);
+  const affectedPoIds: string[] = [];
+  for (const po of pos) {
+    const toRevert = po.colorBreakdown.filter((c) => c.originalRollCount != null);
+    if (toRevert.length === 0) continue;
+    affectedPoIds.push(po.id);
+    await Promise.all(
+      toRevert.map((c) =>
+        db
+          .from("material_po_color_breakdown")
+          .update({ roll_count: c.originalRollCount, original_roll_count: null })
+          .eq("material_po_id", po.id)
+          .eq("warna", c.warna)
+          .eq("lengan", c.lengan)
+      )
+    );
+    const newRollCount = po.colorBreakdown.reduce((sum, c) => sum + (toRevert.includes(c) ? c.originalRollCount! : c.rollCount), 0);
+    const { error } = await db.from("material_pos").update({ roll_count: newRollCount, available_rolls: newRollCount - po.invoicedRolls }).eq("id", po.id);
+    if (error) throw new Error(error.message);
+  }
+  return { affectedPoIds };
 }
 
 export async function approveMaterialPoAction(id: string): Promise<void> {

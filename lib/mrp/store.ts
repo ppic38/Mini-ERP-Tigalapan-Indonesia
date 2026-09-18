@@ -282,6 +282,8 @@ type FlowActions = {
   rejectPpicMrp: (mrpId: string, reason: string) => Promise<void>;
   sendPoToFinance: (mrpId: string) => Promise<void>;
   approveMaterialPo: (id: string) => Promise<void>;
+  roundMaterialPoRollCounts: () => Promise<void>;
+  revertMaterialPoRollRounding: () => Promise<void>;
   approveMaklonPo: (id: string) => Promise<void>;
   bookInvoice: (
     poId: string,
@@ -541,6 +543,8 @@ const BUSY_TRACKED_ACTIONS = new Set<string>([
   "rejectPpicMrp",
   "sendPoToFinance",
   "approveMaterialPo",
+  "roundMaterialPoRollCounts",
+  "revertMaterialPoRollRounding",
   "approveAllMaterialPos",
   "approveVendorMaterialPos",
   "approveMaklonPo",
@@ -776,6 +780,17 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   },
   approveMaterialPo: async (id) => {
     await actions.approveMaterialPoAction(id);
+    backgroundRefresh();
+  },
+  // Fitur "Bulatkan Roll" (owner 2026-09-18) -- tidak ada optimistic patch (server yang menentukan
+  // PO mana yang kena, lihat scope !approved di actions.ts), tunggu backgroundRefresh untuk angka
+  // yang benar.
+  roundMaterialPoRollCounts: async () => {
+    await actions.roundMaterialPoRollCountsAction();
+    backgroundRefresh();
+  },
+  revertMaterialPoRollRounding: async () => {
+    await actions.revertMaterialPoRollRoundingAction();
     backgroundRefresh();
   },
   approveMaklonPo: async (id) => {

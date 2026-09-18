@@ -1,0 +1,12 @@
+-- Fitur "Bulatkan Roll" di halaman Purchase Order (owner 2026-09-18): roll_count di
+-- material_po_color_breakdown kadang berbentuk pecahan (mis. 4.98) -- BUKAN bug ERP, itu apa
+-- adanya dari kolom "QTY ROLL" sheet "Aduan Pola" file Excel yang di-upload (lihat parseImport.ts,
+-- tidak ada pembulatan sama sekali di jalur import). Owner ingin bisa membulatkan roll_count PO
+-- yang SUDAH terlanjur dibuat (bukan cuma yang belum), TAPI tetap bisa dikembalikan ke pecahan
+-- semula kapan saja SELAMA Finance belum approve PO itu -- begitu approved, tidak boleh diutak-atik
+-- lagi (approveMaterialPoAction sudah baca colorBreakdown apa adanya untuk split by entitas).
+--
+-- Kolom ini menyimpan nilai roll_count ASLI (sebelum dibulatkan) HANYA selama proses pembulatan
+-- aktif -- null berarti "belum pernah dibulatkan" (baik karena memang bulat dari awal, atau belum
+-- disentuh tombol Rounding). Begitu dikembalikan ke pecahan (revert), kolom ini di-null-kan lagi.
+alter table material_po_color_breakdown add column if not exists original_roll_count numeric;

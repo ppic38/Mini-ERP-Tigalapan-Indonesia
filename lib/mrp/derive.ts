@@ -103,6 +103,17 @@ export function materialGroupsByWarna(materialRows: MaterialRow[]): MaterialGrou
   return Array.from(map.values()).sort((a, b) => a.warna.localeCompare(b.warna));
 }
 
+/** Fitur "Bulatkan Roll" (owner 2026-09-18) -- dipakai tombol di halaman Purchase Order untuk
+ *  tahu apakah ada PO Material yang MASIH pecahan (belum pernah dibulatkan) dan/atau sudah
+ *  dibulatkan (bisa dikembalikan). Selalu hanya PO belum-approved, sama seperti scope
+ *  roundMaterialPoRollCountsAction/revertMaterialPoRollRoundingAction sendiri di actions.ts. */
+export function hasUnroundedFractionalRoll(materialPOs: MaterialPO[]): boolean {
+  return materialPOs.some((p) => !p.approved && p.status !== "CANCELLED" && p.colorBreakdown.some((c) => c.originalRollCount == null && !Number.isInteger(c.rollCount)));
+}
+export function hasRoundedRollPendingRevert(materialPOs: MaterialPO[]): boolean {
+  return materialPOs.some((p) => !p.approved && p.status !== "CANCELLED" && p.colorBreakdown.some((c) => c.originalRollCount != null));
+}
+
 // ===== Fase 2: kalkulasi PO Bahan & PO Maklon dari Master Data =====
 // Menggantikan estimasi flat lama (MATERIAL_RATE_PER_ROLL/roll, VENDOR_PRODUKSI.ratePerPc/pc)
 // dengan lookup ke Master Data (Harga Kain/Harga Kain PKS, Harga Maklon) yang sudah diimpor dari

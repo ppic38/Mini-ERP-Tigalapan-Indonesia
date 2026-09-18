@@ -18,6 +18,8 @@ import {
   hargaKainRate,
   hargaKerahMansetRateInfo,
   hargaRibRateInfo,
+  hasRoundedRollPendingRevert,
+  hasUnroundedFractionalRoll,
   inferMaterialKategori,
   MATERIAL_KATEGORI_URUTAN,
   maklonPoBadgeWithApproval,
@@ -74,6 +76,8 @@ export default function PoApprovalPage() {
   const switchAduanVendorByRoll = useMrpStore((s) => s.switchAduanVendorByRoll);
   const assignMaterialSupplier = useMrpStore((s) => s.assignMaterialSupplier);
   const sendPoToFinance = useMrpStore((s) => s.sendPoToFinance);
+  const roundMaterialPoRollCounts = useMrpStore((s) => s.roundMaterialPoRollCounts);
+  const revertMaterialPoRollRounding = useMrpStore((s) => s.revertMaterialPoRollRounding);
   const hargaKain = useMrpStore((s) => s.hargaKain);
   const hargaKainPks = useMrpStore((s) => s.hargaKainPks);
   const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
@@ -771,13 +775,29 @@ export default function PoApprovalPage() {
       <div className="overflow-hidden border border-border-subtle bg-surface-card">
         <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
           <span className="font-sans text-[13px] font-semibold text-text-primary">PO Material</span>
-          <div className="relative ml-auto">
-            <button
-              onClick={() => setMaterialColOpen((v) => !v)}
-              className="rounded-md border border-[#CBD5DF] px-2.5 py-[6px] font-sans text-[11.5px] font-semibold text-action-primary"
-            >
-              ⊞ Kolom
-            </button>
+          <div className="ml-auto flex items-center gap-2">
+            {/* Item 2026-09-18 (owner: "roll_count di sini kadang pecahan, apa adanya dari sheet
+               Aduan Pola Excel -- mau bisa dibulatkan, tapi tetap bisa dikembalikan selama Finance
+               belum approve PO-nya"): 2 tombol terpisah (bukan 1 toggle) karena PO yang sudah
+               dibulatkan & yang belum bisa hidup berdampingan (mis. baru sebagian PO dibulatkan) --
+               masing-masing cuma muncul kalau memang ada PO yang relevan (belum approved). */}
+            {hasUnroundedFractionalRoll(allMaterialPOs) && (
+              <Button onClick={() => roundMaterialPoRollCounts()} variant="muted" size="xs" title="Bulatkan roll_count yang masih pecahan pada PO Material yang belum di-approve Finance">
+                Bulatkan Roll
+              </Button>
+            )}
+            {hasRoundedRollPendingRevert(allMaterialPOs) && (
+              <Button onClick={() => revertMaterialPoRollRounding()} variant="ghost" size="xs" title="Kembalikan roll_count yang sudah dibulatkan ke pecahan semula">
+                Kembalikan ke Pecahan
+              </Button>
+            )}
+            <div className="relative">
+              <button
+                onClick={() => setMaterialColOpen((v) => !v)}
+                className="rounded-md border border-[#CBD5DF] px-2.5 py-[6px] font-sans text-[11.5px] font-semibold text-action-primary"
+              >
+                ⊞ Kolom
+              </button>
             {materialColOpen && (
               <div className="absolute right-0 top-[110%] z-20 max-h-72 w-56 overflow-y-auto rounded-md border border-border-subtle bg-surface-card p-2 shadow-[0_8px_20px_rgba(11,19,27,.15)]">
                 {materialTreeColumns.map((c) => (
@@ -788,6 +808,7 @@ export default function PoApprovalPage() {
                 ))}
               </div>
             )}
+          </div>
           </div>
         </div>
         {materialMrpSummaries.length === 0 && (
