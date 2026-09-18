@@ -345,7 +345,14 @@ type FlowActions = {
   /** Item 2026-09-11 (migration 0026) -- lihat setKoliEkspedisiResiGroupAction di actions.ts.
    *  Pengganti setKoliWeight/markKoliDelivered/setKoliEkspedisi lama (dihapus, cuma dipanggil dari
    *  halaman Pengiriman yang sekarang selalu lewat 3 method grup ini). */
-  setKoliEkspedisiResiGroup: (koliIds: string[], ekspedisi: string, note: string, noResi: string, photo: { dataUrl: string; fileName?: string }) => Promise<void>;
+  setKoliEkspedisiResiGroup: (
+    koliIds: string[],
+    ekspedisi: string,
+    note: string,
+    noResi: string,
+    photo: { dataUrl: string; fileName?: string },
+    beratByKoli: Record<string, number>
+  ) => Promise<void>;
   /** Lihat deliverKoliResiGroupAction di actions.ts -- berat per koli + Delivery seluruh grup,
    *  satu aksi. */
   deliverKoliResiGroup: (items: { koliId: string; beratKoli: number }[]) => Promise<void>;
@@ -1204,8 +1211,8 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   },
   // TIDAK dibuat optimistic -- foto lampiran belum tentu valid (divalidasi server) & melibatkan
   // upload, pola sama seperti submitCuttingDefectClaim (bukan skalar sederhana).
-  setKoliEkspedisiResiGroup: async (koliIds, ekspedisi, note, noResi, photo) => {
-    await actions.setKoliEkspedisiResiGroupAction(koliIds, ekspedisi, note, noResi, photo);
+  setKoliEkspedisiResiGroup: async (koliIds, ekspedisi, note, noResi, photo, beratByKoli) => {
+    await actions.setKoliEkspedisiResiGroupAction(koliIds, ekspedisi, note, noResi, photo, beratByKoli);
     backgroundRefresh();
   },
   // TIDAK dibuat optimistic -- deliverKoliResiGroupAction diam-diam no-op (tidak set

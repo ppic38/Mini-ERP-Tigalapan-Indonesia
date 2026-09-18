@@ -406,6 +406,8 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   // aksi atomik (setKoliEkspedisiResiGroupAction), semuanya dapat resiGroupId BARU yang sama.
   const [ekspedisiDialogKoliIds, setEkspedisiDialogKoliIds] = useState<string[] | null>(null);
   const [ekspedisiDraft, setEkspedisiDraft] = useState("");
+  // Berat per koli (kg) diinput di dialog ini -- timbang dulu, baru resi dikeluarkan.
+  const [dialogWeights, setDialogWeights] = useState<Record<string, number>>({});
   const [ekspedisiNoteDraft, setEkspedisiNoteDraft] = useState("");
   const [noResiDraft, setNoResiDraft] = useState("");
   const [ekspedisiPhotoDataUrl, setEkspedisiPhotoDataUrl] = useState<string | null>(null);
@@ -419,6 +421,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   function openEkspedisiDialog(koliIds: string[]) {
     if (koliIds.length === 0) return;
     setEkspedisiDialogKoliIds(koliIds);
+    setDialogWeights(Object.fromEntries(koliIds.map((id) => [id, deliveryKolis.find((k) => k.id === id)?.beratKoli ?? 0])));
     setEkspedisiDraft("");
     setEkspedisiNoteDraft("");
     setNoResiDraft("");
@@ -429,6 +432,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   }
   function closeEkspedisiDialog() {
     setEkspedisiDialogKoliIds(null);
+    setDialogWeights({});
     setEkspedisiDraft("");
     setEkspedisiNoteDraft("");
     setNoResiDraft("");
@@ -458,10 +462,11 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   }
   async function submitEkspedisi() {
     if (!ekspedisiDialogKoliIds || !ekspedisiDraft || !noResiDraft.trim() || !ekspedisiPhotoDataUrl || ekspedisiSubmitting) return;
+    if (ekspedisiDialogKoliIds.some((id) => !((dialogWeights[id] ?? 0) > 0))) return;
     setEkspedisiSubmitting(true);
     setEkspedisiError(null);
     try {
-      await setKoliEkspedisiResiGroup(ekspedisiDialogKoliIds, ekspedisiDraft, ekspedisiNoteDraft.trim(), noResiDraft.trim(), { dataUrl: ekspedisiPhotoDataUrl, fileName: ekspedisiPhotoFileName });
+      await setKoliEkspedisiResiGroup(ekspedisiDialogKoliIds, ekspedisiDraft, ekspedisiNoteDraft.trim(), noResiDraft.trim(), { dataUrl: ekspedisiPhotoDataUrl, fileName: ekspedisiPhotoFileName }, dialogWeights);
       setSelectedForEkspedisi(new Set());
       closeEkspedisiDialog();
     } catch (e) {
@@ -486,8 +491,13 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   // Item 2026-09-11 (migration 0026, owner: "berat dan delivery itu digabung jadi satu aksi ...
   // yang dibayarkan itu adalah berat total koli yang dikirimkan ke satu ekspedisi"): SATU tombol
   // "Delivery" per GRUP resi -- enabled cuma kalau SEMUA koli dalam grup sudah diisi berat > 0.
+  // Berat koli sekarang tersimpan sejak "Set Ekspedisi & Resi" (beratKoli); weightDraft cuma
+  // fallback untuk koli LAMA yang sudah punya ekspedisi tapi beratnya belum pernah diisi.
+  function weightOf(k: DeliveryKoli): number {
+    return k.beratKoli && k.beratKoli > 0 ? k.beratKoli : weightDraft[k.id] ?? 0;
+  }
   function doDeliveryGroup(groupKey: string, kolis: DeliveryKoli[]) {
-    const items = kolis.map((k) => ({ koliId: k.id, beratKoli: weightDraft[k.id] ?? 0 }));
+    const items = kolis.map((k) => ({ koliId: k.id, beratKoli: weightOf(k) }));
     if (items.some((it) => !(it.beratKoli > 0)) || isPending(groupKey)) return;
     runPendingAction(groupKey, deliverKoliResiGroup(items));
   }
@@ -786,9 +796,9 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
             <div className="mt-2 flex flex-col gap-3">
               {pendingGroups.map(([groupKey, kolis]) => {
                 const first = kolis[0];
-                const totalDraftWeight = kolis.reduce((s, k) => s + (weightDraft[k.id] ?? 0), 0);
+                const totalDraftWeight = kolis.reduce((s, k) => s + weightOf(k), 0);
                 const totalEstOngkir = first.ekspedisi && totalDraftWeight > 0 ? ekspedisiPrice(first.ekspedisi, totalDraftWeight, ekspedisiRates) : null;
-                const allWeighed = kolis.every((k) => (weightDraft[k.id] ?? 0) > 0);
+                const allWeighed = kolis.every((k) => weightOf(k) > 0);
                 return (
                   <div key={groupKey} className="overflow-hidden rounded-md border border-border-subtle bg-white">
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-2 font-sans text-[11.5px] text-[#31414F]">
@@ -814,7 +824,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     </div>
                     {kolis.map((k) => {
                       const isExpanded = expandedKoli.has(k.id);
-                      const myWeight = weightDraft[k.id] ?? 0;
+                      const myWeight = weightOf(k);
                       const myOngkirShare = totalEstOngkir != null && totalDraftWeight > 0 ? totalEstOngkir * (myWeight / totalDraftWeight) : null;
                       return (
                         <Fragment key={k.id}>
@@ -830,7 +840,11 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                               {summarizeItems(k.items)}
                             </button>
                             <span className="flex justify-end">
-                              <NumberInput value={myWeight} decimals={2} onChange={(v) => setWeightDraft((prev) => ({ ...prev, [k.id]: v }))} className="input w-[90px] text-right" />
+                              {k.beratKoli && k.beratKoli > 0 ? (
+                                <span className="font-mono">{formatDecimal(k.beratKoli)}</span>
+                              ) : (
+                                <NumberInput value={myWeight} decimals={2} onChange={(v) => setWeightDraft((prev) => ({ ...prev, [k.id]: v }))} className="input w-[90px] text-right" />
+                              )}
                             </span>
                             <span className="text-right font-mono text-[11px] text-text-muted">{myOngkirShare != null ? formatRupiah(myOngkirShare) : "—"}</span>
                             <span className="text-right">
@@ -955,8 +969,38 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
             <div className="border-b border-border-subtle px-5 py-3.5">
               <span className="font-sans text-[13px] font-semibold text-text-primary">Set Ekspedisi &amp; Resi — {ekspedisiDialogKoliIds.length} koli</span>
             </div>
-            <div className="px-5 py-4">
-              <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Ekspedisi</div>
+            <div className="max-h-[75vh] overflow-y-auto px-5 py-4">
+              <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Berat per koli (kg) — timbang dulu</div>
+              <div className="mt-1 overflow-hidden rounded-md border border-[#CFE0EF]">
+                {ekspedisiDialogKoliIds.map((id) => {
+                  const koli = deliveryKolis.find((k) => k.id === id);
+                  return (
+                    <div key={id} className="flex items-center gap-3 border-b border-[#F1F4F7] px-3 py-1.5 last:border-b-0">
+                      <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-[#31414F]" title={koli?.noKoli}>
+                        {koli?.noKoli ?? id}
+                      </span>
+                      <span className="whitespace-nowrap font-sans text-[10.5px] text-text-muted">{koli ? summarizeItems(koli.items) : ""}</span>
+                      <NumberInput
+                        value={dialogWeights[id] ?? 0}
+                        decimals={2}
+                        onChange={(v) => setDialogWeights((prev) => ({ ...prev, [id]: v }))}
+                        className="input w-[90px] text-right"
+                      />
+                    </div>
+                  );
+                })}
+                {(() => {
+                  const totalW = ekspedisiDialogKoliIds.reduce((s, id) => s + (dialogWeights[id] ?? 0), 0);
+                  const est = ekspedisiDraft && totalW > 0 ? ekspedisiPrice(ekspedisiDraft, totalW, ekspedisiRates) : null;
+                  return (
+                    <div className="flex items-center justify-between gap-3 border-t-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[11px] font-semibold text-info-fg">
+                      <span>Total berat: {formatDecimal(totalW)} kg</span>
+                      <span>Estimasi ongkir: {est != null ? formatRupiah(est) : "—"}</span>
+                    </div>
+                  );
+                })()}
+              </div>
+              <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Ekspedisi</div>
               <select value={ekspedisiDraft} onChange={(e) => setEkspedisiDraft(e.target.value)} className="input mt-1 w-full">
                 <option value="">— pilih ekspedisi —</option>
                 {ekspedisiNames.map((e) => (
@@ -1005,7 +1049,13 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
               </button>
               <Button
                 onClick={submitEkspedisi}
-                disabled={!ekspedisiDraft || !noResiDraft.trim() || !ekspedisiPhotoDataUrl || ekspedisiSubmitting}
+                disabled={
+                  !ekspedisiDraft ||
+                  !noResiDraft.trim() ||
+                  !ekspedisiPhotoDataUrl ||
+                  ekspedisiSubmitting ||
+                  ekspedisiDialogKoliIds.some((id) => !((dialogWeights[id] ?? 0) > 0))
+                }
                 variant="accent"
                 size="sm"
               >

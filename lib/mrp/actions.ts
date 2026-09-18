@@ -3848,12 +3848,17 @@ export async function setKoliEkspedisiResiGroupAction(
   ekspedisi: string,
   note: string,
   noResi: string,
-  photo: { dataUrl: string; fileName?: string }
+  photo: { dataUrl: string; fileName?: string },
+  // Revisi 2026-09-19 (owner: "flow di ekspedisi harus timbang dulu baru keluar resinya"): berat
+  // TIAP koli sekarang diinput di dialog ini (dulu di tabel "Sudah ada ekspedisi" sebelum Delivery)
+  // dan disimpan bareng ekspedisi+resi. Wajib > 0 untuk SEMUA koli yang diproses.
+  beratByKoli: Record<string, number> = {}
 ): Promise<void> {
   const vendorId = await requireVendorSession();
   if (koliIds.length === 0) return;
   if (!ekspedisi.trim()) throw new Error("Pilih ekspedisi dulu.");
   if (!noResi.trim()) throw new Error("No resi wajib diisi.");
+  if (koliIds.some((id) => !(Number(beratByKoli[id]) > 0))) throw new Error("Berat semua koli harus diisi (> 0) sebelum set ekspedisi & resi.");
   if (!photo.dataUrl.startsWith("data:image/")) throw new Error("Foto lampiran tidak valid -- harus berupa gambar.");
   const base64Part = photo.dataUrl.slice(photo.dataUrl.indexOf(",") + 1);
   const approxBytes = Math.floor((base64Part.length * 3) / 4);
@@ -3877,6 +3882,10 @@ export async function setKoliEkspedisiResiGroupAction(
     .update({ ekspedisi, ekspedisi_note: note.trim(), ekspedisi_note_at: notedAt, no_resi: noResi.trim(), resi_group_id: resiGroupId })
     .in("id", validIds);
   if (error) throw new Error(error.message);
+  for (const koliId of validIds) {
+    const { error: weightErr } = await db.from("delivery_kolis").update({ berat_koli: Number(beratByKoli[koliId]) }).eq("id", koliId);
+    if (weightErr) throw new Error(weightErr.message);
+  }
 }
 
 /** Ambil BYTE foto lampiran ekspedisi 1 koli on-demand -- `delivery_koli_ekspedisi_photos` sengaja
