@@ -6,20 +6,42 @@ import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatPcs, formatRupiah, maklonPoBadgeWithApproval, maklonPoDeliveryProgress, maklonPoInvoiceLockedBy, vendorItemSizeProgress } from "@/lib/mrp/derive";
+import { formatDate, formatPcs, formatRupiah, maklonPoBadgeWithApproval, maklonPoDeliveryProgress, maklonPoInvoiceLockedBy, targetDoneProduksiForGroup, vendorItemSizeProgress } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
-import type { MaklonPO } from "@/lib/mrp/types";
+import type { MaklonPO, RawMaterialInvoice } from "@/lib/mrp/types";
 
-/** Item 2026-09-12 (user-requested, revisi ke-2 -- versi tabel per-size sebelumnya kaku & makan
- *  tempat): 1 baris ringkas per warna/lengan dengan mini progress bar (FG vs target), size cuma
- *  ditampilkan sebagai chip kecil dan BOLEH di-collapse (default collapse kalau belum ada progres
- *  sama sekali, supaya PO yang masih 0 tidak langsung menuh-menuhin layar) -- klik untuk buka
- *  rincian per size. Sumber data & rumus TIDAK berubah dari revisi sebelumnya (vendorItemSizeProgress,
- *  lib/mrp/derive.ts) -- ini murni perubahan tampilan. */
+/** Item 2026-09-18 (owner: "gabung saja Monitoring Produksi dengan Deadline Produksi") --
+ *  halaman "Deadline Produksi" yang tadinya terpisah DIHAPUS, deadline (bahan diterima + lead time
+ *  vendor, lihat targetDoneProduksiForGroup) sekarang jadi bagian dari baris progres per item di
+ *  sini, bukan halaman/menu sendiri.
+ *
+ *  Item 2026-09-18 (owner): bar Cutting DISEMBUNYIKAN dari tampilan ringkas ini untuk sekarang --
+ *  cuma bar Finish Good yang ditampilkan (dibanding hasil CUTTING AKTUAL, bukan target rencana --
+ *  keputusan sebelumnya di halaman Deadline, dibawa ke sini juga). Angka % SELALU tampil angka
+ *  (0% kalau belum ada progres), TIDAK LAGI pakai "—"/"-" supaya konsisten kelihatan sebagai
+ *  persentase, bukan kelihatan seperti data hilang. */
+type DeadlineInfo = { deadline: string | undefined; daysLeft: number | null };
+
+function statusFor(finishGood: number, cuttingOrTarget: number, hasStarted: boolean, info: DeadlineInfo): { label: string; tone: "neutral" | "info" | "warning" | "success" | "danger" } {
+  if (!info.deadline) return { label: "MENUNGGU BAHAN", tone: "neutral" };
+  const done = hasStarted && cuttingOrTarget > 0 && finishGood >= cuttingOrTarget;
+  if (done) return { label: "SELESAI", tone: "success" };
+  if ((info.daysLeft ?? 0) < 0) return { label: "TERLAMBAT", tone: "danger" };
+  if ((info.daysLeft ?? 99) <= 2) return { label: "MENDEKATI DEADLINE", tone: "warning" };
+  return { label: "BERJALAN", tone: "info" };
+}
+
+function deadlineInfoFor(mrpId: string, vendorProduksi: string, warna: string, invoices: RawMaterialInvoice[]): DeadlineInfo {
+  const deadline = targetDoneProduksiForGroup(mrpId, vendorProduksi, warna, invoices);
+  const daysLeft = deadline ? Math.round((new Date(deadline + "T00:00:00").getTime() - new Date(new Date().toDateString()).getTime()) / 86400000) : null;
+  return { deadline, daysLeft };
+}
+
 function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const productionBatches = useMrpStore((s) => s.productionBatches);
   const productionResults = useMrpStore((s) => s.productionResults);
+  const invoices = useMrpStore((s) => s.invoices);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
 
   const rows = vendorItemSizeProgress(po.mrpId, po.vendorProduksi, mrpDetails, productionBatches, productionResults);
@@ -43,7 +65,7 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
   return (
     <div className="overflow-hidden rounded-md border border-[#E4E9EE] bg-white">
       <div className="bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-        Progres per item (dari rencana Aduan Pola) — klik baris untuk rincian per size
+        Progres per item (dari rencana Aduan Pola) — deadline = bahan diterima + {VENDOR_PRODUKSI[po.vendorProduksi]?.productionLeadDays ?? 7} hari. Bar FG dibanding hasil cutting AKTUAL. Klik baris untuk rincian per size.
       </div>
       {rows.length === 0 ? (
         <div className="border-t border-[#F1F4F7] px-3 py-2 font-sans text-[11.5px] text-text-muted">
@@ -58,23 +80,26 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
               (a, r) => ({ target: a.target + r.target, cutting: a.cutting + r.cutting, finishGood: a.finishGood + r.finishGood, reject: a.reject + r.reject, rework: a.rework + r.rework }),
               { target: 0, cutting: 0, finishGood: 0, reject: 0, rework: 0 }
             );
-            const fgPct = s.target > 0 ? Math.min(100, (s.finishGood / s.target) * 100) : 0;
-            const cuttingPct = s.target > 0 ? Math.min(100, (s.cutting / s.target) * 100) : 0;
+            const denom = s.cutting > 0 ? s.cutting : s.target;
+            const fgPct = s.cutting > 0 ? Math.min(100, (s.finishGood / s.cutting) * 100) : 0;
+            const info = deadlineInfoFor(po.mrpId, po.vendorProduksi, g.warna, invoices);
+            const status = statusFor(s.finishGood, denom, s.cutting > 0, info);
             return (
               <div key={key}>
                 <button onClick={() => toggle(key)} className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-[#FAFBFC]">
                   <span className="flex-none text-text-muted">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
-                  <span className="w-[180px] flex-none truncate font-sans text-[11.5px] font-medium text-[#31414F]">
+                  <span className="w-[160px] flex-none truncate font-sans text-[11.5px] font-medium text-[#31414F]">
                     {g.warna} · {g.lengan}
                   </span>
+                  <span className="w-[100px] flex-none font-mono text-[10.5px] text-text-muted">{info.deadline ? formatDate(info.deadline) : "—"}</span>
+                  <span className="w-[85px] flex-none font-mono text-[10.5px] text-text-muted">{info.daysLeft != null ? (info.daysLeft < 0 ? `${-info.daysLeft} hari lewat` : `${info.daysLeft} hari lagi`) : "—"}</span>
                   <span className="flex-1">
                     <span className="relative block h-1.5 w-full overflow-hidden rounded-full bg-[#EEF0F3]">
-                      <span className="absolute inset-y-0 left-0 rounded-full bg-[#CFE0EF]" style={{ width: `${cuttingPct}%` }} />
                       <span className="absolute inset-y-0 left-0 rounded-full bg-success" style={{ width: `${fgPct}%` }} />
                     </span>
                   </span>
                   <span className="w-[90px] flex-none text-right font-mono text-[11px] text-text-muted">
-                    {formatPcs(s.finishGood)}/{formatPcs(s.target)}
+                    {formatPcs(s.finishGood)}/{formatPcs(denom)}
                   </span>
                   {(s.reject > 0 || s.rework > 0) && (
                     <span className="flex-none font-sans text-[10px]">
@@ -83,23 +108,27 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
                       {s.rework > 0 && <span className="text-warning-fg">{formatPcs(s.rework)} rework</span>}
                     </span>
                   )}
-                  <span className="w-[52px] flex-none text-right font-mono text-[11px] font-semibold text-[#31414F]">
-                    {s.cutting > 0 ? `${((s.finishGood / s.cutting) * 100).toFixed(0)}%` : "—"}
-                  </span>
+                  <span className="w-[52px] flex-none text-right font-mono text-[11px] font-semibold text-[#31414F]">{fgPct.toFixed(0)}%</span>
+                  <StatusPill tone={status.tone} className="flex-none">
+                    {status.label}
+                  </StatusPill>
                 </button>
                 {open && (
                   <div className="flex flex-wrap gap-1.5 border-t border-[#F1F4F7] bg-[#FAFBFC] px-3 py-2 pl-9">
-                    {g.rows.map((r) => (
-                      <span
-                        key={r.size}
-                        title={`Target ${r.target} · Cutting ${r.cutting} · FG ${r.finishGood}${r.reject ? ` · Reject ${r.reject}` : ""}${r.rework ? ` · Rework ${r.rework}` : ""}`}
-                        className="rounded border border-[#E4E9EE] bg-white px-2 py-1 font-mono text-[10.5px] text-[#31414F]"
-                      >
-                        <span className="font-semibold">{r.size}</span> {formatPcs(r.finishGood)}/{formatPcs(r.target)}
-                        {r.reject > 0 && <span className="text-danger-fg"> −{r.reject}</span>}
-                        {r.rework > 0 && <span className="text-warning-fg"> +{r.rework}rw</span>}
-                      </span>
-                    ))}
+                    {g.rows.map((r) => {
+                      const sizeDenom = r.cutting > 0 ? r.cutting : r.target;
+                      return (
+                        <span
+                          key={r.size}
+                          title={`Target ${r.target} · Cutting ${r.cutting} · FG ${r.finishGood}${r.reject ? ` · Reject ${r.reject}` : ""}${r.rework ? ` · Rework ${r.rework}` : ""}`}
+                          className="rounded border border-[#E4E9EE] bg-white px-2 py-1 font-mono text-[10.5px] text-[#31414F]"
+                        >
+                          <span className="font-semibold">{r.size}</span> {formatPcs(r.finishGood)}/{formatPcs(sizeDenom)}
+                          {r.reject > 0 && <span className="text-danger-fg"> −{r.reject}</span>}
+                          {r.rework > 0 && <span className="text-warning-fg"> +{r.rework}rw</span>}
+                        </span>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -210,6 +239,10 @@ export default function ProduksiMonitoringPage() {
 
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
   const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
+  const mrpDetails = useMrpStore((s) => s.mrpDetails);
+  const productionBatches = useMrpStore((s) => s.productionBatches);
+  const productionResults = useMrpStore((s) => s.productionResults);
+  const invoices = useMrpStore((s) => s.invoices);
 
   if (!mounted) return null;
 
@@ -220,6 +253,23 @@ export default function ProduksiMonitoringPage() {
     mrpMap.get(p.mrpId)!.vendorPOs.push(p);
   }
   const rows = Array.from(mrpMap.values()).sort((a, b) => a.mrpId.localeCompare(b.mrpId));
+
+  function worstStatusFor(group: MrpGroup) {
+    const worst = group.vendorPOs
+      .flatMap((po) => {
+        const items = vendorItemSizeProgress(po.mrpId, po.vendorProduksi, mrpDetails, productionBatches, productionResults);
+        const warnaSet = Array.from(new Set(items.map((it) => it.warna)));
+        return warnaSet.map((warna) => {
+          const s = items.filter((it) => it.warna === warna).reduce((a, r) => ({ cutting: a.cutting + r.cutting, finishGood: a.finishGood + r.finishGood, target: a.target + r.target }), { cutting: 0, finishGood: 0, target: 0 });
+          const info = deadlineInfoFor(po.mrpId, po.vendorProduksi, warna, invoices);
+          const denom = s.cutting > 0 ? s.cutting : s.target;
+          return { info, status: statusFor(s.finishGood, denom, s.cutting > 0, info) };
+        });
+      })
+      .filter((r) => r.info.deadline)
+      .sort((a, b) => (a.info.daysLeft ?? 0) - (b.info.daysLeft ?? 0))[0];
+    return worst?.status ?? null;
+  }
 
   const columns: ColumnDef<MrpGroup>[] = [
     {
@@ -240,6 +290,15 @@ export default function ProduksiMonitoringPage() {
         return allSame ? <StatusPill tone={maklonPoBadgeWithApproval(g.vendorPOs[0], vendorInvoices).tone}>{badges[0]}</StatusPill> : <span className="font-sans text-[11px] text-text-muted">Campuran</span>;
       },
     },
+    {
+      key: "deadline",
+      label: "Deadline paling mendesak",
+      default: true,
+      render: (g) => {
+        const worst = worstStatusFor(g);
+        return worst ? <StatusPill tone={worst.tone}>{worst.label}</StatusPill> : <span className="font-sans text-[11px] text-text-muted">Menunggu bahan</span>;
+      },
+    },
   ];
 
   return (
@@ -248,11 +307,11 @@ export default function ProduksiMonitoringPage() {
       activeHref="/produksi/monitoring"
       breadcrumb={["Dashboard", "Monitoring Produksi"]}
       title="Monitoring Produksi"
-      subtitle={`${rows.length} MRP dengan PO vendor produksi — progres kirim & tagih lintas semua vendor`}
+      subtitle={`${rows.length} MRP dengan PO vendor produksi — progres kirim & tagih, deadline & progres per item`}
     >
       <DataTable
         title="MRP dengan PO vendor produksi"
-        subtitle="Klik baris untuk pilih vendor, lalu lihat progres produksi per item (warna/lengan/size)"
+        subtitle="Klik baris untuk pilih vendor, lalu lihat progres produksi & deadline per item (warna/lengan/size)"
         columns={columns}
         rows={rows}
         keyOf={(g) => g.mrpId}

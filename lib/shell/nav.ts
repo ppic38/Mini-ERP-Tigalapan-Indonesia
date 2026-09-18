@@ -64,7 +64,6 @@ export const NAV: Record<RoleKey, RoleNav> = {
     entity: "Tigalapan Indonesia",
     items: [
       { label: "Monitoring Produksi", href: "/produksi/monitoring" },
-      { label: "Deadline Produksi", href: "/produksi/deadline" },
       { label: "Monitoring Reject", href: "/produksi/reject" },
       { label: "Kebutuhan Bahan", href: "/produksi/material-status" },
       { label: "Yield Alert", href: "/produksi/yield-alerts" },
