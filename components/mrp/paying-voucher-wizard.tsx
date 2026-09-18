@@ -311,53 +311,6 @@ export function PayingVoucherWizard({
     <div className="border-t border-border-subtle bg-[#F7F9FB] px-5 py-4">
       <div className="font-sans text-[12.5px] font-semibold text-text-primary">Paying Voucher — {po.id}</div>
 
-      {entries.length > 0 && (
-        <div className="mt-3 overflow-hidden rounded-md border border-border-subtle bg-white">
-          {/* BUG FIX 2026-09-07: kolom ini dulu berlabel "Harga/roll" & tidak menampilkan total
-              berat -- padahal Subtotal SUDAH dihitung benar sebagai harga x TOTAL KG semua roll
-              (field `hargaPerRoll` itu sebenarnya harga PER KG, cocok dengan label input "Harga /
-              kg" di form di bawah), bukan x jumlah roll. Sekarang total berat (kg) ditampilkan
-              eksplisit supaya Subtotal = Total Berat x Harga/Kg terlihat jelas. */}
-          <div className="grid grid-cols-[1.4fr_0.6fr_0.9fr_1fr_1fr_1.5fr_1.1fr_1.1fr] gap-2 border-b-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg">
-            <span>Warna</span>
-            <span className="text-right">Roll</span>
-            <span className="text-right">Total Berat (kg)</span>
-            <span className="text-right">Harga Invoice/Kg</span>
-            <span className="text-right">Harga Master/Kg</span>
-            <span className="text-right">Selisih vs Master</span>
-            <span className="text-right">Subtotal</span>
-            <span className="text-right">Aksi</span>
-          </div>
-          {entries.map((e, i) => {
-            const totalKg = e.rolls.reduce((s, w) => s + w, 0);
-            const master = masterPricePerKg(e.warna, e.rolls.length);
-            return (
-              <div key={i} className="grid grid-cols-[1.4fr_0.6fr_0.9fr_1fr_1fr_1.5fr_1.1fr_1.1fr] items-center gap-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F]">
-                <span>
-                  {e.warna} <span className="text-text-muted">· {e.lengan}</span>
-                </span>
-                <span className="text-right font-mono">{e.rolls.length}</span>
-                <span className="text-right font-mono">{formatDecimal(totalKg)}</span>
-                <span className="text-right font-mono">{formatRupiah(e.hargaPerRoll)}</span>
-                <span className="text-right font-mono text-text-muted">{master != null ? formatRupiah(master) : "—"}</span>
-                <span className="text-right text-[11px]">
-                  <MasterDiff input={e.hargaPerRoll} master={master} />
-                </span>
-                <span className="text-right font-mono">{formatRupiah(e.hargaPerRoll * totalKg)}</span>
-                <span className="flex justify-end gap-2">
-                  <Button onClick={() => editEntry(i)} variant="accent" size="xs">
-                    Edit
-                  </Button>
-                  <Button onClick={() => removeEntry(i)} variant="danger" size="xs">
-                    Hapus
-                  </Button>
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
       {!activeKey && warnaGroups.some((g) => g.totalRemaining > 0) && (() => {
         // Picker warna ringkas: pill kategori bahan + pencarian + daftar 1 baris per warna.
         const available = warnaGroups.filter((g) => g.totalRemaining > 0);
@@ -386,13 +339,15 @@ export function PayingVoucherWizard({
               )}
               <input value={warnaSearch} onChange={(e) => setWarnaSearch(e.target.value)} placeholder="Cari warna…" className="input ml-auto w-44 text-[11.5px]" />
             </div>
-            <div className="grid grid-cols-[1.6fr_0.8fr_1fr_4rem] gap-2 border-b-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg">
-              <span>Warna</span>
-              <span className="text-right">Sisa roll</span>
-              <span className="text-right">Harga Master/Kg</span>
-              <span />
-            </div>
             <div className="max-h-64 overflow-y-auto">
+              {/* Header di DALAM area scroll (sticky) supaya kolomnya tetap sejajar dengan baris
+                  walau ada scrollbar. */}
+              <div className="sticky top-0 z-10 grid grid-cols-[1.6fr_0.8fr_1fr_4rem] gap-2 border-b-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg">
+                <span>Warna</span>
+                <span className="text-right">Sisa roll</span>
+                <span className="text-right">Harga Master/Kg</span>
+                <span />
+              </div>
               {visible.length === 0 && <div className="px-3 py-4 text-center font-sans text-xs text-text-muted">Tidak ada warna yang cocok.</div>}
               {visible.map((g) => {
                 const master = masterPricePerKg(g.warna, g.totalRemaining);
@@ -508,6 +463,53 @@ export function PayingVoucherWizard({
               Kembali
             </button>
           </div>
+        </div>
+      )}
+
+      {entries.length > 0 && (
+        <div className="mt-3 overflow-hidden rounded-md border border-border-subtle bg-white">
+          {/* BUG FIX 2026-09-07: kolom ini dulu berlabel "Harga/roll" & tidak menampilkan total
+              berat -- padahal Subtotal SUDAH dihitung benar sebagai harga x TOTAL KG semua roll
+              (field `hargaPerRoll` itu sebenarnya harga PER KG, cocok dengan label input "Harga /
+              kg" di form di bawah), bukan x jumlah roll. Sekarang total berat (kg) ditampilkan
+              eksplisit supaya Subtotal = Total Berat x Harga/Kg terlihat jelas. */}
+          <div className="grid grid-cols-[1.4fr_0.6fr_0.9fr_1fr_1fr_1.5fr_1.1fr_1.1fr] gap-2 border-b-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg">
+            <span>Warna</span>
+            <span className="text-right">Roll</span>
+            <span className="text-right">Total Berat (kg)</span>
+            <span className="text-right">Harga Invoice/Kg</span>
+            <span className="text-right">Harga Master/Kg</span>
+            <span className="text-right">Selisih vs Master</span>
+            <span className="text-right">Subtotal</span>
+            <span className="text-right">Aksi</span>
+          </div>
+          {entries.map((e, i) => {
+            const totalKg = e.rolls.reduce((s, w) => s + w, 0);
+            const master = masterPricePerKg(e.warna, e.rolls.length);
+            return (
+              <div key={i} className="grid grid-cols-[1.4fr_0.6fr_0.9fr_1fr_1fr_1.5fr_1.1fr_1.1fr] items-center gap-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F]">
+                <span>
+                  {e.warna} <span className="text-text-muted">· {e.lengan}</span>
+                </span>
+                <span className="text-right font-mono">{e.rolls.length}</span>
+                <span className="text-right font-mono">{formatDecimal(totalKg)}</span>
+                <span className="text-right font-mono">{formatRupiah(e.hargaPerRoll)}</span>
+                <span className="text-right font-mono text-text-muted">{master != null ? formatRupiah(master) : "—"}</span>
+                <span className="text-right text-[11px]">
+                  <MasterDiff input={e.hargaPerRoll} master={master} />
+                </span>
+                <span className="text-right font-mono">{formatRupiah(e.hargaPerRoll * totalKg)}</span>
+                <span className="flex justify-end gap-2">
+                  <Button onClick={() => editEntry(i)} variant="accent" size="xs">
+                    Edit
+                  </Button>
+                  <Button onClick={() => removeEntry(i)} variant="danger" size="xs">
+                    Hapus
+                  </Button>
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
 
