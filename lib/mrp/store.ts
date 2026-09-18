@@ -662,6 +662,47 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     scheduleRefresh();
   }
 
+  // Fix (owner, 2026-09-19: "input hasil finish good baru kedetect di progres bar setelah 5-10
+  // detik"): progres bar / target reject / status Selesai Produksi dihitung dari `productionResults`
+  // (cumulativeSizeQtyForGroup), BUKAN dari `productionBatches.fgSizeQty` -- sedangkan saveFgProgress
+  // & closeProductionBatch dulu cuma mem-patch productionBatches secara optimistic, jadi baris
+  // riwayat FG (yang ditulis server lewat logFgProgressDelta) baru muncul di layar setelah
+  // tulisan server selesai + snapshot penuh di-refetch (5-10 detik untuk beberapa roll sekaligus).
+  // Helper ini meniru logFgProgressDelta (lib/mrp/actions.ts) di sisi client: menambahkan 1
+  // ProductionResult FG sementara berisi DELTA positif terhadap yang sudah tercatat untuk roll ini
+  // (baris ber-note "Roll {codeRoll ?? id}" di groupKey yang sama), sehingga progres bar bergerak
+  // seketika. Baris sementara diganti data server asli begitu snapshot berikutnya datang.
+  function optimisticFgLog(batchId: string, newSizeQty: Record<string, number>): string | null {
+    const b = get().productionBatches.find((x) => x.id === batchId);
+    if (!b) return null;
+    const groupKey = `${b.mrpId}|${b.warna}|${b.lengan}`;
+    const note = `Roll ${b.codeRoll ?? b.id}`;
+    const baseline: Record<string, number> = {};
+    for (const r of get().productionResults) {
+      if (r.kind !== "FG" || r.groupKey !== groupKey || r.note !== note) continue;
+      for (const [size, qty] of Object.entries(r.sizeQty)) baseline[size] = (baseline[size] ?? 0) + qty;
+    }
+    const delta: Record<string, number> = {};
+    for (const [size, qty] of Object.entries(newSizeQty)) {
+      const d = qty - (baseline[size] ?? 0);
+      if (d > 0) delta[size] = d;
+    }
+    if (Object.keys(delta).length === 0) return null;
+    const d = new Date();
+    const recordedAt = `${localDateString(d)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    const id = `tmp-fg-${batchId}-${d.getTime()}`;
+    set({
+      productionResults: [
+        ...get().productionResults,
+        { id, groupKey, mrpId: b.mrpId, vendorProduksi: b.vendorProduksi, poId: "", warna: b.warna, lengan: b.lengan, kind: "FG", sizeQty: delta, recordedAt, note },
+      ],
+    });
+    return id;
+  }
+  function dropOptimisticResult(id: string | null) {
+    if (id) set({ productionResults: get().productionResults.filter((r) => r.id !== id) });
+  }
+
   return withBusyTracking(set, {
   ...emptyState,
 
@@ -1107,6 +1148,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // pasti setelah server selesai (beda dari confirmFgDone yang menghitung reject otomatis).
   closeProductionBatch: async (batchId, fgSizeQty) => {
     const previous = get().productionBatches;
+    const tmpResultId = optimisticFgLog(batchId, fgSizeQty);
     set({
       productionBatches: previous.map((b) => (b.id === batchId ? { ...b, fgSizeQty, closedAt: b.closedAt ?? localDateString(new Date()) } : b)),
     });
@@ -1114,6 +1156,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.closeProductionBatchAction(batchId, fgSizeQty);
     } catch (err) {
       set({ productionBatches: previous });
+      dropOptimisticResult(tmpResultId);
       window.alert("Gagal menutup roll -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
@@ -1123,11 +1166,13 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // argumen (server REPLACE penuh, bukan merge, jadi client meniru persis).
   saveFgProgress: async (batchId, sizeQty) => {
     const previous = get().productionBatches;
+    const tmpResultId = optimisticFgLog(batchId, sizeQty);
     set({ productionBatches: previous.map((b) => (b.id === batchId ? { ...b, fgSizeQty: sizeQty } : b)) });
     try {
       await actions.saveFgProgressAction(batchId, sizeQty);
     } catch (err) {
       set({ productionBatches: previous });
+      dropOptimisticResult(tmpResultId);
       window.alert("Gagal menyimpan progres FG -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }

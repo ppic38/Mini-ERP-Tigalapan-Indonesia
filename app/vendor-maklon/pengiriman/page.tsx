@@ -554,10 +554,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
               ))}
             </select>
             {mrpIds.length === 0 && !editingKoliId && (
-              <div className="mt-1 font-sans text-[11px] text-text-muted">
-                Belum ada finish good yang siap dipacking. Warna/lengan baru muncul di sini setelah ditandai &quot;Selesai Produksi&quot; di tab Finish
-                Good (tahap 1) — kecuali PO Produksinya sudah di-Close.
-              </div>
+              <div className="mt-1 font-sans text-[11px] text-text-muted">Belum ada finish good siap dikemas.</div>
             )}
           </div>
           <div>
@@ -565,7 +562,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
             <input value={noKoli} onChange={(e) => setNoKoli(e.target.value)} placeholder="Contoh: KOLI-001" className="input mt-1" />
           </div>
         </div>
-        <div className="mt-2 font-sans text-[11px] text-text-muted">Ekspedisi &amp; resi dipilih belakangan di tabel &quot;Koli belum dikirim&quot; di bawah — bisa digabung dengan koli lain jadi satu resi.</div>
 
         {mrpId && (
           <div className="mt-4">
@@ -575,17 +571,12 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                 (pola sama Finish Good, item 15). Qty yang diketik mengurangi sisa roll manapun
                 yang cocok -- 1 roll SEKARANG BOLEH dikirim sebagian (sisanya tetap tersedia untuk
                 koli lain nanti), dikonfirmasi lewat AskUserQuestion. */}
-            <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">
-              Isi qty per size (Finish Good) — qty mengurangi sisa roll yang cocok, roll boleh dikirim sebagian
-            </div>
+            <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Finish Good — qty per size</div>
             {/* Item 2026-09-12 (user-reported): qty per size TIDAK BOLEH diketik sebelum No koli
                 diisi -- dulu bisa diisi begitu MRP dipilih meski No koli masih kosong, gampang
                 kepencet lupa ngisi No koli-nya baru sadar pas "Simpan koli" gagal. */}
-            {!noKoli.trim() && (
-              <div className="mt-1.5 rounded-md border border-[#F0DFC2] bg-warning-bg px-2.5 py-1.5 font-sans text-[10.5px] text-warning-fg">Isi &quot;No koli&quot; dulu sebelum bisa input qty di bawah.</div>
-            )}
             {rollSizeRows.length === 0 && (
-              <div className="mt-2 font-sans text-xs text-text-muted">Belum ada roll yang &quot;Tutup Roll&quot;-nya selesai (dengan sisa) untuk MRP ini (tab Finish Good).</div>
+              <div className="mt-2 font-sans text-xs text-text-muted">Belum ada roll selesai untuk MRP ini.</div>
             )}
             {rollSizeRows.length > 0 && (
               <div className="mt-2 overflow-hidden rounded-md border border-border-subtle bg-white">
@@ -651,12 +642,9 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
           </div>
         )}
 
-        {mrpId && (
+        {mrpId && anyAvailable && (
           <div className="mt-4">
-            <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">
-              Isi koli (Rework &amp; sisa FG lama) — pilih apa yang mau dimasukkan, isi qty-nya (sisanya biarkan 0)
-            </div>
-            {!anyAvailable && <div className="mt-2 font-sans text-xs text-text-muted">Tidak ada Rework/sisa FG lama tersedia untuk MRP ini.</div>}
+            <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Rework &amp; sisa FG lama</div>
             {anyAvailable && (
               <div className="mt-2 overflow-hidden rounded-md border border-border-subtle bg-white">
                 <div className="grid grid-cols-6 gap-x-2 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
@@ -717,9 +705,9 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
         {/* Item 2026-09-11 (migration 0026): koli yang BELUM punya ekspedisi/resi -- checkbox
            pilih mau digabung ke resi yang mana. */}
         <div className="border-b border-border-subtle px-4 py-3">
-          <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Belum ada ekspedisi — pilih koli yang mau dikirim bareng (satu resi)</div>
+          <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Belum ada ekspedisi</div>
           {pendingWithoutEkspedisi.length === 0 ? (
-            <div className="mt-2 font-sans text-xs text-text-muted">Tidak ada koli menunggu ekspedisi.</div>
+            <div className="mt-2 font-sans text-xs text-text-muted">Tidak ada koli.</div>
           ) : (
             <>
               <div className="mt-2 overflow-hidden rounded-md border border-border-subtle bg-white">
@@ -780,9 +768,9 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
            perhitungan SAMA PERSIS koliOngkirShare (derive.ts) cuma pakai draft, bukan data
            tersimpan. */}
         <div className="px-4 py-3">
-          <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Sudah ada ekspedisi — isi berat tiap koli lalu Delivery per grup</div>
+          <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Sudah ada ekspedisi</div>
           {pendingGroups.length === 0 ? (
-            <div className="mt-2 font-sans text-xs text-text-muted">Tidak ada grup pengiriman menunggu Delivery.</div>
+            <div className="mt-2 font-sans text-xs text-text-muted">Tidak ada grup.</div>
           ) : (
             <div className="mt-2 flex flex-col gap-3">
               {pendingGroups.map(([groupKey, kolis]) => {
