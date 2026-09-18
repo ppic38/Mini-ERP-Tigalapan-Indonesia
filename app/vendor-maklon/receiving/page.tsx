@@ -53,6 +53,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   const advanceMaklonProduction = useMrpStore((s) => s.advanceMaklonProduction);
   const markRollArrived = useMrpStore((s) => s.markRollArrived);
   const receiveRawMaterialAddBuy = useMrpStore((s) => s.receiveRawMaterialAddBuy);
+  const receiveMaterialBatch = useMrpStore((s) => s.receiveMaterialBatch);
 
   const [selectedMrpId, setSelectedMrpId] = useState("");
   // Filter status PO material — default "Semua" (perilaku lama). Sengaja dipisah dari status
@@ -155,6 +156,53 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     if (!selectedInvoice || !selectedColor) return;
     const code = draftCode[idx] ?? { codeRoll: "" };
     markRollArrived(selectedInvoice.id, selectedColor.warna, selectedColor.lengan, idx, code.codeRoll || undefined);
+  }
+
+  // "Terima semua": semua roll yang belum diterima di warna·lengan terpilih + semua item tambahan
+  // invoice ini yang belum diterima -- 1 optimistic patch + 1 tulisan server (receiveMaterialBatch),
+  // jadi tidak ada N klik/N refresh berurutan yang memicu flicker.
+  const pendingRollIdx =
+    selectedInvoice && selectedColor ? selectedColor.rolls.map((_, i) => i).filter((i) => !selectedInvoice.rollArrivals[selectedColorKey]?.[i]) : [];
+  const pendingAddBuyIds = selectedInvoice ? selectedInvoice.addBuys.filter((b) => !selectedInvoice.addBuyReceipts[b.id]).map((b) => b.id) : [];
+  const pendingReceiveCount = pendingRollIdx.length + pendingAddBuyIds.length;
+  function receiveAll() {
+    if (!selectedInvoice || pendingReceiveCount === 0) return;
+    receiveMaterialBatch(
+      selectedInvoice.id,
+      selectedColor?.warna ?? "",
+      selectedColor?.lengan ?? "PENDEK",
+      pendingRollIdx.map((i) => ({ rollIndex: i, codeRoll: draftCode[i]?.codeRoll || undefined })),
+      pendingAddBuyIds
+    );
+  }
+
+  // Item revisi 2026-09-19: daftar "item diterima" untuk kartu Mulai Produksi -- dihitung dari roll
+  // yang SUDAH ditandai diterima (semua invoice MRP ini ke vendor ini), dibandingkan rencana roll
+  // dari aduan pola; estimasi pcs = qty aduan x (roll diterima / roll rencana).
+  function receivedItemsFor(mrpId: string) {
+    const aduan = mrpDetailFor(mrpId, mrpDetails)?.aduanRows.filter((a) => a.vendor === vendorId) ?? [];
+    const map = new Map<string, { warna: string; lengan: string; arrived: number; invoiced: number }>();
+    for (const inv of invoices) {
+      if (inv.mrpId !== mrpId || inv.destinationVendor !== vendorId) continue;
+      for (const c of inv.colorEntries) {
+        const key = c.warna + "|" + c.lengan;
+        const arrivals = inv.rollArrivals[key] ?? [];
+        const g = map.get(key) ?? { warna: c.warna, lengan: c.lengan, arrived: 0, invoiced: 0 };
+        g.invoiced += c.rolls.length;
+        g.arrived += c.rolls.filter((_, i) => arrivals[i] != null).length;
+        map.set(key, g);
+      }
+    }
+    return Array.from(map.values())
+      .filter((g) => g.arrived > 0)
+      .map((g) => {
+        const rows = aduan.filter((a) => a.warna === g.warna && a.lengan === g.lengan);
+        const plannedRoll = rows.reduce((s, a) => s + a.qtyRoll, 0) || g.invoiced;
+        const plannedPcs = rows.reduce((s, a) => s + a.qty, 0);
+        const ratio = plannedRoll > 0 ? Math.min(1, g.arrived / plannedRoll) : 1;
+        return { ...g, plannedRoll, estPcs: Math.round(plannedPcs * ratio) };
+      })
+      .sort((a, b) => a.warna.localeCompare(b.warna, "id-ID") || a.lengan.localeCompare(b.lengan));
   }
 
   // Item 2 (feedback batch 2026-09-07): status RECEIVING tidak bedakan "baru mulai" dari "sudah
@@ -409,94 +457,117 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
             )}
           </div>
 
-          {selectedColor && (
+          {(selectedColor || selectedInvoice.addBuys.length > 0) && (
+            // Revisi 2026-09-19 (owner, Vendor Produksi Gambar 1): tabel "Tandai roll diterima" +
+            // "Add Buy" digabung jadi SATU tabel "Terima Material" (roll di atas, "Item Tambahan"
+            // di bawah), semua kolom (Code Lot, Berat, Status) center (header + isi) & pakai
+            // <table table-fixed> supaya penempatannya presisi. Tombol per baris "Terima" (dulu
+            // "Tandai diterima") sama bentuk/warna untuk roll & item tambahan, + "Terima semua".
             <div className="w-full overflow-x-auto rounded-lg border border-border-subtle bg-surface-card">
-              <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">
-                Tandai roll diterima — {selectedColor.warna} · {selectedColor.lengan}
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle px-4 py-3">
+                <span className="font-sans text-[13px] font-semibold text-text-primary">
+                  Terima Material{selectedColor ? ` — ${selectedColor.warna} · ${selectedColor.lengan}` : ""}
+                </span>
+                {pendingReceiveCount > 0 && (
+                  <Button onClick={receiveAll} variant="primary" size="xs">
+                    Terima semua ({pendingReceiveCount}) →
+                  </Button>
+                )}
               </div>
-              <div
-                className="grid min-w-[860px] gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
-                style={{ gridTemplateColumns: "minmax(70px,0.5fr) minmax(150px,1.2fr) minmax(100px,0.9fr) minmax(110px,0.8fr) minmax(150px,1.2fr)" }}
-              >
-                <span>Roll</span>
-                <span>Code Roll</span>
-                <span>Code Lot</span>
-                <span className="text-right">Berat kotor (kg)</span>
-                <span>Status</span>
-              </div>
-              {selectedColor.rolls.map((grossKg, idx) => {
-                const arrival = selectedInvoice.rollArrivals[selectedColorKey]?.[idx] ?? null;
-                const code = draftCode[idx] ?? { codeRoll: arrival?.codeRoll ?? "" };
-                // Code Lot sekarang murni informasi dari Procurement (diinput saat Paying
-                // Voucher, lihat ColorEntry.lots) — read-only di sini, bukan lagi diisi vendor.
-                const codeLot = selectedColor.lots?.[idx]?.trim() || "";
-                return (
-                  <div
-                    key={idx}
-                    className="grid min-w-[860px] items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0"
-                    style={{ gridTemplateColumns: "minmax(70px,0.5fr) minmax(150px,1.2fr) minmax(100px,0.9fr) minmax(110px,0.8fr) minmax(150px,1.2fr)" }}
-                  >
-                    <span className="font-mono font-medium">Roll {idx + 1}</span>
-                    {arrival ? (
-                      <span className="font-mono text-[11px]">{arrival.codeRoll || "—"}</span>
-                    ) : (
-                      <input
-                        value={code.codeRoll}
-                        onChange={(e) => setDraftCode((prev) => ({ ...prev, [idx]: { ...code, codeRoll: e.target.value } }))}
-                        className="input text-[11px]"
-                        placeholder="Code roll"
-                      />
-                    )}
-                    <span className="font-mono text-[11px] text-text-muted">{codeLot || "—"}</span>
-                    <span className="text-right font-mono">{formatDecimal(grossKg)}</span>
-                    <span className="flex items-center gap-2.5">
-                      {arrival ? (
-                        <>
-                          <span className="font-mono text-[11px] text-text-muted">{formatDate(arrival.arrivedAt)}</span>
-                          <StatusPill tone="success">Diterima</StatusPill>
-                        </>
-                      ) : (
-                        <Button onClick={() => markArrived(idx)} variant="primary" size="xs">
-                          Tandai diterima →
-                        </Button>
-                      )}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {selectedInvoice.addBuys.length > 0 && (
-            <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-              <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Add Buy — bahan tambahan dari invoice</div>
-              <div className="grid grid-cols-5 gap-x-2 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
-                <span>Item</span>
-                <span>Warna</span>
-                <span className="text-right">Berat (kg)</span>
-                <span>Tanggal terima</span>
-                <span />
-              </div>
-              {selectedInvoice.addBuys.map((b) => {
-                const receipt = selectedInvoice.addBuyReceipts[b.id];
-                return (
-                  <div key={b.id} className="grid grid-cols-5 items-center gap-x-2 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0">
-                    <span className="font-medium">{b.item}</span>
-                    <span>{b.warna || "—"}</span>
-                    <span className="text-right font-mono">{formatDecimal(b.beratKg)}</span>
-                    <span className="font-mono text-[11px] text-text-muted">{receipt ? formatDate(receipt.receivedAt) : "—"}</span>
-                    <span className="text-right">
-                      {receipt ? (
-                        <span className="font-sans text-[11px] text-success-fg">Diterima</span>
-                      ) : (
-                        <Button onClick={() => receiveRawMaterialAddBuy(selectedInvoice.id, b.id)} variant="success" size="xs">
-                          Terima →
-                        </Button>
-                      )}
-                    </span>
-                  </div>
-                );
-              })}
+              <table className="w-full min-w-[820px] table-fixed border-collapse">
+                <colgroup>
+                  <col style={{ width: "20%" }} />
+                  <col style={{ width: "26%" }} />
+                  <col style={{ width: "14%" }} />
+                  <col style={{ width: "16%" }} />
+                  <col style={{ width: "24%" }} />
+                </colgroup>
+                <thead>
+                  <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
+                    <th className="px-4 py-[9px] text-left">Roll / Item</th>
+                    <th className="px-3 py-[9px] text-left">Code Roll / Warna</th>
+                    <th className="px-3 py-[9px] text-center">Code Lot</th>
+                    <th className="px-3 py-[9px] text-center">Berat kotor (kg)</th>
+                    <th className="px-3 py-[9px] text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(selectedColor?.rolls ?? []).map((grossKg, idx) => {
+                    const arrival = selectedInvoice.rollArrivals[selectedColorKey]?.[idx] ?? null;
+                    const code = draftCode[idx] ?? { codeRoll: arrival?.codeRoll ?? "" };
+                    // Code Lot sekarang murni informasi dari Procurement (diinput saat Paying
+                    // Voucher, lihat ColorEntry.lots) — read-only di sini, bukan lagi diisi vendor.
+                    const codeLot = selectedColor?.lots?.[idx]?.trim() || "";
+                    return (
+                      <tr key={idx} className="border-b border-[#F1F4F7] font-sans text-xs text-[#31414F]">
+                        <td className="px-4 py-[9px] font-mono font-medium">Roll {idx + 1}</td>
+                        <td className="px-3 py-[9px]">
+                          {arrival ? (
+                            <span className="font-mono text-[11px]">{arrival.codeRoll || "—"}</span>
+                          ) : (
+                            <input
+                              value={code.codeRoll}
+                              onChange={(e) => setDraftCode((prev) => ({ ...prev, [idx]: { ...code, codeRoll: e.target.value } }))}
+                              className="input text-[11px]"
+                              placeholder="Code roll"
+                            />
+                          )}
+                        </td>
+                        <td className="px-3 py-[9px] text-center font-mono text-[11px] text-text-muted">{codeLot || "—"}</td>
+                        <td className="px-3 py-[9px] text-center font-mono">{formatDecimal(grossKg)}</td>
+                        <td className="px-3 py-[9px]">
+                          <div className="flex items-center justify-center gap-2.5">
+                            {arrival ? (
+                              <>
+                                <span className="font-mono text-[11px] text-text-muted">{formatDate(arrival.arrivedAt)}</span>
+                                <StatusPill tone="success">Diterima</StatusPill>
+                              </>
+                            ) : (
+                              <Button onClick={() => markArrived(idx)} variant="primary" size="xs">
+                                Terima →
+                              </Button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {selectedInvoice.addBuys.length > 0 && (
+                    <>
+                      <tr className="border-b border-[#CFE0EF] bg-info-bg/60">
+                        <td colSpan={5} className="px-4 py-1.5 font-sans text-[10.5px] font-semibold uppercase tracking-wider text-info-fg">
+                          Item Tambahan
+                        </td>
+                      </tr>
+                      {selectedInvoice.addBuys.map((b) => {
+                        const receipt = selectedInvoice.addBuyReceipts[b.id];
+                        return (
+                          <tr key={b.id} className="border-b border-[#F1F4F7] font-sans text-xs text-[#31414F]">
+                            <td className="px-4 py-[9px] font-medium">{b.item}</td>
+                            <td className="px-3 py-[9px] text-text-muted">{b.warna || "—"}</td>
+                            <td className="px-3 py-[9px] text-center font-mono text-[11px] text-text-muted">—</td>
+                            <td className="px-3 py-[9px] text-center font-mono">{formatDecimal(b.beratKg)}</td>
+                            <td className="px-3 py-[9px]">
+                              <div className="flex items-center justify-center gap-2.5">
+                                {receipt ? (
+                                  <>
+                                    <span className="font-mono text-[11px] text-text-muted">{formatDate(receipt.receivedAt)}</span>
+                                    <StatusPill tone="success">Diterima</StatusPill>
+                                  </>
+                                ) : (
+                                  <Button onClick={() => receiveRawMaterialAddBuy(selectedInvoice.id, b.id)} variant="primary" size="xs">
+                                    Terima →
+                                  </Button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </>
+                  )}
+                </tbody>
+              </table>
             </div>
           )}
         </>
@@ -509,17 +580,52 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
       {readyMaklonPOs.length > 0 && (
         <div className="rounded-lg border border-[#B7DFC5] bg-success-bg px-5 py-4">
           <div className="font-sans text-[12.5px] font-semibold text-success-fg">Bahan sudah diterima — siap mulai produksi</div>
+          {/* Revisi 2026-09-19 (owner, Gambar 2): yang dimulai produksi = bahan yang SUDAH DITERIMA
+              saat ini (bukan seluruh PO) -- daftar item + estimasi pcs di bawah dihitung langsung dari
+              roll yang sudah ditandai diterima (bertambah otomatis begitu material baru masuk). */}
           <div className="mt-2.5 flex flex-col gap-2">
-            {readyMaklonPOs.map((p) => (
-              <div key={p.id} className="flex items-center justify-between gap-3 rounded-md border border-border-subtle bg-white px-3.5 py-2.5">
-                <span className="font-sans text-xs text-[#31414F]">
-                  <span className="font-mono font-medium">{p.id}</span> — {formatPcs(p.qty)} pcs
-                </span>
-                <Button onClick={() => advanceMaklonProduction(p.id)} variant="primary" size="xs">
-                  Mulai Produksi →
-                </Button>
-              </div>
-            ))}
+            {readyMaklonPOs.map((p) => {
+              const items = receivedItemsFor(p.mrpId);
+              const estTotal = items.reduce((s, it) => s + it.estPcs, 0);
+              return (
+                <div key={p.id} className="overflow-hidden rounded-md border border-border-subtle bg-white">
+                  <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
+                    <span className="font-sans text-xs text-[#31414F]">
+                      <span className="font-mono font-medium">{p.id}</span> — estimasi{" "}
+                      <span className="font-semibold">{formatPcs(estTotal)} pcs</span> dari bahan diterima{" "}
+                      <span className="text-text-muted">(total PO {formatPcs(p.qty)} pcs)</span>
+                    </span>
+                    <Button onClick={() => advanceMaklonProduction(p.id)} variant="primary" size="xs">
+                      Mulai Produksi →
+                    </Button>
+                  </div>
+                  {items.length > 0 && (
+                    <table className="w-full table-fixed border-collapse border-t border-[#CFE0EF]">
+                      <thead>
+                        <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg">
+                          <th className="px-3.5 py-1.5 text-left">Item diterima (warna · lengan)</th>
+                          <th className="w-[22%] px-3 py-1.5 text-center">Roll diterima / rencana</th>
+                          <th className="w-[22%] px-3 py-1.5 text-center">Estimasi (pcs)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {items.map((it) => (
+                          <tr key={it.warna + "|" + it.lengan} className="border-b border-[#F1F4F7] font-sans text-[11.5px] text-[#31414F] last:border-b-0">
+                            <td className="px-3.5 py-1.5 font-medium">
+                              {it.warna} <span className="text-text-muted">· {it.lengan}</span>
+                            </td>
+                            <td className="px-3 py-1.5 text-center font-mono">
+                              {it.arrived}/{it.plannedRoll}
+                            </td>
+                            <td className="px-3 py-1.5 text-center font-mono">{formatPcs(it.estPcs)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

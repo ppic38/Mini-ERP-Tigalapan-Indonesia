@@ -67,6 +67,13 @@ let redirectingForAuthError = false;
 // TIDAK dihitung -- itu baca, bukan tulis, dan refresh() sendiri lewat sini juga; menghitungnya
 // bikin backgroundRefresh menunggu dirinya sendiri).
 let inFlightWriteCount = 0;
+// Fix flicker (2026-09-19, owner: "tombol Terima masih flicker"): guard inFlightWriteCount di atas
+// cuma melindungi SEBELUM fetch snapshot dimulai. Kalau user klik roll berikutnya SAAT snapshot
+// masih di perjalanan (fetch ~0,6-1,4 detik), snapshot itu diambil sebelum tulisan barunya ada,
+// lalu set()-nya menimpa patch optimistic klik terbaru -> baris sempat balik "belum diterima"
+// sampai refresh berikutnya datang. writeEpoch naik SETIAP ada tulisan baru dimulai; refresh()
+// membuang snapshot yang diambil selama epoch berubah (tulisan itu punya refresh sendiri).
+let writeEpoch = 0;
 // Fix (feedback batch 2026-09-10, item 6/10 "tombol ngeflick"): dipakai oleh refresh() di bawah
 // supaya SEMUA pemanggilnya (bukan cuma scheduleRefresh/backgroundRefresh) menunggu semua tulisan
 // yang sedang berlangsung selesai dulu sebelum fetch snapshot -- lihat catatan panjang di refresh().
@@ -104,7 +111,10 @@ function guardAction<Args extends unknown[], R>(
   alertOnAuthError: boolean
 ): (...args: Args) => Promise<R> {
   return async (...args: Args) => {
-    if (countInFlight) inFlightWriteCount++;
+    if (countInFlight) {
+      inFlightWriteCount++;
+      writeEpoch++;
+    }
     try {
       return await fn(...args);
     } catch (err) {
@@ -300,6 +310,9 @@ type FlowActions = {
   setInvoicePaymentProof: (invoiceIds: string[], dataUrl: string, fileName?: string) => Promise<void>;
   setInvoicesDelivery: (invoiceIds: string[], deliveryDate: string) => Promise<void>;
   markRollArrived: (invoiceId: string, warna: string, lengan: Lengan, rollIndex: number, codeRoll?: string) => Promise<void>;
+  /** "Terima semua": roll (1 warna·lengan) + item tambahan (add buy) 1 invoice sekaligus, optimistic
+   *  penuh, 1 tulisan server (lihat receiveMaterialBatchAction). */
+  receiveMaterialBatch: (invoiceId: string, warna: string, lengan: Lengan, rolls: { rollIndex: number; codeRoll?: string }[], addBuyIds: string[]) => Promise<void>;
   receiveRawMaterialRoll: (
     invoiceId: string,
     warna: string,
@@ -667,12 +680,21 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // internal-auth-store.ts/vendor-auth-store.ts, DAN scheduleRefresh), bukan cuma jalur
   // backgroundRefresh yang sudah ter-guard.
   refresh: async () => {
-    await waitForNoInFlightWrites();
-    const { busy: _snapshotBusy, ...snapshot } = await actions.getFlowSnapshotAction();
-    // `busy` SENGAJA tidak ikut di-spread -- ini flag UI lokal punya store.ts (lihat
-    // withBusyTracking), bukan bagian data server; overwrite balik pakai kosong/false dari sini
-    // akan salah kalau ada action LAIN yang kebetulan masih berjalan bersamaan.
-    set({ ...snapshot, hydrated: true });
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await waitForNoInFlightWrites();
+      const epochAtStart = writeEpoch;
+      const { busy: _snapshotBusy, ...snapshot } = await actions.getFlowSnapshotAction();
+      // Ada tulisan baru yang mulai selama snapshot di perjalanan -> snapshot ini bisa basi &
+      // akan menimpa patch optimistic tulisan itu. Buang, ulangi (maks 4x; kalau tetap ada
+      // tulisan terus-menerus, refresh milik tulisan terakhir yang akan menyegarkan).
+      const stale = epochAtStart !== writeEpoch || inFlightWriteCount > 0;
+      if (stale && (attempt < 3 || get().hydrated)) continue;
+      // `busy` SENGAJA tidak ikut di-spread -- ini flag UI lokal punya store.ts (lihat
+      // withBusyTracking), bukan bagian data server; overwrite balik pakai kosong/false dari sini
+      // akan salah kalau ada action LAIN yang kebetulan masih berjalan bersamaan.
+      set({ ...snapshot, hydrated: true });
+      return;
+    }
   },
 
   importMrp: async (parsed, customId) => {
@@ -885,6 +907,36 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     } catch (err) {
       set({ invoices: previous });
       window.alert("Gagal menandai roll diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  receiveMaterialBatch: async (invoiceId, warna, lengan, rolls, addBuyIds) => {
+    if (rolls.length === 0 && addBuyIds.length === 0) return;
+    const colorKey = `${warna}|${lengan}`;
+    const arrivedAt = localDateString(new Date());
+    const previous = get().invoices;
+    set({
+      invoices: previous.map((inv) => {
+        if (inv.id !== invoiceId) return inv;
+        const arr = [...(inv.rollArrivals[colorKey] ?? [])];
+        for (const r of rolls) arr[r.rollIndex] = { arrivedAt, codeRoll: r.codeRoll };
+        const receipts = { ...inv.addBuyReceipts };
+        for (const id of addBuyIds) receipts[id] = { receivedAt: arrivedAt };
+        return {
+          ...inv,
+          rollArrivals: rolls.length > 0 ? { ...inv.rollArrivals, [colorKey]: arr } : inv.rollArrivals,
+          addBuyReceipts: receipts,
+          status: inv.status === "DELIVERY" ? "RECEIVING" : inv.status,
+          receivedAt: inv.receivedAt ?? arrivedAt,
+        };
+      }),
+    });
+    try {
+      await actions.receiveMaterialBatchAction(invoiceId, warna, lengan, rolls, addBuyIds);
+    } catch (err) {
+      set({ invoices: previous });
+      window.alert("Gagal menandai material diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();

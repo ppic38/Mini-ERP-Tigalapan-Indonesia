@@ -1309,6 +1309,41 @@ export async function markRollArrivedAction(invoiceId: string, warna: string, le
   void vendorId;
 }
 
+/** "Terima semua" di Good Receive: banyak roll (1 warna·lengan) + item tambahan (add buy) 1 invoice
+ *  sekaligus dalam 1 round-trip -- pengganti N kali markRollArrivedAction/receiveRawMaterialAddBuyAction
+ *  berurutan (N tulisan + N refresh = sumber flicker & lambat). Semantik per roll/add buy SAMA persis
+ *  dengan kedua action tunggal itu (code_lot tidak disentuh). */
+export async function receiveMaterialBatchAction(
+  invoiceId: string,
+  warna: string,
+  lengan: Lengan,
+  rolls: { rollIndex: number; codeRoll?: string }[],
+  addBuyIds: string[]
+): Promise<void> {
+  await requireVendorSession();
+  const db = supabaseServer();
+  const colorId = `${invoiceId}-${warna}-${lengan}`;
+  const receivedAt = today();
+  const results = await Promise.all(
+    rolls.map((r) =>
+      db.from("raw_material_invoice_rolls").update({ received_at: receivedAt, code_roll: r.codeRoll ?? null }).eq("invoice_color_id", colorId).eq("roll_index", r.rollIndex)
+    )
+  );
+  const failed = results.find((r) => r.error);
+  if (failed?.error) throw new Error(failed.error.message);
+  if (addBuyIds.length > 0) {
+    const { error } = await db.from("raw_material_invoice_addbuys").update({ received_at: receivedAt }).in("id", addBuyIds).eq("invoice_id", invoiceId);
+    if (error) throw new Error(error.message);
+  }
+  const { data: inv } = await db.from("raw_material_invoices").select("id,status,received_at").eq("id", invoiceId).single();
+  if (inv) {
+    await db
+      .from("raw_material_invoices")
+      .update({ status: inv.status === "DELIVERY" ? "RECEIVING" : inv.status, received_at: inv.received_at ?? receivedAt })
+      .eq("id", invoiceId);
+  }
+}
+
 /** Timbang 1 roll yang SUDAH ditandai diterima — dipanggil dari halaman Cutting (lihat
  *  pendingWeighRolls). Code roll biasanya sudah diisi saat markRollArrivedAction dan tidak
  *  diubah lagi di sini, KECUALI roll ini sedang ditimbang ulang setelah retur (`codeRoll`
