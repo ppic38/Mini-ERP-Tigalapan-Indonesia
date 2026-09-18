@@ -1413,6 +1413,15 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                       />
                     </div>
                   )}
+                  {/* Revisi 2026-09-19 (owner): tampilkan jam MULAI resting sesi ini di atas input jam
+                      cutting -- mode edit sudah punya field resting yang bisa diubah (di atas), jadi
+                      cuma ditampilkan read-only di mode input biasa. */}
+                  {!cuttingGroupEditAll && (
+                    <div className="mb-3">
+                      <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Mulai resting</div>
+                      <div className="input mt-1 flex items-center bg-[#F7F9FB] font-mono">{formatDateTime(session.restingAt)}</div>
+                    </div>
+                  )}
                   <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Tanggal &amp; jam cutting (berlaku untuk semua roll di grup ini)</div>
                   <input
                     type="datetime-local"
