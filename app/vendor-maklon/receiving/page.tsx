@@ -158,6 +158,17 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     markRollArrived(selectedInvoice.id, selectedColor.warna, selectedColor.lengan, idx, code.codeRoll || undefined);
   }
 
+  // Revisi 2026-09-19 (owner: "tabel terima material & tabel di atasnya ter-close begitu klik Mulai
+  // Produksi"): detail PO + tabel Terima Material ditutup (sama seperti klik "Tutup detail") --
+  // dipanggil SEBELUM aksinya (optimistic, PO langsung pindah status) supaya tidak ada jeda tampil.
+  function startProduction(maklonPoId: string) {
+    setSelectedInvoiceId("");
+    setSelectedColorKey("");
+    setDraftCode({});
+    setShowAllColors(false);
+    advanceMaklonProduction(maklonPoId);
+  }
+
   // "Terima semua": semua roll yang belum diterima di warna·lengan terpilih + semua item tambahan
   // invoice ini yang belum diterima -- 1 optimistic patch + 1 tulisan server (receiveMaterialBatch),
   // jadi tidak ada N klik/N refresh berurutan yang memicu flicker.
@@ -595,7 +606,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                       <span className="font-semibold">{formatPcs(estTotal)} pcs</span> dari bahan diterima{" "}
                       <span className="text-text-muted">(total PO {formatPcs(p.qty)} pcs)</span>
                     </span>
-                    <Button onClick={() => advanceMaklonProduction(p.id)} variant="primary" size="xs">
+                    <Button onClick={() => startProduction(p.id)} variant="primary" size="xs">
                       Mulai Produksi →
                     </Button>
                   </div>
