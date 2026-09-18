@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
@@ -64,86 +64,100 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
 
   return (
     <div className="overflow-hidden rounded-md border border-[#E4E9EE] bg-white">
-      <div className="bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-        Progres per item (dari rencana Aduan Pola) — deadline = bahan diterima + {VENDOR_PRODUKSI[po.vendorProduksi]?.productionLeadDays ?? 7} hari. Bar FG dibanding hasil cutting AKTUAL. Klik baris untuk rincian per size.
-      </div>
       {rows.length === 0 ? (
-        <div className="border-t border-[#F1F4F7] px-3 py-2 font-sans text-[11.5px] text-text-muted">
-          Belum ada rencana Aduan Pola untuk vendor ini di MRP tsb.
-        </div>
+        <div className="px-3 py-2 font-sans text-[11.5px] text-text-muted">Belum ada rencana Aduan Pola untuk vendor ini di MRP tsb.</div>
       ) : (
-        // Grid (bukan flex per baris) SENGAJA dipakai di sini supaya semua kolom (nama item,
-        // tanggal deadline, bar, dst) SELALU sejajar antar baris -- lebar tiap kolom otomatis
-        // menyesuaikan ke konten TERPANJANG di seluruh grid (termasuk nama item yang panjang,
-        // mis. "COKLAT SUSU 24S · PANJANG"), bukan lagi lebar tetap yang bisa memotong (truncate)
-        // nama yang lebih panjang dari perkiraan. `display:contents` pada wrapper per baris
-        // membuat sel-selnya ikut jadi anak langsung grid (supaya auto-sizing kolom bekerja lintas
-        // baris) sambil tetap 1 unit klik-able per baris.
-        <div
-          className="border-t border-[#F1F4F7]"
-          style={{ display: "grid", gridTemplateColumns: "max-content max-content max-content max-content 1fr max-content max-content max-content max-content", alignItems: "center", columnGap: "12px" }}
-        >
-          {Array.from(groups.values()).map((g) => {
-            const key = g.warna + "|" + g.lengan;
-            const open = openGroups.has(key);
-            const s = g.rows.reduce(
-              (a, r) => ({ target: a.target + r.target, cutting: a.cutting + r.cutting, finishGood: a.finishGood + r.finishGood, reject: a.reject + r.reject, rework: a.rework + r.rework }),
-              { target: 0, cutting: 0, finishGood: 0, reject: 0, rework: 0 }
-            );
-            const denom = s.cutting > 0 ? s.cutting : s.target;
-            const fgPct = s.cutting > 0 ? Math.min(100, (s.finishGood / s.cutting) * 100) : 0;
-            const info = deadlineInfoFor(po.mrpId, po.vendorProduksi, g.warna, invoices);
-            const status = statusFor(s.finishGood, denom, s.cutting > 0, info);
-            const cell = "border-b border-[#F1F4F7] py-2";
-            return (
-              <div key={key} role="button" tabIndex={0} onClick={() => toggle(key)} onKeyDown={(e) => e.key === "Enter" && toggle(key)} style={{ display: "contents" }} className="cursor-pointer">
-                <span className={cell + " pl-3 text-text-muted"}>{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
-                <span className={cell + " font-sans text-[11.5px] font-medium text-[#31414F]"}>
-                  {g.warna} · {g.lengan}
-                </span>
-                <span className={cell + " font-mono text-[10.5px] text-text-muted"}>{info.deadline ? formatDate(info.deadline) : "—"}</span>
-                <span className={cell + " font-mono text-[10.5px] text-text-muted"}>{info.daysLeft != null ? (info.daysLeft < 0 ? `${-info.daysLeft} hari lewat` : `${info.daysLeft} hari lagi`) : "—"}</span>
-                <span className={cell}>
-                  <span className="relative block h-1.5 w-full min-w-[120px] overflow-hidden rounded-full bg-[#EEF0F3]">
-                    <span className="absolute inset-y-0 left-0 rounded-full bg-success" style={{ width: `${fgPct}%` }} />
-                  </span>
-                </span>
-                <span className={cell + " text-right font-mono text-[11px] text-text-muted"}>
-                  {formatPcs(s.finishGood)}/{formatPcs(denom)}
-                </span>
-                <span className={cell + " font-sans text-[10px]"}>
-                  {s.reject > 0 && <span className="text-danger-fg">−{formatPcs(s.reject)} reject</span>}
-                  {s.reject > 0 && s.rework > 0 && " · "}
-                  {s.rework > 0 && <span className="text-warning-fg">{formatPcs(s.rework)} rework</span>}
-                </span>
-                <span className={cell + " text-right font-mono text-[11px] font-semibold text-[#31414F]"}>{fgPct.toFixed(0)}%</span>
-                <span className={cell + " pr-3"}>
-                  <StatusPill tone={status.tone} className="flex-none">
-                    {status.label}
-                  </StatusPill>
-                </span>
-                {open && (
-                  <div style={{ gridColumn: "1 / -1" }} className="flex flex-wrap gap-1.5 border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-2 pl-9">
-                    {g.rows.map((r) => {
-                      const sizeDenom = r.cutting > 0 ? r.cutting : r.target;
-                      return (
-                        <span
-                          key={r.size}
-                          title={`Target ${r.target} · Cutting ${r.cutting} · FG ${r.finishGood}${r.reject ? ` · Reject ${r.reject}` : ""}${r.rework ? ` · Rework ${r.rework}` : ""}`}
-                          className="rounded border border-[#E4E9EE] bg-white px-2 py-1 font-mono text-[10.5px] text-[#31414F]"
-                        >
-                          <span className="font-semibold">{r.size}</span> {formatPcs(r.finishGood)}/{formatPcs(sizeDenom)}
-                          {r.reject > 0 && <span className="text-danger-fg"> −{r.reject}</span>}
-                          {r.rework > 0 && <span className="text-warning-fg"> +{r.rework}rw</span>}
-                        </span>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+        // Item 2026-09-18 (owner: "samakan panjang bar & posisi semua kolom, hilangkan teks
+        // deskripsi, ganti jadi header tabel"): <table> HTML asli dipakai di sini (bukan grid/flex
+        // per baris) -- tabel SELALU menyamakan lebar tiap kolom di SELURUH baris secara alami
+        // (itu cara kerja dasar <table>), jadi bar & posisi angka pasti sejajar tanpa perlu
+        // trik CSS, dan nama item (kolom "Warna/Lengan") tidak pernah terpotong karena kolomnya
+        // ikut melebar ke konten terpanjang. Header kolom yang sebelumnya teks deskripsi biasa
+        // sekarang jadi <thead> beneran.
+        <table className="w-full border-collapse">
+          <thead>
+            <tr className="bg-[#F2F4F7] font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+              <th className="w-6 py-1.5 pl-3"></th>
+              <th className="whitespace-nowrap px-2 py-1.5 text-left">Warna / Lengan</th>
+              <th className="whitespace-nowrap px-2 py-1.5 text-left">Deadline</th>
+              <th className="whitespace-nowrap px-2 py-1.5 text-left">Sisa Waktu</th>
+              <th className="w-full px-2 py-1.5 text-left">Progres FG (dari hasil cutting aktual)</th>
+              <th className="whitespace-nowrap px-2 py-1.5 text-right">Qty</th>
+              <th className="whitespace-nowrap px-2 py-1.5 text-left">Reject / Rework</th>
+              <th className="whitespace-nowrap px-2 py-1.5 text-right">%</th>
+              <th className="whitespace-nowrap px-2 py-1.5 pr-3 text-left">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Array.from(groups.values()).map((g) => {
+              const key = g.warna + "|" + g.lengan;
+              const open = openGroups.has(key);
+              const s = g.rows.reduce(
+                (a, r) => ({ target: a.target + r.target, cutting: a.cutting + r.cutting, finishGood: a.finishGood + r.finishGood, reject: a.reject + r.reject, rework: a.rework + r.rework }),
+                { target: 0, cutting: 0, finishGood: 0, reject: 0, rework: 0 }
+              );
+              const denom = s.cutting > 0 ? s.cutting : s.target;
+              const fgPct = s.cutting > 0 ? Math.min(100, (s.finishGood / s.cutting) * 100) : 0;
+              const info = deadlineInfoFor(po.mrpId, po.vendorProduksi, g.warna, invoices);
+              const status = statusFor(s.finishGood, denom, s.cutting > 0, info);
+              return (
+                <Fragment key={key}>
+                  <tr onClick={() => toggle(key)} className="cursor-pointer border-t border-[#F1F4F7] hover:bg-[#FAFBFC]">
+                    <td className="py-2 pl-3 text-text-muted">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
+                    <td className="whitespace-nowrap px-2 py-2 font-sans text-[11.5px] font-medium text-[#31414F]">
+                      {g.warna} · {g.lengan}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-2 font-mono text-[10.5px] text-text-muted">{info.deadline ? formatDate(info.deadline) : "—"}</td>
+                    <td className="whitespace-nowrap px-2 py-2 font-mono text-[10.5px] text-text-muted">
+                      {info.daysLeft != null ? (info.daysLeft < 0 ? `${-info.daysLeft} hari lewat` : `${info.daysLeft} hari lagi`) : "—"}
+                    </td>
+                    <td className="w-full px-2 py-2">
+                      <span className="relative block h-1.5 w-full min-w-[140px] overflow-hidden rounded-full bg-[#EEF0F3]">
+                        <span className="absolute inset-y-0 left-0 rounded-full bg-success" style={{ width: `${fgPct}%` }} />
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] text-text-muted">
+                      {formatPcs(s.finishGood)}/{formatPcs(denom)}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-2 font-sans text-[10px]">
+                      {s.reject > 0 && <span className="text-danger-fg">−{formatPcs(s.reject)} reject</span>}
+                      {s.reject > 0 && s.rework > 0 && " · "}
+                      {s.rework > 0 && <span className="text-warning-fg">{formatPcs(s.rework)} rework</span>}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] font-semibold text-[#31414F]">{fgPct.toFixed(0)}%</td>
+                    <td className="whitespace-nowrap px-2 py-2 pr-3">
+                      <StatusPill tone={status.tone} className="flex-none">
+                        {status.label}
+                      </StatusPill>
+                    </td>
+                  </tr>
+                  {open && (
+                    <tr className="border-t border-[#F1F4F7] bg-[#FAFBFC]">
+                      <td colSpan={9} className="px-3 py-2 pl-9">
+                        <div className="flex flex-wrap gap-1.5">
+                          {g.rows.map((r) => {
+                            const sizeDenom = r.cutting > 0 ? r.cutting : r.target;
+                            return (
+                              <span
+                                key={r.size}
+                                title={`Target ${r.target} · Cutting ${r.cutting} · FG ${r.finishGood}${r.reject ? ` · Reject ${r.reject}` : ""}${r.rework ? ` · Rework ${r.rework}` : ""}`}
+                                className="rounded border border-[#E4E9EE] bg-white px-2 py-1 font-mono text-[10.5px] text-[#31414F]"
+                              >
+                                <span className="font-semibold">{r.size}</span> {formatPcs(r.finishGood)}/{formatPcs(sizeDenom)}
+                                {r.reject > 0 && <span className="text-danger-fg"> −{r.reject}</span>}
+                                {r.rework > 0 && <span className="text-warning-fg"> +{r.rework}rw</span>}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
       )}
     </div>
   );
