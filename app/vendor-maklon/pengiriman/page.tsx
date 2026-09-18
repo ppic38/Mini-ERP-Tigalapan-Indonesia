@@ -970,7 +970,26 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
               <span className="font-sans text-[13px] font-semibold text-text-primary">Set Ekspedisi &amp; Resi — {ekspedisiDialogKoliIds.length} koli</span>
             </div>
             <div className="max-h-[75vh] overflow-y-auto px-5 py-4">
-              <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Berat per koli (kg) — timbang dulu</div>
+              <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Ekspedisi</div>
+              <select value={ekspedisiDraft} onChange={(e) => setEkspedisiDraft(e.target.value)} className="input mt-1 w-full">
+                <option value="">— pilih ekspedisi —</option>
+                {ekspedisiNames.map((e) => (
+                  <option key={e} value={e}>
+                    {e}
+                  </option>
+                ))}
+              </select>
+              <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">No Resi (wajib)</div>
+              <input value={noResiDraft} onChange={(e) => setNoResiDraft(e.target.value)} placeholder="Contoh: JX1234567890" className="input mt-1 w-full" />
+              <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Catatan ekspedisi (opsional)</div>
+              <textarea
+                value={ekspedisiNoteDraft}
+                onChange={(e) => setEkspedisiNoteDraft(e.target.value)}
+                placeholder="Contoh: estimasi tiba, kontak ekspedisi..."
+                rows={3}
+                className="input mt-1 w-full"
+              />
+              <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Berat per koli (kg) — wajib</div>
               <div className="mt-1 overflow-hidden rounded-md border border-[#CFE0EF]">
                 {ekspedisiDialogKoliIds.map((id) => {
                   const koli = deliveryKolis.find((k) => k.id === id);
@@ -1000,25 +1019,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                   );
                 })()}
               </div>
-              <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Ekspedisi</div>
-              <select value={ekspedisiDraft} onChange={(e) => setEkspedisiDraft(e.target.value)} className="input mt-1 w-full">
-                <option value="">— pilih ekspedisi —</option>
-                {ekspedisiNames.map((e) => (
-                  <option key={e} value={e}>
-                    {e}
-                  </option>
-                ))}
-              </select>
-              <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">No Resi (wajib)</div>
-              <input value={noResiDraft} onChange={(e) => setNoResiDraft(e.target.value)} placeholder="Contoh: JX1234567890" className="input mt-1 w-full" />
-              <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Catatan ekspedisi (opsional)</div>
-              <textarea
-                value={ekspedisiNoteDraft}
-                onChange={(e) => setEkspedisiNoteDraft(e.target.value)}
-                placeholder="Contoh: estimasi tiba, kontak ekspedisi..."
-                rows={3}
-                className="input mt-1 w-full"
-              />
               <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Foto lampiran (wajib)</div>
               {/* Revisi 2026-09-19 (owner): tampilan tombol pilih file disamakan dengan upload Bukti
                   Paying Voucher di Procurement (components/mrp/paying-voucher-wizard.tsx). */}
