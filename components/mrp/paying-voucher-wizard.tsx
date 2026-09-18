@@ -3,8 +3,17 @@
 import { useState } from "react";
 import { NumberInput } from "@/components/mrp/number-input";
 import { Button } from "@/components/ui/button";
-import { aduanMaterialAllocationPreview, formatDecimal, formatRupiah, type AduanMaterialKind } from "@/lib/mrp/derive";
-import type { MrpDetail } from "@/lib/mrp/store";
+import {
+  aduanMaterialAllocationPreview,
+  formatDecimal,
+  formatRupiah,
+  hargaKainRateInfo,
+  inferMaterialKategori,
+  MATERIAL_KATEGORI_URUTAN,
+  type AduanMaterialKind,
+} from "@/lib/mrp/derive";
+import { ROLL_KG_ESTIMATE } from "@/lib/mrp/seed";
+import { useMrpStore, type MrpDetail } from "@/lib/mrp/store";
 import type { AddBuyItem, ColorEntry, Lengan, MaterialPO } from "@/lib/mrp/types";
 
 const ADD_BUY_ITEMS = ["Rib", "Kerah", "Manset", "Bur"];
@@ -31,6 +40,18 @@ function remainingByWarna(po: MaterialPO, entries: ColorEntry[]): WarnaGroup[] {
     map.set(c.warna, g);
   }
   return Array.from(map.values());
+}
+
+/** Selisih harga input invoice vs harga Master Data (per kg). Master `null` = tidak ada harga
+ *  tercatat di Master Data untuk supplier+warna ini (source "Estimasi" bukan harga master). */
+function MasterDiff({ input, master }: { input: number; master: number | null }) {
+  if (master == null) return <span className="text-text-muted">—</span>;
+  if (!(input > 0)) return <span className="text-text-muted">belum diisi</span>;
+  const diff = input - master;
+  if (Math.abs(diff) < 0.5) return <span className="font-semibold text-success-fg">✓ Sama</span>;
+  const pct = (diff / master) * 100;
+  const label = (diff > 0 ? "▲ +" : "▼ −") + formatRupiah(Math.abs(diff)) + " (" + (diff > 0 ? "+" : "−") + Math.abs(pct).toLocaleString("id-ID", { maximumFractionDigits: 1 }) + "%)";
+  return <span className={"font-semibold " + (diff > 0 ? "text-danger-fg" : "text-warning-fg")}>{label}</span>;
 }
 
 function splitRollsAcrossLengan(rolls: number[], lots: string[] | null, breakdown: { lengan: Lengan; remaining: number }[]) {
@@ -71,6 +92,12 @@ export function PayingVoucherWizard({
   // benar-benar tersimpan -- retry berikutnya kelihatan seperti "loop dari awal terus" karena
   // roll count memang tidak pernah berkurang. Sekarang di-`await` + tampilkan error kalau gagal,
   // wizard TIDAK tertutup sampai submit benar-benar sukses.
+  // Harga Master Data (Harga Kain Standar/PKS) -- pembanding untuk harga/kg yang diinput dari invoice.
+  const hargaKain = useMrpStore((s) => s.hargaKain);
+  const hargaKainPks = useMrpStore((s) => s.hargaKainPks);
+  // Filter picker warna: kategori bahan (Combed 24S, 30S, dst) + pencarian nama warna.
+  const [kategoriFilter, setKategoriFilter] = useState<string>("");
+  const [warnaSearch, setWarnaSearch] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [entries, setEntries] = useState<ColorEntry[]>([]);
@@ -118,6 +145,16 @@ export function PayingVoucherWizard({
     };
     reader.onerror = () => setBuktiPvError("Gagal membaca file, coba lagi.");
     reader.readAsDataURL(file);
+  }
+
+  // Harga/kg dari Master Data untuk 1 warna di supplier PO ini. Tonase (untuk band PKS) dihitung
+  // dari roll x estimasi 25 kg. Source "Estimasi" (tidak ada data harga sama sekali) => null.
+  function masterInfo(warna: string, rolls: number) {
+    const info = hargaKainRateInfo(hargaKain, hargaKainPks, po.supplier, warna, Math.max(1, rolls) * ROLL_KG_ESTIMATE);
+    return info.source === "Estimasi" ? null : info;
+  }
+  function masterPricePerKg(warna: string, rolls: number): number | null {
+    return masterInfo(warna, rolls)?.rate ?? null;
   }
 
   const warnaGroups = remainingByWarna(po, entries);
@@ -281,24 +318,31 @@ export function PayingVoucherWizard({
               (field `hargaPerRoll` itu sebenarnya harga PER KG, cocok dengan label input "Harga /
               kg" di form di bawah), bukan x jumlah roll. Sekarang total berat (kg) ditampilkan
               eksplisit supaya Subtotal = Total Berat x Harga/Kg terlihat jelas. */}
-          <div className="grid grid-cols-6 gap-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+          <div className="grid grid-cols-[1.4fr_0.6fr_0.9fr_1fr_1fr_1.5fr_1.1fr_1.1fr] gap-2 border-b-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg">
             <span>Warna</span>
             <span className="text-right">Roll</span>
             <span className="text-right">Total Berat (kg)</span>
-            <span className="text-right">Harga/Kg</span>
+            <span className="text-right">Harga Invoice/Kg</span>
+            <span className="text-right">Harga Master/Kg</span>
+            <span className="text-right">Selisih vs Master</span>
             <span className="text-right">Subtotal</span>
             <span className="text-right">Aksi</span>
           </div>
           {entries.map((e, i) => {
             const totalKg = e.rolls.reduce((s, w) => s + w, 0);
+            const master = masterPricePerKg(e.warna, e.rolls.length);
             return (
-              <div key={i} className="grid grid-cols-6 items-center gap-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F]">
+              <div key={i} className="grid grid-cols-[1.4fr_0.6fr_0.9fr_1fr_1fr_1.5fr_1.1fr_1.1fr] items-center gap-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F]">
                 <span>
                   {e.warna} <span className="text-text-muted">· {e.lengan}</span>
                 </span>
                 <span className="text-right font-mono">{e.rolls.length}</span>
                 <span className="text-right font-mono">{formatDecimal(totalKg)}</span>
                 <span className="text-right font-mono">{formatRupiah(e.hargaPerRoll)}</span>
+                <span className="text-right font-mono text-text-muted">{master != null ? formatRupiah(master) : "—"}</span>
+                <span className="text-right text-[11px]">
+                  <MasterDiff input={e.hargaPerRoll} master={master} />
+                </span>
                 <span className="text-right font-mono">{formatRupiah(e.hargaPerRoll * totalKg)}</span>
                 <span className="flex justify-end gap-2">
                   <Button onClick={() => editEntry(i)} variant="accent" size="xs">
@@ -314,33 +358,92 @@ export function PayingVoucherWizard({
         </div>
       )}
 
-      {!activeKey && warnaGroups.some((g) => g.totalRemaining > 0) && (
-        <div className="mt-3">
-          <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Pilih warna</div>
-          <div className="mt-1.5 flex flex-wrap gap-2">
-            {warnaGroups
-              .filter((g) => g.totalRemaining > 0)
-              .map((g) => (
-                <button
-                  key={g.warna}
-                  onClick={() => startColor(g.warna)}
-                  className="rounded-md border border-[#CBD5DF] bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-semibold text-action-primary"
-                >
-                  {g.warna} ({g.totalRemaining} roll sisa)
-                </button>
-              ))}
+      {!activeKey && warnaGroups.some((g) => g.totalRemaining > 0) && (() => {
+        // Picker warna ringkas: pill kategori bahan + pencarian + daftar 1 baris per warna.
+        const available = warnaGroups.filter((g) => g.totalRemaining > 0);
+        const kategoriHadir = MATERIAL_KATEGORI_URUTAN.filter((k) => available.some((g) => inferMaterialKategori(g.warna) === k));
+        const activeKategori = kategoriHadir.find((k) => k === kategoriFilter) ?? "";
+        const q = warnaSearch.trim().toLowerCase();
+        const visible = available.filter((g) => (!activeKategori || inferMaterialKategori(g.warna) === activeKategori) && (!q || g.warna.toLowerCase().includes(q)));
+        const pillClass = (on: boolean) =>
+          "rounded-full border px-2.5 py-[3px] font-sans text-[11px] font-semibold " +
+          (on ? "border-accent-blue bg-accent-blue text-white" : "border-[#CFE0EF] bg-white text-info-fg hover:bg-info-bg");
+        return (
+          <div className="mt-3 overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
+            <div className="flex flex-wrap items-center gap-2 border-b border-[#CFE0EF] px-3 py-2">
+              <span className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Pilih warna</span>
+              {kategoriHadir.length > 1 && (
+                <div className="flex flex-wrap gap-1.5">
+                  <button type="button" onClick={() => setKategoriFilter("")} className={pillClass(!activeKategori)}>
+                    Semua ({available.length})
+                  </button>
+                  {kategoriHadir.map((k) => (
+                    <button key={k} type="button" onClick={() => setKategoriFilter(activeKategori === k ? "" : k)} className={pillClass(activeKategori === k)}>
+                      {k} ({available.filter((g) => inferMaterialKategori(g.warna) === k).length})
+                    </button>
+                  ))}
+                </div>
+              )}
+              <input value={warnaSearch} onChange={(e) => setWarnaSearch(e.target.value)} placeholder="Cari warna…" className="input ml-auto w-44 text-[11.5px]" />
+            </div>
+            <div className="grid grid-cols-[1.6fr_0.8fr_1fr_4rem] gap-2 border-b-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg">
+              <span>Warna</span>
+              <span className="text-right">Sisa roll</span>
+              <span className="text-right">Harga Master/Kg</span>
+              <span />
+            </div>
+            <div className="max-h-64 overflow-y-auto">
+              {visible.length === 0 && <div className="px-3 py-4 text-center font-sans text-xs text-text-muted">Tidak ada warna yang cocok.</div>}
+              {visible.map((g) => {
+                const master = masterPricePerKg(g.warna, g.totalRemaining);
+                return (
+                  <div
+                    key={g.warna}
+                    onClick={() => startColor(g.warna)}
+                    className="grid cursor-pointer grid-cols-[1.6fr_0.8fr_1fr_4rem] items-center gap-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] hover:bg-info-bg/60"
+                  >
+                    <span className="font-medium text-text-primary">{g.warna}</span>
+                    <span className="text-right font-mono">{g.totalRemaining}</span>
+                    <span className="text-right font-mono text-text-muted">{master != null ? formatRupiah(master) : "—"}</span>
+                    <span className="text-right text-[11px] font-semibold text-info-fg">Pilih ›</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {activeGroup && !draftRolls && (
         <div className="mt-3 rounded-md border border-[#CFE0EF] bg-info-bg p-3">
           <div className="font-sans text-xs font-semibold text-info-fg">
             {activeGroup.warna} — maks {activeGroup.totalRemaining} roll
           </div>
+          {(() => {
+            const info = masterInfo(activeGroup.warna, qtyRoll);
+            return (
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-[#CFE0EF] bg-white px-3 py-2 font-sans text-[11.5px]">
+                <span className="text-text-muted">Harga Master Data ({po.supplier}):</span>
+                {info ? (
+                  <>
+                    <span className="font-mono font-semibold text-text-primary">{formatRupiah(info.rate)} / kg</span>
+                    <span className="rounded bg-info-bg px-1.5 py-[1px] text-[10px] font-semibold text-info-fg">{info.source}</span>
+                    <button type="button" onClick={() => setHargaPerRoll(info.rate)} className="font-semibold text-accent-blue underline">
+                      Pakai harga master
+                    </button>
+                    <span className="ml-auto">
+                      Invoice vs master: <MasterDiff input={hargaPerRoll} master={info.rate} />
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-text-muted">belum ada harga untuk warna ini di Master Data</span>
+                )}
+              </div>
+            );
+          })()}
           <div className="mt-2 grid grid-cols-2 gap-3">
             <div>
-              <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Harga / kg</div>
+              <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Harga / kg (dari invoice)</div>
               <NumberInput value={hargaPerRoll} onChange={setHargaPerRoll} currency startEmptyIfZero placeholder="Rp 45.000" className="input mt-1" />
             </div>
             <div>

@@ -38,6 +38,19 @@ export function PoMaklonPanel() {
   const [expandedVendorAll, setExpandedVendorAll] = useState<string | null>(null);
   const [expandedPoAll, setExpandedPoAll] = useState<string | null>(null);
 
+  // Daftar PO pending: vendor produksi (tingkat 1) -> PO (tingkat 2, klik = detail warna/lengan).
+  // Set (bukan single string) supaya beberapa vendor bisa dibuka bersamaan buat dibandingkan.
+  const [openVendorPending, setOpenVendorPending] = useState<Set<string>>(new Set());
+  const [openPoPending, setOpenPoPending] = useState<string | null>(null);
+  function toggleVendorPending(vendor: string) {
+    setOpenVendorPending((prev) => {
+      const next = new Set(prev);
+      if (next.has(vendor)) next.delete(vendor);
+      else next.add(vendor);
+      return next;
+    });
+  }
+
   if (!mounted) return null;
 
   const pending = maklonPOs.filter((po) => !po.approved);
@@ -109,7 +122,7 @@ export function PoMaklonPanel() {
     <>
       {pending.length > 0 && (
         <div className="rounded-lg border border-[#CFE0EF] bg-info-bg px-5 py-3 font-sans text-[11.5px] leading-[1.5] text-info-fg">
-          Approve akan memindahkan PO ke dashboard produksi vendor terkait, dan PO material terkait berpindah ke Paying Voucher (Invoice) dengan status <b>waiting invoice</b>.
+          Begitu di-approve, PO Maklon <b>otomatis masuk ke portal / modul Vendor Produksi</b> terkait (menu PO Produksi, vendor dapat notifikasi), dan PO material terkait berpindah ke Paying Voucher (Invoice) dengan status <b>waiting invoice</b>.
         </div>
       )}
       {/* Item revisi 2026-09-17 (owner: "hide saja untuk saat ini, siapa tau masih dibutuhkan
@@ -161,41 +174,106 @@ export function PoMaklonPanel() {
       )}
 
       {scopedPending.length > 0 && (
-        <div className="overflow-hidden rounded-lg border border-border-subtle bg-[#EEF1F5]">
-          {Array.from(groupedByVendor.entries()).map(([vendor, pos]) => {
-            const vendorQtyTotal = pos.reduce((a, p) => a + p.qty, 0);
-            const vendorAmountTotal = pos.reduce((a, p) => a + p.amount, 0);
-            return (
-              <div key={vendor} className="border-b border-border-subtle last:border-b-0">
-                <div className="flex items-center gap-2.5 bg-[#DEE4EC] px-5 py-[11px] font-sans text-[11px] font-semibold text-text-primary">
-                  <span>→ {VENDOR_PRODUKSI[vendor]?.name ?? vendor}</span>
-                  <button
-                    onClick={() => approveVendorGroup(pos)}
-                    className="ml-auto rounded-md bg-success px-2.5 py-[6px] font-sans text-[11px] font-semibold text-white"
-                  >
-                    Approve semua PO vendor ini ({pos.length})
-                  </button>
-                </div>
-                <div className="flex flex-col gap-2.5 px-3.5 py-3">
-                  {pos.map((po) => (
-                    <div key={po.id} className="flex items-center gap-3 overflow-hidden rounded-md border border-[#D8DEE6] bg-white px-4 py-[11px] shadow-[0_1px_3px_rgba(11,19,27,.06)]">
-                      <span className="font-mono text-xs font-medium text-[#31414F]">{po.id}</span>
-                      <span className="font-sans text-xs text-[#31414F]">{formatPcs(po.qty)} pcs</span>
-                      <span className="ml-auto font-mono text-xs">{formatRupiah(po.amount)}</span>
-                      <Button onClick={() => approveMaklonPo(po.id)} variant="success" size="xs">
-                        Approve
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex flex-wrap items-center gap-4 bg-[#DEE4EC] px-5 py-[10px] font-sans text-[11px] font-semibold text-text-primary">
-                  <span>Total vendor {VENDOR_PRODUKSI[vendor]?.name ?? vendor}:</span>
-                  <span>Qty: {formatPcs(vendorQtyTotal)} pcs</span>
-                  <span>Total: {formatRupiah(vendorAmountTotal)}</span>
-                </div>
-              </div>
-            );
-          })}
+        <div className="overflow-hidden rounded-lg border border-[#CFE0EF] bg-white">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
+                  <th className="px-5 py-[9px] text-left">Vendor Produksi / No PO</th>
+                  <th className="px-3 py-[9px] text-right">Qty</th>
+                  <th className="px-3 py-[9px] text-right">Nilai</th>
+                  <th className="px-3 py-[9px] text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from(groupedByVendor.entries()).map(([vendor, pos]) => {
+                  const vendorName = VENDOR_PRODUKSI[vendor]?.name ?? vendor;
+                  const vendorQtyTotal = pos.reduce((a, p) => a + p.qty, 0);
+                  const vendorAmountTotal = pos.reduce((a, p) => a + p.amount, 0);
+                  const vendorOpen = openVendorPending.has(vendor);
+                  return (
+                    <Fragment key={vendor}>
+                      <tr
+                        onClick={() => toggleVendorPending(vendor)}
+                        className={"cursor-pointer border-b border-[#CFE0EF] font-sans text-xs text-[#31414F] hover:bg-info-bg/60 " + (vendorOpen ? "bg-info-bg/50" : "")}
+                      >
+                        <td className="px-5 py-[11px]">
+                          <span className="mr-1.5 text-info-fg">{vendorOpen ? "▾" : "▸"}</span>
+                          <span className="font-semibold text-text-primary">{vendorName}</span>
+                          <span className="ml-1.5 font-sans text-[10.5px] text-text-muted">{pos.length} PO</span>
+                        </td>
+                        <td className="px-3 py-[11px] text-right font-mono tabular-nums">{formatPcs(vendorQtyTotal)} pcs</td>
+                        <td className="px-3 py-[11px] text-right font-mono font-medium tabular-nums">{formatRupiah(vendorAmountTotal)}</td>
+                        <td className="px-3 py-[11px] text-right">
+                          <Button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              approveVendorGroup(pos);
+                            }}
+                            variant="success"
+                            size="xs"
+                          >
+                            Approve vendor ini ({pos.length})
+                          </Button>
+                        </td>
+                      </tr>
+                      {vendorOpen &&
+                        pos.map((po) => {
+                          const poOpen = openPoPending === po.id;
+                          return (
+                            <Fragment key={po.id}>
+                              <tr
+                                onClick={() => setOpenPoPending(poOpen ? null : po.id)}
+                                className={"cursor-pointer border-b border-[#E4EEF8] bg-[#F8FBFF] font-sans text-[11.5px] text-[#31414F] hover:bg-info-bg/60 " + (poOpen ? "bg-info-bg/50" : "")}
+                              >
+                                <td className="py-[10px] pl-12 pr-3">
+                                  <span className="mr-1.5 text-info-fg">{poOpen ? "▾" : "▸"}</span>
+                                  <span className="font-mono font-medium text-text-primary">{po.id}</span>
+                                </td>
+                                <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatPcs(po.qty)} pcs</td>
+                                <td className="px-3 py-[10px] text-right font-mono font-medium tabular-nums">{formatRupiah(po.amount)}</td>
+                                <td className="px-3 py-[10px] text-right">
+                                  <Button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      approveMaklonPo(po.id);
+                                    }}
+                                    variant="success"
+                                    size="xs"
+                                  >
+                                    Approve
+                                  </Button>
+                                </td>
+                              </tr>
+                              {poOpen && (
+                                <tr>
+                                  <td colSpan={4} className="border-b border-[#E4EEF8] bg-white px-4 py-3 pl-12">
+                                    <MaklonPoWarnaLenganTable
+                                      vendorProduksi={po.vendorProduksi}
+                                      amount={po.amount}
+                                      aduanRows={mrpDetails.find((d) => d.mrp.id === po.mrpId)?.aduanRows.filter((a) => a.vendor === po.vendorProduksi) ?? []}
+                                      hargaMaklon={hargaMaklon}
+                                    />
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
+                          );
+                        })}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-accent-blue bg-info-bg font-sans text-[11px] font-semibold text-info-fg">
+                  <td className="px-5 py-[10px]">Total MRP {effectiveMrpId}</td>
+                  <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatPcs(scopedPending.reduce((a, p) => a + p.qty, 0))} pcs</td>
+                  <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatRupiah(scopedPending.reduce((a, p) => a + p.amount, 0))}</td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
         </div>
       )}
 

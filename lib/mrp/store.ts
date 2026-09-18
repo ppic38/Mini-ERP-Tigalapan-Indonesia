@@ -390,6 +390,7 @@ type FlowActions = {
   setMaterialPoColorEntity: (poId: string, warna: string, lengan: Lengan, entitas: string) => Promise<void>;
   approveAllMaterialPos: () => Promise<void>;
   approveVendorMaterialPos: (mrpId: string, vendor: string) => Promise<void>;
+  approveMaterialPos: (mrpId: string, poIds: string[]) => Promise<void>;
   closePoWithReason: (poId: string, reason: string, warna: string, lengan: Lengan, closeQty: number) => Promise<void>;
   reassignMaterialToSupplier: (poId: string, warna: string, lengan: Lengan, moveQty: number, newSupplier: string, reason: string) => Promise<void>;
   transferMaterial: (items: { invoiceId: string; warna: string; lengan: Lengan; qty: number }[], toVendor: string, deliveryDate: string) => Promise<void>;
@@ -547,6 +548,7 @@ const BUSY_TRACKED_ACTIONS = new Set<string>([
   "revertMaterialPoRollRounding",
   "approveAllMaterialPos",
   "approveVendorMaterialPos",
+  "approveMaterialPos",
   "approveMaklonPo",
   "bookInvoice",
   "setInvoicesPaid",
@@ -1562,6 +1564,10 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   },
   approveVendorMaterialPos: async (mrpId, vendor) => {
     await actions.approveVendorMaterialPosAction(mrpId, vendor);
+    backgroundRefresh();
+  },
+  approveMaterialPos: async (mrpId, poIds) => {
+    await actions.approveMaterialPosByIdsAction(mrpId, poIds);
     backgroundRefresh();
   },
   closePoWithReason: async (poId, reason, warna, lengan, closeQty) => {

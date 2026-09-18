@@ -1715,6 +1715,29 @@ export async function approveVendorMaterialPosAction(mrpId: string, vendor: stri
   await checkPoApproved(mrpId);
 }
 
+/** Approve PO Material berdasarkan DAFTAR ID PO persis (owner 2026-09-19: "approve PO per level
+ *  supplier"). approveVendorMaterialPosAction di atas approve SEMUA PO belum-approved milik
+ *  mrp+vendor tanpa peduli supplier -- kalau 1 vendor produksi punya PO dari >1 supplier (mis. BAYU
+ *  dapat kain dari KNITTO & FABRIKU), approve "per supplier" lewat fungsi itu ikut menyetujui PO
+ *  supplier lain yang belum dicek Finance. Di sini cuma id yang dikirim yang diproses -- logika
+ *  split per entitas SAMA persis dengan approveVendorMaterialPosAction/approveMaterialPoAction. */
+export async function approveMaterialPosByIdsAction(mrpId: string, poIds: string[]): Promise<void> {
+  await requireInternalRole(await requireSession(), "finance");
+  if (poIds.length === 0) return;
+  const db = supabaseServer();
+  for (const id of poIds) {
+    const po = await fetchOneMaterialPo(db, id);
+    if (!po || po.mrpId !== mrpId || po.approved || po.status === "CANCELLED") continue;
+    const entitasOrder = Array.from(new Set(po.colorBreakdown.map((c) => c.entitas ?? po.entity)));
+    const newIds = await Promise.all(
+      entitasOrder.slice(1).map((entitas) => nextPoDisplayId("material_pos", "PO-SUP", [po.mrpId, po.vendorProduksi, po.supplier, entitas]))
+    );
+    const parts = splitMaterialPoByEntitas(po, newIds).map((p) => ({ ...p, approved: true }));
+    await writeMaterialPoSplit(db, po.id, parts);
+  }
+  await checkPoApproved(mrpId);
+}
+
 /** PERFORMA: mengembalikan cuttingAt/sizeQty yang baru ditulis supaya store.ts bisa nge-patch
  *  baris ProductionBatch ini LANGSUNG di client (optimistic), tanpa nunggu backgroundRefresh
  *  (snapshot 32-tabel) buat lihat roll-nya sudah "Cutting" -- ini yang secara konkret diminta user

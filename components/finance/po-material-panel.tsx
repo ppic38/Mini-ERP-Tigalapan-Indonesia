@@ -85,7 +85,9 @@ export function PoMaterialPanel() {
   const entitasList = useMrpStore((s) => s.entitasList);
   const setMaterialPoEntity = useMrpStore((s) => s.setMaterialPoEntity);
   const setMaterialPoColorEntity = useMrpStore((s) => s.setMaterialPoColorEntity);
-  const approveVendorMaterialPos = useMrpStore((s) => s.approveVendorMaterialPos);
+  // Approve per ID PO (bukan per vendor) -- supaya "approve per supplier" tidak ikut menyetujui PO
+  // supplier lain milik vendor produksi yang sama (lihat approveMaterialPosByIdsAction).
+  const approveMaterialPos = useMrpStore((s) => s.approveMaterialPos);
   // Item 3: sumber harga/kg per warna (rib dari mrpDetails.materialRows di atas).
   const hargaKain = useMrpStore((s) => s.hargaKain);
   const hargaKainPks = useMrpStore((s) => s.hargaKainPks);
@@ -219,8 +221,13 @@ export function PoMaterialPanel() {
   // catatan di atas) -- vendor unik dihitung langsung dari scopedPending supaya tidak berubah
   // perilaku (approve tetap per vendor produksi, action-nya memang scoped begitu).
   function approveAllForMrp() {
-    const vendors = new Set(scopedPending.map((p) => p.vendorProduksi));
-    for (const vendor of vendors) approveVendorMaterialPos(selectedMrpId, vendor);
+    approveMaterialPos(selectedMrpId, scopedPending.map((p) => p.id));
+  }
+
+  // Set entitas SEMUA PO milik 1 supplier sekaligus (level supplier) -- tanpa ini approve per
+  // supplier praktis tidak bisa dipakai karena tiap warna di tiap PO harus dipilih entitasnya dulu.
+  function chooseEntityForPos(pos: MaterialPO[], entitas: string) {
+    for (const po of pos) chooseEntityBulk(po.id, entitas);
   }
 
   function approvedStatusBadge(p: MaterialPO) {
@@ -332,7 +339,7 @@ export function PoMaterialPanel() {
       )}
 
       {detail && (
-        <div className="overflow-hidden rounded-lg border border-border-subtle bg-[#EEF1F5]">
+        <div className="overflow-hidden rounded-lg border border-[#CFE0EF] bg-[#F5F9FE]">
           {/* Item revisi 2026-09-18: level LUAR sekarang Supplier (Vendor Material), level DALAM
              Vendor Produksi -- dibalik dari sebelumnya (Vendor Produksi->Supplier), lihat catatan
              di expandedSupplierPending/expandedVendorPending & `grouped` di atas. */}
@@ -351,30 +358,48 @@ export function PoMaterialPanel() {
             }
 
             return (
-              <div key={supplier} className="border-b border-border-subtle last:border-b-0">
+              <div key={supplier} className="border-b border-[#CFE0EF] last:border-b-0">
                 <div
                   onClick={() => {
                     setExpandedSupplierPending(supplierOpen ? null : supplier);
                     setExpandedVendorPending(null);
                   }}
-                  className="flex cursor-pointer items-center gap-2.5 bg-[#DEE4EC] px-5 py-[11px] font-sans text-[11px] font-semibold text-text-primary hover:bg-[#D5DCE6]"
+                  className="flex cursor-pointer flex-wrap items-center gap-2.5 border-b-2 border-accent-blue bg-info-bg px-5 py-[11px] font-sans text-[11px] font-semibold uppercase tracking-wider text-info-fg hover:bg-[#E2EDFC]"
                 >
-                  <span className="text-text-muted">{supplierOpen ? "▾" : "▸"}</span>
+                  <span>{supplierOpen ? "▾" : "▸"}</span>
                   <span>{supplier}</span>
-                  <span className="font-sans text-[10.5px] font-normal text-text-muted">
+                  <span className="font-sans text-[10.5px] font-normal normal-case tracking-normal text-info-fg/70">
                     {vendorGroups.size} vendor · {pos.length} PO
                   </span>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      for (const vendor of vendorGroups.keys()) approveVendorMaterialPos(selectedMrpId, vendor);
-                    }}
-                    disabled={supplierWithoutEntity.length > 0}
-                    title={supplierWithoutEntity.length > 0 ? `${supplierWithoutEntity.length} PO supplier ini belum pilih entitas -- lengkapi dulu` : undefined}
-                    className="ml-auto rounded-md bg-success px-2.5 py-[6px] font-sans text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Approve semua PO supplier ini ({pos.length})
-                  </button>
+                  <div className="ml-auto flex items-center gap-2 normal-case tracking-normal">
+                    {/* Level supplier: set entitas semua PO supplier ini sekaligus, lalu approve
+                       HANYA PO milik supplier ini (approve per ID, bukan per vendor produksi). */}
+                    <select
+                      value=""
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => chooseEntityForPos(pos, e.target.value)}
+                      title="Set entitas untuk SEMUA PO & warna milik supplier ini sekaligus"
+                      className="rounded-md border border-accent-blue/60 bg-white px-2 py-[5px] font-sans text-[11px] font-medium text-text-primary"
+                    >
+                      <option value="">{supplierWithoutEntity.length === 0 ? "✓ entitas lengkap — ubah semua…" : "— set entitas semua PO supplier —"}</option>
+                      {entitasList.map((e) => (
+                        <option key={e.id} value={e.nama}>
+                          {e.nama}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        approveMaterialPos(selectedMrpId, pos.map((p) => p.id));
+                      }}
+                      disabled={supplierWithoutEntity.length > 0}
+                      title={supplierWithoutEntity.length > 0 ? `${supplierWithoutEntity.length} PO supplier ini belum pilih entitas -- lengkapi dulu` : `Approve ${pos.length} PO milik ${supplier} saja`}
+                      className="rounded-md bg-success px-2.5 py-[6px] font-sans text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Approve supplier ini ({pos.length} PO)
+                    </button>
+                  </div>
                 </div>
 
                 {supplierOpen && (
@@ -386,21 +411,41 @@ export function PoMaterialPanel() {
                     const vendorNilai = vendorPos.reduce((a, p) => a + p.amount, 0);
                     const vendorNeedsEntity = vendorPos.some((p) => !poHasAllEntitas(p));
                     return (
-                      <div key={vendorKey} className="overflow-hidden rounded-md border border-[#D8DEE6] bg-white">
-                        <button
-                          type="button"
+                      <div key={vendorKey} className="overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
+                        <div
+                          role="button"
+                          tabIndex={0}
                           onClick={() => setExpandedVendorPending(vendorOpen ? null : vendorKey)}
-                          className="flex w-full items-center gap-3 px-4 py-[10px] text-left hover:bg-[#F7F9FB]"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setExpandedVendorPending(vendorOpen ? null : vendorKey);
+                            }
+                          }}
+                          className="flex w-full cursor-pointer items-center gap-3 px-4 py-[10px] text-left hover:bg-info-bg/60"
                         >
-                          <span className="text-text-muted">{vendorOpen ? "▾" : "▸"}</span>
+                          <span className="text-info-fg">{vendorOpen ? "▾" : "▸"}</span>
                           <span className="font-sans text-xs font-semibold text-text-primary">→ {VENDOR_PRODUKSI[vendor]?.name ?? vendor}</span>
                           <span className="font-mono text-[10.5px] text-text-muted">{vendorPos.map((p) => p.id).join(", ")}</span>
                           <span className="ml-auto font-mono text-xs">{vendorRoll} roll</span>
                           <span className="font-mono text-xs font-medium">{formatRupiah(vendorNilai)}</span>
                           {vendorNeedsEntity && <StatusPill tone="warning">Entitas belum lengkap</StatusPill>}
-                        </button>
+                          {/* Level vendor produksi (di dalam 1 supplier): approve PO vendor ini saja. */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              approveMaterialPos(selectedMrpId, vendorPos.map((p) => p.id));
+                            }}
+                            disabled={vendorNeedsEntity}
+                            title={vendorNeedsEntity ? "Lengkapi entitas PO vendor ini dulu" : `Approve ${vendorPos.length} PO vendor ini saja`}
+                            className="rounded-md bg-success px-2.5 py-[5px] font-sans text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Approve
+                          </button>
+                        </div>
                         {vendorOpen && (
-                <div className="flex flex-col gap-2.5 border-t border-[#F1F4F7] bg-[#FAFBFC] px-3.5 py-3">
+                <div className="flex flex-col gap-2.5 border-t border-[#CFE0EF] bg-[#F8FBFF] px-3.5 py-3">
                   {vendorPos.map((po) => {
                     const poMaklonTotal = po.colorBreakdown.reduce((a, c) => a + maklonFeeForColorLine(po, c, maklonPOs, mrpDetails), 0);
                     const hasEntity = poHasAllEntitas(po);
@@ -411,7 +456,7 @@ export function PoMaterialPanel() {
                       // Tiap PO jadi kartu putih tersendiri (border + shadow) di atas latar abu
                       // vendor-group — supaya jelas terlihat sebagai unit terpisah, tidak
                       // menyatu dengan PO di atas/bawahnya seperti sebelumnya.
-                      <div key={po.id} className="overflow-hidden rounded-md border border-[#D8DEE6] bg-white shadow-[0_1px_3px_rgba(11,19,27,.06)]">
+                      <div key={po.id} className="overflow-hidden rounded-md border border-[#CFE0EF] bg-white shadow-[0_1px_3px_rgba(11,19,27,.06)]">
                         <div className="grid items-center gap-2 px-4 py-[11px]" style={{ gridTemplateColumns: "110px 1fr 90px 120px 170px" }}>
                           <span className="font-mono font-medium text-xs text-[#31414F]">{po.id}</span>
                           <span className="flex items-center gap-1.5 font-sans text-xs text-[#31414F]">
@@ -508,7 +553,7 @@ export function PoMaterialPanel() {
                 </div>
                 )}
 
-                <div className="flex flex-wrap items-center gap-4 bg-[#DEE4EC] px-5 py-[10px] font-sans text-[11px] font-semibold text-text-primary">
+                <div className="flex flex-wrap items-center gap-4 border-t-2 border-accent-blue bg-info-bg px-5 py-[10px] font-sans text-[11px] font-semibold text-info-fg">
                   <span>Total supplier {supplier}:</span>
                   <span>Roll: {supplierRollTotal}</span>
                   <span>Material: {formatRupiah(supplierMaterialTotal)}</span>
