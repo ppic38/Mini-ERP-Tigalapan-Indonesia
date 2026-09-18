@@ -130,6 +130,9 @@ const KAIN_VARIANT_SUFFIXES = [" KID", " RIB", " TUNIK"];
 // yang TIDAK ada di sini & TIDAK match strip akhiran generik (mis. "DENIM BLUE 24S KID") SENGAJA
 // dibiarkan TIDAK ada fallback sama sekali (owner: "biarkan kosong") -- base-nya memang belum
 // punya padanan warna 24S manapun di Master Data, jangan menebak-nebak sendiri.
+// Revisi 2026-09-18 (owner: alias "FUCHSIA 24S KID" -> "FANTA 24S" sudah tidak berlaku, dihapus
+// dari tabel) -- fallback generik (strip akhiran " KID") yang berlaku sekarang untuk warna ini,
+// sama seperti varian lain yang tidak butuh alias eksplisit.
 const KAIN_WARNA_ALIAS: Record<string, string> = {
   "BENHUR 24S KID": "BENHUR SPECIAL 24S",
   "BENHUR 24S RIB": "BENHUR SPECIAL 24S",
@@ -140,7 +143,6 @@ const KAIN_WARNA_ALIAS: Record<string, string> = {
   "PUTIH 24S RIB": "PUTIH BLUISH 24S",
   "MERAH 24S KID": "MERAH CABE 24S",
   "MERAH 24S RIB": "MERAH CABE 24S",
-  "FUCHSIA 24S KID": "FANTA 24S",
 };
 function baseWarnaForKainFallback(warna: string): string | null {
   const trimmed = warna.trim();
