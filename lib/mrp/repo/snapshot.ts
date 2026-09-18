@@ -461,6 +461,7 @@ export async function getFlowSnapshot(): Promise<FlowState> {
       mansetKg: Number(r.manset_kg),
       supplier: r.supplier,
       entitas: r.entitas ?? undefined,
+      sentToPoAt: r.sent_to_po_at ?? undefined,
     }));
     const dates: MrpDates = {
       created: m.created_at,

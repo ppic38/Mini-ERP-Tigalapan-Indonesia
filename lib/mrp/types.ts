@@ -43,6 +43,12 @@ export type MaterialRow = {
   mansetKg: number;
   supplier: string | null;
   entitas?: string;
+  /** Item 2026-09-18 ("Kirim PO ke Finance" parsial) -- terisi begitu baris ini sudah ikut
+   *  diproses sendPoToFinanceAction (jadi bagian PO Material + qty PO Vendor Produksi yang
+   *  benar-benar terkirim). Baris yang masih null TIDAK ikut qty PO manapun -- aman ditinggal
+   *  belum ada supplier tanpa memblokir baris lain yang sudah siap, dan tidak akan diproses ulang
+   *  begitu supplier-nya nanti diisi & PO dikirim lagi. */
+  sentToPoAt?: string;
 };
 
 export type MrpStatusPO = "DRAFT" | "PO SENT" | "PO APPROVED";

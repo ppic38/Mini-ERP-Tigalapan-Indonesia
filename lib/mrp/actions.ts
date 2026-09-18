@@ -311,7 +311,7 @@ export async function rejectPpicMrpAction(mrpId: string, reason: string): Promis
 // membuat record baru (bookInvoice dkk) -- di sini SEMUA field yang dibutuhkan MaterialPO/MaklonPO
 // sudah 100% diketahui begitu insert sukses (tidak ada nilai turunan lain yang baru dihitung
 // trigger/RPC di server), jadi aman dikembalikan apa adanya.
-export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPOs: MaterialPO[]; maklonPOs: MaklonPO[] }> {
+export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPOs: MaterialPO[]; maklonPOs: MaklonPO[]; mrpFullySent: boolean }> {
   await requireInternalRole(await requireSession(), "procurement");
   const db = supabaseServer();
   // Targeted (bukan getFlowSnapshot() penuh): aduanRows/materialRows di-scope ke mrpId ini saja;
@@ -336,6 +336,7 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
     mansetKg: Number(r.manset_kg),
     supplier: r.supplier,
     entitas: r.entitas ?? undefined,
+    sentToPoAt: r.sent_to_po_at ?? undefined,
   }));
   const hargaMaklon: HargaMaklonRow[] = (hargaMaklonRes.data ?? []).map((r) => ({
     id: r.id,
@@ -349,15 +350,32 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
   }));
   const entitasList: EntitasRow[] = (entitasRes.data ?? []).map((r) => ({ id: r.id, nama: r.nama }));
 
+  // Item 2026-09-18 (owner: "tetap bisa ajukan PO meskipun ada beberapa warna yang belum dipilih
+  // suppliernya, jangan bocor ke Finance untuk warna yang belum dipilih") -- HANYA aduan pola yang
+  // materialRow-nya SUDAH punya supplier DAN BELUM PERNAH ikut PO sebelumnya (sentToPoAt kosong)
+  // yang diproses di sini. Warna yang belum ke-assign supplier TIDAK ikut qty PO Vendor Produksi
+  // SAMA SEKALI (dulu ikut lewat vendorRows dari SEMUA aduanRows -- itu penyebab "bocor": vendor
+  // disuruh produksi bahan yang tidak pernah dipesan) -- otomatis diproses lagi di panggilan
+  // sendPoToFinanceAction BERIKUTNYA begitu supplier-nya sudah diisi.
+  const sendableAduanRows = aduanRows.filter((a) => {
+    const mr = materialRows.find((m) => m.lenganGroupId === a.lenganGroupId);
+    return !!mr?.supplier && !mr.sentToPoAt;
+  });
+  if (sendableAduanRows.length === 0) {
+    throw new Error("Belum ada warna dengan vendor material yang siap dikirim -- pilih vendor material dulu untuk minimal 1 warna.");
+  }
+
   const vendorRows = new Map<string, typeof aduanRows>();
-  for (const a of aduanRows) vendorRows.set(a.vendor, [...(vendorRows.get(a.vendor) ?? []), a]);
+  for (const a of sendableAduanRows) vendorRows.set(a.vendor, [...(vendorRows.get(a.vendor) ?? []), a]);
 
   const pairTotals = new Map<string, { vendor: string; supplier: string; rolls: number; colorMap: Map<string, ColorBreakdown> }>();
   const defaultEntitas = entitasList[0]?.nama ?? ENTITAS_LIST[0];
-  for (const a of aduanRows) {
+  const sentMaterialRowIds = new Set<string>();
+  for (const a of sendableAduanRows) {
     const mr = materialRows.find((m) => m.lenganGroupId === a.lenganGroupId);
     const supplier = mr?.supplier;
     if (!supplier) continue;
+    sentMaterialRowIds.add(mr!.id);
     const key = a.vendor + "|" + supplier;
     const cur = pairTotals.get(key) ?? { vendor: a.vendor, supplier, rolls: 0, colorMap: new Map<string, ColorBreakdown>() };
     cur.rolls += a.qtyRoll;
@@ -458,13 +476,25 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
     })(),
   ]);
 
-  // PERFORMA: update mrp.po_sent & notifikasi juga independen satu sama lain -- paralel.
+  // Sisa baris material (qty_roll>0) yang BELUM ikut PO manapun -- dari batch ini (belum ada
+  // supplier) MAUPUN dari batch sebelumnya (kalau ada). mrp.po_sent cuma boleh true begitu tidak
+  // ada sisa sama sekali -- selama masih ada sisa, MRP ini TETAP muncul di "MRP tanpa PO"
+  // Procurement (lihat `selectable` di app/procurement/po-approval/page.tsx, filter `!poSent`)
+  // supaya warna yang belum ke-assign bisa diproses lagi nanti, tidak hilang selamanya.
+  const outstandingAfter = materialRows.some((m) => m.qtyRoll > 0 && !m.sentToPoAt && !sentMaterialRowIds.has(m.id));
+  const notifText = outstandingAfter
+    ? `PO untuk ${mrpId} dikirim SEBAGIAN ke Finance — ${materialPOs.length} PO material, ${maklonPOs.length} PO maklon (masih ada warna yang belum dipilih vendor material)`
+    : `PO untuk ${mrpId} dikirim ke Finance — ${materialPOs.length} PO material, ${maklonPOs.length} PO maklon`;
+
+  // PERFORMA: tandai material_rows terkirim, update mrp.po_sent (kalau semua sudah tuntas), &
+  // notifikasi -- independen satu sama lain, paralel.
   await Promise.all([
-    db.from("mrp").update({ po_sent: true, po_sent_at: today() }).eq("id", mrpId),
-    insertNotification(notif(`PO untuk ${mrpId} dikirim ke Finance — ${materialPOs.length} PO material, ${maklonPOs.length} PO maklon`, ["finance"])),
+    db.from("material_rows").update({ sent_to_po_at: nowIso() }).in("id", Array.from(sentMaterialRowIds)),
+    outstandingAfter ? Promise.resolve() : db.from("mrp").update({ po_sent: true, po_sent_at: today() }).eq("id", mrpId),
+    insertNotification(notif(notifText, ["finance"])),
   ]);
 
-  return { materialPOs, maklonPOs };
+  return { materialPOs, maklonPOs, mrpFullySent: !outstandingAfter };
 }
 
 /** Fetch SATU MaterialPO by id (+colorBreakdown & invoicedByColor-nya) -- targeted 3-tabel query

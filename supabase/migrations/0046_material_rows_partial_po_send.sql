@@ -1,0 +1,14 @@
+-- Kirim PO ke Finance PARSIAL (owner 2026-09-18): "tetap bisa ajukan PO meskipun ada beberapa
+-- warna yang belum dipilih suppliernya, jangan bocor ke Finance untuk warna yang belum dipilih,
+-- MRP tetap muncul di filter Procurement selama masih ada yang outstanding".
+--
+-- Sebelumnya sendPoToFinanceAction() memproses SEMUA aduan_pola_rows suatu MRP sekaligus (warna
+-- tanpa supplier ikut MASUK ke qty PO Vendor Produksi walau TIDAK dapat PO Material -- vendor jadi
+-- "disuruh produksi" bahan yang tidak pernah dipesan) lalu langsung mrp.po_sent=true (MRP hilang
+-- selamanya dari "MRP tanpa PO" walau masih ada warna yang belum ke-assign -- warna itu tidak
+-- pernah bisa diproses lagi).
+--
+-- Kolom baru ini menandai baris material_rows mana yang SUDAH ikut dikirim ke PO (supaya panggilan
+-- sendPoToFinanceAction berikutnya untuk MRP yang sama tidak memproses ulang baris yang sudah
+-- terkirim, dan mrp.po_sent cuma di-set true begitu SEMUA baris qty_roll>0 sudah sent_to_po_at).
+alter table material_rows add column if not exists sent_to_po_at timestamptz;

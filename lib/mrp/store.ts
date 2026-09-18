@@ -763,7 +763,14 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     set({
       materialPOs: [...get().materialPOs, ...result.materialPOs],
       maklonPOs: [...get().maklonPOs, ...result.maklonPOs],
-      mrpDetails: get().mrpDetails.map((d) => (d.mrp.id === mrpId ? { ...d, poSent: true, dates: { ...d.dates, poSent: localDateString(new Date()) } } : d)),
+      // Item 2026-09-18 ("Kirim PO ke Finance" parsial): poSent CUMA di-set true kalau server
+      // bilang MRP ini sudah tuntas (mrpFullySent) -- kirim parsial (masih ada warna outstanding)
+      // HARUS tetap poSent:false supaya MRP ini tidak hilang dari "MRP tanpa PO" (lihat
+      // sendPoToFinanceAction). materialRows.sentToPoAt sendiri menyusul dari backgroundRefresh
+      // (snapshot penuh), tidak di-patch optimistic di sini.
+      mrpDetails: result.mrpFullySent
+        ? get().mrpDetails.map((d) => (d.mrp.id === mrpId ? { ...d, poSent: true, dates: { ...d.dates, poSent: localDateString(new Date()) } } : d))
+        : get().mrpDetails,
     });
     backgroundRefresh();
   },

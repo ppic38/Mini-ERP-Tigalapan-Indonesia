@@ -53,6 +53,11 @@ function RateBadge({ explanation }: { explanation: { sources: ("PKS" | "Standar"
   );
 }
 
+// Tint latar per jenis bahan di tabel Material (owner 2026-09-18: "ada pemisah" antara kg/Rp Rib,
+// Kerah, Manset) -- dipasangkan ke kolom kg-nya SENDIRI dan kolom Est.(Rp)-nya supaya kelihatan
+// jelas 1 pasang, TIDAK dipakai untuk kolom Roll/Est. Kain (warna default, dianggap "kolom utama").
+const MATERIAL_GROUP_BG = { rib: "bg-[#F5F8FF]", kerah: "bg-[#F5FBF7]", manset: "bg-[#FFF8F0]" };
+
 export default function PoApprovalPage() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -147,8 +152,16 @@ export default function PoApprovalPage() {
   const detail = mrpDetails.find((d) => d.mrp.id === selectedId && !d.poSent);
   const vendorRows = detail ? vendorProduksiRows(detail, hargaMaklon, vendorProduksiList) : [];
   // Baris qtyRoll 0 = kombinasi warna+lengan placeholder (tidak ada yang dipesan) -- jangan ikut
-  // memblokir "Kirim PO ke Finance" gara-gara belum ada vendor untuk warna yang memang kosong.
-  const allMaterialAssigned = detail ? detail.materialRows.filter((m) => m.qtyRoll > 0).every((m) => m.supplier) : false;
+  // dihitung "outstanding" gara-gara belum ada vendor untuk warna yang memang kosong.
+  // Revisi 2026-09-18 (owner: "tetap bisa ajukan PO meskipun ada beberapa warna yang belum
+  // dipilih suppliernya"): dulu "Kirim PO ke Finance" diblokir TOTAL sampai SEMUA warna assigned
+  // (allMaterialAssigned, all-or-nothing) -- sekarang tombol aktif begitu ADA MINIMAL 1 warna
+  // yang siap (sudah pilih vendor material & belum pernah dikirim), sisanya yang belum siap tetap
+  // outstanding dan bisa dikirim menyusul kapan saja tanpa perlu MRP ini dipilih ulang dari awal
+  // (lihat sentToPoAt, sendPoToFinanceAction — MRP TIDAK hilang dari "MRP tanpa PO" sampai semua
+  // warna tuntas terkirim).
+  const outstandingMaterialRows = detail ? detail.materialRows.filter((m) => m.qtyRoll > 0 && !m.sentToPoAt) : [];
+  const hasSendableMaterial = outstandingMaterialRows.some((m) => m.supplier);
 
   // Dulu cuma menampilkan status WAITING_APPROVAL — begitu Finance approve, row (dan tombol
   // Download PO-nya) hilang dari tabel, padahal Procurement justru BUTUH download PDF-nya
@@ -413,14 +426,21 @@ export default function PoApprovalPage() {
           </select>
         </div>
         {detail && (
-          <button
-            onClick={() => allMaterialAssigned && sendPoToFinance(detail.mrp.id)}
-            disabled={!allMaterialAssigned}
-            title={!allMaterialAssigned ? "Tetapkan vendor material untuk semua baris dulu" : undefined}
-            className="ml-auto rounded-md bg-action-primary px-3.5 py-[9px] font-sans text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Kirim PO ke Finance
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            {outstandingMaterialRows.length > 0 && (
+              <span title="Warna yang belum dipilih vendor material ATAU belum pernah dikirim ke PO">
+                <StatusPill tone="warning">{outstandingMaterialRows.length} warna outstanding</StatusPill>
+              </span>
+            )}
+            <button
+              onClick={() => hasSendableMaterial && sendPoToFinance(detail.mrp.id)}
+              disabled={!hasSendableMaterial}
+              title={!hasSendableMaterial ? "Pilih vendor material untuk minimal 1 warna dulu" : undefined}
+              className="rounded-md bg-action-primary px-3.5 py-[9px] font-sans text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {outstandingMaterialRows.length > 0 && outstandingMaterialRows.some((m) => !m.supplier) ? "Kirim PO ke Finance (parsial)" : "Kirim PO ke Finance"}
+            </button>
+          </div>
         )}
       </div>
 
@@ -460,15 +480,20 @@ export default function PoApprovalPage() {
           <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
             <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Vendor produksi</div>
             {/* Item 2026-09-13 (user-reported): kolom "%" (persentase kapasitas terpakai) dihapus
-               -- tidak relevan buat keputusan di halaman ini, cuma bikin tabel penuh. */}
+               -- tidak relevan buat keputusan di halaman ini, cuma bikin tabel penuh.
+               Revisi 2026-09-18 (owner: "buat tampilannya seperti PO Material, kolomnya terlalu
+               jauh"): header disamakan (biru, border-accent-blue) dengan tabel Material, dan
+               "Nama vendor" TIDAK LAGI minmax(0,1fr) (dulu memaksa nama merentang penuh lebar
+               tabel, mendorong 3 kolom angka terisolasi jauh ke kanan) -- sekarang lebar tetap
+               wajar, sisa ruang kosong di ujung kanan (bukan disebar ke celah antar kolom). */}
             <div
-              className="grid gap-x-2 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
-              style={{ gridTemplateColumns: "minmax(0, 1fr) 64px 72px 118px" }}
+              className="grid gap-x-3 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
+              style={{ gridTemplateColumns: "260px 90px 100px 140px" }}
             >
-              <span>Nama vendor</span>
-              <span className="text-right">Qty plan</span>
-              <span className="text-right">Kapasitas</span>
-              <span className="text-right">Est. biaya</span>
+              <span className="whitespace-nowrap">Nama vendor</span>
+              <span className="whitespace-nowrap text-right">Qty plan</span>
+              <span className="whitespace-nowrap text-right">Kapasitas</span>
+              <span className="whitespace-nowrap text-right">Est. biaya</span>
             </div>
             {vendorRows.map((v) => {
               const aduanRows = detail?.aduanRows.filter((a) => a.vendor === v.vendor) ?? [];
@@ -476,8 +501,8 @@ export default function PoApprovalPage() {
                 <button
                   key={v.vendor}
                   onClick={() => setDrillVendor(v.vendor)}
-                  className="grid w-full items-center gap-x-2 border-b border-[#F1F4F7] px-4 py-[11px] text-left font-sans text-xs text-[#31414F] last:border-b-0 hover:bg-[#F7F9FB]"
-                  style={{ gridTemplateColumns: "minmax(0, 1fr) 64px 72px 118px" }}
+                  className="grid items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] text-left font-sans text-xs text-[#31414F] last:border-b-0 hover:bg-[#F7F9FB]"
+                  style={{ gridTemplateColumns: "260px 90px 100px 140px" }}
                 >
                   <span className="font-medium">{v.name}</span>
                   <span className="text-right font-mono">{formatPcs(v.qty)}</span>
@@ -496,7 +521,11 @@ export default function PoApprovalPage() {
           <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
             <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Material</div>
             {(() => {
-              const materialGroups = materialGroupsByWarna(detail.materialRows);
+              // Item 2026-09-18 ("Kirim PO ke Finance" parsial): baris yang SUDAH ikut PO
+              // (sentToPoAt terisi) dikeluarkan dari tabel ini -- tidak ada lagi yang perlu
+              // dilakukan Procurement untuk warna itu. Sisa yang tampil di sini otomatis JADI
+              // daftar "outstanding" (belum dipilih vendor material / belum dikirim).
+              const materialGroups = materialGroupsByWarna(detail.materialRows.filter((m) => !m.sentToPoAt));
               // Item BAGIAN 2 (Req 20) — kolom Kerah/Manset kg cuma ditampilkan kalau ADA material
               // row MRP ini yang benar-benar punya nilai (kategori "WANGKI MYNO").
               const showKerahManset = materialGroups.some((g) => g.totalKerahKg > 0 || g.totalMansetKg > 0);
@@ -509,9 +538,16 @@ export default function PoApprovalPage() {
               // Lebar kolom Kerah/Manset kg & Est. (Rp) dilebarkan (revisi 2026-09-18, owner:
               // "header-nya jangan 2 baris") supaya label header ("MANSET KG", "EST. MANSET (RP)")
               // muat 1 baris tanpa patah kata -- lihat whitespace-nowrap di header di bawah.
+              // Revisi 2026-09-18 (owner: "tambah kolom estimasi harga roll" + "pisahkan kg dan
+              // harga per jenis bahan biar kelihatan pasangannya") -- kolom kg & Est.(Rp) SEKARANG
+              // BERPASANGAN bersebelahan per jenis bahan (Roll+EstKain, RibKg+EstRib, dst, bukan
+              // lagi semua kg dulu baru semua Est. di akhir) + 1 kolom baru "Est. Kain (Rp)" untuk
+              // harga kain utamanya sendiri (sebelumnya cuma RIB/Kerah/Manset yang ada estimasinya,
+              // padahal harga kain-nya sendiri yang paling besar porsinya). Pemisah visual antar
+              // jenis bahan pakai warna latar (lihat MATERIAL_GROUP_BG di bawah), bukan cuma grid gap.
               const cols = showKerahManset
-                ? "20px minmax(120px, 1.3fr) 44px 64px 78px 84px 112px 122px 128px minmax(150px, 1fr)"
-                : "20px minmax(140px, 1.5fr) 44px 64px 112px minmax(160px, 1fr)";
+                ? "20px minmax(120px, 1.3fr) 44px 104px 64px 104px 70px 104px 76px 104px minmax(150px, 1fr)"
+                : "20px minmax(140px, 1.5fr) 44px 104px 64px 104px minmax(160px, 1fr)";
               // Owner 2026-09-16: kelompokkan per kategori kain (WANGKI MYNO/30S/KID/dsb sering
               // campur dalam 1 MRP, lihat inferMaterialKategori) + filter kategori + checkbox
               // bulk-assign supplier untuk banyak warna sekaligus (bukan 1-per-1 seperti dulu).
@@ -573,15 +609,32 @@ export default function PoApprovalPage() {
                     className="grid gap-x-3 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
                     style={{ gridTemplateColumns: cols }}
                   >
-                    <span />
+                    <input
+                      type="checkbox"
+                      checked={visibleGroups.length > 0 && visibleGroups.every((g) => selectedWarna.has(g.warna))}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setSelectedWarna((prev) => {
+                          const next = new Set(prev);
+                          for (const g of visibleGroups) {
+                            if (checked) next.add(g.warna);
+                            else next.delete(g.warna);
+                          }
+                          return next;
+                        });
+                      }}
+                      className="h-3.5 w-3.5"
+                      aria-label={materialKategoriFilter ? `Pilih semua warna kategori ${materialKategoriFilter}` : "Pilih semua warna"}
+                    />
                     <span className="whitespace-nowrap">Warna</span>
                     <span className="whitespace-nowrap text-right">Roll</span>
-                    <span className="whitespace-nowrap text-right">Rib kg</span>
-                    {showKerahManset && <span className="whitespace-nowrap text-right">Kerah kg</span>}
-                    {showKerahManset && <span className="whitespace-nowrap text-right">Manset kg</span>}
-                    <span className="whitespace-nowrap text-right">Est. Rib (Rp)</span>
-                    {showKerahManset && <span className="whitespace-nowrap text-right">Est. Kerah (Rp)</span>}
-                    {showKerahManset && <span className="whitespace-nowrap text-right">Est. Manset (Rp)</span>}
+                    <span className="whitespace-nowrap text-right">Est. Kain (Rp)</span>
+                    <span className={MATERIAL_GROUP_BG.rib + " whitespace-nowrap border-l border-[#E4E9EE] pl-2 text-right"}>Rib kg</span>
+                    <span className={MATERIAL_GROUP_BG.rib + " whitespace-nowrap text-right"}>Est. Rib (Rp)</span>
+                    {showKerahManset && <span className={MATERIAL_GROUP_BG.kerah + " whitespace-nowrap border-l border-[#E4E9EE] pl-2 text-right"}>Kerah kg</span>}
+                    {showKerahManset && <span className={MATERIAL_GROUP_BG.kerah + " whitespace-nowrap text-right"}>Est. Kerah (Rp)</span>}
+                    {showKerahManset && <span className={MATERIAL_GROUP_BG.manset + " whitespace-nowrap border-l border-[#E4E9EE] pl-2 text-right"}>Manset kg</span>}
+                    {showKerahManset && <span className={MATERIAL_GROUP_BG.manset + " whitespace-nowrap text-right"}>Est. Manset (Rp)</span>}
                     <span className="whitespace-nowrap">Vendor material</span>
                   </div>
                   {groupsByKategori.map(({ kategori, groups }) => (
@@ -615,28 +668,29 @@ export default function PoApprovalPage() {
                     // KNITTO lalu harga global lama (lihat hargaKerahMansetRateInfo).
                     const kerahRate = hargaKerahMansetRateInfo(hargaKerahManset, kerahMansetSettings, g.supplier, "KERAH");
                     const mansetRate = hargaKerahMansetRateInfo(hargaKerahManset, kerahMansetSettings, g.supplier, "MANSET");
+                    // Estimasi Harga Kain (Rp) -- owner 2026-09-18: "tambah kolom estimasi harga
+                    // roll" -- sebelumnya cuma RIB/Kerah/Manset yang ada estimasinya, padahal kain
+                    // utamanya sendiri yang paling besar porsi biayanya. Rumus SAMA dengan
+                    // materialAmountForPo (dipakai p.amount PO Material sungguhan) supaya angka di
+                    // sini tidak menyesatkan -- kg dari roll x ROLL_KG_ESTIMATE, rate dari
+                    // hargaKainRate (Harga Kain PKS by tonase, fallback Harga Kain flat). Perlu
+                    // supplier dulu (tidak ada fallback tanpa supplier, beda dari RIB/Kerah/Manset
+                    // yang punya acuan KNITTO) -- tampilkan "—" kalau belum dipilih.
+                    const kainKg = g.totalRoll * ROLL_KG_ESTIMATE;
+                    const kainRate = g.supplier ? hargaKainRate(hargaKain, hargaKainPks, g.supplier, g.warna, kainKg) : null;
                     return (
                       <div key={g.warna} className="grid gap-x-3 items-center border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0" style={{ gridTemplateColumns: cols }}>
                         <input type="checkbox" checked={selectedWarna.has(g.warna)} onChange={() => toggleWarna(g.warna)} className="h-3.5 w-3.5" aria-label={`Pilih warna ${g.warna}`} />
                         <span>{g.warna}</span>
                         <span className="text-right font-mono">{g.totalRoll}</span>
-                        <span className="text-right font-mono">{g.totalRibKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>
-                        {showKerahManset && (
-                          <span className="text-right font-mono" title={kerahLooksUnconverted ? "Angka ini tampak jauh di luar wajar (kg per roll terlalu besar) -- kemungkinan MRP lama yang di-import sebelum Master Data Kerah/Manset ada, belum pernah terkonversi ke kg sungguhan." : undefined}>
-                            {kerahLooksUnconverted && <span className="text-warning-fg">⚠ </span>}
-                            {g.totalKerahKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })}
-                          </span>
-                        )}
-                        {showKerahManset && (
-                          <span className="text-right font-mono" title={mansetLooksUnconverted ? "Angka ini tampak jauh di luar wajar (kg per roll terlalu besar) -- kemungkinan MRP lama yang di-import sebelum Master Data Kerah/Manset ada, belum pernah terkonversi ke kg sungguhan." : undefined}>
-                            {mansetLooksUnconverted && <span className="text-warning-fg">⚠ </span>}
-                            {g.totalMansetKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })}
-                          </span>
-                        )}
-                        {/* Estimasi Rp (kg terkonversi x harga/kg dari Master Data Kerah/Manset) -- PURELY
-                            DISPLAY, tidak mengubah total_biaya/nilai PO Bahan aktual manapun. */}
+                        <span className="text-right font-mono" title={kainRate != null ? `${kainKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kg x ${formatRupiah(kainRate)}/kg` : "Pilih vendor material dulu untuk lihat estimasi."}>
+                          {kainRate != null ? formatRupiah(kainKg * kainRate) : "—"}
+                        </span>
+                        <span className={MATERIAL_GROUP_BG.rib + " border-l border-[#F1F4F7] pl-2 text-right font-mono"}>{g.totalRibKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>
+                        {/* Estimasi Rp (kg terkonversi x harga/kg dari Master Data RIB/Kerah/Manset) --
+                            PURELY DISPLAY, tidak mengubah total_biaya/nilai PO Bahan aktual manapun. */}
                         <span
-                          className="text-right font-mono"
+                          className={MATERIAL_GROUP_BG.rib + " text-right font-mono"}
                           title={
                             ribRate
                               ? `Rib ${g.totalRibKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kg x ${formatRupiah(ribRate.rate)}/kg (Master Data Harga RIB, ${ribRate.sourceSupplier}${ribRate.viaReference ? " — acuan, supplier ini belum punya harga RIB sendiri" : ""})`
@@ -647,7 +701,16 @@ export default function PoApprovalPage() {
                         </span>
                         {showKerahManset && (
                           <span
-                            className="text-right font-mono"
+                            className={MATERIAL_GROUP_BG.kerah + " border-l border-[#F1F4F7] pl-2 text-right font-mono"}
+                            title={kerahLooksUnconverted ? "Angka ini tampak jauh di luar wajar (kg per roll terlalu besar) -- kemungkinan MRP lama yang di-import sebelum Master Data Kerah/Manset ada, belum pernah terkonversi ke kg sungguhan." : undefined}
+                          >
+                            {kerahLooksUnconverted && <span className="text-warning-fg">⚠ </span>}
+                            {g.totalKerahKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })}
+                          </span>
+                        )}
+                        {showKerahManset && (
+                          <span
+                            className={MATERIAL_GROUP_BG.kerah + " text-right font-mono"}
                             title={`Kerah ${g.totalKerahKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kg x ${formatRupiah(kerahRate.rate)}/kg (${kerahRate.sourceLabel}${kerahRate.viaFallback ? " — acuan, supplier ini belum punya harga Kerah sendiri" : ""})`}
                           >
                             {formatRupiah(g.totalKerahKg * kerahRate.rate)}
@@ -655,7 +718,16 @@ export default function PoApprovalPage() {
                         )}
                         {showKerahManset && (
                           <span
-                            className="text-right font-mono"
+                            className={MATERIAL_GROUP_BG.manset + " border-l border-[#F1F4F7] pl-2 text-right font-mono"}
+                            title={mansetLooksUnconverted ? "Angka ini tampak jauh di luar wajar (kg per roll terlalu besar) -- kemungkinan MRP lama yang di-import sebelum Master Data Kerah/Manset ada, belum pernah terkonversi ke kg sungguhan." : undefined}
+                          >
+                            {mansetLooksUnconverted && <span className="text-warning-fg">⚠ </span>}
+                            {g.totalMansetKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })}
+                          </span>
+                        )}
+                        {showKerahManset && (
+                          <span
+                            className={MATERIAL_GROUP_BG.manset + " text-right font-mono"}
                             title={`Manset ${g.totalMansetKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kg x ${formatRupiah(mansetRate.rate)}/kg (${mansetRate.sourceLabel}${mansetRate.viaFallback ? " — acuan, supplier ini belum punya harga Manset sendiri" : ""})`}
                           >
                             {formatRupiah(g.totalMansetKg * mansetRate.rate)}
@@ -680,7 +752,7 @@ export default function PoApprovalPage() {
                           ))}
                         </select>
                         {optionsForWarna.length === 0 && (
-                          <div className={(showKerahManset ? "col-span-10" : "col-span-6") + " -mt-1.5 pb-0.5 font-sans text-[10.5px] font-medium text-warning-fg"}>
+                          <div className={(showKerahManset ? "col-span-11" : "col-span-7") + " -mt-1.5 pb-0.5 font-sans text-[10.5px] font-medium text-warning-fg"}>
                             ⚠ Belum ada supplier dengan harga untuk warna {g.warna} di Master Data Harga Kain.
                           </div>
                         )}
