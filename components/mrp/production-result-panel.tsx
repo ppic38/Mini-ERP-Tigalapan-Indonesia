@@ -484,42 +484,55 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                           }
                           return (
                             <div className="overflow-hidden rounded-md border border-[#A8C5DF] bg-white">
-                              <div className="border-b border-[#EEF1F4] bg-[#F7F9FB] px-3 py-2 font-sans text-[11px] font-semibold text-[#31414F]">
-                                Isi qty per size — qty BARU yang baru selesai (otomatis dipetakan &amp; disimpan ke roll, roll pertama dulu; roll yang
-                                penuh otomatis ditutup)
+                              <div className="border-b border-[#CFE0EF] bg-info-bg px-4 py-2.5 font-sans text-[11.5px] font-semibold leading-[1.5] text-info-fg">
+                                Isi qty per size — qty BARU yang baru selesai
+                                <span className="block text-[10.5px] font-normal text-info-fg/80">
+                                  Otomatis dipetakan &amp; disimpan ke roll (roll pertama dulu); roll yang penuh otomatis ditutup.
+                                </span>
                               </div>
                               {sizesToShow.length === 0 ? (
                                 <div className="px-3 py-3 text-center font-sans text-[11.5px] text-text-muted">
                                   Semua size sudah mencapai target finish good — tinggal Tutup Roll (lihat di bawah) untuk menyelesaikan roll yang tersisa.
                                 </div>
                               ) : (
-                                <div className="flex flex-wrap items-end gap-3 px-3 py-2.5">
-                                  {sizesToShow.map((size) => (
-                                    // Item 2026-09-12 (user-reported): size dulu ditulis kecil/muted
-                                    // di atas input, sisa-maks dicampur jadi 1 baris kecil -- sekarang
-                                    // size ditaruh sebagai badge besar DI SAMPING input (ukuran teks
-                                    // setara angkanya, bukan lagi label mini), dan "sisa maks" jadi
-                                    // caption sendiri di bawah supaya jelas terbaca terpisah.
-                                    <div key={size} className="flex flex-col gap-1 rounded-md border border-[#E4E9EE] bg-[#FAFBFC] px-2.5 py-2">
-                                      <div className="flex items-center gap-2">
-                                        <span className="flex h-9 w-9 flex-none items-center justify-center rounded-md bg-[#DCE8F7] font-sans text-[13px] font-bold text-action-primary">
-                                          {size}
-                                        </span>
+                                // Revisi 2026-09-19 (owner: "perbaiki tampilan card biru"): label size dulu
+                                // kotak 36x36 tetap -> size panjang seperti "S-2XL, S-XL" terpotong jadi 3
+                                // baris. Sekarang tiap size = 1 kartu (grid auto-fill): pill label size
+                                // selebar teksnya (nowrap) + "sisa maks" di baris atas, input di tengah
+                                // (lebar penuh kartu), progres kecil di bawah.
+                                <div className="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-3 px-4 py-3">
+                                  {sizesToShow.map((size) => {
+                                    const rec = recorded[size] ?? 0;
+                                    const tgt = target[size] ?? 0;
+                                    const pct = tgt > 0 ? Math.min(100, Math.round((rec / tgt) * 100)) : 0;
+                                    return (
+                                      <div key={size} className="flex flex-col gap-2 rounded-md border border-[#CFE0EF] bg-white px-3 py-2.5 shadow-[0_1px_2px_rgba(11,19,27,.05)]">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <span className="whitespace-nowrap rounded-md bg-info-bg px-2.5 py-1 font-sans text-[12.5px] font-bold text-info-fg">{size}</span>
+                                          <span className="whitespace-nowrap font-mono text-[10px] text-text-muted">
+                                            sisa maks <span className="font-semibold text-[#31414F]">{totalCapacity[size]}</span>
+                                          </span>
+                                        </div>
                                         <NumberInput
                                           value={sizeTotalDraft[size] ?? 0}
                                           decimals={0}
                                           onChange={(v) => setSizeTotalDraft((prev) => ({ ...prev, [size]: v }))}
-                                          className="input h-9 w-[92px] text-right text-[13px] font-semibold"
+                                          className="input h-9 w-full text-right text-[13px] font-semibold"
                                         />
+                                        <div className="flex items-center gap-2">
+                                          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#EEF0F3]">
+                                            <span className="block h-full rounded-full bg-success" style={{ width: `${pct}%` }} />
+                                          </span>
+                                          <span className="whitespace-nowrap font-mono text-[10px] text-text-muted">
+                                            {rec}/{tgt} pcs
+                                          </span>
+                                        </div>
                                       </div>
-                                      <span className="whitespace-nowrap font-mono text-[10px] text-text-muted">
-                                        {recorded[size] ?? 0}/{target[size] ?? 0} pcs · sisa maks <span className="font-semibold text-[#31414F]">{totalCapacity[size]}</span>
-                                      </span>
-                                    </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               )}
-                              <div className="flex items-center gap-2 border-t border-[#EEF1F4] px-3 py-2.5">
+                              <div className="flex items-center gap-2 border-t border-[#CFE0EF] bg-[#F8FBFF] px-4 py-3">
                                 {/* saveFgProgress & closeProductionBatch (dipanggil saveSizeTotals)
                                    sudah optimistic penuh di store.ts -- isPending/teks "Menyimpan…"
                                    dilepas, disabled cukup dari sizesToShow saja. */}
