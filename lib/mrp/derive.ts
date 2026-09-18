@@ -3204,7 +3204,6 @@ export function hppRowsForInvoice(
 
   const drafts: Draft[] = [];
   for (const line of inv.lines) {
-    const mrp = mrpMetaFor(line.mrpId, mrpDetails, staticMrps);
     const groupKey = line.mrpId + "|" + line.warna + "|" + line.lengan;
     const bySize = productionYieldBySize(line.mrpId, line.warna, line.lengan, mrpDetails, productionBatches, productionResults);
     const meta = productionGroupMetaFor(groupKey, productionGroupMeta);
@@ -3236,7 +3235,10 @@ export function hppRowsForInvoice(
       const aktualBeratTerpakai = faktorProduksi * beratBahanPerPc;
       drafts.push({
         mrpId: line.mrpId,
-        mrpLabel: `${line.mrpId} ${mrp?.kategori ?? ""}`.trim(),
+        // Item revisi 2026-09-18 (owner: "kenapa di nomor MRP ada kategori bahan kayak COMBED 24S?
+        // jangan, pure No. MRP saja") -- dulu digabung dengan mrp.kategori. Laporan HPP sekarang
+        // murni No. MRP di baris tree-nya (lihat app/finance/laporan-hpp/page.tsx).
+        mrpLabel: line.mrpId,
         warna: line.warna,
         lengan: line.lengan,
         item: `${line.warna} ${HPP_LENGAN_ABBR[line.lengan]} ${s.size}`,
@@ -3527,7 +3529,6 @@ export function hppRowsForInvoicePerRoll(
     const reworkBefore = Math.max(0, before - totalRollFgForGroup);
     const reworkAfter = Math.max(0, after - totalRollFgForGroup);
 
-    const mrp = mrpMetaFor(line.mrpId, mrpDetails, staticMrps);
     const meta = productionGroupMetaFor(groupKey, productionGroupMeta);
     const target = targetDoneProduksiForGroup(line.mrpId, inv.vendorProduksi, line.warna, rawInvoices);
     const status = productionStatusFromDates(target, meta?.doneAt);
@@ -3593,7 +3594,7 @@ export function hppRowsForInvoicePerRoll(
         noKoli: koli?.noKoli,
         koliId: koli?.id,
         mrpId: line.mrpId,
-        mrpLabel: `${line.mrpId} ${mrp?.kategori ?? ""}`.trim(),
+        mrpLabel: line.mrpId,
         warna: line.warna,
         lengan: line.lengan,
         item: `${line.warna} ${HPP_LENGAN_ABBR[line.lengan]} ${c.size} · roll ${roll.codeRoll ?? roll.id}`,
@@ -3656,7 +3657,7 @@ export function hppRowsForInvoicePerRoll(
         noKoli: c.koli.noKoli,
         koliId: c.koli.id,
         mrpId: line.mrpId,
-        mrpLabel: `${line.mrpId} ${mrp?.kategori ?? ""}`.trim(),
+        mrpLabel: line.mrpId,
         warna: line.warna,
         lengan: line.lengan,
         item: `${line.warna} ${HPP_LENGAN_ABBR[line.lengan]} ${c.size} · Rework${usiaLabel ? " (" + usiaLabel + ")" : ""} · koli ${c.koli.noKoli}`,

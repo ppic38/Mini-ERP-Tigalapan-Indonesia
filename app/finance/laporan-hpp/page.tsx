@@ -6,7 +6,7 @@ import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Button } from "@/components/ui/button";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatDate, formatPcs, formatRupiah, hppRowsForInvoicePerRoll, mrpMetaFor, type HppRow } from "@/lib/mrp/derive";
+import { formatDate, formatPcs, formatRupiah, hppRowsForInvoicePerRoll, type HppRow } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { DeliveryKoli } from "@/lib/mrp/types";
 
@@ -119,18 +119,117 @@ function downloadMrpHpp(m: MrpHppSummary) {
  *  koli pengiriman spesifik asal baris ini — kosong untuk baris pool lama (MRP tanpa roll
  *  tracking sama sekali) yang menggabungkan >1 koli sekaligus, lihat HppRow.noKoli. Rows di-sort
  *  (requirement D butir 20) sebelum dirender supaya batch/resi berbeda mengelompok rapi. */
-function MrpHppDetailTable({ rows }: { rows: HppTableRow[] }) {
-  const sortedRows = sortHppRowsForDetail(rows);
+/** Item revisi 2026-09-18 (owner: "filternya di setiap header, klik header untuk filter", lalu
+ *  "terapkan multifilter") -- header kolom kategorikal (Warna/Lengan, Batch Koli, No Resi) jadi
+ *  tombol: klik buka popover checklist nilai unik kolom itu, BISA PILIH LEBIH DARI SATU
+ *  (kosong = tidak difilter/semua, sama seperti filterDefs multi-select di komponen lain).
+ *  Cuma 1 popover per header instance (state lokal ke komponen ini sendiri) -- overlay transparan
+ *  di belakang popover menutupnya begitu diklik di luar; popover TIDAK auto-close begitu 1 opsi
+ *  dicentang (beda dari versi single-select sebelumnya) supaya bisa centang beberapa sekaligus. */
+function FilterableTh({
+  label,
+  align = "left",
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  align?: "left" | "right";
+  options: string[];
+  value: Set<string>;
+  onChange: (v: Set<string>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  function toggle(o: string) {
+    const next = new Set(value);
+    if (next.has(o)) next.delete(o);
+    else next.add(o);
+    onChange(next);
+  }
   return (
-    <div className="overflow-x-auto rounded-md border border-[#E4E9EE] bg-white">
+    <th className={"relative px-3 py-2 " + (align === "right" ? "text-right" : "text-left")}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={"inline-flex items-center gap-1 font-sans text-[10px] font-semibold uppercase tracking-wider hover:text-action-primary " + (value.size > 0 ? "text-action-primary" : "text-text-muted")}
+      >
+        {label}
+        {value.size > 0 ? <span className="rounded-full bg-action-primary px-1.5 py-px text-[9px] font-bold text-white">{value.size}</span> : <span className="text-[9px]">▾</span>}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 top-full z-30 mt-1 flex max-h-72 w-60 flex-col overflow-hidden rounded-md border border-border-subtle bg-white shadow-[0_8px_20px_rgba(11,19,27,.15)]">
+            <div className="flex items-center justify-between border-b border-[#F1F4F7] px-2 py-1.5">
+              <button type="button" onClick={() => onChange(new Set(options))} className="font-sans text-[10.5px] font-semibold text-action-primary">
+                Pilih semua
+              </button>
+              <button type="button" onClick={() => onChange(new Set())} className="font-sans text-[10.5px] font-semibold text-action-primary">
+                Kosongkan
+              </button>
+            </div>
+            <div className="overflow-y-auto p-1">
+              {options.map((o) => (
+                <label key={o} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-left normal-case hover:bg-[#F7F9FB]">
+                  <input type="checkbox" checked={value.has(o)} onChange={() => toggle(o)} className="h-3.5 w-3.5 flex-none accent-accent-blue" />
+                  <span className="truncate font-sans text-[11px] font-medium text-[#31414F]" title={o}>
+                    {o}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </th>
+  );
+}
+
+function MrpHppDetailTable({ rows }: { rows: HppTableRow[] }) {
+  const [warnaLenganFilter, setWarnaLenganFilter] = useState<Set<string>>(new Set());
+  const [batchKoliFilter, setBatchKoliFilter] = useState<Set<string>>(new Set());
+  const [noResiFilter, setNoResiFilter] = useState<Set<string>>(new Set());
+  const sortedRows = sortHppRowsForDetail(rows);
+  const warnaLenganOf = (r: HppTableRow) => `${r.warna} · ${r.lengan}`;
+  const warnaLenganOptions = Array.from(new Set(rows.map(warnaLenganOf))).sort((a, b) => a.localeCompare(b, "id-ID"));
+  const batchKoliOptions = Array.from(new Set(rows.map((r) => r.noKoli).filter((v): v is string => !!v))).sort((a, b) => a.localeCompare(b, "id-ID"));
+  const noResiOptions = Array.from(new Set(rows.map((r) => r.noResi).filter((v): v is string => !!v))).sort((a, b) => a.localeCompare(b, "id-ID"));
+  const filteredRows = sortedRows.filter(
+    (r) =>
+      (warnaLenganFilter.size === 0 || warnaLenganFilter.has(warnaLenganOf(r))) &&
+      (batchKoliFilter.size === 0 || (r.noKoli != null && batchKoliFilter.has(r.noKoli))) &&
+      (noResiFilter.size === 0 || (r.noResi != null && noResiFilter.has(r.noResi)))
+  );
+  const hasActiveFilter = warnaLenganFilter.size > 0 || batchKoliFilter.size > 0 || noResiFilter.size > 0;
+  return (
+    <div className="overflow-hidden rounded-md border border-[#E4E9EE] bg-white">
+      {hasActiveFilter && (
+        <div className="flex items-center gap-2 border-b border-[#E4E9EE] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10.5px] text-text-muted">
+          <span>
+            {filteredRows.length} dari {sortedRows.length} baris
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setWarnaLenganFilter(new Set());
+              setBatchKoliFilter(new Set());
+              setNoResiFilter(new Set());
+            }}
+            className="font-semibold text-action-primary underline"
+          >
+            ✕ Hapus semua filter
+          </button>
+        </div>
+      )}
+      <div className="overflow-x-auto">
       <table className="w-full min-w-[1420px] border-collapse">
         <thead>
           <tr className="border-b border-[#E4E9EE] bg-[#F2F5F8] font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-            <th className="px-3 py-2 text-left">Warna / lengan</th>
+            <FilterableTh label="Warna / lengan" options={warnaLenganOptions} value={warnaLenganFilter} onChange={setWarnaLenganFilter} />
             <th className="px-3 py-2 text-left">Item</th>
-            <th className="px-3 py-2 text-left">Batch koli</th>
+            <FilterableTh label="Batch koli" options={batchKoliOptions} value={batchKoliFilter} onChange={setBatchKoliFilter} />
             <th className="px-3 py-2 text-left">Tanggal kirim</th>
-            <th className="px-3 py-2 text-left">No resi</th>
+            <FilterableTh label="No resi" options={noResiOptions} value={noResiFilter} onChange={setNoResiFilter} />
             <th className="px-3 py-2 text-right">FG</th>
             <th className="px-3 py-2 text-right">Reject</th>
             <th className="px-3 py-2 text-right">Rework</th>
@@ -144,7 +243,14 @@ function MrpHppDetailTable({ rows }: { rows: HppTableRow[] }) {
           </tr>
         </thead>
         <tbody>
-          {sortedRows.map((r) => (
+          {filteredRows.length === 0 && (
+            <tr>
+              <td colSpan={15} className="px-3 py-6 text-center font-sans text-[11.5px] text-text-muted">
+                Tidak ada baris yang cocok dengan filter.
+              </td>
+            </tr>
+          )}
+          {filteredRows.map((r) => (
             <tr key={r.rowId} className="border-b border-[#EEF1F4] font-sans text-[11.5px] text-[#31414F] last:border-b-0">
               <td className="px-3 py-1.5">
                 {r.warna} · {r.lengan}
@@ -167,6 +273,7 @@ function MrpHppDetailTable({ rows }: { rows: HppTableRow[] }) {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -193,6 +300,11 @@ export default function FinanceLaporanHppPage() {
   // Produksi (leaf), klik vendor untuk membuka MrpHppDetailTable persis di bawah baris itu.
   const [expandedMrpHpp, setExpandedMrpHpp] = useState<string | null>(null);
   const [expandedVendorHpp, setExpandedVendorHpp] = useState<string | null>(null);
+  // Item revisi 2026-09-18 (owner: "card HPP ikuti perhitungan xlsx yang dilampirkan, dan bisa
+  // difilter per No. MRP") -- filter dropdown yang men-scope KPI cards di atas tabel ke 1 No. MRP
+  // saja (kosong = semua MRP, perilaku lama). Cuma men-scope cards -- tabel pohon di bawah TETAP
+  // menampilkan semua MRP (sudah punya drill-down sendiri, tidak diubah).
+  const [hppMrpFilter, setHppMrpFilter] = useState("");
 
   if (!mounted) return null;
 
@@ -213,12 +325,27 @@ export default function FinanceLaporanHppPage() {
     })
   );
 
-  const totalFg = rows.reduce((s, r) => s + r.fg, 0);
-  const totalBiayaProduksi = rows.reduce((s, r) => s + r.biayaProduksiTotal, 0);
-  const totalCogsBahan = rows.reduce((s, r) => s + r.cogsBahan, 0);
-  const totalOngkir = rows.reduce((s, r) => s + r.totalOngkirRow, 0);
-  const totalHppWeighted = rows.reduce((s, r) => s + r.hppPerItem * r.fg, 0);
-  const avgHpp = totalFg > 0 ? totalHppWeighted / totalFg : 0;
+  // Item revisi 2026-09-18: KPI cards sekarang di-scope ke `cardRows` (bukan `rows` mentah lagi)
+  // -- `cardRows` = seluruh baris kalau `hppMrpFilter` kosong (perilaku lama, semua MRP), atau
+  // cuma baris MRP yang difilter.
+  const cardRows = hppMrpFilter ? rows.filter((r) => r.mrpId === hppMrpFilter) : rows;
+  const totalBiayaProduksi = cardRows.reduce((s, r) => s + r.biayaProduksiTotal, 0);
+  const totalCogsBahan = cardRows.reduce((s, r) => s + r.cogsBahan, 0);
+  const totalOngkir = cardRows.reduce((s, r) => s + r.totalOngkirRow, 0);
+  // Item revisi 2026-09-18 (owner, lampiran "HPP MRP.xlsx"): tiru rumus di file itu persis --
+  // per item, "Total Hpp" = Qty * Hpp(/pc) dan "Total Harga" = Qty * Harga Jual(/pc), lalu utk
+  // seluruh MRP (baris ringkasan xlsx): Total Hpp = SUM(Total Hpp semua item), Total Harga =
+  // SUM(Total Harga semua item), %HPP = Total Hpp / Total Harga -- BUKAN rata-rata dari
+  // persentase per item (beda dari kolom "Hpp" per-baris di xlsx yang cuma informatif per item).
+  // Item TANPA harga jual (itemSellingPrices tidak punya datanya) dikeluarkan dari DUA sisi
+  // (Total Hpp scoped & Total Harga) supaya %HPP tidak bias oleh item yang harganya tidak
+  // diketahui -- sama seperti kolom "Hpp%" per-baris di tabel bawah yang tampil "—" utk kasus itu.
+  // `> 0` (bukan cuma `!= null`) -- sama seperti guard di hppPercentage per-baris
+  // (lib/mrp/derive.ts), supaya konsisten dengan baris yang tampil "—" di tabel bawah.
+  const rowsWithSellingPrice = cardRows.filter((r) => r.sellingPricePerItem != null && r.sellingPricePerItem > 0);
+  const totalHargaJual = rowsWithSellingPrice.reduce((s, r) => s + (r.sellingPricePerItem as number) * r.fg, 0);
+  const totalHppForPercent = rowsWithSellingPrice.reduce((s, r) => s + r.hppPerItem * r.fg, 0);
+  const hppPercentAgg = totalHargaJual > 0 ? (totalHppForPercent / totalHargaJual) * 100 : null;
 
   // Restrukturisasi (requirement D): sebelumnya 1 baris = 1 pasangan MRP+vendor. Sekarang grouping
   // per MRP+vendor DIPERTAHANKAN dulu (logika di bawah ini identik dengan sebelumnya, angka per
@@ -268,10 +395,11 @@ export default function FinanceLaporanHppPage() {
     for (const mrpId of mrpIdsInInvoice) {
       const key = mrpId + "|" + inv.vendorProduksi;
       if (vendorRowsMap.has(key)) continue;
-      const mrp = mrpMetaFor(mrpId, mrpDetails, staticMrps);
+      // Item revisi 2026-09-18 (owner: "No. MRP jangan digabung kategori bahan") -- pure mrpId,
+      // sama seperti mrpLabel di hppRowsForInvoice (lib/mrp/derive.ts).
       vendorRowsMap.set(key, {
         mrpId,
-        mrpLabel: `${mrpId} ${mrp?.kategori ?? ""}`.trim(),
+        mrpLabel: mrpId,
         vendorProduksi: inv.vendorProduksi,
         vendorLabel: VENDOR_PRODUKSI[inv.vendorProduksi]?.name ?? inv.vendorProduksi,
         totalFg: 0,
@@ -335,11 +463,38 @@ export default function FinanceLaporanHppPage() {
       breadcrumb={["Dashboard", "Laporan HPP"]}
       title="Laporan HPP"
     >
+      {/* Item revisi 2026-09-18 (owner: "card HPP ikuti perhitungan xlsx, bisa difilter per MRP")
+         -- filter di atas KPI cards, TIDAK memengaruhi tabel pohon di bawah (tetap semua MRP). */}
+      <div className="flex items-center gap-3 rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
+        <div>
+          <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Filter No. MRP (untuk card di bawah)</div>
+          <select
+            value={hppMrpFilter}
+            onChange={(e) => setHppMrpFilter(e.target.value)}
+            className="mt-1 rounded-md border border-[#DDE4EB] px-[11px] py-[9px] font-sans text-[12.5px] font-medium text-text-primary"
+          >
+            <option value="">— Semua MRP —</option>
+            {mrpRowsSorted.map((m) => (
+              <option key={m.mrpId} value={m.mrpId}>
+                {m.mrpLabel || m.mrpId}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* Item revisi 2026-09-18 (owner: "tidak usah hapus filter -- pilih 'Semua' saja di select;
+         card-nya cuma perlu Total COGS Bahan, Total Biaya Produksi, Total Ongkir, %HPP") -- tombol
+         "Hapus filter" dilepas (dropdown sendiri sudah punya opsi "— Semua MRP —"), dan card
+         Total FG/Total HPP/Total Harga Jual/Rata-rata HPP-pc dilepas juga (angka Total Harga Jual
+         tetap dipakai internal untuk hitung %HPP di bawah, cuma tidak lagi ditampilkan sendiri). */}
       <div className="grid grid-cols-4 gap-3.5">
-        <KpiCard label="Total FG" value={formatPcs(totalFg)} sub="pcs terhitung HPP" accent="blue" />
-        <KpiCard label="Rata-rata HPP/pc" value={formatRupiah(avgHpp)} accent="purple" />
         <KpiCard label="Total biaya produksi" value={formatRupiah(totalBiayaProduksi)} sub="maklon + denda/reward" accent="orange" />
-        <KpiCard label="Total COGS bahan" value={formatRupiah(totalCogsBahan)} sub={`+ ${formatRupiah(totalOngkir)} ongkir (otomatis)`} accent="teal" />
+        <KpiCard label="Total COGS bahan" value={formatRupiah(totalCogsBahan)} accent="teal" />
+        <KpiCard label="Total ongkir" value={formatRupiah(totalOngkir)} sub="otomatis" accent="blue" />
+        {/* Item revisi 2026-09-18 (xlsx sel H2 = F2/G2) -- %HPP = Total Hpp / Total Harga, DIHITUNG
+           GABUNGAN (bukan rata-rata persentase per item) -- lihat catatan hppPercentAgg di atas. */}
+        <KpiCard label="HPP (%)" value={hppPercentAgg != null ? hppPercentAgg.toFixed(1) + "%" : "—"} sub="Total HPP / Total Harga Jual" accent="success" />
       </div>
 
       <div className="overflow-hidden border border-border-subtle bg-surface-card">

@@ -62,6 +62,9 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   const [selectedInvoiceId, setSelectedInvoiceId] = useState("");
   const [selectedColorKey, setSelectedColorKey] = useState("");
   const [draftCode, setDraftCode] = useState<Record<number, DraftCode>>({});
+  // Item revisi 2026-09-18 (owner, Gambar 3) -- toggle "Pilih warna" chip row, lihat catatan
+  // panjang di dekat pemakaiannya di bawah.
+  const [showAllColors, setShowAllColors] = useState(false);
 
   const eligible = invoices.filter((i) => i.destinationVendor === vendorId && (i.status === "DELIVERY" || i.status === "RECEIVING"));
   // MRP tetap tampil di dropdown selama masih ada invoice DELIVERY atau RECEIVING (termasuk yang
@@ -124,12 +127,23 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     setDraftCode({});
   }
 
+  // Item revisi 2026-09-18 (owner: "ganti redaksi 'Pilih' jadi 'Lihat Detail', bisa di-close lagi
+  // tabelnya") -- dulu SELALU set selectedInvoiceId (sekali diklik, tidak bisa ditutup lagi selain
+  // pindah pilih invoice lain). Sekarang toggle: klik baris yang SEDANG terbuka lagi -> tutup
+  // (selectedInvoiceId dikosongkan), sama seperti pola expand/collapse baris di tabel lain.
   function pickInvoice(id: string) {
+    if (selectedInvoiceId === id) {
+      setSelectedInvoiceId("");
+      setSelectedColorKey("");
+      setDraftCode({});
+      return;
+    }
     setSelectedInvoiceId(id);
     const inv = eligible.find((i) => i.id === id);
     const first = inv?.colorEntries[0];
     setSelectedColorKey(first ? first.warna + "|" + first.lengan : "");
     setDraftCode({});
+    setShowAllColors(false);
   }
 
   function pickColor(key: string) {
@@ -248,7 +262,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                 </span>
                 <span className="text-right">
                   <Button onClick={() => pickInvoice(i.id)} variant={selectedInvoiceId === i.id ? "muted" : "primary"} size="xs">
-                    {selectedInvoiceId === i.id ? "Terpilih" : "Pilih →"}
+                    {selectedInvoiceId === i.id ? "Tutup detail ✕" : "Lihat Detail →"}
                   </Button>
                 </span>
               </div>
@@ -325,32 +339,69 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
               </div>
             )}
 
-            <div className="mt-3 font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Pilih warna</div>
-            <div className="mt-1.5 flex flex-wrap gap-2">
-              {colorOptions.map((c) => {
+            {/* Item revisi 2026-09-18 (owner, Gambar 3: "apa bisa ini tidak ditampilkan semua? tapi
+                user tetap bisa notice warna yang sudah/belum diterima") -- dulu SEMUA warna·lengan
+                langsung tampil sekaligus (bisa puluhan chip untuk PO besar). Ringkasan per warna
+                di atas (roll diterima/total + status ✅/○ Belum) sudah cukup untuk "notice" status
+                tiap warna tanpa perlu chip row ini terbuka -- jadi sekarang chip di bawah DEFAULT
+                cuma nampilkan yang MASIH BISA ditandai (belum lengkap & punya roll), warna yang
+                sudah ✅ lengkap disembunyikan (masih kelihatan di ringkasan atas) sampai toggle
+                "Tampilkan semua" diklik. Warna yang lagi dipilih (selectedColorKey) SELALU ikut
+                tampil apa pun statusnya, supaya tidak tiba-tiba hilang dari layar begitu selesai
+                ditandai lengkap. */}
+            {(() => {
+              const completeCount = colorOptions.filter((c) => {
                 const key = c.warna + "|" + c.lengan;
                 const arrivedCount = c.rolls.filter((_, idx) => selectedInvoice.rollArrivals[key]?.[idx]).length;
-                const complete = c.rolls.length > 0 && arrivedCount === c.rolls.length;
-                return (
-                  <button
-                    key={key}
-                    onClick={() => pickColor(key)}
-                    disabled={c.rolls.length === 0}
-                    className={
-                      "rounded-md border px-2.5 py-[6px] font-sans text-[11.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-40 " +
-                      (selectedColorKey === key ? "border-action-primary bg-action-primary text-white" : "border-[#CBD5DF] bg-white text-action-primary")
-                    }
-                  >
-                    {/* Item revisi 2026-09-08 (owner, Gambar 4: "Tambahkan simbol atau icon centang
-                        hijau pada card warna jika sudah lengkap untuk menandai roll sudah
-                        diterima"). Item 7 (feedback batch 2026-09-10): tambah state awal eksplisit
-                        ("○") sebelum lengkap, supaya ✅ tidak kesannya muncul tiba-tiba. */}
-                    <span className="mr-1">{complete ? "✅" : "○"}</span>
-                    {c.warna} · {c.lengan} ({arrivedCount}/{c.rolls.length} diterima)
-                  </button>
-                );
-              })}
-            </div>
+                return c.rolls.length > 0 && arrivedCount === c.rolls.length;
+              }).length;
+              const visibleColors = showAllColors
+                ? colorOptions
+                : colorOptions.filter((c) => {
+                    const key = c.warna + "|" + c.lengan;
+                    if (key === selectedColorKey) return true;
+                    const arrivedCount = c.rolls.filter((_, idx) => selectedInvoice.rollArrivals[key]?.[idx]).length;
+                    const complete = c.rolls.length > 0 && arrivedCount === c.rolls.length;
+                    return !complete;
+                  });
+              return (
+                <>
+                  <div className="mt-3 flex items-center gap-2">
+                    <span className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Pilih warna</span>
+                    {completeCount > 0 && (
+                      <button onClick={() => setShowAllColors((v) => !v)} className="font-sans text-[10.5px] font-semibold text-action-primary underline">
+                        {showAllColors ? "Sembunyikan yang sudah lengkap" : `Tampilkan semua (${completeCount} sudah lengkap)`}
+                      </button>
+                    )}
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap gap-2">
+                    {visibleColors.map((c) => {
+                      const key = c.warna + "|" + c.lengan;
+                      const arrivedCount = c.rolls.filter((_, idx) => selectedInvoice.rollArrivals[key]?.[idx]).length;
+                      const complete = c.rolls.length > 0 && arrivedCount === c.rolls.length;
+                      return (
+                        <button
+                          key={key}
+                          onClick={() => pickColor(key)}
+                          disabled={c.rolls.length === 0}
+                          className={
+                            "rounded-md border px-2.5 py-[6px] font-sans text-[11.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-40 " +
+                            (selectedColorKey === key ? "border-action-primary bg-action-primary text-white" : "border-[#CBD5DF] bg-white text-action-primary")
+                          }
+                        >
+                          {/* Item revisi 2026-09-08 (owner, Gambar 4: "Tambahkan simbol atau icon centang
+                              hijau pada card warna jika sudah lengkap untuk menandai roll sudah
+                              diterima"). Item 7 (feedback batch 2026-09-10): tambah state awal eksplisit
+                              ("○") sebelum lengkap, supaya ✅ tidak kesannya muncul tiba-tiba. */}
+                          <span className="mr-1">{complete ? "✅" : "○"}</span>
+                          {c.warna} · {c.lengan} ({arrivedCount}/{c.rolls.length} diterima)
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              );
+            })()}
             {colorOptions.some((c) => c.rolls.length === 0) && (
               <div className="mt-2 font-sans text-[11px] text-text-muted">
                 Warna dengan 0 roll belum ada data roll dari Procurement untuk invoice ini — tidak bisa ditandai diterima di sini.

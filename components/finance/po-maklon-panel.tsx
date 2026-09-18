@@ -65,9 +65,15 @@ export function PoMaklonPanel() {
   // Pohon 2 tingkat untuk "Semua PO Vendor Produksi": No MRP -> Vendor Produksi (leaf = 1 PO) --
   // sama pola dengan tree PO Material Finance (po-material-panel.tsx), tidak ada level Supplier
   // (Maklon tidak punya supplier terpisah).
+  // Item revisi 2026-09-18 (owner: "tabel ini rencananya buat detect PO Maklon apa yang SUDAH
+  // diapprove Finance, jangan simpan yang belum diapprove") -- dulu ikut PO yang masih menunggu
+  // approval (statusnya tampil "WAITING APPROVAL" di sini juga, duplikat dengan daftar pending di
+  // atas). Sekarang cuma PO yang `approved` yang masuk sini -- PO yang belum di-approve HANYA
+  // muncul di daftar approval di atas, bukan lagi di tree read-only ini.
+  const approvedMaklonPOs = maklonPOs.filter((p) => p.approved);
   const allMrpSummaries = (() => {
     const map = new Map<string, MaklonPO[]>();
-    for (const p of maklonPOs) {
+    for (const p of approvedMaklonPOs) {
       if (!map.has(p.mrpId)) map.set(p.mrpId, []);
       map.get(p.mrpId)!.push(p);
     }
@@ -198,8 +204,9 @@ export function PoMaklonPanel() {
           <div className="font-sans text-[13px] font-semibold text-text-primary">Semua PO Vendor Produksi</div>
           {/* Revisi 2026-09-17 (owner: "yang atas buat approve, yang bawah cuma buat cek status yang
              sudah diapprove"): dulu tabel ini ikut punya tombol Approve per baris (duplikat dengan
-             alur approve di atas) -- sekarang murni status checker, read-only. */}
-          <div className="font-sans text-[11.5px] text-text-muted">Cek status semua PO (yang sudah di-approve akan hilang dari daftar approval di atas).</div>
+             alur approve di atas) -- sekarang murni status checker, read-only. Revisi 2026-09-18:
+             sekarang benar-benar HANYA berisi PO yang sudah di-approve (lihat approvedMaklonPOs). */}
+          <div className="font-sans text-[11.5px] text-text-muted">Daftar PO vendor produksi yang sudah di-approve Finance.</div>
         </div>
         {allMrpSummaries.length === 0 && <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada PO vendor produksi.</div>}
         {allMrpSummaries.length > 0 && (

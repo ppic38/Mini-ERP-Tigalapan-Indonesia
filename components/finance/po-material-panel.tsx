@@ -113,8 +113,16 @@ export function PoMaterialPanel() {
   // dulu (dulu SELALU terbuka, sekarang di-collapse), baru muncul list-card ringkas per Supplier
   // (No PO/roll/nilai) -- klik salah satu supplier BARU tampil kartu pengisian entitas lengkap
   // (persis tampilan lama) untuk PO-PO supplier itu saja.
-  const [expandedVendorPending, setExpandedVendorPending] = useState<string | null>(null);
+  //
+  // Item revisi 2026-09-18 (owner: "master approval/card list untuk isi entitas acuannya harusnya
+  // Vendor Supplier (Material) dulu, baru turun ke vendor produksi") -- hierarki DIBALIK dari
+  // Vendor Produksi->Supplier jadi Supplier->Vendor Produksi, supaya konsisten dengan tree "PO
+  // Material disetujui" di bawah (approvedMrpSummaries, sudah lebih dulu pakai urutan Supplier->
+  // Vendor Produksi). expandedSupplierPending sekarang level LUAR (Supplier), expandedVendorPending
+  // level DALAM (Vendor Produksi di dalam 1 supplier) -- namanya dipertahankan, cuma perannya
+  // ditukar, supaya diff minimal.
   const [expandedSupplierPending, setExpandedSupplierPending] = useState<string | null>(null);
+  const [expandedVendorPending, setExpandedVendorPending] = useState<string | null>(null);
 
   // Item revisi 2026-09-17 (owner: "PO Material disetujui digrouping level MRP -> Supplier ->
   // Vendor Produksi, kolom Supplier/Vendor dipisah") -- dulu DataTable flat 1 baris per PO dengan
@@ -177,11 +185,13 @@ export function PoMaterialPanel() {
   const multiEntitasCount = scopedPendingAll.filter(poIsMultiEntitas).length;
   const scopedPending = onlyMultiEntitas ? scopedPendingAll.filter(poIsMultiEntitas) : scopedPendingAll;
 
+  // Item revisi 2026-09-18: grup luar sekarang per Supplier (Vendor Material) -- lihat catatan di
+  // expandedSupplierPending/expandedVendorPending di atas.
   const grouped = new Map<string, MaterialPO[]>();
   for (const po of scopedPending) {
-    const arr = grouped.get(po.vendorProduksi) ?? [];
+    const arr = grouped.get(po.supplier) ?? [];
     arr.push(po);
-    grouped.set(po.vendorProduksi, arr);
+    grouped.set(po.supplier, arr);
   }
 
   function chooseEntityBulk(poId: string, entitas: string) {
@@ -205,8 +215,12 @@ export function PoMaterialPanel() {
 
   // Item 10.3: "Approve semua PO MRP ini" -- loop approveVendorMaterialPos per vendor dari MRP
   // terpilih (BUKAN approveAllMaterialPos(), yang approve SEMUA MRP di seluruh app).
+  // Item revisi 2026-09-18: `grouped.keys()` sekarang berisi SUPPLIER (bukan vendor lagi, lihat
+  // catatan di atas) -- vendor unik dihitung langsung dari scopedPending supaya tidak berubah
+  // perilaku (approve tetap per vendor produksi, action-nya memang scoped begitu).
   function approveAllForMrp() {
-    for (const vendor of grouped.keys()) approveVendorMaterialPos(selectedMrpId, vendor);
+    const vendors = new Set(scopedPending.map((p) => p.vendorProduksi));
+    for (const vendor of vendors) approveVendorMaterialPos(selectedMrpId, vendor);
   }
 
   function approvedStatusBadge(p: MaterialPO) {
@@ -319,75 +333,75 @@ export function PoMaterialPanel() {
 
       {detail && (
         <div className="overflow-hidden rounded-lg border border-border-subtle bg-[#EEF1F5]">
-          {Array.from(grouped.entries()).map(([vendor, pos]) => {
-            const vendorWithoutEntity = pos.filter((p) => !poHasAllEntitas(p));
-            const vendorMaterialTotal = pos.reduce((a, p) => a + p.amount, 0);
-            const vendorMaklonTotal = pos.reduce((a, p) => a + p.colorBreakdown.reduce((s, c) => s + maklonFeeForColorLine(p, c, maklonPOs, mrpDetails), 0), 0);
-            const vendorRollTotal = pos.reduce((a, p) => a + p.rollCount, 0);
-            const vendorOpen = expandedVendorPending === vendor;
+          {/* Item revisi 2026-09-18: level LUAR sekarang Supplier (Vendor Material), level DALAM
+             Vendor Produksi -- dibalik dari sebelumnya (Vendor Produksi->Supplier), lihat catatan
+             di expandedSupplierPending/expandedVendorPending & `grouped` di atas. */}
+          {Array.from(grouped.entries()).map(([supplier, pos]) => {
+            const supplierWithoutEntity = pos.filter((p) => !poHasAllEntitas(p));
+            const supplierMaterialTotal = pos.reduce((a, p) => a + p.amount, 0);
+            const supplierMaklonTotal = pos.reduce((a, p) => a + p.colorBreakdown.reduce((s, c) => s + maklonFeeForColorLine(p, c, maklonPOs, mrpDetails), 0), 0);
+            const supplierRollTotal = pos.reduce((a, p) => a + p.rollCount, 0);
+            const supplierOpen = expandedSupplierPending === supplier;
 
-            // Item revisi 2026-09-17: sub-grup per supplier (Vendor Material) -- list-card ringkas
-            // (No PO/roll/nilai) ditampilkan dulu, klik salah satu baru muncul kartu pengisian
-            // entitas lengkap (persis tampilan lama) khusus PO-PO supplier itu.
-            const supplierGroups = new Map<string, MaterialPO[]>();
+            const vendorGroups = new Map<string, MaterialPO[]>();
             for (const po of pos) {
-              const arr = supplierGroups.get(po.supplier) ?? [];
+              const arr = vendorGroups.get(po.vendorProduksi) ?? [];
               arr.push(po);
-              supplierGroups.set(po.supplier, arr);
+              vendorGroups.set(po.vendorProduksi, arr);
             }
 
             return (
-              <div key={vendor} className="border-b border-border-subtle last:border-b-0">
+              <div key={supplier} className="border-b border-border-subtle last:border-b-0">
                 <div
                   onClick={() => {
-                    setExpandedVendorPending(vendorOpen ? null : vendor);
-                    setExpandedSupplierPending(null);
+                    setExpandedSupplierPending(supplierOpen ? null : supplier);
+                    setExpandedVendorPending(null);
                   }}
                   className="flex cursor-pointer items-center gap-2.5 bg-[#DEE4EC] px-5 py-[11px] font-sans text-[11px] font-semibold text-text-primary hover:bg-[#D5DCE6]"
                 >
-                  <span className="text-text-muted">{vendorOpen ? "▾" : "▸"}</span>
-                  <span>→ {VENDOR_PRODUKSI[vendor]?.name ?? vendor}</span>
+                  <span className="text-text-muted">{supplierOpen ? "▾" : "▸"}</span>
+                  <span>{supplier}</span>
                   <span className="font-sans text-[10.5px] font-normal text-text-muted">
-                    {supplierGroups.size} supplier · {pos.length} PO
+                    {vendorGroups.size} vendor · {pos.length} PO
                   </span>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      approveVendorMaterialPos(selectedMrpId, vendor);
+                      for (const vendor of vendorGroups.keys()) approveVendorMaterialPos(selectedMrpId, vendor);
                     }}
-                    disabled={vendorWithoutEntity.length > 0}
-                    title={vendorWithoutEntity.length > 0 ? `${vendorWithoutEntity.length} PO vendor ini belum pilih entitas -- lengkapi dulu` : undefined}
+                    disabled={supplierWithoutEntity.length > 0}
+                    title={supplierWithoutEntity.length > 0 ? `${supplierWithoutEntity.length} PO supplier ini belum pilih entitas -- lengkapi dulu` : undefined}
                     className="ml-auto rounded-md bg-success px-2.5 py-[6px] font-sans text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Approve semua PO vendor ini ({pos.length})
+                    Approve semua PO supplier ini ({pos.length})
                   </button>
                 </div>
 
-                {vendorOpen && (
+                {supplierOpen && (
                 <div className="flex flex-col gap-2 px-3.5 py-3">
-                  {Array.from(supplierGroups.entries()).map(([supplier, supplierPos]) => {
-                    const supplierKey = `${vendor}::${supplier}`;
-                    const supplierOpen = expandedSupplierPending === supplierKey;
-                    const supplierRoll = supplierPos.reduce((a, p) => a + p.rollCount, 0);
-                    const supplierNilai = supplierPos.reduce((a, p) => a + p.amount, 0);
-                    const supplierNeedsEntity = supplierPos.some((p) => !poHasAllEntitas(p));
+                  {Array.from(vendorGroups.entries()).map(([vendor, vendorPos]) => {
+                    const vendorKey = `${supplier}::${vendor}`;
+                    const vendorOpen = expandedVendorPending === vendorKey;
+                    const vendorRoll = vendorPos.reduce((a, p) => a + p.rollCount, 0);
+                    const vendorNilai = vendorPos.reduce((a, p) => a + p.amount, 0);
+                    const vendorNeedsEntity = vendorPos.some((p) => !poHasAllEntitas(p));
                     return (
-                      <div key={supplierKey} className="overflow-hidden rounded-md border border-[#D8DEE6] bg-white">
+                      <div key={vendorKey} className="overflow-hidden rounded-md border border-[#D8DEE6] bg-white">
                         <button
                           type="button"
-                          onClick={() => setExpandedSupplierPending(supplierOpen ? null : supplierKey)}
+                          onClick={() => setExpandedVendorPending(vendorOpen ? null : vendorKey)}
                           className="flex w-full items-center gap-3 px-4 py-[10px] text-left hover:bg-[#F7F9FB]"
                         >
-                          <span className="text-text-muted">{supplierOpen ? "▾" : "▸"}</span>
-                          <span className="font-sans text-xs font-semibold text-text-primary">{supplier}</span>
-                          <span className="font-mono text-[10.5px] text-text-muted">{supplierPos.map((p) => p.id).join(", ")}</span>
-                          <span className="ml-auto font-mono text-xs">{supplierRoll} roll</span>
-                          <span className="font-mono text-xs font-medium">{formatRupiah(supplierNilai)}</span>
-                          {supplierNeedsEntity && <StatusPill tone="warning">Entitas belum lengkap</StatusPill>}
+                          <span className="text-text-muted">{vendorOpen ? "▾" : "▸"}</span>
+                          <span className="font-sans text-xs font-semibold text-text-primary">→ {VENDOR_PRODUKSI[vendor]?.name ?? vendor}</span>
+                          <span className="font-mono text-[10.5px] text-text-muted">{vendorPos.map((p) => p.id).join(", ")}</span>
+                          <span className="ml-auto font-mono text-xs">{vendorRoll} roll</span>
+                          <span className="font-mono text-xs font-medium">{formatRupiah(vendorNilai)}</span>
+                          {vendorNeedsEntity && <StatusPill tone="warning">Entitas belum lengkap</StatusPill>}
                         </button>
-                        {supplierOpen && (
+                        {vendorOpen && (
                 <div className="flex flex-col gap-2.5 border-t border-[#F1F4F7] bg-[#FAFBFC] px-3.5 py-3">
-                  {supplierPos.map((po) => {
+                  {vendorPos.map((po) => {
                     const poMaklonTotal = po.colorBreakdown.reduce((a, c) => a + maklonFeeForColorLine(po, c, maklonPOs, mrpDetails), 0);
                     const hasEntity = poHasAllEntitas(po);
                     const bulkValue = poBulkEntitasValue(po);
@@ -495,11 +509,11 @@ export function PoMaterialPanel() {
                 )}
 
                 <div className="flex flex-wrap items-center gap-4 bg-[#DEE4EC] px-5 py-[10px] font-sans text-[11px] font-semibold text-text-primary">
-                  <span>Total vendor {VENDOR_PRODUKSI[vendor]?.name ?? vendor}:</span>
-                  <span>Roll: {vendorRollTotal}</span>
-                  <span>Material: {formatRupiah(vendorMaterialTotal)}</span>
-                  <span>Maklon: {formatRupiah(vendorMaklonTotal)}</span>
-                  <span>Total: {formatRupiah(vendorMaterialTotal + vendorMaklonTotal)}</span>
+                  <span>Total supplier {supplier}:</span>
+                  <span>Roll: {supplierRollTotal}</span>
+                  <span>Material: {formatRupiah(supplierMaterialTotal)}</span>
+                  <span>Maklon: {formatRupiah(supplierMaklonTotal)}</span>
+                  <span>Total: {formatRupiah(supplierMaterialTotal + supplierMaklonTotal)}</span>
                 </div>
               </div>
             );
