@@ -467,27 +467,29 @@ export function PayingVoucherWizard({
           <div className="font-sans text-xs font-semibold text-info-fg">
             Berat per roll — {activeGroup.warna} ({draftRolls.length} roll)
           </div>
-          <div className="mt-2 grid grid-cols-5 gap-2">
+          {/* Revisi 2026-09-19 (owner: "persimpel & minimize, berat + kode lot dalam 1 baris"):
+              tiap roll = 1 baris (label + input berat + input code lot berukuran sama), label kolom
+              cukup SEKALI di atas, bukan diulang per roll. Beberapa roll disusun 2-3 kolom. */}
+          <div className="mt-1 font-sans text-[10px] text-text-muted">Berat pakai koma untuk desimal (mis. 25,5). Code lot opsional.</div>
+          <div className="mt-2 grid grid-cols-1 gap-x-5 gap-y-1.5 md:grid-cols-2 xl:grid-cols-3">
             {draftRolls.map((w, i) => (
-              <div key={i}>
-                <div className="font-sans text-[10px] text-text-muted">Roll {i + 1} (kg)</div>
+              <div key={i} className="flex items-center gap-2">
+                <span className="w-14 shrink-0 font-sans text-[11px] font-medium text-text-muted">Roll {i + 1}</span>
                 <NumberInput
                   value={w}
                   decimals={2}
                   commaOnly
                   onChange={(v) => setDraftRolls((prev) => prev!.map((x, idx) => (idx === i ? v : x)))}
-                  className="input mt-0.5"
+                  className="input min-w-0 flex-1 !py-1.5"
                 />
-                <div className="mt-0.5 font-sans text-[9px] text-text-muted">pakai koma untuk desimal (mis. 25,5)</div>
                 {/* Item revisi 2026-09-08: kode lot per roll diinput di sini (Procurement, saat
                     Paying Voucher) -- akan dibawa sampai ke Good Receive vendor (read-only di
                     sana), tidak lagi di-generate random vendor. Opsional, boleh dikosongkan. */}
-                <div className="mt-1.5 font-sans text-[10px] text-text-muted">Code lot</div>
                 <input
                   value={draftLots?.[i] ?? ""}
                   onChange={(e) => setDraftLots((prev) => (prev ?? draftRolls.map(() => ""))!.map((x, idx) => (idx === i ? e.target.value : x)))}
-                  placeholder="mis. 818"
-                  className="input mt-0.5 text-[11px]"
+                  placeholder="Code lot, mis. 818"
+                  className="input min-w-0 flex-1 !py-1.5 text-[11px]"
                 />
               </div>
             ))}
