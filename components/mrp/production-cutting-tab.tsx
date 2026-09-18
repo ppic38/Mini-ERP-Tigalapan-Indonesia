@@ -1162,9 +1162,12 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
       )}
 
       <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-        <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Material dalam produksi</div>
+        <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Input Resting dan Cutting</div>
         <div className="overflow-x-auto">
-          <div>
+          {/* Revisi 2026-09-19: wrapper ini SEKARANG min-w-[1550px] (dulu cuma <div> biasa selebar
+              layar) -- header, baris grup, dan sub-tabel per-roll semua berbagi lebar yang SAMA
+              sehingga latar/border-nya tidak lagi terpotong di sisi kanan saat digulir horizontal. */}
+          <div className="min-w-[1550px]">
             <div
               className="grid min-w-[1550px] gap-x-5 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
               style={{
@@ -1172,7 +1175,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               }}
             >
               <span>MRP</span>
-              <span>Kode</span>
+              <span>Kode Aduan</span>
               <span>Part</span>
               <span>Warna</span>
               <span className="text-right">Roll</span>
@@ -1181,7 +1184,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               <span>Durasi Resting</span>
               <span>Status Resting</span>
               <span>Hasil Aduan / Yield</span>
-              <span />
+              <span className="text-center">Detail</span>
             </div>
             {sessionGroups.length === 0 && <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada batch produksi.</div>}
             {sessionGroups.map((g) => {
@@ -1257,7 +1260,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         </span>
                       )}
                     </span>
-                    <span className="text-right">
+                    <span className="text-center">
                       <button onClick={() => toggleSessionExpanded(g.key)} className="font-sans text-[11px] font-semibold text-action-primary">
                         {isExpanded ? "Sembunyikan" : "Lihat roll →"}
                       </button>
@@ -1266,7 +1269,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   {isExpanded && (
                     <div className="bg-[#FAFBFC]">
                       <div
-                        className="grid min-w-[1550px] gap-x-3 border-y border-[#F1F4F7] bg-[#F2F4F7] px-8 py-[7px] font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted"
+                        className="grid min-w-[1550px] gap-x-3 border-y border-[#CFE0EF] bg-info-bg/60 px-8 py-[7px] font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg"
                         style={{ gridTemplateColumns: CUTTING_BATCH_COLUMNS }}
                       >
                         <span>Warna</span>
