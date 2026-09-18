@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/mrp/number-input";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { MasterDataFormModal, ModalField } from "@/components/mrp/master-data-form-modal";
-import { formatRupiah } from "@/lib/mrp/derive";
+import { formatRupiah, MATERIAL_KATEGORI_URUTAN } from "@/lib/mrp/derive";
 import { useMrpStore } from "@/lib/mrp/store";
 import type { HargaKainRow } from "@/lib/mrp/masterData";
 
@@ -54,6 +54,10 @@ export function HargaKainPanel() {
     const supplier = materialSuppliers.find((s) => s.nama === draft.namaSupplier);
     if (!supplier) {
       setError("Pilih supplier dulu.");
+      return;
+    }
+    if (!draft.kategori) {
+      setError("Pilih kategori dulu.");
       return;
     }
     if (!draft.warna.trim()) {
@@ -135,7 +139,14 @@ export function HargaKainPanel() {
             </select>
           </ModalField>
           <ModalField label="Kategori">
-            <input value={draft.kategori} onChange={(e) => setDraft({ ...draft, kategori: e.target.value })} className="input w-full" />
+            <select value={draft.kategori} onChange={(e) => setDraft({ ...draft, kategori: e.target.value })} className="input w-full">
+              <option value="">— pilih kategori —</option>
+              {MATERIAL_KATEGORI_URUTAN.map((k) => (
+                <option key={k} value={k}>
+                  {k}
+                </option>
+              ))}
+            </select>
           </ModalField>
           <ModalField label="Warna">
             <input value={draft.warna} onChange={(e) => setDraft({ ...draft, warna: e.target.value })} className="input w-full" />

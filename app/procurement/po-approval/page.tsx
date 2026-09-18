@@ -66,7 +66,7 @@ export default function PoApprovalPage() {
   const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
   const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
   const maklonInvoices = useMrpStore((s) => s.maklonInvoices);
-  const switchAduanVendor = useMrpStore((s) => s.switchAduanVendor);
+  const switchAduanVendorByRoll = useMrpStore((s) => s.switchAduanVendorByRoll);
   const assignMaterialSupplier = useMrpStore((s) => s.assignMaterialSupplier);
   const sendPoToFinance = useMrpStore((s) => s.sendPoToFinance);
   const hargaKain = useMrpStore((s) => s.hargaKain);
@@ -506,9 +506,12 @@ export default function PoApprovalPage() {
               // ada di semua kategori, bukan cuma WANGKI MYNO.
               // Kolom Warna diberi lebar minimum supaya nama warna tidak patah per kata (revisi
               // 2026-09-15, owner: tabel Material terlalu sempit).
+              // Lebar kolom Kerah/Manset kg & Est. (Rp) dilebarkan (revisi 2026-09-18, owner:
+              // "header-nya jangan 2 baris") supaya label header ("MANSET KG", "EST. MANSET (RP)")
+              // muat 1 baris tanpa patah kata -- lihat whitespace-nowrap di header di bawah.
               const cols = showKerahManset
-                ? "20px minmax(120px, 1.3fr) 44px 60px 64px 64px 104px 104px 104px minmax(150px, 1fr)"
-                : "20px minmax(140px, 1.5fr) 44px 60px 110px minmax(160px, 1fr)";
+                ? "20px minmax(120px, 1.3fr) 44px 64px 78px 84px 112px 122px 128px minmax(150px, 1fr)"
+                : "20px minmax(140px, 1.5fr) 44px 64px 112px minmax(160px, 1fr)";
               // Owner 2026-09-16: kelompokkan per kategori kain (WANGKI MYNO/30S/KID/dsb sering
               // campur dalam 1 MRP, lihat inferMaterialKategori) + filter kategori + checkbox
               // bulk-assign supplier untuk banyak warna sekaligus (bukan 1-per-1 seperti dulu).
@@ -567,19 +570,19 @@ export default function PoApprovalPage() {
                     </div>
                   )}
                   <div
-                    className="grid gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
+                    className="grid gap-x-3 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
                     style={{ gridTemplateColumns: cols }}
                   >
                     <span />
-                    <span>Warna</span>
-                    <span className="text-right">Roll</span>
-                    <span className="text-right">Rib kg</span>
-                    {showKerahManset && <span className="text-right">Kerah kg</span>}
-                    {showKerahManset && <span className="text-right">Manset kg</span>}
-                    <span className="text-right">Est. Rib (Rp)</span>
-                    {showKerahManset && <span className="text-right">Est. Kerah (Rp)</span>}
-                    {showKerahManset && <span className="text-right">Est. Manset (Rp)</span>}
-                    <span>Vendor material</span>
+                    <span className="whitespace-nowrap">Warna</span>
+                    <span className="whitespace-nowrap text-right">Roll</span>
+                    <span className="whitespace-nowrap text-right">Rib kg</span>
+                    {showKerahManset && <span className="whitespace-nowrap text-right">Kerah kg</span>}
+                    {showKerahManset && <span className="whitespace-nowrap text-right">Manset kg</span>}
+                    <span className="whitespace-nowrap text-right">Est. Rib (Rp)</span>
+                    {showKerahManset && <span className="whitespace-nowrap text-right">Est. Kerah (Rp)</span>}
+                    {showKerahManset && <span className="whitespace-nowrap text-right">Est. Manset (Rp)</span>}
+                    <span className="whitespace-nowrap">Vendor material</span>
                   </div>
                   {groupsByKategori.map(({ kategori, groups }) => (
                     <div key={kategori}>
@@ -981,7 +984,7 @@ export default function PoApprovalPage() {
           otherVendors={Object.keys(VENDOR_PRODUKSI)
             .filter((v) => v !== drillVendor)
             .map((v) => ({ id: v, name: VENDOR_PRODUKSI[v].name }))}
-          onSwitch={(aduanId, toVendor) => switchAduanVendor(detail.mrp.id, aduanId, toVendor)}
+          onSwitch={(warna, lengan, toVendor, rollCount) => switchAduanVendorByRoll(detail.mrp.id, warna, lengan, drillVendor, toVendor, rollCount)}
           onClose={() => setDrillVendor(null)}
         />
       )}

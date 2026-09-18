@@ -512,7 +512,13 @@ export type VendorProduksiRow = {
  *  pertama) -- BUKAN sumber utama lagi. */
 export function vendorProduksiRows(detail: MrpDetail, hargaMaklon: HargaMaklonRow[], vendorProduksiList: VendorProduksiMasterRow[]): VendorProduksiRow[] {
   const rowsByVendor = new Map<string, AduanPolaRow[]>();
+  // Baris aduan qty 0 = kombinasi warna+lengan placeholder (tidak ada yang dipesan, sama pola
+  // dengan materialRows qtyRoll 0 di po-approval/page.tsx) -- SENGAJA dibuang di sini supaya
+  // vendor yang cuma punya placeholder kosong (mis. vendor "-" hasil import lama) tidak lolos
+  // sebagai baris vendor 0 qty (owner 2026-09-18: "kenapa bisa ada lolos yang roll dan qty-nya 0?
+  // harusnya tidak usah dimasukkan").
   for (const a of detail.aduanRows) {
+    if (a.qty <= 0) continue;
     const arr = rowsByVendor.get(a.vendor) ?? [];
     arr.push(a);
     rowsByVendor.set(a.vendor, arr);

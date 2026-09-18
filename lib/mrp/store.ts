@@ -277,7 +277,7 @@ type FlowActions = {
   importMrp: (parsed: ParsedMrpImport, customId?: string) => Promise<string>;
   assignMaterialSupplier: (mrpId: string, materialRowIds: string[], supplier: string) => Promise<void>;
   assignMaterialEntitas: (mrpId: string, materialRowId: string, entitas: string) => Promise<void>;
-  switchAduanVendor: (mrpId: string, aduanId: string, toVendor: string) => Promise<void>;
+  switchAduanVendorByRoll: (mrpId: string, warna: string, lengan: Lengan, fromVendor: string, toVendor: string, rollCount: number) => Promise<void>;
   approvePpicMrp: (mrpId: string) => Promise<void>;
   rejectPpicMrp: (mrpId: string, reason: string) => Promise<void>;
   sendPoToFinance: (mrpId: string) => Promise<void>;
@@ -712,16 +712,14 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     }
     backgroundRefresh();
   },
-  switchAduanVendor: async (mrpId, aduanId, toVendor) => {
-    const previous = get().mrpDetails;
-    set({
-      mrpDetails: previous.map((d) => (d.mrp.id !== mrpId ? d : { ...d, aduanRows: d.aduanRows.map((a) => (a.id === aduanId ? { ...a, vendor: toVendor } : a)) })),
-    });
+  // Versi per-roll (bukan per baris kode aduan utuh) -- server-nya bisa men-split 1 baris aduan
+  // pola jadi 2 (id baru dibuat di server, lihat switchAduanVendorByRollAction), jadi TIDAK ada
+  // optimistic update di sini -- tunggu backgroundRefresh untuk state final yang benar.
+  switchAduanVendorByRoll: async (mrpId, warna, lengan, fromVendor, toVendor, rollCount) => {
     try {
-      await actions.switchAduanVendorAction(mrpId, aduanId, toVendor);
+      await actions.switchAduanVendorByRollAction(mrpId, warna, lengan, fromVendor, toVendor, rollCount);
     } catch (err) {
-      set({ mrpDetails: previous });
-      window.alert("Gagal memindahkan vendor aduan -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      window.alert("Gagal memindahkan roll -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();

@@ -255,10 +255,41 @@ export async function assignMaterialEntitasAction(mrpId: string, materialRowId: 
   if (error) throw new Error(error.message);
 }
 
-export async function switchAduanVendorAction(mrpId: string, aduanId: string, toVendor: string): Promise<void> {
+/** Pindah aduan pola berdasarkan JUMLAH ROLL per warna+lengan (owner 2026-09-18: "procurement
+ *  langsung pilih warna terus berapa roll yang mau dipindahkan ... tidak perlu sedetail aduan
+ *  pola" -- menggantikan switchAduanVendorAction lama yang memindah 1 baris kode aduan utuh).
+ *  Pakai `reassignAduanRowsVendor` yang SUDAH ADA (persis fungsi yang dipakai
+ *  transferMaterialAction untuk split roll material antar vendor) -- kalau roll yang diminta
+ *  lebih kecil dari qtyRoll baris aduan asalnya, baris itu di-split proporsional (bukan digabung
+ *  rata, konsisten dengan pola split yang sudah ada), sisanya tetap di vendor asal. */
+export async function switchAduanVendorByRollAction(mrpId: string, warna: string, lengan: Lengan, fromVendor: string, toVendor: string, rollCount: number): Promise<void> {
   await requireInternalRole(await requireSession(), "procurement");
-  const { error } = await supabaseServer().from("aduan_pola_rows").update({ vendor: toVendor }).eq("id", aduanId).eq("mrp_id", mrpId);
-  if (error) throw new Error(error.message);
+  if (fromVendor === toVendor) throw new Error("Vendor tujuan harus berbeda dari vendor asal.");
+  if (!Number.isInteger(rollCount) || rollCount <= 0) throw new Error("Jumlah roll harus bilangan bulat positif.");
+  const db = supabaseServer();
+  const aduanRows = await fetchAduanRowsForMrp(db, mrpId);
+  const scoped = aduanRows.filter((a) => a.vendor === fromVendor && a.warna === warna && a.lengan === lengan);
+  const available = scoped.reduce((s, a) => s + a.qtyRoll, 0);
+  if (rollCount > available) throw new Error(`Roll yang diminta (${rollCount}) melebihi roll tersedia (${available}) untuk warna ini di vendor asal.`);
+  const newIds = await Promise.all(scoped.map(() => nextReadableId("AD")));
+  const nextRows = reassignAduanRowsVendor(aduanRows, fromVendor, toVendor, warna, lengan, rollCount, newIds);
+  const before = new Map(aduanRows.map((a) => [a.id, a]));
+  for (const a of nextRows) {
+    const prev = before.get(a.id);
+    if (!prev) {
+      const { error } = await db
+        .from("aduan_pola_rows")
+        .insert({ id: a.id, lengan_group_id: a.lenganGroupId, mrp_id: mrpId, warna: a.warna, lengan: a.lengan, kode: a.kode, qty_roll: a.qtyRoll, qty: a.qty, vendor: a.vendor, rib_allocated_roll: a.ribAllocatedRoll ?? null });
+      if (error) throw new Error(error.message);
+      if (a.sizes.length > 0) {
+        const { error: sizeErr } = await db.from("aduan_pola_sizes").insert(a.sizes.map((s) => ({ aduan_row_id: a.id, size: s.size, qty: s.qty })));
+        if (sizeErr) throw new Error(sizeErr.message);
+      }
+    } else if (prev.vendor !== a.vendor || prev.qtyRoll !== a.qtyRoll || prev.qty !== a.qty) {
+      const { error } = await db.from("aduan_pola_rows").update({ vendor: a.vendor, qty_roll: a.qtyRoll, qty: a.qty }).eq("id", a.id);
+      if (error) throw new Error(error.message);
+    }
+  }
 }
 
 export async function rejectPpicMrpAction(mrpId: string, reason: string): Promise<void> {

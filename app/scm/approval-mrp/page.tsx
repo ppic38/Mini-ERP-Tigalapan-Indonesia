@@ -36,9 +36,8 @@ export default function ScmApprovalMrpPage() {
   // rincian per-warna (qty/roll/rib) dulu SEBELUM memutuskan, bukan cuma qty total, dengan cara
   // klik baris untuk expand (chevron di ujung kanan, lihat DataTable renderExpanded).
   const pendingColumns: ColumnDef<MrpDetail>[] = [
-    { key: "kategori", label: "Kategori / Warna", default: true, render: (d) => `${d.mrp.kategori} · ${d.mrp.warna}` },
     { key: "qty", label: "Qty", default: true, align: "right", render: (d) => formatPcs(effectiveMrpQty(d.mrp.id, d.mrp.qty, maklonPOs)) + " pcs" },
-    { key: "vendor", label: "Vendor", default: true, render: (d) => vendorsForMrp(d).join(", ") || "—" },
+    { key: "vendor", label: "Jumlah Vendor", default: true, render: (d) => `${vendorsForMrp(d).length} vendor` },
     { key: "tglSubmit", label: "Tanggal Diajukan", default: true, render: (d) => formatDate(d.dates.ppicSubmitted) },
     {
       key: "status",
@@ -49,9 +48,8 @@ export default function ScmApprovalMrpPage() {
   ];
 
   const historyColumns: ColumnDef<MrpDetail>[] = [
-    { key: "kategori", label: "Kategori / Warna", default: true, render: (d) => `${d.mrp.kategori} · ${d.mrp.warna}` },
     { key: "qty", label: "Qty", default: true, align: "right", render: (d) => formatPcs(effectiveMrpQty(d.mrp.id, d.mrp.qty, maklonPOs)) },
-    { key: "vendor", label: "Vendor", default: true, render: (d) => vendorsForMrp(d).join(", ") || "—" },
+    { key: "vendor", label: "Jumlah Vendor", default: true, render: (d) => `${vendorsForMrp(d).length} vendor` },
     { key: "tglSubmit", label: "Tanggal Diajukan", default: true, render: (d) => formatDate(d.dates.ppicSubmitted) },
     { key: "tglKeputusan", label: "Tanggal Keputusan", default: true, render: (d) => formatDate(d.dates.ppicApproved) },
     {
