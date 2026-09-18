@@ -360,7 +360,8 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   // (koli BARU, bukan optimistic -- lihat store.ts) belum tentu sudah selesai di server, jadi ada
   // jeda "form kosong tapi koli barunya belum kelihatan" sampai backgroundRefresh selesai, tanpa
   // ada tanda apa pun kalau masih diproses.
-  const [submitting, setSubmitting] = useState(false);
+  // submit() sekarang tidak menunggu server (optimistic) -- tidak ada state "submitting" lagi.
+  const submitting = false;
   async function submit() {
     if (!mrpId || !noKoli.trim() || submitting) return;
     const validItems: DeliveryKoliItem[] = rows
@@ -369,22 +370,32 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
     const rollItems = buildRollItems();
     const allItems = [...validItems, ...rollItems];
     if (allItems.length === 0) return;
-    setSubmitting(true);
-    try {
-      if (editingKoliId) {
-        const existing = deliveryKolis.find((k) => k.id === editingKoliId);
-        await updateDeliveryKoli(editingKoliId, { ekspedisi: existing?.ekspedisi ?? "", noKoli: noKoli.trim(), items: allItems });
-        cancelEdit();
-      } else {
-        // Ekspedisi & resi belum dipilih di sini — dipilih belakangan lewat checkbox + "Set
-        // Ekspedisi & Resi" di tabel "Koli belum dikirim" di bawah (migration 0026).
-        await createDeliveryKoli({ mrpId, vendorProduksi: vendorId, ekspedisi: "", noKoli: noKoli.trim(), items: allItems });
-        setNoKoli("");
-        setQtyDraft({});
-        setRollQtyDraft({});
-      }
-    } finally {
-      setSubmitting(false);
+    // Revisi 2026-09-19 (owner: "langsung ada hasilnya saja dulu"): TIDAK lagi menunggu server --
+    // store (createDeliveryKoli/updateDeliveryKoli) sudah optimistic penuh (koli langsung muncul di
+    // daftar), form dikosongkan seketika. Kalau server menolak, store sudah alert + membatalkan
+    // perubahan; di sini form dikembalikan supaya input tidak hilang.
+    if (editingKoliId) {
+      const existing = deliveryKolis.find((k) => k.id === editingKoliId);
+      const editedId = editingKoliId;
+      updateDeliveryKoli(editedId, { ekspedisi: existing?.ekspedisi ?? "", noKoli: noKoli.trim(), items: allItems }).catch(() => {
+        const k = useMrpStore.getState().deliveryKolis.find((x) => x.id === editedId);
+        if (k) editKoli(k);
+      });
+      cancelEdit();
+    } else {
+      // Ekspedisi & resi belum dipilih di sini — dipilih belakangan lewat checkbox + "Set
+      // Ekspedisi & Resi" di tabel "Koli belum dikirim" di bawah (migration 0026).
+      const draftNoKoli = noKoli;
+      const draftQty = qtyDraft;
+      const draftRollQty = rollQtyDraft;
+      createDeliveryKoli({ mrpId, vendorProduksi: vendorId, ekspedisi: "", noKoli: noKoli.trim(), items: allItems }).catch(() => {
+        setNoKoli(draftNoKoli);
+        setQtyDraft(draftQty);
+        setRollQtyDraft(draftRollQty);
+      });
+      setNoKoli("");
+      setQtyDraft({});
+      setRollQtyDraft({});
     }
   }
 
@@ -723,7 +734,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                   return (
                     <Fragment key={k.id}>
                       <div className="grid grid-cols-5 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0">
-                        <input type="checkbox" checked={selectedForEkspedisi.has(k.id)} onChange={() => toggleSelectedForEkspedisi(k.id)} className="h-3.5 w-3.5" />
+                        <input type="checkbox" checked={selectedForEkspedisi.has(k.id)} onChange={() => toggleSelectedForEkspedisi(k.id)} disabled={k.id.startsWith("tmp-")} className="h-3.5 w-3.5 disabled:opacity-40" />
                         <span className="font-mono">{k.mrpId}</span>
                         <span className="font-mono font-medium">{k.noKoli}</span>
                         <button
@@ -735,7 +746,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                           {summarizeItems(k.items)}
                         </button>
                         <span className="text-right">
-                          <Button onClick={() => editKoli(k)} variant="ghost" size="xs">
+                          <Button onClick={() => editKoli(k)} disabled={k.id.startsWith("tmp-")} variant="ghost" size="xs">
                             Edit
                           </Button>
                         </span>
@@ -965,18 +976,21 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                 className="input mt-1 w-full"
               />
               <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Foto lampiran (wajib)</div>
-              <div className="mt-1 rounded-md border border-dashed border-[#CBD5DF] bg-[#F7F9FB] px-3 py-2.5">
-                <input
-                  ref={ekspedisiPhotoInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) onEkspedisiPhotoSelected(file);
-                  }}
-                  className="font-sans text-[11px]"
-                />
-              </div>
+              {/* Revisi 2026-09-19 (owner): tampilan tombol pilih file disamakan dengan upload Bukti
+                  Paying Voucher di Procurement (components/mrp/paying-voucher-wizard.tsx). */}
+              <input
+                ref={ekspedisiPhotoInputRef}
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onEkspedisiPhotoSelected(file);
+                }}
+                className="input mt-1 file:mr-2.5 file:rounded file:border-0 file:bg-info-bg file:px-2.5 file:py-1 file:font-sans file:text-[11px] file:font-semibold file:text-info-fg"
+              />
+              {ekspedisiPhotoFileName && ekspedisiPhotoDataUrl && !ekspedisiPhotoBusy && (
+                <div className="mt-1 font-sans text-[11px] text-success-fg">✓ {ekspedisiPhotoFileName} terupload.</div>
+              )}
               {ekspedisiPhotoBusy && <div className="mt-1.5 font-sans text-[10.5px] text-text-muted">Memproses foto…</div>}
               {ekspedisiPhotoError && <div className="mt-1.5 font-sans text-[10.5px] text-danger-fg">{ekspedisiPhotoError}</div>}
               {ekspedisiPhotoDataUrl && !ekspedisiPhotoBusy && (

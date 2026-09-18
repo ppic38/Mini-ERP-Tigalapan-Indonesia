@@ -1182,9 +1182,24 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // pasti setelah server generate, tidak bisa ditebak optimistic SEBELUM itu -- pola sama
   // startProductionBatches di atas) -- di-patch LANGSUNG dari hasil nyatanya, tanpa menunggu
   // backgroundRefresh (snapshot 32-tabel) cuma untuk koli baru ini muncul.
+  // Revisi 2026-09-19 (owner: "Simpan koli butuh loading, harusnya langsung ada hasilnya"): koli
+  // SEKARANG muncul di daftar "Koli belum dikirim" SEKETIKA (baris sementara id "tmp-koli-...",
+  // items apa adanya dari form), lalu diganti hasil nyata server (id resmi + items yang sudah
+  // di-clamp & diberi sourceBatchId) begitu tulisan selesai. Gagal -> baris sementara dihapus +
+  // alert. UI melarang memilih/mengedit baris "tmp-" (lihat pengiriman/page.tsx).
   createDeliveryKoli: async (input) => {
-    const created = await actions.createDeliveryKoliAction(input);
-    set({ deliveryKolis: [...get().deliveryKolis, created] });
+    const tmpId = `tmp-koli-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    set({ deliveryKolis: [...get().deliveryKolis, { id: tmpId, ...input, createdAt: localDateString(new Date()) }] });
+    let created;
+    try {
+      created = await actions.createDeliveryKoliAction(input);
+    } catch (err) {
+      set({ deliveryKolis: get().deliveryKolis.filter((k) => k.id !== tmpId) });
+      window.alert("Gagal menyimpan koli -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    // filter dulu (kalau snapshot sudah keburu membawa koli asli, jangan sampai dobel).
+    set({ deliveryKolis: get().deliveryKolis.filter((k) => k.id !== created.id).map((k) => (k.id === tmpId ? created : k)) });
     backgroundRefresh();
   },
   // TIDAK dibuat optimistic -- foto lampiran belum tentu valid (divalidasi server) & melibatkan
