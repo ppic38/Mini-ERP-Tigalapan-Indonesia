@@ -70,12 +70,12 @@ function DeadlineTable({ po }: { po: MaklonPO }) {
   return (
     <div className="overflow-hidden rounded-md border border-[#E4E9EE] bg-white">
       <div className="bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-        Deadline per warna/lengan — bahan diterima + {VENDOR_PRODUKSI[po.vendorProduksi]?.productionLeadDays ?? 7} hari. Bar Cutting/FG dibanding target rencana; angka paling kanan = efisiensi FG dari cutting AKTUAL.
+        Deadline per warna/lengan — bahan diterima + {VENDOR_PRODUKSI[po.vendorProduksi]?.productionLeadDays ?? 7} hari. Bar Cutting dibanding target rencana; bar FG dibanding hasil cutting AKTUAL (bukan target rencana).
       </div>
       <div className="divide-y divide-[#F1F4F7]">
         {rows.map((r) => {
           const cuttingPct = r.target > 0 ? Math.min(100, (r.cutting / r.target) * 100) : 0;
-          const fgPct = r.target > 0 ? Math.min(100, (r.finishGood / r.target) * 100) : 0;
+          const fgPct = r.cutting > 0 ? Math.min(100, (r.finishGood / r.cutting) * 100) : 0;
           const status = statusFor(r);
           return (
             <div key={r.warna + "|" + r.lengan} className="flex items-center gap-3 px-3 py-2">
@@ -97,14 +97,8 @@ function DeadlineTable({ po }: { po: MaklonPO }) {
                   <span className="relative block h-1.5 w-full overflow-hidden rounded-full bg-[#EEF0F3]">
                     <span className="absolute inset-y-0 left-0 rounded-full bg-success" style={{ width: `${fgPct}%` }} />
                   </span>
-                  <span className="w-[80px] flex-none text-right font-mono text-[10.5px] text-text-muted">{formatPcs(r.finishGood)}/{formatPcs(r.target)}</span>
+                  <span className="w-[80px] flex-none text-right font-mono text-[10.5px] text-text-muted">{formatPcs(r.finishGood)}/{formatPcs(r.cutting)}</span>
                 </span>
-              </span>
-              <span
-                title="Finish Good dibagi hasil cutting AKTUAL (bukan target rencana) -- kalau cutting sendiri belum capai target, angka ini tetap menunjukkan efisiensi konversi cutting->baju yang sebenarnya, terlepas dari cutting-nya kurang/lebih dari rencana."
-                className="w-[70px] flex-none text-right font-mono text-[11px] font-semibold text-[#31414F]"
-              >
-                {r.cutting > 0 ? `${((r.finishGood / r.cutting) * 100).toFixed(0)}%` : "—"}
               </span>
               <StatusPill tone={status.tone} className="flex-none">
                 {status.label}
