@@ -4149,12 +4149,21 @@ export async function getFlowSnapshotAction() {
 // dipakai halaman Master Data (add/update/delete satu baris) & tombol "Import dari Google
 // Sheets" (replaceX -- ganti SELURUH tabel, bukan merge, persis perilaku lama).
 // =========================================================================
-import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, KerahMansetSettingRow, SupplierRow } from "./masterData";
+import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, SupplierRow } from "./masterData";
 
 async function requireMasterDataRole() {
   const session = await requireSession();
   if (!session.internalRoles.some((r) => r === "procurement" || r === "finance")) {
     throw new Error("Forbidden: Master Data hanya bisa diubah dari modul Procurement/Finance.");
+  }
+}
+
+// Master Data "SKU (Harga Jual per Item)" ini milik PPIC (bukan Procurement/Finance seperti master
+// data lain di file ini) -- role check TERPISAH dari requireMasterDataRole di atas.
+async function requirePpicRole() {
+  const session = await requireSession();
+  if (!session.internalRoles.some((r) => r === "ppic")) {
+    throw new Error("Forbidden: Master Data SKU hanya bisa diubah dari modul PPIC.");
   }
 }
 
@@ -4460,5 +4469,48 @@ export async function updateKerahMansetSettingAction(kind: "KERAH" | "MANSET", p
   if (patch.kgPerPcs !== undefined) p.kg_per_pcs = patch.kgPerPcs;
   if (patch.hargaPerKg !== undefined) p.harga_per_kg = patch.hargaPerKg;
   const { error } = await supabaseServer().from("kerah_manset_settings").update(p).eq("kind", kind);
+  if (error) throw new Error(error.message);
+}
+
+// Master Data "SKU (Harga Jual per Item)" (migration 0035 seed awal, 0043 dibikin live) -- dipakai
+// LIVE oleh sellingPriceFor (lib/mrp/derive.ts, kolom "% HPP" di Laporan HPP) DAN oleh RPC
+// wms_resi_snapshot/wms_master_sku_snapshot (integrasi WMS, migration 0039/0043) -- SKU di sini
+// yang dicocokkan WMS ke katalog Master SKU-nya sendiri. `updated_at` di-set manual di sini
+// (bukan trigger Postgres -- tidak ada pola trigger updated_at lain di codebase ini) supaya
+// wms_master_sku_snapshot bisa deteksi baris yang berubah lewat snapshotId-nya.
+export async function addItemSellingPriceRowAction(data: Omit<ItemSellingPriceRow, "id">): Promise<void> {
+  await requirePpicRole();
+  const id = await nextReadableId("HJ");
+  const { error } = await supabaseServer()
+    .from("item_selling_prices")
+    .insert({
+      id,
+      kategori: data.kategori,
+      sku: data.sku,
+      item_name: data.itemName,
+      warna: data.warna,
+      lengan: data.lengan,
+      size: data.size,
+      price: data.price,
+      updated_at: new Date().toISOString(),
+    });
+  if (error) throw new Error(error.message);
+}
+export async function updateItemSellingPriceRowAction(id: string, patch: Partial<ItemSellingPriceRow>): Promise<void> {
+  await requirePpicRole();
+  const p: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (patch.kategori !== undefined) p.kategori = patch.kategori;
+  if (patch.sku !== undefined) p.sku = patch.sku;
+  if (patch.itemName !== undefined) p.item_name = patch.itemName;
+  if (patch.warna !== undefined) p.warna = patch.warna;
+  if (patch.lengan !== undefined) p.lengan = patch.lengan;
+  if (patch.size !== undefined) p.size = patch.size;
+  if (patch.price !== undefined) p.price = patch.price;
+  const { error } = await supabaseServer().from("item_selling_prices").update(p).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+export async function deleteItemSellingPriceRowAction(id: string): Promise<void> {
+  await requirePpicRole();
+  const { error } = await supabaseServer().from("item_selling_prices").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }

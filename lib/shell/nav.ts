@@ -15,6 +15,7 @@ export const NAV: Record<RoleKey, RoleNav> = {
     items: [
       { label: "Dashboard", href: "/dashboard/ppic" },
       { label: "MRP", href: "/mrp/ppic" },
+      { label: "Master Data", href: "/mrp/ppic/master-data" },
     ],
   },
   procurement: {

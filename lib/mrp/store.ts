@@ -380,6 +380,9 @@ type FlowActions = {
   deleteHargaKerahMansetRow: (id: string) => Promise<void>;
   addMaterialSupplier: (nama: string) => Promise<void>;
   deleteMaterialSupplier: (id: string) => Promise<void>;
+  addItemSellingPriceRow: (data: Omit<ItemSellingPriceRow, "id">) => Promise<void>;
+  updateItemSellingPriceRow: (id: string, patch: Partial<ItemSellingPriceRow>) => Promise<void>;
+  deleteItemSellingPriceRow: (id: string) => Promise<void>;
 
   setMaterialPoEntity: (poId: string, entitas: string) => Promise<void>;
   setMaterialPoColorEntity: (poId: string, warna: string, lengan: Lengan, entitas: string) => Promise<void>;
@@ -1334,6 +1337,34 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     } catch (err) {
       set({ materialSuppliers: previous });
       window.alert("Gagal menghapus supplier -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  addItemSellingPriceRow: async (data) => {
+    await actions.addItemSellingPriceRowAction(data);
+    backgroundRefresh();
+  },
+  updateItemSellingPriceRow: async (id, patch) => {
+    const previous = get().itemSellingPrices;
+    set({ itemSellingPrices: previous.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+    try {
+      await actions.updateItemSellingPriceRowAction(id, patch);
+    } catch (err) {
+      set({ itemSellingPrices: previous });
+      window.alert("Gagal menyimpan SKU -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  deleteItemSellingPriceRow: async (id) => {
+    const previous = get().itemSellingPrices;
+    set({ itemSellingPrices: previous.filter((r) => r.id !== id) });
+    try {
+      await actions.deleteItemSellingPriceRowAction(id);
+    } catch (err) {
+      set({ itemSellingPrices: previous });
+      window.alert("Gagal menghapus SKU -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
