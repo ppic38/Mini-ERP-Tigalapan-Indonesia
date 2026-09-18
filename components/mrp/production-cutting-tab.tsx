@@ -1004,9 +1004,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
       {selectedDetail && (
         <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
           <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Aduan pola — {selectedDetail.mrp.id}</div>
-          <div className="grid grid-cols-4 gap-2 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+          <div className="grid grid-cols-4 gap-2 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
             <span>Kode aduan / lengan</span>
-            <span className="text-right">Total qty roll aduan</span>
+            <span className="text-right">Total roll aduan MRP</span>
             <span className="text-right">Total roll tersedia</span>
             <span />
           </div>
@@ -1017,8 +1017,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 <span className="font-mono font-medium">
                   {g.kode} · {g.lengan}
                 </span>
-                <span className="text-right font-mono">{g.totalQty}</span>
-                <span className={"text-right font-mono " + (g.totalAvailable > 0 ? "text-success-fg" : "text-text-muted")}>{g.totalAvailable}</span>
+                <span className="text-right font-mono font-semibold text-info-fg">{g.totalQty}</span>
+                <span className={"text-right font-mono font-semibold " + (g.totalAvailable > 0 ? "text-info-fg" : "text-danger-fg")}>{g.totalAvailable}</span>
                 <span className="text-right">
                   <button
                     onClick={() => pickGroup(key)}
@@ -1166,7 +1166,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
         <div className="overflow-x-auto">
           <div>
             <div
-              className="grid min-w-[1550px] gap-x-5 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
+              className="grid min-w-[1550px] gap-x-5 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
               style={{
                 gridTemplateColumns: CUTTING_SESSION_COLUMNS,
               }}
