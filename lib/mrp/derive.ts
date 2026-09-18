@@ -961,6 +961,42 @@ export function materialPoFullStatusBadge(status: MaterialPoFullStatus) {
   return map[status];
 }
 
+export type MaterialPoStageBreakdown = {
+  totalRolls: number;
+  /** Belum diinvoice ATAU sudah diinvoice tapi roll-nya belum ditandai datang (Good Receive) --
+   *  gabungan "belum sampai vendor" tanpa membedakan tahap invoice/bayar/kirim, karena dari sisi
+   *  Produksi yang penting cuma "sudah di tangan vendor atau belum". */
+  waitingRolls: number;
+  /** Sudah di-Good Receive vendor (rollArrivalProgress arrived) TAPI warna/lengan itu belum masuk
+   *  cutting/produksi sama sekali. */
+  receivedRolls: number;
+  /** Sudah di-Good Receive DAN warna/lengan itu sudah mulai cutting/produksi -- pakai kriteria
+   *  SAMA PERSIS dengan `startedProduction` di materialPoFullStatus (vendor klik "Mulai Produksi"
+   *  ATAU ada batch ber-cuttingAt), supaya kedua tampilan selalu konsisten. Granularitas per PO
+   *  material (bukan per warna/lengan) -- kalau PO ini mencakup >1 warna/lengan dan HANYA
+   *  sebagian yang sudah cutting, roll yang sudah datang tetap dihitung "sudah masuk produksi"
+   *  semua (approksimasi yang sama dipakai materialPoFullStatus, bukan pelacakan per roll fisik).
+   */
+  productionRolls: number;
+};
+
+export function materialPoStageBreakdown(po: MaterialPO, invoices: RawMaterialInvoice[], maklonPOs: MaklonPO[] = [], productionBatches: ProductionBatch[] = []): MaterialPoStageBreakdown {
+  const invoicesForPo = invoices.filter((i) => i.poId === po.id);
+  const arrivedRolls = invoicesForPo.reduce((n, inv) => n + rollArrivalProgress(inv).arrived, 0);
+  const totalRolls = po.rollCount;
+  const waitingRolls = Math.max(0, totalRolls - arrivedRolls);
+
+  const vendorStartedProduction = maklonPOs.some((m) => m.mrpId === po.mrpId && m.vendorProduksi === po.vendorProduksi && (m.status === "PRODUCTION" || m.status === "PARTIAL_PRODUCTION"));
+  const startedProduction = vendorStartedProduction || po.colorBreakdown.some((c) => productionBatches.some((b) => b.mrpId === po.mrpId && b.warna === c.warna && b.lengan === c.lengan && b.cuttingAt));
+
+  return {
+    totalRolls,
+    waitingRolls,
+    receivedRolls: startedProduction ? 0 : arrivedRolls,
+    productionRolls: startedProduction ? arrivedRolls : 0,
+  };
+}
+
 /** Tarif ongkir FLAT per kg dari Master Data "Ekspedisi" (`ekspedisi_rates`, lihat
  *  EkspedisiRateRow di masterData.ts) -- MENGGANTIKAN tarif tier/berjenjang hardcode lama
  *  (EKSPEDISI_RATES di lib/mrp/seed.ts, sudah dihapus). Matching nama EXACT (case-sensitive,
