@@ -3867,8 +3867,9 @@ export async function setKoliEkspedisiResiGroupAction(
 
   // Kepemilikan + belum delivered -- cegah vendor A menyentuh koli vendor B, & cegah ekspedisi/
   // resi koli yang SUDAH terkirim diubah lewat sini (harusnya sudah final).
-  const { data: rows } = await db.from("delivery_kolis").select("id,vendor_produksi,delivered_at").in("id", koliIds);
-  const validIds = (rows ?? []).filter((r) => r.vendor_produksi === vendorId && !r.delivered_at).map((r) => r.id);
+  const { data: rows } = await db.from("delivery_kolis").select("id,vendor_produksi,delivered_at,no_koli").in("id", koliIds);
+  const validRows = (rows ?? []).filter((r) => r.vendor_produksi === vendorId && !r.delivered_at);
+  const validIds = validRows.map((r) => r.id);
   if (validIds.length === 0) return;
 
   const resiGroupId = await nextReadableId("RESI");
@@ -3882,10 +3883,17 @@ export async function setKoliEkspedisiResiGroupAction(
     .update({ ekspedisi, ekspedisi_note: note.trim(), ekspedisi_note_at: notedAt, no_resi: noResi.trim(), resi_group_id: resiGroupId })
     .in("id", validIds);
   if (error) throw new Error(error.message);
+  // Revisi 2026-09-19 (owner: "hilangkan fitur Delivery -- begitu ekspedisi & resi disimpan langsung
+  // masuk Riwayat Pengiriman, tinggal Submit Invoice"): berat koli + delivered_at + notifikasi
+  // Warehouse yang dulu dikerjakan deliverKoliResiGroupAction (tombol Delivery, sekarang dihapus
+  // dari UI untuk alur normal) SEKARANG ikut di sini -- efeknya identik.
+  const deliveredAt = today();
   for (const koliId of validIds) {
-    const { error: weightErr } = await db.from("delivery_kolis").update({ berat_koli: Number(beratByKoli[koliId]) }).eq("id", koliId);
+    const { error: weightErr } = await db.from("delivery_kolis").update({ berat_koli: Number(beratByKoli[koliId]), delivered_at: deliveredAt }).eq("id", koliId);
     if (weightErr) throw new Error(weightErr.message);
   }
+  const noKoliLabel = validRows.map((r) => r.no_koli ?? r.id).join(", ");
+  await insertNotification(notif(`Koli ${noKoliLabel} dari ${VENDOR_PRODUKSI[vendorId]?.name ?? vendorId} sedang dikirim`, ["warehouse"]));
 }
 
 /** Ambil BYTE foto lampiran ekspedisi 1 koli on-demand -- `delivery_koli_ekspedisi_photos` sengaja

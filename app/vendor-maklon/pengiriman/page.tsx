@@ -788,8 +788,12 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
            ditampilkan (grup & per koli) live-preview dari berat DRAFT (belum tersimpan), pola
            perhitungan SAMA PERSIS koliOngkirShare (derive.ts) cuma pakai draft, bukan data
            tersimpan. */}
+        {/* Revisi 2026-09-19: tombol Delivery dihapus dari alur normal -- "Set Ekspedisi & Resi"
+            sekarang langsung mengirim koli (masuk Riwayat Pengiriman). Bagian ini HANYA tampil untuk
+            koli LAMA yang sudah punya ekspedisi tapi belum sempat di-Delivery. */}
+        {pendingGroups.length > 0 && (
         <div className="px-4 py-3">
-          <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Sudah ada ekspedisi</div>
+          <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Sudah ada ekspedisi (belum dikirim)</div>
           {pendingGroups.length === 0 ? (
             <div className="mt-2 font-sans text-xs text-text-muted">Tidak ada grup.</div>
           ) : (
@@ -877,6 +881,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
             </div>
           )}
         </div>
+        )}
       </div>
 
       <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
@@ -1059,7 +1064,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                 variant="accent"
                 size="sm"
               >
-                {ekspedisiSubmitting ? "Menyimpan…" : "Simpan ekspedisi & resi"}
+                {ekspedisiSubmitting ? "Menyimpan…" : "Simpan & kirim"}
               </Button>
             </div>
           </div>

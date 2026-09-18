@@ -1213,6 +1213,31 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // upload, pola sama seperti submitCuttingDefectClaim (bukan skalar sederhana).
   setKoliEkspedisiResiGroup: async (koliIds, ekspedisi, note, noResi, photo, beratByKoli) => {
     await actions.setKoliEkspedisiResiGroupAction(koliIds, ekspedisi, note, noResi, photo, beratByKoli);
+    // Patch lokal SETELAH server sukses (foto/berat sudah tervalidasi di server): koli langsung
+    // pindah ke Riwayat Pengiriman tanpa menunggu snapshot penuh. resiGroupId sementara dipakai
+    // bersama supaya koli sesama resi tetap 1 grup di layar; diganti nilai asli saat refresh.
+    {
+      const idSet = new Set(koliIds);
+      const now = new Date();
+      const notedAt = `${localDateString(now)} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      const tmpResi = `tmp-resi-${now.getTime()}`;
+      set({
+        deliveryKolis: get().deliveryKolis.map((k) =>
+          idSet.has(k.id) && !k.deliveredAt
+            ? {
+                ...k,
+                ekspedisi,
+                noResi: noResi.trim(),
+                ekspedisiNote: note.trim(),
+                ekspedisiNoteAt: notedAt,
+                resiGroupId: tmpResi,
+                beratKoli: beratByKoli[k.id] ?? k.beratKoli,
+                deliveredAt: localDateString(now),
+              }
+            : k
+        ),
+      });
+    }
     backgroundRefresh();
   },
   // TIDAK dibuat optimistic -- deliverKoliResiGroupAction diam-diam no-op (tidak set
