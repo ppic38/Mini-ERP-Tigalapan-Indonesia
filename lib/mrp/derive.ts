@@ -2268,6 +2268,83 @@ export function receivedNotYetProducedRows(vendorId: string, invoices: RawMateri
   return out;
 }
 
+/** Daftar warna/lengan RENCANA MRP untuk 1 vendor produksi (dari aduanRows, BUKAN dari roll yang
+ *  sudah dicutting / FG yang sudah diinput) + qty rencananya. Dipakai tab Final Produksi supaya
+ *  warna yang belum sempat dicutting/diterima bahannya tetap kelihatan. */
+export type MrpPlannedGroup = { warna: string; lengan: Lengan; plannedPcs: number; plannedRoll: number };
+
+export function mrpPlannedGroupsForVendor(mrpId: string, vendorProduksi: string, mrpDetails: MrpDetail[]): MrpPlannedGroup[] {
+  const detail = mrpDetailFor(mrpId, mrpDetails);
+  const map = new Map<string, MrpPlannedGroup>();
+  for (const a of detail?.aduanRows ?? []) {
+    if (a.vendor !== vendorProduksi) continue;
+    const key = a.warna + "|" + a.lengan;
+    const cur = map.get(key) ?? { warna: a.warna, lengan: a.lengan, plannedPcs: 0, plannedRoll: 0 };
+    cur.plannedPcs += a.qty;
+    cur.plannedRoll += a.qtyRoll;
+    map.set(key, cur);
+  }
+  return Array.from(map.values());
+}
+
+/** Ringkasan "apa yang belum tuntas" untuk 1 warna/lengan -- dipakai sebagai peringatan sebelum user
+ *  menutup ("Selesai Produksi") warna itu, supaya tidak tertutup padahal bahannya belum datang atau
+ *  produksinya masih jalan. Semua angka dibandingkan ke RENCANA MRP (aduanRows vendor ini). */
+export type GroupCloseSummary = {
+  plannedRoll: number;
+  receivedRoll: number;
+  /** Roll rencana MRP yang bahannya belum diterima vendor (0 kalau sudah lengkap / melebihi). */
+  notReceivedRoll: number;
+  /** Roll yang sudah diterima tapi belum dipakai (dicutting) sama sekali. */
+  receivedNotUsedRoll: number;
+  plannedPcs: number;
+  fgPcs: number;
+  /** Pcs rencana MRP yang belum jadi Finish Good (0 kalau sudah tercapai). */
+  fgShortfallPcs: number;
+  hasWarning: boolean;
+};
+
+export function groupCloseSummary(
+  mrpId: string,
+  vendorProduksi: string,
+  warna: string,
+  lengan: Lengan,
+  mrpDetails: MrpDetail[],
+  invoices: RawMaterialInvoice[],
+  batches: ProductionBatch[],
+  results: ProductionResult[]
+): GroupCloseSummary {
+  const planned = mrpPlannedGroupsForVendor(mrpId, vendorProduksi, mrpDetails).find((g) => g.warna === warna && g.lengan === lengan);
+  const plannedRoll = planned?.plannedRoll ?? 0;
+  const plannedPcs = planned?.plannedPcs ?? 0;
+  const row = receivedNotYetProducedRows(vendorProduksi, invoices, batches).find((r) => r.mrpId === mrpId && r.warna === warna && r.lengan === lengan);
+  const receivedRoll = row?.received ?? 0;
+  const receivedNotUsedRoll = Math.max(0, row?.remaining ?? 0);
+  const fgPcs = Object.values(cumulativeSizeQtyForGroup(mrpId + "|" + warna + "|" + lengan, "FG", results)).reduce((a, b) => a + b, 0);
+  const notReceivedRoll = Math.max(0, plannedRoll - receivedRoll);
+  const fgShortfallPcs = Math.max(0, plannedPcs - fgPcs);
+  return {
+    plannedRoll,
+    receivedRoll,
+    notReceivedRoll,
+    receivedNotUsedRoll,
+    plannedPcs,
+    fgPcs,
+    fgShortfallPcs,
+    hasWarning: notReceivedRoll > 0 || receivedNotUsedRoll > 0 || fgShortfallPcs > 0,
+  };
+}
+
+/** Teks peringatan (baris per baris) dari groupCloseSummary -- dipakai window.confirm di tab Finish
+ *  Good & Final Produksi. Kosong kalau tidak ada yang perlu diperingatkan. */
+export function groupCloseWarningLines(label: string, s: GroupCloseSummary): string[] {
+  const lines: string[] = [];
+  if (s.notReceivedRoll > 0) lines.push(`• Bahan BELUM diterima: ${s.notReceivedRoll} roll (diterima ${s.receivedRoll} dari ${s.plannedRoll} roll rencana MRP)`);
+  if (s.receivedNotUsedRoll > 0) lines.push(`• Bahan sudah diterima tapi BELUM diproduksi: ${s.receivedNotUsedRoll} roll`);
+  if (s.fgShortfallPcs > 0) lines.push(`• Produksi BELUM selesai: Finish Good ${s.fgPcs} dari ${s.plannedPcs} pcs rencana MRP (kurang ${s.fgShortfallPcs} pcs)`);
+  return lines.length > 0 ? [label, ...lines] : [];
+}
+
 /** 1 PO maklon (mrpId+vendorProduksi) cuma boleh ditagihkan lewat SATU jalur invoice —
  *  "maklon" (per-PO, base fee, lunas sekaligus) ATAU "vendor" (per-pcs, bisa dicicil) — bukan
  *  dua-duanya, supaya vendor tidak dibayar dobel untuk pekerjaan yang sama. Siapa yang submit

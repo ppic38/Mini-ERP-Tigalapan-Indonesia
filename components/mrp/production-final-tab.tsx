@@ -9,6 +9,9 @@ import {
   cumulativeSizeQtyForGroup,
   cuttingSizesForGroup,
   fgMurniAndReworkForGroup,
+  groupCloseSummary,
+  groupCloseWarningLines,
+  mrpPlannedGroupsForVendor,
   openMaterialClaimsForGroup,
   productionGroupMetaFor,
   reworkBySizeForGroup,
@@ -65,7 +68,20 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
   // warnaLenganGroupsWithFg (bukan cutWarnaLenganGroups) -- ikutkan grup TUJUAN rework lintas
   // lengan yang tidak pernah dicutting sendiri (lihat catatan di lib/mrp/derive.ts), supaya
   // grup itu tetap bisa di-"Selesai Produksi"-kan & masuk Pengiriman.
-  const groups = selectedMrpId ? warnaLenganGroupsWithFg(selectedMrpId, vendorId, productionBatches, productionResults) : [];
+  // Revisi 2026-09-19 (owner: "list warna ini berdasarkan qty MRP, bukan berdasarkan Finish Good yang
+  // diinput"): daftar baris SEKARANG diambil dari rencana MRP vendor ini (aduanRows) -- warna yang
+  // bahannya belum diterima / belum sempat dicutting tetap tampil (FG 0) dan tidak "hilang" dari
+  // rekap. Grup yang cuma ada dari cutting/FG (mis. tujuan rework lintas lengan, tidak ada di rencana
+  // MRP) tetap ditambahkan di bawahnya.
+  const plannedGroups = selectedMrpId ? mrpPlannedGroupsForVendor(selectedMrpId, vendorId, mrpDetails) : [];
+  const groups = (() => {
+    if (!selectedMrpId) return [];
+    const out = plannedGroups.map((g) => ({ warna: g.warna, lengan: g.lengan }));
+    for (const g of warnaLenganGroupsWithFg(selectedMrpId, vendorId, productionBatches, productionResults)) {
+      if (!out.some((o) => o.warna === g.warna && o.lengan === g.lengan)) out.push(g);
+    }
+    return out;
+  })();
   const selectedMaklonPo = selectedMrpId ? maklonPOs.find((p) => p.mrpId === selectedMrpId && p.vendorProduksi === vendorId) : undefined;
   const isPoClosed = !!selectedMaklonPo?.closedAt;
 
@@ -150,7 +166,7 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
       {selectedMrpId && (
         <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
           <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Final Produksi — {selectedMrpId}</div>
-          {groups.length === 0 && <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada warna yang tercutting untuk MRP ini.</div>}
+          {groups.length === 0 && <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada warna pada rencana MRP ini.</div>}
           {groups.map((g) => {
             const groupKey = selectedMrpId + "|" + g.warna + "|" + g.lengan;
             const target = cuttingSizesForGroup(selectedMrpId, g.warna, g.lengan, mrpDetails, productionBatches);
@@ -194,11 +210,19 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
               materialClaimReplacements,
               materialClaimAcceptances
             );
+            // Revisi 2026-09-19: peringatan sebelum menutup warna -- bahan belum diterima / sudah diterima
+            // tapi belum diproduksi / Finish Good masih di bawah qty rencana MRP.
+            const closeSummary = groupCloseSummary(selectedMrpId, vendorId, g.warna, g.lengan, mrpDetails, rawInvoices, productionBatches, productionResults);
+            const plannedPcs = plannedGroups.find((x) => x.warna === g.warna && x.lengan === g.lengan)?.plannedPcs ?? 0;
             function confirmAndMarkDone() {
+              const warnings = groupCloseWarningLines(`${g.warna} · ${g.lengan}`, closeSummary);
+              if (openClaims.length > 0) warnings.push(`• ${openClaims.length} klaim material belum selesai (roll pengganti bisa jadi masih dalam proses)`);
               if (
-                openClaims.length > 0 &&
+                warnings.length > 0 &&
                 !window.confirm(
-                  `Grup ${g.warna} · ${g.lengan} masih punya ${openClaims.length} klaim material yang belum selesai (roll pengganti bisa jadi masih dalam proses). Setelah "Selesai Produksi", roll BARU untuk warna/lengan ini tidak akan bisa di-cutting lagi kecuali dibuka kunci dulu. Tetap lanjutkan?`
+                  "PERHATIAN sebelum menutup warna ini:\n\n" +
+                    warnings.join("\n") +
+                    '\n\nSetelah "Selesai Produksi", roll BARU untuk warna/lengan ini tidak bisa di-cutting lagi kecuali dibuka kunci dulu. Tetap lanjutkan?'
                 )
               ) {
                 return;
@@ -228,6 +252,7 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
                         {fgSplit.murni} murni + {fgSplit.rework} dari rework
                       </span>
                     )}
+                    {plannedPcs > 0 && <span className="font-mono text-[10px] text-text-muted">Rencana MRP: {plannedPcs} pcs</span>}
                     <div className="flex items-center gap-1.5">
                       <span className="h-1.5 w-full max-w-[130px] flex-1 overflow-hidden rounded-full bg-[#EEF0F3]">
                         <span className="block h-full rounded-full bg-success" style={{ width: `${progressPct}%` }} />
@@ -262,7 +287,7 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
                     ) : isFgConfirmed ? (
                       <button
                         onClick={confirmAndMarkDone}
-                        title={openClaims.length > 0 ? `${openClaims.length} klaim material grup ini belum selesai -- akan diminta konfirmasi dulu` : undefined}
+                        title={openClaims.length > 0 || closeSummary.hasWarning ? "Ada hal yang belum tuntas untuk grup ini -- akan diminta konfirmasi dulu" : undefined}
                         className="rounded-md bg-action-primary px-3 py-[6px] font-sans text-[11px] font-semibold text-white"
                       >
                         {openClaims.length > 0 ? `Selesai Produksi ⚠ ${openClaims.length} klaim aktif` : "Selesai Produksi"}

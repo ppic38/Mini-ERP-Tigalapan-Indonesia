@@ -10,6 +10,8 @@ import { usePendingActions } from "@/lib/mrp/usePendingActions";
 import {
   cumulativeSizeQtyForGroup,
   fgMurniAndReworkForGroup,
+  groupCloseSummary,
+  groupCloseWarningLines,
   formatDate,
   formatDateTimeShort,
   productionGroupMetaFor,
@@ -22,7 +24,7 @@ import {
   warnaLenganGroupsWithFg,
 } from "@/lib/mrp/derive";
 import { countFgShortfallGroupsForMrp, countRejectActionableGroupsForMrp, pendingMarker } from "@/lib/shell/badges";
-import type { ProductionResult } from "@/lib/mrp/types";
+import type { Lengan, ProductionResult } from "@/lib/mrp/types";
 
 // FG: Warna/lengan | Progres (target+terinput+bar digabung jadi satu kolom, bukan 3 kolom
 // sempit terpisah — jauh lebih mudah dipindai sekilas) | Target done produksi | Aksi.
@@ -142,18 +144,25 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
   // Revisi 2026-09-19 (bug: "klik Simpan langsung tutup roll, tidak bisa input lagi"): "Selesai
   // Produksi" menutup SEMUA roll yang masih terbuka & selisih target-vs-FG langsung jadi reject --
   // tombolnya sebelumnya bisa terklik tanpa konfirmasi (dekat tombol Simpan). Sekarang selalu tanya dulu.
-  function confirmFinish(scope: string) {
+  // Revisi 2026-09-19 (owner): dialog juga merinci bahan yang belum diterima / belum diproduksi &
+  // Finish Good yang masih di bawah qty rencana MRP, per warna/lengan yang akan ditutup.
+  function confirmFinish(toClose: { warna: string; lengan: string }[]) {
+    const scope = toClose.length > 1 ? `${toClose.length} warna/lengan sekaligus` : `${toClose[0]?.warna} · ${toClose[0]?.lengan}`;
+    const detail = toClose.flatMap((g) =>
+      groupCloseWarningLines(
+        `${g.warna} · ${g.lengan}`,
+        groupCloseSummary(selectedMrpId, vendorId, g.warna, g.lengan as Lengan, mrpDetails, rawInvoices, productionBatches, productionResults)
+      )
+    );
     return window.confirm(
-      `Selesaikan Finish Good ${scope}?
-
-Semua roll yang masih terbuka akan DITUTUP dan qty yang belum terpenuhi dihitung sebagai reject.
-
-Kalau hanya ingin menyimpan progres, pilih Batal lalu klik "Simpan →".`
+      `Selesaikan Finish Good ${scope}?\n\n` +
+        (detail.length > 0 ? `PERHATIAN -- masih ada yang belum tuntas:\n${detail.join("\n")}\n\n` : "") +
+        'Semua roll yang masih terbuka akan DITUTUP dan qty yang belum terpenuhi dihitung sebagai reject.\n\nKalau hanya ingin menyimpan progres, pilih Batal lalu klik "Simpan →".'
     );
   }
   function finishAllGroups() {
     if (pendingFgGroups.length === 0) return;
-    if (!confirmFinish(pendingFgGroups.length > 1 ? `${pendingFgGroups.length} warna/lengan sekaligus` : "warna/lengan ini")) return;
+    if (!confirmFinish(pendingFgGroups)) return;
     runAction(
       "fg-all:" + selectedMrpId,
       Promise.all(pendingFgGroups.map((g) => confirmFgDone(selectedMrpId + "|" + g.warna + "|" + g.lengan, selectedMrpId, vendorId, g.warna, g.lengan)))
@@ -347,7 +356,7 @@ Kalau hanya ingin menyimpan progres, pilih Batal lalu klik "Simpan →".`
                         )}
                         {kind === "FG" && !isFgConfirmed && pendingFgGroups.length > 1 && (
                           <Button
-                            onClick={() => confirmFinish(`${g.warna} · ${g.lengan}`) && runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan))}
+                            onClick={() => confirmFinish([g]) && runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan))}
                             disabled={isPending(groupKey)}
                             variant="primary"
                             size="xs"
@@ -566,7 +575,7 @@ Kalau hanya ingin menyimpan progres, pilih Batal lalu klik "Simpan →".`
                                    trigger yang perlu diklik. */}
                                 {!isFgConfirmed && (
                                   <Button
-                                    onClick={() => confirmFinish(`${g.warna} · ${g.lengan}`) && runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan))}
+                                    onClick={() => confirmFinish([g]) && runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan))}
                                     disabled={isPending(groupKey)}
                                     title="Selesaikan Finish Good grup ini -- roll yang masih terbuka otomatis ditutup, selisih target vs FG jadi reject"
                                     variant="primary"
