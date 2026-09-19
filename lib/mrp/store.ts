@@ -29,6 +29,7 @@ import type { ParsedMrpImport } from "./parseImport";
 import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, MaterialSupplierRow, SupplierRow, VendorProduksiMasterRow } from "./masterData";
 import { localDateString } from "./derive";
 import * as rawActions from "./actions";
+import { unwrapAction } from "./action-result";
 
 // Setiap Server Action di lib/mrp/actions.ts lempar Error("Unauthorized: ...") / Error("Forbidden:
 // ...") kalau sesi login tidak valid/kedaluwarsa/salah role (lihat requireSession/
@@ -1160,7 +1161,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       productionBatches: previous.map((b) => (b.id === batchId ? { ...b, fgSizeQty, closedAt: b.closedAt ?? localDateString(new Date()) } : b)),
     });
     try {
-      await actions.closeProductionBatchAction(batchId, fgSizeQty);
+      unwrapAction(await actions.closeProductionBatchAction(batchId, fgSizeQty));
     } catch (err) {
       set({ productionBatches: previous });
       dropOptimisticResult(tmpResultId);
@@ -1176,7 +1177,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     const tmpResultId = optimisticFgLog(batchId, sizeQty);
     set({ productionBatches: previous.map((b) => (b.id === batchId ? { ...b, fgSizeQty: sizeQty } : b)) });
     try {
-      await actions.saveFgProgressAction(batchId, sizeQty);
+      unwrapAction(await actions.saveFgProgressAction(batchId, sizeQty));
     } catch (err) {
       set({ productionBatches: previous });
       dropOptimisticResult(tmpResultId);
@@ -1833,7 +1834,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       productionBatches: previous.map((b) => (idSet.has(b.id) ? { ...b, cuttingAt, sizeQty: sizeQtyByBatchId[b.id] ?? b.sizeQty } : b)),
     });
     try {
-      await actions.updateBatchesToCuttingAction(batchIds, cuttingAt, sizeQtyByBatchId);
+      unwrapAction(await actions.updateBatchesToCuttingAction(batchIds, cuttingAt, sizeQtyByBatchId));
     } catch (err) {
       set({ productionBatches: previous });
       window.alert("Gagal menyimpan hasil cutting -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
@@ -1942,7 +1943,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // untuk data paling sensitif (reject/HPP). Tombolnya TETAP menunjukkan status berjalan ("Menyimpan…")
   // di komponennya (production-result-panel.tsx/production-final-tab.tsx) -- keputusan disengaja.
   confirmFgDone: async (groupKey, mrpId, vendorProduksi, warna, lengan) => {
-    await actions.confirmFgDoneAction(groupKey, mrpId, vendorProduksi, warna, lengan);
+    unwrapAction(await actions.confirmFgDoneAction(groupKey, mrpId, vendorProduksi, warna, lengan));
     backgroundRefresh();
   },
   // Optimistic PATCH -- kebalikan confirmFgDone, tapi di sini cuma perlu MENGOSONGKAN
@@ -1953,7 +1954,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     const previous = get().productionGroupMeta;
     set({ productionGroupMeta: previous.map((m) => (m.groupKey === groupKey ? { ...m, fgConfirmedAt: undefined } : m)) });
     try {
-      await actions.undoFgConfirmAction(groupKey);
+      unwrapAction(await actions.undoFgConfirmAction(groupKey));
     } catch (err) {
       set({ productionGroupMeta: previous });
       window.alert("Gagal membuka kunci Finish Good -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));

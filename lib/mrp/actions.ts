@@ -17,6 +17,16 @@
 // komentar di masing-masing fungsi kalau ada penyesuaian dari bentuk aslinya.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { ActionResult } from "./action-result";
+
+/** Bungkus aksi supaya alasan gagalnya sampai ke user di production (lihat action-result.ts). */
+async function toActionResult<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
+  try {
+    return { ok: true, data: await fn() };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
 import { requireSession, requireInternalRole, requireAnyInternalRole } from "../auth/session";
 import { supabaseServer } from "../supabase/server";
 import { nextReadableId, nextPoDisplayId } from "./repo/ids";
@@ -1851,6 +1861,22 @@ export async function updateBatchesToCuttingAction(
   batchIds: string[],
   cuttingAt: string,
   sizeQtyByBatchId: Record<string, Record<string, number>>
+): Promise<ActionResult<{ batchId: string; cuttingAt: string; sizeQty?: Record<string, number> }[]>> {
+  // Revisi 2026-09-19: di production Next.js MENYEMBUNYIKAN pesan Error yang di-throw Server Action
+  // (klien hanya menerima "Minified React error #441" -- alasan sebenarnya, mis. 'grup sudah Selesai
+  // Produksi', tidak pernah sampai ke user). Makanya alasan penolakan dikembalikan sebagai nilai
+  // ({ ok: false, error }) dan store yang melempar ulang di sisi klien.
+  try {
+    return { ok: true, data: await updateBatchesToCuttingImpl(batchIds, cuttingAt, sizeQtyByBatchId) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function updateBatchesToCuttingImpl(
+  batchIds: string[],
+  cuttingAt: string,
+  sizeQtyByBatchId: Record<string, Record<string, number>>
 ): Promise<{ batchId: string; cuttingAt: string; sizeQty?: Record<string, number> }[]> {
   await requireVendorSession();
   if (batchIds.length === 0) return [];
@@ -1864,16 +1890,23 @@ export async function updateBatchesToCuttingAction(
     .in("id", batchIds);
   if (batchErr) throw new Error(batchErr.message);
   if (!batchRows || batchRows.length !== batchIds.length) throw new Error("Sebagian roll tidak ditemukan.");
-  const groupKeys = new Set(batchRows.map((b) => `${b.mrp_id}|${b.warna}|${b.lengan}`));
-  if (groupKeys.size > 1) throw new Error("Semua roll yang disimpan sekaligus harus dari grup warna/lengan yang sama.");
-  const first = batchRows[0];
-  const groupKey = `${first.mrp_id}|${first.warna}|${first.lengan}`;
+  // Revisi 2026-09-19 (bug: "tidak bisa input hasil cutting"): modal Input Hasil Cutting bekerja
+  // per SESI RESTING (kode aduan + lengan + jam resting, lihat restingSessionGroups) -- 1 sesi
+  // bisa berisi roll dari BEBERAPA warna (mis. ORANGE BATA + TOFFEE), artinya beberapa grup
+  // warna/lengan. Dulu di sini semua roll WAJIB 1 grup, jadi sesi multi-warna SELALU ditolak.
+  // Sekarang tiap grup divalidasi (gate "Selesai Produksi") & dihitung ulang rejectnya sendiri-sendiri.
+  const groups = new Map<string, { mrp_id: string; vendor_produksi: string; warna: string; lengan: string }>();
+  for (const b of batchRows) groups.set(`${b.mrp_id}|${b.warna}|${b.lengan}`, b);
 
-  const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).maybeSingle();
-  if (meta?.done_at) {
-    throw new Error(
-      `Grup ${first.warna} · ${first.lengan} sudah "Selesai Produksi" (Final Produksi) -- hasil cutting tidak bisa diedit lagi. Buka kunci dulu di tab Final Produksi ("Buka kunci ↺") kalau memang masih ada roll baru untuk warna/lengan ini yang perlu diproses.`
-    );
+  const metaByGroup = new Map<string, { fg_confirmed_at: string | null; done_at: string | null }>();
+  for (const [groupKey, g] of groups) {
+    const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).maybeSingle();
+    if (meta?.done_at) {
+      throw new Error(
+        `Grup ${g.warna} · ${g.lengan} sudah "Selesai Produksi" (Final Produksi) -- hasil cutting tidak bisa diedit lagi. Buka kunci dulu di tab Final Produksi ("Buka kunci ↺") kalau memang masih ada roll baru untuk warna/lengan ini yang perlu diproses.`
+      );
+    }
+    if (meta) metaByGroup.set(groupKey, meta);
   }
 
   // 1 UPDATE untuk SEMUA batchId sekaligus (cuttingAt seragam untuk 1 grup, lihat komentar
@@ -1900,8 +1933,10 @@ export async function updateBatchesToCuttingAction(
 
   // recomputeAutoRejectForGroup 1x untuk groupKey ini (bukan N kali seperti kalau ini dipanggil
   // lewat loop versi single) -- fungsi ini SUDAH ada & dipakai versi single, reuse apa adanya.
-  if (meta?.fg_confirmed_at && !meta.done_at) {
-    await recomputeAutoRejectForGroup(db, groupKey, first.mrp_id, first.vendor_produksi, first.warna, first.lengan as Lengan);
+  for (const [groupKey, g] of groups) {
+    if (metaByGroup.get(groupKey)?.fg_confirmed_at) {
+      await recomputeAutoRejectForGroup(db, groupKey, g.mrp_id, g.vendor_produksi, g.warna, g.lengan as Lengan);
+    }
   }
 
   return results;
@@ -3187,7 +3222,11 @@ async function logFgProgressDelta(
  *  lama yang baca pool production_results (tab Reject/Rework, badge, "Selesai Produksi" tahap 1/2,
  *  Pengiriman Rework) tetap jalan tanpa disentuh sama sekali. Lihat plan HPP per roll untuk desain
  *  lengkap. */
-export async function closeProductionBatchAction(batchId: string, fgSizeQty: Record<string, number>): Promise<void> {
+export async function closeProductionBatchAction(batchId: string, fgSizeQty: Record<string, number>): Promise<ActionResult<void>> {
+  return toActionResult(() => closeProductionBatchImpl(batchId, fgSizeQty));
+}
+
+async function closeProductionBatchImpl(batchId: string, fgSizeQty: Record<string, number>): Promise<void> {
   await requireVendorSession();
   const db = supabaseServer();
   const { data: batch } = await db
@@ -3260,7 +3299,11 @@ async function autoCloseOpenBatchesForGroup(db: SupabaseClient, groupBatches: Pr
  *  dikerjakan, progres hari-hari sebelumnya tidak pernah benar2 tersimpan. Sekarang tersimpan ke
  *  production_batch_fg_sizes betulan, dibaca lagi sebagai draft awal begitu grup dibuka ulang
  *  (lihat production-result-panel.tsx). */
-export async function saveFgProgressAction(batchId: string, sizeQty: Record<string, number>): Promise<void> {
+export async function saveFgProgressAction(batchId: string, sizeQty: Record<string, number>): Promise<ActionResult<void>> {
+  return toActionResult(() => saveFgProgressImpl(batchId, sizeQty));
+}
+
+async function saveFgProgressImpl(batchId: string, sizeQty: Record<string, number>): Promise<void> {
   await requireVendorSession();
   const db = supabaseServer();
   const { data: batch } = await db
@@ -3605,7 +3648,11 @@ async function recomputeAutoRejectForGroup(
  *  seharusnya 2). Grup TANPA batch cutting sama sekali (murni grup TUJUAN rework lintas lengan,
  *  lihat warnaLenganGroupsWithFg) baseline-nya memang kosong -- itu SAH, reject 0, tetap boleh
  *  confirm. */
-export async function confirmFgDoneAction(groupKey: string, mrpId: string, vendorProduksi: string, warna: string, lengan: Lengan): Promise<void> {
+export async function confirmFgDoneAction(groupKey: string, mrpId: string, vendorProduksi: string, warna: string, lengan: Lengan): Promise<ActionResult<void>> {
+  return toActionResult(() => confirmFgDoneImpl(groupKey, mrpId, vendorProduksi, warna, lengan));
+}
+
+async function confirmFgDoneImpl(groupKey: string, mrpId: string, vendorProduksi: string, warna: string, lengan: Lengan): Promise<void> {
   await requireVendorSession();
   const db = supabaseServer();
   const scope = await fetchProductionScopeForMrp(db, mrpId, vendorProduksi);
@@ -3645,10 +3692,14 @@ export async function confirmFgDoneAction(groupKey: string, mrpId: string, vendo
  *  (undoProductionGroupDoneAction) sebelum bisa buka tahap 1; atau (b) reject hasil hitungan di
  *  sini SUDAH SEMPAT dirework/dibuang -- membuka lagi bisa bikin data reject/rework tidak
  *  konsisten (deduksi rework tanpa reject dasar yang jelas), jadi diblokir sebagai pengaman. */
-export async function undoFgConfirmAction(groupKey: string): Promise<void> {
+export async function undoFgConfirmAction(groupKey: string): Promise<ActionResult<void>> {
+  return toActionResult(() => undoFgConfirmImpl(groupKey));
+}
+
+async function undoFgConfirmImpl(groupKey: string): Promise<void> {
   await requireVendorSession();
   const db = supabaseServer();
-  const { data: meta } = await db.from("production_group_meta").select("done_at").eq("group_key", groupKey).maybeSingle();
+  const { data: meta } = await db.from("production_group_meta").select("done_at,fg_confirmed_at").eq("group_key", groupKey).maybeSingle();
   if (meta?.done_at) {
     throw new Error('Grup ini sudah "Selesai Produksi" di tab Final Produksi -- buka kunci itu dulu sebelum bisa buka kunci Finish Good.');
   }
@@ -3671,6 +3722,34 @@ export async function undoFgConfirmAction(groupKey: string): Promise<void> {
     await db.from("production_results").delete().in("id", oldAutoRejects.map((r) => r.id));
   }
   await db.from("production_group_meta").update({ fg_confirmed_at: null }).eq("group_key", groupKey);
+
+  // Revisi 2026-09-19 (bug: "klik Selesai Produksi salah / Buka kunci, roll tetap tertutup, tidak bisa
+  // input lagi"): confirmFgDoneAction menutup SEMUA roll yang masih terbuka (autoCloseOpenBatchesForGroup),
+  // tapi dulu "Buka kunci" cuma menghapus fg_confirmed_at -- roll-rollnya tetap tertutup selamanya
+  // ("Semua roll grup ini sudah tertutup", form input FG hilang, tidak ada jalan membukanya lagi).
+  // Sekarang roll yang ditutup pada tanggal konfirmasi itu ikut dibuka lagi, KECUALI yang sudah masuk
+  // koli pengiriman (FG-nya sudah terkirim, tidak boleh dibuka lagi). FG yang sudah tersimpan tetap utuh.
+  if (meta?.fg_confirmed_at) {
+    const [mrpId, warna, lengan] = groupKey.split("|");
+    const day = String(meta.fg_confirmed_at).slice(0, 10);
+    const { data: closedRolls } = await db
+      .from("production_batches")
+      .select("id,closed_at")
+      .eq("mrp_id", mrpId)
+      .eq("warna", warna)
+      .eq("lengan", lengan)
+      .not("closed_at", "is", null);
+    const candidateIds = (closedRolls ?? []).filter((b) => String(b.closed_at).slice(0, 10) === day).map((b) => b.id);
+    if (candidateIds.length > 0) {
+      const { data: shipped } = await db.from("delivery_koli_items").select("source_batch_id").in("source_batch_id", candidateIds);
+      const shippedIds = new Set((shipped ?? []).map((r) => r.source_batch_id));
+      const reopenIds = candidateIds.filter((id) => !shippedIds.has(id));
+      if (reopenIds.length > 0) {
+        const { error: reopenErr } = await db.from("production_batches").update({ closed_at: null }).in("id", reopenIds);
+        if (reopenErr) throw new Error(reopenErr.message);
+      }
+    }
+  }
 }
 
 /** TAHAP 2 dari 2 -- diklik dari tab FINAL PRODUKSI, SETELAH rework/buang ke sisa (kalau ada)

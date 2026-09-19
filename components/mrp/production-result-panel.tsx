@@ -139,14 +139,21 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
     kind === "FG" && selectedMrpId
       ? groups.filter((g) => !productionGroupMetaFor(selectedMrpId + "|" + g.warna + "|" + g.lengan, productionGroupMeta)?.fgConfirmedAt)
       : [];
+  // Revisi 2026-09-19 (bug: "klik Simpan langsung tutup roll, tidak bisa input lagi"): "Selesai
+  // Produksi" menutup SEMUA roll yang masih terbuka & selisih target-vs-FG langsung jadi reject --
+  // tombolnya sebelumnya bisa terklik tanpa konfirmasi (dekat tombol Simpan). Sekarang selalu tanya dulu.
+  function confirmFinish(scope: string) {
+    return window.confirm(
+      `Selesaikan Finish Good ${scope}?
+
+Semua roll yang masih terbuka akan DITUTUP dan qty yang belum terpenuhi dihitung sebagai reject.
+
+Kalau hanya ingin menyimpan progres, pilih Batal lalu klik "Simpan →".`
+    );
+  }
   function finishAllGroups() {
     if (pendingFgGroups.length === 0) return;
-    if (
-      pendingFgGroups.length > 1 &&
-      !window.confirm(`Selesaikan produksi ${pendingFgGroups.length} warna/lengan sekaligus? Roll yang masih terbuka otomatis ditutup & selisihnya jadi reject (bisa dibuka kunci lagi per baris).`)
-    ) {
-      return;
-    }
+    if (!confirmFinish(pendingFgGroups.length > 1 ? `${pendingFgGroups.length} warna/lengan sekaligus` : "warna/lengan ini")) return;
     runAction(
       "fg-all:" + selectedMrpId,
       Promise.all(pendingFgGroups.map((g) => confirmFgDone(selectedMrpId + "|" + g.warna + "|" + g.lengan, selectedMrpId, vendorId, g.warna, g.lengan)))
@@ -340,7 +347,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                         )}
                         {kind === "FG" && !isFgConfirmed && pendingFgGroups.length > 1 && (
                           <Button
-                            onClick={() => runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan))}
+                            onClick={() => confirmFinish(`${g.warna} · ${g.lengan}`) && runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan))}
                             disabled={isPending(groupKey)}
                             variant="primary"
                             size="xs"
@@ -559,7 +566,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                    trigger yang perlu diklik. */}
                                 {!isFgConfirmed && (
                                   <Button
-                                    onClick={() => runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan))}
+                                    onClick={() => confirmFinish(`${g.warna} · ${g.lengan}`) && runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan))}
                                     disabled={isPending(groupKey)}
                                     title="Selesaikan Finish Good grup ini -- roll yang masih terbuka otomatis ditutup, selisih target vs FG jadi reject"
                                     variant="primary"
