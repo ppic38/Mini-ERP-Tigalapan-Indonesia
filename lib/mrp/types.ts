@@ -343,6 +343,9 @@ export type ProductionBatch = {
   cuttingAt?: string;
   createdAt: string;
   codeRoll?: string;
+  /** Revisi 2026-09-19 (migration 0048): isian "Setting" kain per roll (mis. lebar / heat setting),
+   *  diisi vendor di list roll sebelum Resting. Opsional. */
+  setting?: string;
   /** Hasil aduan AKTUAL (qty per size) dari roll ini, dicatat vendor saat "Update ke Cutting" —
    *  kosong kalau belum diisi (batch lama sebelum fitur ini ada, atau memang belum diinput).
    *  Dipakai untuk target/yield per roll (lihat productionYieldAlertsList di derive.ts), BUKAN

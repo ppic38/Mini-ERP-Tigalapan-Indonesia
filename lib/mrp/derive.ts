@@ -1415,28 +1415,108 @@ export function receivedRollCountForColor(mrpId: string, vendorProduksi: string,
  *  tidak sinkron dengan itu — bisa menampilkan mis. 2 roll tersedia padahal cuma 1 yang punya
  *  code roll untuk dipilih, sehingga baris ke-2 yang ditambah user (dropdown code roll-nya kosong)
  *  gagal tersimpan diam-diam saat "Resting" diklik. */
-function receivedRollCountWithCodeForColor(mrpId: string, vendorProduksi: string, warna: string, lengan: Lengan, invoices: RawMaterialInvoice[]): number {
+function receivedRollCountWithCodeForColor(
+  mrpId: string,
+  vendorProduksi: string,
+  warna: string,
+  lengan: Lengan,
+  invoices: RawMaterialInvoice[],
+  lockedKeys: Set<string> = new Set()
+): number {
+  // Revisi 2026-09-19 (alur Cutting baru, owner): roll TIDAK lagi harus ditimbang/dikonfirmasi dulu
+  // sebelum bisa dipilih -- begitu Good Receive menandai roll diterima (dan punya code roll) roll
+  // langsung masuk pool pemilihan aduan pola; berat bersih baru diinput di list roll saat Resting.
+  // Yang tetap dikecualikan: roll yang terkunci klaim (lockedKeys, lihat lockedClaimKeys).
   const key = warna + "|" + lengan;
   let count = 0;
   for (const i of invoices) {
     if (i.mrpId !== mrpId || i.destinationVendor !== vendorProduksi) continue;
-    const colorEntry = i.colorEntries.find((c) => c.warna === warna && c.lengan === lengan);
     const receipts = i.rollReceipts[key] ?? [];
-    receipts.forEach((r, idx) => {
-      if (!r || !r.codeRoll) return;
-      // Roll dengan klaim selisih berat AKTIF (kurang dari toleransi & belum ditimbang ulang
-      // sampai sesuai — lihat requestMaterialClaimRetur) sengaja TIDAK dihitung tersedia untuk
-      // dipotong, supaya material bermasalah tidak terpakai produksi sebelum retur ke supplier
-      // selesai. Item 4: cuma yang `claimable` (lebih RINGAN) yang mengunci — roll yang lebih
-      // BERAT dari invoice tetap dihitung tersedia. Item 13: roll juga harus sudah "Konfirmasi"
-      // (weighConfirmedAt) sebelum dihitung tersedia untuk Resting.
-      const grossKg = colorEntry?.rolls[idx];
-      if (grossKg !== undefined && weightVariance(grossKg, r.netKg).claimable) return;
-      if (!r.weighConfirmedAt) return;
+    (i.rollArrivals[key] ?? []).forEach((a, idx) => {
+      if (!a) return;
+      const code = receipts[idx]?.codeRoll ?? a.codeRoll;
+      if (!code) return;
+      if (lockedKeys.has(i.id + "|" + key + "|" + idx)) return;
       count++;
     });
   }
   return count;
+}
+
+/** Key klaim (`invoiceId|warna|lengan|rollIndex`) roll yang SEDANG TERKUNCI klaim -- klaim aktif
+ *  (berat/fisik) yang belum "diterima roll penggantinya" (RETUR_DITERIMA, boleh dipakai lagi setelah
+ *  ditimbang ulang) DAN klaim yang sudah SELESAI (roll lama digantikan invoice baru). Roll di set ini
+ *  tidak boleh muncul di pilihan Resting. */
+export function lockedClaimKeys(invoices: RawMaterialInvoice[], claimDicts: ClaimResolutionDicts = {}): Set<string> {
+  const { resolutions = {}, returRequests = {}, returDeliveries = {}, returReceipts = {} } = claimDicts;
+  const out = new Set<string>();
+  for (const c of materialClaimsList(invoices)) {
+    if (materialClaimStage(c.key, resolutions, returRequests, returDeliveries, returReceipts) !== "RETUR_DITERIMA") out.add(c.key);
+  }
+  return out;
+}
+
+/** Roll yang BISA dimasukkan ke list Resting: sudah diterima (Good Receive) + punya code roll + belum
+ *  dipakai ProductionBatch manapun + tidak terkunci klaim. `netKg` terisi kalau roll pernah ditimbang
+ *  (mis. roll pengganti klaim yang sedang ditimbang ulang). */
+export type RestingCandidateRoll = {
+  invoiceId: string;
+  poId: string;
+  warna: string;
+  lengan: Lengan;
+  rollIndex: number;
+  grossKg: number;
+  codeRoll: string;
+  codeLot?: string;
+  netKg?: number;
+  /** Roll pengganti klaim yang sudah diterima -- perlu ditimbang ulang (klaim lama ditutup saat disimpan). */
+  isReplacement: boolean;
+  claimKey: string;
+};
+
+export function restingCandidateRolls(
+  mrpId: string,
+  vendorId: string,
+  invoices: RawMaterialInvoice[],
+  batches: ProductionBatch[],
+  lockedKeys: Set<string> = new Set()
+): RestingCandidateRoll[] {
+  const activeClaimKeys = new Set(materialClaimsList(invoices).map((c) => c.key));
+  const out: RestingCandidateRoll[] = [];
+  for (const inv of invoices) {
+    if (inv.mrpId !== mrpId || inv.destinationVendor !== vendorId) continue;
+    for (const c of inv.colorEntries) {
+      const key = c.warna + "|" + c.lengan;
+      const receipts = inv.rollReceipts[key] ?? [];
+      const arrivals = inv.rollArrivals[key] ?? [];
+      const used = new Set(
+        batches.filter((b) => b.mrpId === mrpId && b.vendorProduksi === vendorId && b.warna === c.warna && b.lengan === c.lengan && b.codeRoll).map((b) => b.codeRoll!)
+      );
+      c.rolls.forEach((grossKg, idx) => {
+        const a = arrivals[idx];
+        if (!a) return;
+        const receipt = receipts[idx];
+        const code = receipt?.codeRoll ?? a.codeRoll;
+        if (!code || used.has(code)) return;
+        const claimKey = inv.id + "|" + key + "|" + idx;
+        if (lockedKeys.has(claimKey)) return;
+        out.push({
+          invoiceId: inv.id,
+          poId: inv.poId,
+          warna: c.warna,
+          lengan: c.lengan,
+          rollIndex: idx,
+          grossKg,
+          codeRoll: code,
+          codeLot: receipt?.codeLot ?? a.codeLot,
+          netKg: receipt?.netKg,
+          isReplacement: activeClaimKeys.has(claimKey),
+          claimKey,
+        });
+      });
+    }
+  }
+  return out;
 }
 
 /** True kalau SEMUA roll (di semua warna/lengan) & semua add-buy dari invoice ini sudah
@@ -1736,40 +1816,13 @@ export function pendingWeighRollsCount(
   mrpId?: string,
   claimDicts: ClaimResolutionDicts = {}
 ): number {
-  const { resolutions = {}, returRequests = {}, returDeliveries = {}, returReceipts = {} } = claimDicts;
-  const activeClaimKeys = new Set(materialClaimsList(invoices).map((c) => c.key));
+  // Revisi 2026-09-19 (alur Cutting baru): nama fungsi dipertahankan (dipakai badge sidebar/tab
+  // Cutting di lib/shell/badges.ts), tapi artinya sekarang "roll yang sudah diterima & siap dimasukkan
+  // ke Resting" -- tidak ada lagi tahap timbang terpisah sebelum itu.
+  const locked = lockedClaimKeys(invoices, claimDicts);
+  const mrpIds = new Set(invoices.filter((i) => i.destinationVendor === vendorId && (!mrpId || i.mrpId === mrpId)).map((i) => i.mrpId));
   let count = 0;
-  for (const inv of invoices) {
-    if (inv.destinationVendor !== vendorId) continue;
-    if (mrpId && inv.mrpId !== mrpId) continue;
-    for (const c of inv.colorEntries) {
-      const key = c.warna + "|" + c.lengan;
-      const arrivals = inv.rollArrivals[key] ?? [];
-      const receipts = inv.rollReceipts[key] ?? [];
-      const usedCodeRolls = new Set(
-        batches.filter((b) => b.mrpId === inv.mrpId && b.vendorProduksi === vendorId && b.warna === c.warna && b.lengan === c.lengan && b.codeRoll).map((b) => b.codeRoll!)
-      );
-      c.rolls.forEach((_grossKg, idx) => {
-        const arrival = arrivals[idx];
-        const receipt = receipts[idx];
-        const claimKey = `${inv.id}|${key}|${idx}`;
-        if (!arrival) return;
-        if (!receipt) {
-          count++;
-          return;
-        }
-        if (activeClaimKeys.has(claimKey)) {
-          // Sinkron dgn pendingWeighRolls di atas -- klaim yang sudah SELESAI (mis. sudah
-          // dibuatkan PV pengganti) berhenti dihitung SAMA SEKALI (roll lama ini sudah "diganti"
-          // & tidak lagi muncul di weighedUnconfirmedRolls/pendingWeighRolls manapun), supaya
-          // badge tidak nyala terus untuk roll yang sudah tidak ada di daftar mana pun.
-          if (materialClaimStage(claimKey, resolutions, returRequests, returDeliveries, returReceipts) !== "SELESAI") count++;
-          return;
-        }
-        if (!receipt.weighConfirmedAt && !(receipt.codeRoll && usedCodeRolls.has(receipt.codeRoll))) count++;
-      });
-    }
-  }
+  for (const id of mrpIds) count += restingCandidateRolls(id, vendorId, invoices, batches, locked).length;
   return count;
 }
 
@@ -1788,13 +1841,19 @@ export function startedRollsForAduan(aduanRowId: string, batches: ProductionBatc
  *  ini, 3 baris dengan qtyRoll 1/2/1 dari pool 3 roll bisa sama-sama tampil "tersedia" penuh dan
  *  jumlahnya 4, bukan 3. Sekarang pool dialokasikan BERURUTAN sesuai urutan baris (array order),
  *  jadi total gabungan selalu pas dengan roll yang benar-benar ada. */
-export function availableRollsByAduanRow(aduanRows: AduanPolaRow[], invoices: RawMaterialInvoice[], batches: ProductionBatch[], mrpId: string): Record<string, number> {
+export function availableRollsByAduanRow(
+  aduanRows: AduanPolaRow[],
+  invoices: RawMaterialInvoice[],
+  batches: ProductionBatch[],
+  mrpId: string,
+  lockedKeys: Set<string> = new Set()
+): Record<string, number> {
   const poolByColor = new Map<string, number>();
   const out: Record<string, number> = {};
   for (const row of aduanRows) {
     const colorKey = row.vendor + "|" + row.warna + "|" + row.lengan;
     if (!poolByColor.has(colorKey)) {
-      const received = receivedRollCountWithCodeForColor(mrpId, row.vendor, row.warna, row.lengan, invoices);
+      const received = receivedRollCountWithCodeForColor(mrpId, row.vendor, row.warna, row.lengan, invoices, lockedKeys);
       const sameColorRows = aduanRows.filter((a) => a.vendor === row.vendor && a.warna === row.warna && a.lengan === row.lengan);
       const startedForColor = sameColorRows.reduce((s, r) => s + startedRollsForAduan(r.id, batches), 0);
       poolByColor.set(colorKey, Math.max(0, received - startedForColor));
@@ -1827,28 +1886,12 @@ export function availableCodeRollsForColor(
   lengan: Lengan,
   vendorId: string,
   invoices: RawMaterialInvoice[],
-  batches: ProductionBatch[]
+  batches: ProductionBatch[],
+  lockedKeys: Set<string> = new Set()
 ): string[] {
-  const key = warna + "|" + lengan;
-  const received: string[] = [];
-  for (const inv of invoices) {
-    if (inv.mrpId !== mrpId || inv.destinationVendor !== vendorId) continue;
-    const colorEntry = inv.colorEntries.find((c) => c.warna === warna && c.lengan === lengan);
-    (inv.rollReceipts[key] ?? []).forEach((r, idx) => {
-      if (!r || !r.codeRoll) return;
-      // Sama seperti receivedRollCountWithCodeForColor — roll dengan klaim aktif (lebih RINGAN
-      // dari toleransi, item 4) tidak boleh muncul sebagai code roll yang bisa dipilih untuk
-      // Resting/Cutting, dan roll juga harus sudah "Konfirmasi" (item 13).
-      const grossKg = colorEntry?.rolls[idx];
-      if (grossKg !== undefined && weightVariance(grossKg, r.netKg).claimable) return;
-      if (!r.weighConfirmedAt) return;
-      received.push(r.codeRoll!);
-    });
-  }
-  const used = new Set(
-    batches.filter((b) => b.mrpId === mrpId && b.vendorProduksi === vendorId && b.warna === warna && b.lengan === lengan && b.codeRoll).map((b) => b.codeRoll!)
-  );
-  return received.filter((c) => !used.has(c));
+  return restingCandidateRolls(mrpId, vendorId, invoices, batches, lockedKeys)
+    .filter((r) => r.warna === warna && r.lengan === lengan)
+    .map((r) => r.codeRoll);
 }
 
 export function formatDateTime(iso?: string): string {

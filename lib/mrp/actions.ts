@@ -1301,6 +1301,8 @@ export async function markRollArrivedAction(invoiceId: string, warna: string, le
   const vendorId = await requireVendorSession();
   const db = supabaseServer();
   const colorId = `${invoiceId}-${warna}-${lengan}`;
+  // Revisi 2026-09-19: code roll WAJIB terisi (jaring pengaman selain tombol UI yang sudah disabled).
+  if (!codeRoll?.trim()) throw new Error("Code roll wajib diisi sebelum roll diterima.");
   // Item revisi 2026-09-08: TIDAK LAGI menyentuh code_lot di sini -- sejak kode lot diinput
   // Procurement saat Paying Voucher (bookInvoiceAction), bukan lagi di-generate random vendor di
   // Good Receive, roll ini SUDAH punya code_lot dari awal (atau memang kosong untuk invoice lama
@@ -1334,6 +1336,7 @@ export async function receiveMaterialBatchAction(
   const db = supabaseServer();
   const colorId = `${invoiceId}-${warna}-${lengan}`;
   const receivedAt = today();
+  if (rolls.some((r) => !r.codeRoll?.trim())) throw new Error("Code roll wajib diisi untuk semua roll yang diterima.");
   const results = await Promise.all(
     rolls.map((r) =>
       db.from("raw_material_invoice_rolls").update({ received_at: receivedAt, code_roll: r.codeRoll ?? null }).eq("invoice_color_id", colorId).eq("roll_index", r.rollIndex)
@@ -1649,6 +1652,98 @@ export async function submitCuttingDefectClaimAction(
   }
 
   return { claimed, skipped };
+}
+
+/** Revisi 2026-09-19 (owner, alur Cutting baru): klaim FISIK (shading, kotor, dll) untuk roll yang
+ *  MASIH di list roll sebelum Resting -- belum menjadi ProductionBatch, jadi diidentifikasi langsung
+ *  lewat (invoiceId, warna, lengan, rollIndex), BUKAN lewat batch seperti submitCuttingDefectClaimAction.
+ *  Efek ke data SAMA: claim_defect_* di raw_material_invoice_rolls (materialClaimsList otomatis
+ *  memasukkannya, roll terkunci sampai Procurement atur retur) + foto + arsip klaim + notifikasi. */
+export async function submitRollDefectClaimAction(
+  rolls: { invoiceId: string; warna: string; lengan: Lengan; rollIndex: number; netKg: number }[],
+  note: string,
+  photo: { dataUrl: string; fileName?: string }
+): Promise<ActionResult<{ claimed: number }>> {
+  return toActionResult(() => submitRollDefectClaimImpl(rolls, note, photo));
+}
+
+async function submitRollDefectClaimImpl(
+  rolls: { invoiceId: string; warna: string; lengan: Lengan; rollIndex: number; netKg: number }[],
+  note: string,
+  photo: { dataUrl: string; fileName?: string }
+): Promise<{ claimed: number }> {
+  const vendorId = await requireVendorSession();
+  if (!note.trim()) throw new Error("Keterangan cacat wajib diisi.");
+  if (!photo.dataUrl.startsWith("data:image/")) throw new Error("Foto bukti tidak valid -- harus berupa gambar.");
+  const base64Part = photo.dataUrl.slice(photo.dataUrl.indexOf(",") + 1);
+  if (Math.floor((base64Part.length * 3) / 4) > 700 * 1024) throw new Error("Foto bukti terlalu besar -- ambil ulang dengan resolusi lebih kecil.");
+  if (rolls.length === 0) return { claimed: 0 };
+
+  const db = supabaseServer();
+  const claimedAt = nowIso();
+  let claimed = 0;
+  const invCache = new Map<string, { po_id: string | null; mrp_id: string | null; supplier: string | null; destination_vendor: string | null } | null>();
+  for (const r of rolls) {
+    if (!invCache.has(r.invoiceId)) {
+      const { data } = await db.from("raw_material_invoices").select("po_id,mrp_id,supplier,destination_vendor").eq("id", r.invoiceId).maybeSingle();
+      invCache.set(r.invoiceId, data ?? null);
+    }
+    const inv = invCache.get(r.invoiceId);
+    // Kepemilikan: hanya roll milik invoice yang ditujukan ke vendor sesi ini.
+    if (!inv || inv.destination_vendor !== vendorId) continue;
+
+    const colorId = `${r.invoiceId}-${r.warna}-${r.lengan}`;
+    const { data: rollRow } = await db.from("raw_material_invoice_rolls").select("code_roll,code_lot,gross_kg").eq("invoice_color_id", colorId).eq("roll_index", r.rollIndex).maybeSingle();
+    if (!rollRow) continue;
+
+    const claimKey = `${r.invoiceId}|${r.warna}|${r.lengan}|${r.rollIndex}`;
+    const { error: photoErr } = await db.from("material_claim_photos").upsert({
+      claim_key: claimKey,
+      invoice_id: r.invoiceId,
+      warna: r.warna,
+      lengan: r.lengan,
+      roll_index: r.rollIndex,
+      data_url: photo.dataUrl,
+      file_name: photo.fileName ?? null,
+      uploaded_at: claimedAt,
+    });
+    if (photoErr) throw new Error("Gagal menyimpan foto bukti klaim: " + photoErr.message);
+    const { error: updErr } = await db
+      .from("raw_material_invoice_rolls")
+      // net_kg WAJIB ikut terisi: materialClaimsList/snapshot hanya membentuk "receipt" (dan karenanya
+      // mengenali klaim) untuk roll yang net_kg-nya tidak null -- tanpa ini klaim fisik pada roll yang
+      // belum ditimbang tidak akan pernah kelihatan. weigh_confirmed_at dikosongkan (roll terkunci).
+      .update({ claim_defect_note: note.trim(), claim_defect_at: claimedAt, claim_photo_at: claimedAt, net_kg: r.netKg, weigh_confirmed_at: null })
+      .eq("invoice_color_id", colorId)
+      .eq("roll_index", r.rollIndex);
+    if (updErr) throw new Error("Gagal menyimpan klaim fisik: " + updErr.message);
+
+    try {
+      const historyId = await nextReadableId("MCH");
+      await db.from("material_claim_history").insert({
+        id: historyId,
+        invoice_id: r.invoiceId,
+        po_id: inv.po_id,
+        mrp_id: inv.mrp_id,
+        supplier: inv.supplier,
+        vendor_produksi: inv.destination_vendor,
+        warna: r.warna,
+        lengan: r.lengan,
+        roll_index: r.rollIndex,
+        code_roll: rollRow.code_roll ?? null,
+        code_lot: rollRow.code_lot ?? null,
+        gross_kg: rollRow.gross_kg ?? null,
+        reason: "FISIK",
+        defect_note: note.trim(),
+        claim_photo_at: claimedAt,
+      });
+    } catch {
+      // arsip opsional -- klaim utamanya sudah tersimpan di atas (pola sama submitCuttingDefectClaimAction).
+    }
+    claimed++;
+  }
+  if (claimed > 0) await insertNotification(notif(`${claimed} roll diklaim cacat fisik oleh vendor produksi -- cek Klaim Material`, ["procurement"]));
+  return { claimed };
 }
 
 /** Item 13.2: tutup tahap "timbang" -- roll yang sudah ditimbang (net_kg terisi) & TIDAK claimable
@@ -3020,10 +3115,24 @@ export async function receiveRawMaterialAddBuyAction(invoiceId: string, addBuyId
 export async function advanceMaklonProductionAction(id: string): Promise<void> {
   await requireVendorSession();
   const db = supabaseServer();
-  const { data: po } = await db.from("maklon_pos").select("status").eq("id", id).single();
+  const { data: po } = await db.from("maklon_pos").select("status,mrp_id,vendor_produksi").eq("id", id).single();
   if (!po) return;
   let next: string | null = null;
-  if (po.status === "FULL_WAITING_MATERIAL" || po.status === "PARTIAL_WAITING_MATERIAL") next = "PRODUCTION";
+  if (po.status === "FULL_WAITING_MATERIAL" || po.status === "PARTIAL_WAITING_MATERIAL") {
+    // Revisi 2026-09-19: tidak boleh lanjut ke produksi kalau ada roll yang sudah diterima tapi code rollnya kosong.
+    const { data: invs } = await db.from("raw_material_invoices").select("id").eq("mrp_id", po.mrp_id).eq("destination_vendor", po.vendor_produksi);
+    const invIds = (invs ?? []).map((i) => i.id);
+    if (invIds.length > 0) {
+      const { data: colors } = await db.from("raw_material_invoice_colors").select("id").in("invoice_id", invIds);
+      const colorIds = (colors ?? []).map((c) => c.id);
+      if (colorIds.length > 0) {
+        const { data: rolls } = await db.from("raw_material_invoice_rolls").select("code_roll").in("invoice_color_id", colorIds).not("received_at", "is", null);
+        const missing = (rolls ?? []).filter((r) => !r.code_roll || !String(r.code_roll).trim()).length;
+        if (missing > 0) throw new Error(`Belum bisa mulai produksi: ${missing} roll yang sudah diterima belum punya code roll.`);
+      }
+    }
+    next = "PRODUCTION";
+  }
   else if (po.status === "PRODUCTION") next = "DELIVERY";
   if (next) await db.from("maklon_pos").update({ status: next }).eq("id", id);
 }
@@ -3091,7 +3200,7 @@ export async function startProductionBatchAction(input: { mrpId: string; aduanRo
 export async function startProductionBatchesAction(input: {
   mrpId: string;
   restingAt: string;
-  lines: { aduanRowId: string; gramasi: number; codeRoll?: string }[];
+  lines: { aduanRowId: string; gramasi: number; codeRoll?: string; setting?: string }[];
 }): Promise<ProductionBatch[]> {
   await requireVendorSession();
   const db = supabaseServer();
@@ -3114,6 +3223,9 @@ export async function startProductionBatchesAction(input: {
       resting_at: input.restingAt,
       created_at: createdAt,
       code_roll: line.codeRoll ?? null,
+      // Kolom `setting` (migration 0048) HANYA ditulis kalau diisi -- supaya Resting tetap jalan
+      // kalau migration itu belum dijalankan dan vendor tidak mengisi Setting.
+      ...(line.setting?.trim() ? { setting: line.setting.trim() } : {}),
     });
     if (error) throw new Error(error.message);
     created.push({
@@ -3129,6 +3241,7 @@ export async function startProductionBatchesAction(input: {
       restingAt: input.restingAt,
       createdAt,
       codeRoll: line.codeRoll,
+      setting: line.setting?.trim() || undefined,
     });
   }
   return created;

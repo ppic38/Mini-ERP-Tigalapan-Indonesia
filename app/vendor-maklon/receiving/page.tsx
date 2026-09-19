@@ -20,6 +20,7 @@ import {
 } from "@/lib/mrp/derive";
 import { countGoodReceiveEligibleForMrp, pendingMarker } from "@/lib/shell/badges";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import type { Lengan } from "@/lib/mrp/types";
 
 type DraftCode = { codeRoll: string };
 
@@ -155,7 +156,8 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   function markArrived(idx: number) {
     if (!selectedInvoice || !selectedColor) return;
     const code = draftCode[idx] ?? { codeRoll: "" };
-    markRollArrived(selectedInvoice.id, selectedColor.warna, selectedColor.lengan, idx, code.codeRoll || undefined);
+    if (!code.codeRoll.trim()) return;
+    markRollArrived(selectedInvoice.id, selectedColor.warna, selectedColor.lengan, idx, code.codeRoll.trim());
   }
 
   // Revisi 2026-09-19 (owner: "tabel terima material & tabel di atasnya ter-close begitu klik Mulai
@@ -169,23 +171,50 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     advanceMaklonProduction(maklonPoId);
   }
 
-  // "Terima semua": semua roll yang belum diterima di warna·lengan terpilih + semua item tambahan
-  // invoice ini yang belum diterima -- 1 optimistic patch + 1 tulisan server (receiveMaterialBatch),
-  // jadi tidak ada N klik/N refresh berurutan yang memicu flicker.
+  // Revisi 2026-09-19 (owner: "simpan semua untuk roll dan simpan semua untuk item tambahan (Rib,
+  // Kerah, Manset) dipisah"): dulu SATU tombol "Terima semua" menerima roll warna terpilih SEKALIGUS
+  // semua item tambahan invoice ini (item tambahan dari warna-warna lain ikut tersimpan padahal
+  // user cuma mau menerima roll 1 warna). Sekarang dua aksi terpisah:
+  //   - receiveAllRolls: HANYA roll warna·lengan yang sedang dipilih;
+  //   - receiveAllAddBuys: HANYA item tambahan invoice ini (tidak menyentuh roll).
+  // Keduanya tetap 1 optimistic patch + 1 tulisan server (receiveMaterialBatch), tanpa flicker.
   const pendingRollIdx =
     selectedInvoice && selectedColor ? selectedColor.rolls.map((_, i) => i).filter((i) => !selectedInvoice.rollArrivals[selectedColorKey]?.[i]) : [];
   const pendingAddBuyIds = selectedInvoice ? selectedInvoice.addBuys.filter((b) => !selectedInvoice.addBuyReceipts[b.id]).map((b) => b.id) : [];
-  const pendingReceiveCount = pendingRollIdx.length + pendingAddBuyIds.length;
-  function receiveAll() {
-    if (!selectedInvoice || pendingReceiveCount === 0) return;
+  // Code roll WAJIB terisi sebelum roll boleh diterima (Terima / Terima semua roll).
+  const rollsMissingCode = pendingRollIdx.filter((i) => !draftCode[i]?.codeRoll?.trim());
+  function receiveAllRolls() {
+    if (!selectedInvoice || !selectedColor || pendingRollIdx.length === 0 || rollsMissingCode.length > 0) return;
     receiveMaterialBatch(
       selectedInvoice.id,
-      selectedColor?.warna ?? "",
-      selectedColor?.lengan ?? "PENDEK",
-      pendingRollIdx.map((i) => ({ rollIndex: i, codeRoll: draftCode[i]?.codeRoll || undefined })),
-      pendingAddBuyIds
+      selectedColor.warna,
+      selectedColor.lengan,
+      pendingRollIdx.map((i) => ({ rollIndex: i, codeRoll: draftCode[i]!.codeRoll.trim() })),
+      []
     );
   }
+  function receiveAllAddBuys() {
+    if (!selectedInvoice || pendingAddBuyIds.length === 0) return;
+    receiveMaterialBatch(selectedInvoice.id, "", "PENDEK", [], pendingAddBuyIds);
+  }
+
+  // Revisi 2026-09-19 (owner: "tidak bisa lanjut ke produksi kalau ada roll yang tidak diinput code
+  // rollnya"): roll yang SUDAH diterima tapi code rollnya kosong (mis. data lama) -- "Mulai Produksi"
+  // untuk MRP ini diblokir sampai semuanya punya code roll.
+  function rollsWithoutCode(mrpId: string) {
+    const out: { invoiceId: string; poId: string; warna: string; lengan: Lengan; idx: number }[] = [];
+    for (const inv of invoices) {
+      if (inv.mrpId !== mrpId || inv.destinationVendor !== vendorId) continue;
+      for (const c of inv.colorEntries) {
+        const key = c.warna + "|" + c.lengan;
+        (inv.rollArrivals[key] ?? []).forEach((a, idx) => {
+          if (a && !a.codeRoll?.trim()) out.push({ invoiceId: inv.id, poId: inv.poId, warna: c.warna, lengan: c.lengan, idx });
+        });
+      }
+    }
+    return out;
+  }
+  const [legacyCodeDraft, setLegacyCodeDraft] = useState<Record<string, string>>({});
 
   // Item revisi 2026-09-19: daftar "item diterima" untuk kartu Mulai Produksi -- dihitung dari roll
   // yang SUDAH ditandai diterima (semua invoice MRP ini ke vendor ini), dibandingkan rencana roll
@@ -479,10 +508,13 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                 <span className="font-sans text-[13px] font-semibold text-text-primary">
                   Terima Material{selectedColor ? ` — ${selectedColor.warna} · ${selectedColor.lengan}` : ""}
                 </span>
-                {pendingReceiveCount > 0 && (
-                  <Button onClick={receiveAll} variant="primary" size="xs">
-                    Terima semua ({pendingReceiveCount}) →
-                  </Button>
+                {pendingRollIdx.length > 0 && (
+                  <span className="flex items-center gap-2">
+                    {rollsMissingCode.length > 0 && <span className="font-sans text-[10.5px] text-warning-fg">{rollsMissingCode.length} roll belum diisi code roll</span>}
+                    <Button onClick={receiveAllRolls} disabled={rollsMissingCode.length > 0} variant="primary" size="xs">
+                      Terima semua roll ({pendingRollIdx.length}) →
+                    </Button>
+                  </span>
                 )}
               </div>
               <table className="w-full min-w-[820px] table-fixed border-collapse">
@@ -534,7 +566,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                                 <StatusPill tone="success">Diterima</StatusPill>
                               </>
                             ) : (
-                              <Button onClick={() => markArrived(idx)} variant="primary" size="xs">
+                              <Button onClick={() => markArrived(idx)} disabled={!code.codeRoll.trim()} variant="primary" size="xs">
                                 Terima →
                               </Button>
                             )}
@@ -547,7 +579,14 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                     <>
                       <tr className="border-b border-[#CFE0EF] bg-info-bg/60">
                         <td colSpan={5} className="px-4 py-1.5 font-sans text-[10.5px] font-semibold uppercase tracking-wider text-info-fg">
-                          Item Tambahan
+                          <span className="flex items-center justify-between gap-2">
+                            <span>Item Tambahan (Rib, Kerah, Manset)</span>
+                            {pendingAddBuyIds.length > 0 && (
+                              <Button onClick={receiveAllAddBuys} variant="primary" size="xs">
+                                Terima semua item ({pendingAddBuyIds.length}) →
+                              </Button>
+                            )}
+                          </span>
                         </td>
                       </tr>
                       {selectedInvoice.addBuys.map((b) => {
@@ -598,6 +637,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
             {readyMaklonPOs.map((p) => {
               const items = receivedItemsFor(p.mrpId);
               const estTotal = items.reduce((s, it) => s + it.estPcs, 0);
+              const noCode = rollsWithoutCode(p.mrpId);
               return (
                 <div key={p.id} className="overflow-hidden rounded-md border border-border-subtle bg-white">
                   <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
@@ -606,10 +646,41 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                       <span className="font-semibold">{formatPcs(estTotal)} pcs</span> dari bahan diterima{" "}
                       <span className="text-text-muted">(total PO {formatPcs(p.qty)} pcs)</span>
                     </span>
-                    <Button onClick={() => startProduction(p.id)} variant="primary" size="xs">
+                    <Button onClick={() => startProduction(p.id)} disabled={noCode.length > 0} variant="primary" size="xs">
                       Mulai Produksi →
                     </Button>
                   </div>
+                  {noCode.length > 0 && (
+                    <div className="border-t border-[#F0DFC2] bg-warning-bg px-3.5 py-2 font-sans text-[11px] text-warning-fg">
+                      <div className="font-semibold">Belum bisa mulai produksi — {noCode.length} roll yang sudah diterima belum punya code roll. Isi dulu:</div>
+                      <div className="mt-1.5 flex flex-col gap-1.5">
+                        {noCode.map((r) => {
+                          const k = r.invoiceId + "|" + r.warna + "|" + r.lengan + "|" + r.idx;
+                          return (
+                            <div key={k} className="flex flex-wrap items-center gap-2">
+                              <span className="min-w-[260px]">
+                                {r.warna} · {r.lengan} — Roll {r.idx + 1} <span className="font-mono text-[10px] text-text-muted">({r.poId})</span>
+                              </span>
+                              <input
+                                value={legacyCodeDraft[k] ?? ""}
+                                onChange={(e) => setLegacyCodeDraft((prev) => ({ ...prev, [k]: e.target.value }))}
+                                className="input w-[180px] text-[11px]"
+                                placeholder="Code roll"
+                              />
+                              <Button
+                                onClick={() => markRollArrived(r.invoiceId, r.warna, r.lengan, r.idx, legacyCodeDraft[k]?.trim())}
+                                disabled={!legacyCodeDraft[k]?.trim()}
+                                variant="primary"
+                                size="xs"
+                              >
+                                Simpan code
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   {items.length > 0 && (
                     <table className="w-full table-fixed border-collapse border-t border-[#CFE0EF]">
                       <thead>

@@ -709,6 +709,7 @@ export async function getFlowSnapshot(): Promise<FlowState> {
       cuttingAt: b.cutting_at ?? undefined,
       createdAt: b.created_at,
       codeRoll: b.code_roll ?? undefined,
+      setting: b.setting ?? undefined,
       sizeQty: sizeRows.length > 0 ? sizeQty : undefined,
       fgSizeQty: fgSizeRows.length > 0 ? fgSizeQty : undefined,
       closedAt: b.closed_at ?? undefined,

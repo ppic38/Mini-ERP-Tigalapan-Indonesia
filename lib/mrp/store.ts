@@ -331,10 +331,12 @@ type FlowActions = {
   /** Item 13 (feedback batch 2026-09-10): klaim fisik (shading/kotor/dll) untuk roll yang sudah
    *  masuk resting -- lihat submitCuttingDefectClaimAction. */
   submitCuttingDefectClaim: (batchIds: string[], note: string, photo: { dataUrl: string; fileName?: string }) => Promise<{ claimed: number; skipped: string[] }>;
+  /** Klaim cacat fisik untuk roll yang masih di list roll (belum jadi batch resting) -- lihat submitRollDefectClaimAction. */
+  submitRollDefectClaim: (rolls: { invoiceId: string; warna: string; lengan: Lengan; rollIndex: number; netKg: number }[], note: string, photo: { dataUrl: string; fileName?: string }) => Promise<{ claimed: number }>;
   /** PERFORMA (owner-reported, tombol "Resting" freeze): lihat startProductionBatchesAction di
    *  actions.ts -- SATU aksi untuk >=1 roll sekaligus (dulu startProductionBatch dipanggil
    *  berurutan per roll dari production-cutting-tab.tsx, sudah dihapus dari sini). */
-  startProductionBatches: (input: { mrpId: string; restingAt: string; lines: { aduanRowId: string; gramasi: number; codeRoll?: string }[] }) => Promise<void>;
+  startProductionBatches: (input: { mrpId: string; restingAt: string; lines: { aduanRowId: string; gramasi: number; codeRoll?: string; setting?: string }[] }) => Promise<void>;
   // "WASTE" SENGAJA tidak termasuk di sini -- item 19: "Buang ke Sisa" (satu-satunya jalur dulu
   // bikin entri WASTE) sudah dihapus, jadi kind di sini praktis selalu "FG"/"REJECT" saja.
   submitProductionResult: (input: { mrpId: string; vendorProduksi: string; warna: string; lengan: Lengan; kind: "FG" | "REJECT"; sizeQty: Record<string, number>; note?: string }) => Promise<void>;
@@ -1132,6 +1134,11 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // Item 13 (feedback batch 2026-09-10): klaim fisik dari roll yang sudah masuk resting -- batch-
   // nya dihapus server-side (lihat submitCuttingDefectClaimAction), jadi TIDAK optimistic (perlu
   // snapshot baru supaya "Material dalam produksi" & "Timbang roll" langsung konsisten).
+  submitRollDefectClaim: async (rolls, note, photo) => {
+    const result = unwrapAction(await actions.submitRollDefectClaimAction(rolls, note, photo));
+    backgroundRefresh();
+    return result;
+  },
   submitCuttingDefectClaim: async (batchIds, note, photo) => {
     const result = await actions.submitCuttingDefectClaimAction(batchIds, note, photo);
     backgroundRefresh();

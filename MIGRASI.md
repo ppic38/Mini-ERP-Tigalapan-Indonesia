@@ -1,5 +1,11 @@
 # Migrasi Project — Status & Riwayat
 
+## Alur Cutting baru -- migration 0048 (2026-09-19)
+Tambah kolom `production_batches.setting` (teks, opsional) untuk isian "Setting" kain per roll di List roll
+(tab Cutting vendor produksi). **Owner perlu menjalankan `supabase/migrations/0048_production_batch_setting.sql`
+manual di SQL Editor Supabase.** Kode aman kalau migration terlambat (kolom hanya ditulis saat Setting diisi),
+tapi isian Setting baru tersimpan setelah migration jalan.
+
 ## Master Data "Supplier Material" -- migration 0042 (2026-09-17)
 Owner cek langsung di Supabase: migration `0042_material_suppliers.sql` (dan file `0043` yang
 sempat ada terpisah) **BELUM PERNAH DIJALANKAN** -- tabel `material_suppliers` tidak ada sama
