@@ -228,7 +228,7 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
   const columns: ColumnDef<Row>[] = [
     { key: "supplier", label: "Supplier", default: false, render: (r) => r.suppliers },
     { key: "totalRoll", label: "Total roll PO", default: true, align: "right", render: (r) => r.totalRoll + " roll" },
-    { key: "waitingRoll", label: "Belum diinvoice", default: true, align: "right", render: (r) => (r.waitingRoll > 0 ? r.waitingRoll + " roll" : "—") },
+    { key: "waitingRoll", label: "Belum diinvoice", default: false, align: "right", render: (r) => (r.waitingRoll > 0 ? r.waitingRoll + " roll" : "—") },
     // Revisi 2026-09-19: "Qty roll receiving" (total roll yang pernah diterima) diganti "Qty roll
     // stock" = roll yang sudah diterima tapi belum dipakai produksi (rollSisa, dulunya kolom
     // "Sisa roll material" yang disembunyikan -- digabung ke sini supaya tidak dobel).
