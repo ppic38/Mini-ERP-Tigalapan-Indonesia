@@ -10,30 +10,8 @@ import { useMrpStore } from "@/lib/mrp/store";
 import { addDays, formatDate, invoiceBadge, receivedNotYetProducedRows } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { Lengan, RawMaterialInvoice } from "@/lib/mrp/types";
-// Item revisi 2026-09-06: vendor produksi sekarang bisa lihat/download bukti PV & bukti
-// pembayaran untuk PO material tujuannya sendiri -- dulu tidak ada sama sekali di halaman ini.
-// buktiPvDataUrl/buktiPvFileName sudah ada di snapshot (tidak perlu fetch tambahan); bukti
-// pembayaran TETAP fetch on-demand (getInvoicePaymentProofAction, sekarang juga mengizinkan
-// vendor tujuan invoice-nya sendiri -- lihat lib/mrp/actions.ts).
-import { getInvoicePaymentProofAction } from "@/lib/mrp/actions";
-// Revisi 2026-09-08 (bug fix popup blocked): openPreviewWindow/fillPreviewWindow -- lihat
-// catatan panjang di lib/mrp/clientFiles.ts.
-import { viewAndDownloadFile, openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
-
-async function viewPaymentProof(invoiceId: string) {
-  const win = openPreviewWindow();
-  try {
-    const proof = await getInvoicePaymentProofAction(invoiceId);
-    if (!proof) {
-      win?.close();
-      return;
-    }
-    fillPreviewWindow(win, proof.dataUrl);
-  } catch (err) {
-    win?.close();
-    throw err;
-  }
-}
+// Revisi 2026-09-19: link Bukti PV & Bukti Bayar (revisi 2026-09-06) dicabut lagi dari halaman ini
+// -- owner: vendor produksi tidak perlu melihat lampiran PV/bukti bayar di PO Material Saya.
 
 const REMARK_BY_STATUS: Record<string, string> = {
   WAITING_INVOICE: "Menunggu invoice supplier",
@@ -64,17 +42,12 @@ type InvoiceSub = {
   colorDetail: { warna: string; lengan: Lengan; roll: number }[];
   warnaLabel: string;
   roll: number;
-  rollReceiving: number;
   rollProduksi: number;
   rollSisa: number;
   status: string;
   deliveredAt?: string;
   receivedAt?: string;
   productionStart?: string;
-  buktiPvDataUrl?: string;
-  buktiPvFileName?: string;
-  buktiBayarAt?: string;
-  buktiBayarFileName?: string;
 };
 
 type PoRow = {
@@ -92,7 +65,6 @@ type Row = {
   suppliers: string;
   totalRoll: number;
   waitingRoll: number;
-  rollReceiving: number;
   rollProduksi: number;
   rollSisa: number;
   status: string;
@@ -169,18 +141,6 @@ function InvoiceListExpanded({ vendorId, group }: { vendorId: string; group: Row
                 </button>
                 {isOpen && (
                   <div className="border-t border-[#F1F4F7] px-3 py-2">
-                    <div className="mb-2 flex flex-wrap items-center gap-3 font-sans text-[11px]">
-                      {inv.buktiPvDataUrl && (
-                        <button onClick={() => viewAndDownloadFile(inv.buktiPvDataUrl!)} className="font-semibold text-action-primary underline">
-                          Bukti PV
-                        </button>
-                      )}
-                      {inv.buktiBayarAt && (
-                        <button onClick={() => viewPaymentProof(inv.invoiceId)} className="font-semibold text-action-primary underline">
-                          Bukti Bayar
-                        </button>
-                      )}
-                    </div>
                     <InvoiceCard vendorId={vendorId} inv={inv} />
                   </div>
                 )}
@@ -214,10 +174,6 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
         const key = c.warna + "|" + c.lengan;
         return (i.rollReceipts[key] ?? []).some((r) => r != null);
       });
-      const rollReceiving = i.colorEntries.reduce((sum, c) => {
-        const key = c.warna + "|" + c.lengan;
-        return sum + (i.rollReceipts[key] ?? []).filter((r) => r != null).length;
-      }, 0);
       const rollProduksi = receivedColorEntries.reduce((sum, c) => sum + (groupFor(i.mrpId, c.warna, c.lengan)?.used ?? 0), 0);
       const rollSisa = receivedColorEntries.reduce((sum, c) => sum + (groupFor(i.mrpId, c.warna, c.lengan)?.remaining ?? 0), 0);
       return {
@@ -225,17 +181,12 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
         colorDetail: i.colorEntries.map((c) => ({ warna: c.warna, lengan: c.lengan, roll: c.rolls.length })),
         warnaLabel: receivedColorEntries.length > 0 ? receivedColorEntries.map((c) => `${c.warna} · ${c.lengan}`).join(", ") : "Menunggu diterima",
         roll: i.qtyReady,
-        rollReceiving,
         rollProduksi,
         rollSisa,
         status: i.status,
         deliveredAt: i.deliveredAt,
         receivedAt: i.receivedAt,
         productionStart: i.productionStart,
-        buktiPvDataUrl: i.buktiPvDataUrl,
-        buktiPvFileName: i.buktiPvFileName,
-        buktiBayarAt: i.buktiBayarAt,
-        buktiBayarFileName: i.buktiBayarFileName,
       };
     });
     return {
@@ -265,7 +216,6 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
       suppliers: Array.from(new Set(pos.map((p) => p.supplier))).join(", "),
       totalRoll: pos.reduce((s, p) => s + p.totalRoll, 0),
       waitingRoll: pos.reduce((s, p) => s + p.waitingRoll, 0),
-      rollReceiving: allInvoices.reduce((s, x) => s + x.rollReceiving, 0),
       rollProduksi: allInvoices.reduce((s, x) => s + x.rollProduksi, 0),
       rollSisa: allInvoices.reduce((s, x) => s + x.rollSisa, 0),
       status,
@@ -279,9 +229,11 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
     { key: "supplier", label: "Supplier", default: false, render: (r) => r.suppliers },
     { key: "totalRoll", label: "Total roll PO", default: true, align: "right", render: (r) => r.totalRoll + " roll" },
     { key: "waitingRoll", label: "Belum diinvoice", default: true, align: "right", render: (r) => (r.waitingRoll > 0 ? r.waitingRoll + " roll" : "—") },
-    { key: "rollReceiving", label: "Qty roll receiving", default: true, align: "right", render: (r) => r.rollReceiving },
+    // Revisi 2026-09-19: "Qty roll receiving" (total roll yang pernah diterima) diganti "Qty roll
+    // stock" = roll yang sudah diterima tapi belum dipakai produksi (rollSisa, dulunya kolom
+    // "Sisa roll material" yang disembunyikan -- digabung ke sini supaya tidak dobel).
+    { key: "rollSisa", label: "Qty roll stock", default: true, align: "right", render: (r) => r.rollSisa },
     { key: "rollProduksi", label: "Qty roll produksi", default: true, align: "right", render: (r) => r.rollProduksi },
-    { key: "rollSisa", label: "Sisa roll material", default: false, align: "right", render: (r) => r.rollSisa },
     {
       key: "status",
       label: "Status",
