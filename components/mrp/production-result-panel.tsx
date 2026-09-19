@@ -311,7 +311,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                         <span className="font-medium">
                           {g.warna} · {g.lengan}
                         </span>
-                        {isFgConfirmed && <StatusPill tone="success">FG Selesai</StatusPill>}
+                        {isFgConfirmed && <StatusPill tone="success">Finish Good Selesai</StatusPill>}
                         {isFinalDone && <StatusPill tone="success">Final</StatusPill>}
                       </span>
                       {kind === "REJECT" ? (
@@ -338,7 +338,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                             </div>
                             {!!fgSplit?.rework && (
                               <span className="font-mono text-[10px] text-text-muted">
-                                ({fgSplit.murni} murni + {fgSplit.rework} dari rework)
+                                ({fgSplit.murni} Finish Good Saja + {fgSplit.rework} dari rework)
                               </span>
                             )}
                           </div>
@@ -688,7 +688,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                   <span className="text-right font-mono">{target[size] ?? 0}</span>
                                   <span className="text-right font-mono font-semibold">{total}</span>
                                   <span className="text-right font-mono text-[11px] text-text-muted">
-                                    {total - rw} murni{rw > 0 ? ` + ${rw} rework` : ""}
+                                    {total - rw} Finish Good Saja{rw > 0 ? ` + ${rw} rework` : ""}
                                   </span>
                                 </div>
                               );

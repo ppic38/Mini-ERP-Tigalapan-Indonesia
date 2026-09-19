@@ -234,7 +234,7 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
                 <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-[13px] font-sans text-xs text-[#31414F]">
                   <span className="flex min-w-[160px] items-center gap-1.5 font-medium">
                     {g.warna} · {g.lengan}
-                    {isFgConfirmed && <StatusPill tone="success">FG Selesai</StatusPill>}
+                    {isFgConfirmed && <StatusPill tone="success">Finish Good Selesai</StatusPill>}
                     {isDone && <StatusPill tone="success">Final</StatusPill>}
                   </span>
                   <div className="flex min-w-[170px] flex-col gap-1">
@@ -249,7 +249,7 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
                     </div>
                     {fgSplit.rework > 0 && (
                       <span className="font-mono text-[10px] text-text-muted">
-                        {fgSplit.murni} murni + {fgSplit.rework} dari rework
+                        {fgSplit.murni} Finish Good Saja + {fgSplit.rework} dari rework
                       </span>
                     )}
                     {plannedPcs > 0 && <span className="font-mono text-[10px] text-text-muted">Rencana MRP: {plannedPcs} pcs</span>}
