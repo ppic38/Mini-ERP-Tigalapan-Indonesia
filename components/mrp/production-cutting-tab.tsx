@@ -958,7 +958,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
 
                   <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Code roll terpilih (bisa disesuaikan)</div>
                   <div className="mt-1.5 flex flex-col gap-1.5">
-                    {pickCandidates.map((c) => {
+                    {/* Hanya roll yang dialokasikan ke aduan pola ini (sebanyak kuota/pickMax) -- roll
+                        sisa warna yang sama untuk aduan pola lain tidak ditampilkan di sini. */}
+                    {pickCandidates.slice(0, pickMax).map((c) => {
                       const checked = pickChecked.has(c.claimKey);
                       const disabled = !checked && pickChecked.size >= pickMax;
                       return (
