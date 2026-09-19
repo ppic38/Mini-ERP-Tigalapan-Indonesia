@@ -184,7 +184,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   // pengajuan claim diisi. Waktu MULAI resting dicatat otomatis saat tombol Resting diklik (tidak ada
   // lagi field tanggal/jam manual).
   const [lines, setLines] = useState<RollLine[]>([]);
-  const [pickWarna, setPickWarna] = useState<string | null>(null);
+  // Popup form "Tambah roll": langkah 1 pilih warna (hanya yang bahannya sudah diterima), langkah 2 tentukan jumlah roll.
+  const [pickOpen, setPickOpen] = useState(false);
+  const [pickWarna, setPickWarna] = useState("");
   const [pickChecked, setPickChecked] = useState<Set<string>>(new Set());
   const [fillGramasi, setFillGramasi] = useState(0);
   const [fillSetting, setFillSetting] = useState("");
@@ -322,7 +324,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
     setSelectedMrpId(mrpId);
     setSelectedGroupKey("");
     setLines([]);
-    setPickWarna(null);
+    closePick();
     setRestingError(null);
   }
 
@@ -330,25 +332,45 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
     if (selectedGroupKey === key) {
       setSelectedGroupKey("");
       setLines([]);
-      setPickWarna(null);
+      closePick();
       return;
     }
     setSelectedGroupKey(key);
     setLines([]);
-    setPickWarna(null);
+    closePick();
     setRestingError(null);
   }
 
-  // Popup "Pilih roll" untuk 1 warna: code roll yang masih tersedia (belum di list), maksimal sebanyak
-  // sisa roll aduan yang bisa dipakai warna ini.
+  // Popup form "Tambah roll": hanya warna yang bahannya SUDAH diterima & masih punya sisa yang bisa
+  // dipakai (belum diterima = tidak ditampilkan). Setelah warna dipilih, user menentukan JUMLAH roll
+  // (stepper) -- code roll terpilih mengikuti urutan, dan bisa disesuaikan dengan centang manual.
+  const warnaOptions = selectedGroup
+    ? selectedGroup.rows
+        .map((r) => ({ warna: r.warna, free: r.available - visibleLines.filter((l) => l.roll.warna === r.warna).length }))
+        .filter((o) => o.free > 0)
+    : [];
   const pickRow = selectedGroup && pickWarna ? selectedGroup.rows.find((r) => r.warna === pickWarna) : undefined;
   const pickCandidates =
     selectedGroup && pickWarna ? candidates.filter((c) => c.warna === pickWarna && c.lengan === selectedGroup.lengan && !visibleLines.some((l) => l.id === c.claimKey)) : [];
-  const pickMax = pickRow ? Math.max(0, pickRow.available - visibleLines.filter((l) => l.roll.warna === pickWarna).length) : 0;
+  const pickMax = pickRow ? Math.max(0, Math.min(pickCandidates.length, pickRow.available - visibleLines.filter((l) => l.roll.warna === pickWarna).length)) : 0;
 
-  function openPick(warna: string) {
+  function openPick() {
+    setPickOpen(true);
+    setPickWarna(warnaOptions.length === 1 ? warnaOptions[0].warna : "");
+    setPickChecked(new Set());
+  }
+  function closePick() {
+    setPickOpen(false);
+    setPickWarna("");
+    setPickChecked(new Set());
+  }
+  function choosePickWarna(warna: string) {
     setPickWarna(warna);
     setPickChecked(new Set());
+  }
+  function setPickCount(n: number) {
+    const count = Math.max(0, Math.min(pickMax, Math.floor(n) || 0));
+    setPickChecked(new Set(pickCandidates.slice(0, count).map((c) => c.claimKey)));
   }
   function togglePick(key: string) {
     setPickChecked((prev) => {
@@ -357,9 +379,6 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
       else if (next.size < pickMax) next.add(key);
       return next;
     });
-  }
-  function pickAll() {
-    setPickChecked(new Set(pickCandidates.slice(0, pickMax).map((c) => c.claimKey)));
   }
   function addPickedToList() {
     const picked = pickCandidates.filter((c) => pickChecked.has(c.claimKey));
@@ -377,8 +396,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
         codeRoll: roll.codeRoll,
       })),
     ]);
-    setPickWarna(null);
-    setPickChecked(new Set());
+    closePick();
   }
 
   function updateLine(id: string, patch: Partial<RollLine>) {
@@ -593,46 +611,17 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
           {selectedGroup && (
             <div className="border-t border-[#CFE0EF] bg-info-bg p-4">
               <div className="font-sans text-xs font-semibold text-info-fg">
-                {selectedGroup.kode} · {selectedGroup.lengan} — material pada aduan pola ini
+                {selectedGroup.kode} · {selectedGroup.lengan} — roll yang akan di-resting
               </div>
 
-              <div className="mt-2.5 overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
-                <div className="grid grid-cols-[minmax(160px,1.4fr)_minmax(90px,0.6fr)_minmax(90px,0.6fr)_minmax(200px,2fr)_minmax(110px,0.7fr)] gap-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                  <span>Warna</span>
-                  <span className="text-right">Roll aduan</span>
-                  <span className="text-right">Tersedia</span>
-                  <span>Code roll tersedia</span>
-                  <span />
+              <div className="mt-2.5 flex flex-wrap items-end justify-between gap-2">
+                <div className="flex items-center gap-3">
+                  <div className="font-sans text-xs font-semibold text-info-fg">List roll ({visibleLines.length})</div>
+                  <Button onClick={openPick} disabled={warnaOptions.length === 0} variant="primary" size="sm">
+                    + Tambah roll
+                  </Button>
+                  {warnaOptions.length === 0 && <span className="font-sans text-[11px] text-text-muted">Tidak ada roll yang tersedia untuk aduan pola ini.</span>}
                 </div>
-                {selectedGroup.rows.map((r) => {
-                  const inList = visibleLines.filter((l) => l.roll.warna === r.warna).length;
-                  const codes = candidates.filter((c) => c.warna === r.warna && c.lengan === selectedGroup.lengan).map((c) => c.codeRoll);
-                  return (
-                    <div key={r.id} className="grid grid-cols-[minmax(160px,1.4fr)_minmax(90px,0.6fr)_minmax(90px,0.6fr)_minmax(200px,2fr)_minmax(110px,0.7fr)] items-center gap-2 border-t border-[#F1F4F7] px-3 py-2 font-sans text-xs text-[#31414F]">
-                      <span className="font-medium">{r.warna}</span>
-                      <span className="text-right font-mono">{r.qtyRoll}</span>
-                      <span className={"text-right font-mono font-semibold " + (r.available > 0 ? "text-info-fg" : "text-danger-fg")}>{r.available}</span>
-                      <span className="flex flex-wrap gap-1">
-                        {codes.length === 0 && <span className="text-[11px] text-text-muted">—</span>}
-                        {codes.slice(0, 6).map((c) => (
-                          <span key={c} className="rounded border border-[#E4E8EE] bg-[#FAFBFC] px-1.5 py-px font-mono text-[10px] text-text-muted">
-                            {c}
-                          </span>
-                        ))}
-                        {codes.length > 6 && <span className="font-mono text-[10px] text-text-muted">+{codes.length - 6}</span>}
-                      </span>
-                      <span className="text-right">
-                        <Button onClick={() => openPick(r.warna)} disabled={r.available - inList <= 0} variant="primary" size="xs">
-                          Pilih roll →
-                        </Button>
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="mt-4 flex flex-wrap items-end justify-between gap-2">
-                <div className="font-sans text-xs font-semibold text-info-fg">List roll ({visibleLines.length})</div>
                 {visibleLines.length > 0 && (
                   <div className="flex flex-wrap items-end gap-2">
                     <div>
@@ -665,7 +654,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   <span className="text-right">Aksi</span>
                 </div>
                 {visibleLines.length === 0 && (
-                  <div className="px-3 py-4 text-center font-sans text-[11px] text-text-muted">Belum ada roll di list — klik &quot;Pilih roll →&quot; pada warna di atas.</div>
+                  <div className="px-3 py-4 text-center font-sans text-[11px] text-text-muted">Belum ada roll di list — klik &quot;+ Tambah roll&quot; untuk memilih warna dan jumlah roll.</div>
                 )}
                 {visibleLines.map((l) => {
                   const variance = weightVariance(l.roll.grossKg, l.netKg);
@@ -904,25 +893,71 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
         </div>
       </div>
 
-      {/* Popup "Pilih roll" -- langkah setelah memilih warna: centang code roll yang mau dimasukkan ke List roll. */}
-      {pickWarna && selectedGroup && (
+      {/* Popup form "Tambah roll" -- 1) pilih warna (hanya yang sudah diterima), 2) tentukan jumlah roll yang
+          masuk tahap resting (ditimbang, dll di List roll). */}
+      {pickOpen && selectedGroup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4">
-          <div className="w-full max-w-[460px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]">
+          <div className="flex max-h-[88vh] w-full max-w-[480px] flex-col rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]">
             <div className="border-b border-border-subtle px-5 py-3.5">
-              <div className="font-sans text-[13px] font-semibold text-text-primary">Pilih roll — {pickWarna}</div>
+              <div className="font-sans text-[13px] font-semibold text-text-primary">Tambah roll ke resting</div>
               <div className="mt-0.5 font-sans text-[11px] text-text-muted">
-                {selectedGroup.kode} · {selectedGroup.lengan} · maksimal {pickMax} roll · terpilih {pickChecked.size}
+                {selectedGroup.kode} · {selectedGroup.lengan}
               </div>
             </div>
-            <div className="max-h-[50vh] overflow-y-auto px-5 py-3">
-              {pickCandidates.length === 0 ? (
-                <div className="py-4 text-center font-sans text-[11.5px] text-text-muted">Tidak ada roll tersedia untuk warna ini.</div>
-              ) : (
-                <>
-                  <button onClick={pickAll} disabled={pickMax <= 0} className="mb-2 font-sans text-[11px] font-semibold text-action-primary underline disabled:opacity-40">
-                    Pilih semua ({Math.min(pickMax, pickCandidates.length)})
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">1. Pilih warna</div>
+              <div className="mt-1.5 flex flex-wrap gap-2">
+                {warnaOptions.map((o) => (
+                  <button
+                    key={o.warna}
+                    onClick={() => choosePickWarna(o.warna)}
+                    className={
+                      "rounded-md border px-3 py-[7px] font-sans text-[11.5px] font-semibold " +
+                      (pickWarna === o.warna ? "border-action-primary bg-action-primary text-white" : "border-[#CBD5DF] bg-white text-action-primary")
+                    }
+                  >
+                    {o.warna} <span className="font-mono text-[10.5px] font-normal opacity-80">({o.free} roll)</span>
                   </button>
-                  <div className="flex flex-col gap-1.5">
+                ))}
+              </div>
+
+              {pickWarna && (
+                <>
+                  <div className="mt-4 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">2. Jumlah roll yang dimasukkan</div>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <div className="flex items-stretch overflow-hidden rounded-md border border-[#DDE4EB]">
+                      <button
+                        type="button"
+                        onClick={() => setPickCount(pickChecked.size - 1)}
+                        disabled={pickChecked.size <= 0}
+                        className="w-8 border-r border-[#DDE4EB] text-[11px] text-text-muted hover:bg-[#F2F4F7] disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        −
+                      </button>
+                      <input
+                        value={pickChecked.size > 0 ? String(pickChecked.size) : ""}
+                        onChange={(e) => setPickCount(parseInt(e.target.value.replace(/[^0-9]/g, ""), 10) || 0)}
+                        inputMode="numeric"
+                        placeholder="0"
+                        className="w-14 px-1 py-1.5 text-center font-mono text-[13px] font-semibold outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setPickCount(pickChecked.size + 1)}
+                        disabled={pickChecked.size >= pickMax}
+                        className="w-8 border-l border-[#DDE4EB] text-[11px] text-text-muted hover:bg-[#F2F4F7] disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        +
+                      </button>
+                    </div>
+                    <Button onClick={() => setPickCount(pickMax)} disabled={pickMax <= 0} variant="accent" size="sm">
+                      Semua ({pickMax})
+                    </Button>
+                    <span className="font-sans text-[11px] text-text-muted">maks {pickMax} roll</span>
+                  </div>
+
+                  <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Code roll terpilih (bisa disesuaikan)</div>
+                  <div className="mt-1.5 flex flex-col gap-1.5">
                     {pickCandidates.map((c) => {
                       const checked = pickChecked.has(c.claimKey);
                       const disabled = !checked && pickChecked.size >= pickMax;
@@ -930,7 +965,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         <label
                           key={c.claimKey}
                           className={
-                            "flex items-center gap-2.5 rounded-md border px-3 py-2 font-sans text-xs " +
+                            "flex items-center gap-2.5 rounded-md border px-3 py-1.5 font-sans text-xs " +
                             (checked ? "border-action-primary bg-[#F3F8FE]" : "border-[#E4E8EE] bg-white") +
                             (disabled ? " opacity-50" : " cursor-pointer")
                           }
@@ -948,7 +983,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               )}
             </div>
             <div className="flex justify-end gap-2 border-t border-border-subtle px-5 py-3.5">
-              <button onClick={() => setPickWarna(null)} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary">
+              <button onClick={closePick} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary">
                 Batal
               </button>
               <Button onClick={addPickedToList} disabled={pickChecked.size === 0} variant="primary" size="md">
