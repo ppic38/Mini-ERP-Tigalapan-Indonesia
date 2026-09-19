@@ -3,6 +3,11 @@
 import { useState } from "react";
 import type { Notification } from "@/lib/mrp/types";
 
+// Revisi 2026-09-19 (owner: "untuk sementara notifikasi di semua modul di-hide"): tombol
+// Notifikasi di topbar disembunyikan di SEMUA halaman (Topbar hanya dipakai lewat AppShell).
+// Sengaja cuma disembunyikan, bukan dihapus -- ubah ke true untuk menampilkannya lagi.
+const SHOW_NOTIFICATIONS = false;
+
 function formatNotifTime(time: string) {
   return time;
 }
@@ -40,6 +45,8 @@ export function Topbar({
     <div className="flex h-[52px] flex-none items-center gap-[14px] border-b border-border-subtle bg-surface-card px-[22px]">
       <div className="font-sans text-[13px] font-semibold text-text-primary">{role}</div>
       <div className="ml-auto flex items-center gap-[14px]">
+        {SHOW_NOTIFICATIONS && (
+        <>
         <div className="relative">
           <button
             onClick={() => {
@@ -95,6 +102,8 @@ export function Topbar({
         </div>
 
         <span className="h-5 w-px flex-none bg-border-subtle" />
+        </>
+        )}
 
         <div className="relative">
           <button
