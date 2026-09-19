@@ -178,9 +178,6 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
 
   const [selectedMrpId, setSelectedMrpId] = useState("");
   const [selectedGroupKey, setSelectedGroupKey] = useState("");
-  // Revisi 2026-09-19 (owner): tabel Aduan pola & Input Resting dan Cutting dibagi jadi 2 bagian
-  // (PENDEK dulu, baru PANJANG) yang berbagi satu filter lengan ini.
-  const [lenganFilter, setLenganFilter] = useState<"SEMUA" | "PENDEK" | "PANJANG">("SEMUA");
   // Daftar roll dalam proses klaim dibuka lewat popup (bukan container yang selalu terbuka).
   const [claimListOpen, setClaimListOpen] = useState(false);
   // Revisi 2026-09-19 (owner, alur Cutting baru): tahap "Timbang roll" yang berdiri sendiri DIHAPUS.
@@ -536,8 +533,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
     setCuttingGroupEditAll(false);
   }
 
-  // Urutan tampil: PENDEK dulu, baru PANJANG; filter lengan berlaku untuk kedua tabel.
-  const visibleLengan = (["PENDEK", "PANJANG"] as const).filter((l) => lenganFilter === "SEMUA" || lenganFilter === l);
+  // Revisi 2026-09-19 (owner): tabel Aduan pola dibagi 2 (lengan PENDEK dulu, baru PANJANG), tanpa filter.
+  // Tabel "Input Resting dan Cutting" TIDAK dibagi.
+  const visibleLengan = ["PENDEK", "PANJANG"] as const;
   // Tabel "Input Resting dan Cutting" KOSONG sampai MRP dipilih.
   const scopedSessions = selectedMrpId ? sessionGroups.filter((g) => g.mrpId === selectedMrpId) : [];
 
@@ -681,31 +679,6 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
           ))}
         </select>
         {readyMrps.length === 0 && <div className="mt-2 font-sans text-xs text-text-muted">Belum ada MRP dengan bahan siap dan pekerjaan belum selesai.</div>}
-        {selectedMrpId && (
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Tampilkan lengan</span>
-            {(["SEMUA", "PENDEK", "PANJANG"] as const).map((opt) => (
-              <button
-                key={opt}
-                onClick={() => {
-                  setLenganFilter(opt);
-                  // aduan pola yang sedang dipilih ikut ditutup kalau lengannya tersembunyi filter ini.
-                  if (opt !== "SEMUA" && selectedGroup && selectedGroup.lengan !== opt) {
-                    setSelectedGroupKey("");
-                    setLines([]);
-                    closePick();
-                  }
-                }}
-                className={
-                  "rounded-md border px-2.5 py-[6px] font-sans text-[11px] font-semibold " +
-                  (lenganFilter === opt ? "border-action-primary bg-action-primary text-white" : "border-[#CBD5DF] bg-white text-action-primary")
-                }
-              >
-                {opt === "SEMUA" ? "Pendek + Panjang" : opt === "PENDEK" ? "Pendek saja" : "Panjang saja"}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
 
       {selectedMrpId && claimRolls.length > 0 && (
@@ -726,17 +699,10 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
           </div>
           {visibleLengan.map((len) => {
             const gl = groupList.filter((g) => g.lengan === len);
-            const totalAvail = gl.reduce((sum, g) => sum + g.totalAvailable, 0);
             return (
               <div key={len} className="border-b border-[#CFE0EF] last:border-b-0">
-                <div className="flex items-center justify-between gap-2 bg-[#EAF2FB] px-4 py-2 font-sans text-[11.5px] font-semibold text-info-fg">
-                  <span>Lengan {len}</span>
-                  <span className="font-mono text-[10.5px] font-normal">
-                    {gl.length} aduan pola · {totalAvail} roll tersedia
-                  </span>
-                </div>
                 <div className="grid grid-cols-4 gap-2 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
-                  <span>Kode aduan</span>
+                  <span>Kode Aduan (Lengan {len === "PENDEK" ? "Pendek" : "Panjang"})</span>
                   <span className="text-right">Total roll aduan MRP</span>
                   <span className="text-right">Total roll tersedia</span>
                   <span />
@@ -780,15 +746,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 Pilih MRP di atas untuk menampilkan kode aduan, progres input resting &amp; cutting, dan riwayatnya.
               </div>
             )}
-            {selectedMrpId &&
-              visibleLengan.map((len) => {
-                const list = scopedSessions.filter((g) => g.lengan === len);
-                return (
-                  <div key={len} className="border-b border-[#CFE0EF] last:border-b-0">
-                    <div className="flex min-w-[1550px] items-center justify-between gap-2 bg-[#EAF2FB] px-4 py-2 font-sans text-[11.5px] font-semibold text-info-fg">
-                      <span>Lengan {len}</span>
-                      <span className="font-mono text-[10.5px] font-normal">{list.length} sesi resting</span>
-                    </div>
+            {selectedMrpId && (
+              <>
             <div
               className="grid min-w-[1550px] gap-x-5 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
               style={{ gridTemplateColumns: CUTTING_SESSION_COLUMNS }}
@@ -805,8 +764,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               <span>Hasil Aduan / Yield</span>
               <span className="text-center">Detail</span>
             </div>
-                    {list.length === 0 && <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Belum ada batch produksi lengan {len} untuk MRP ini.</div>}
-                    {list.map((g) => {
+                    {scopedSessions.length === 0 && <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Belum ada batch produksi untuk MRP ini.</div>}
+                    {scopedSessions.map((g) => {
               const isExpanded = expandedSessions.has(g.key);
               const detail = mrpDetails.find((d) => d.mrp.id === g.mrpId);
               const distinctWarna = Array.from(new Set(g.batches.map((b) => b.warna))).join(", ");
@@ -941,9 +900,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 </div>
               );
                     })}
-                  </div>
-                );
-              })}
+              </>
+            )}
           </div>
         </div>
       </div>
