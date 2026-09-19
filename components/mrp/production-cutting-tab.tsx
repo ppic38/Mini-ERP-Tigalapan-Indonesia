@@ -178,6 +178,11 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
 
   const [selectedMrpId, setSelectedMrpId] = useState("");
   const [selectedGroupKey, setSelectedGroupKey] = useState("");
+  // Revisi 2026-09-19 (owner): tabel Aduan pola & Input Resting dan Cutting dibagi jadi 2 bagian
+  // (PENDEK dulu, baru PANJANG) yang berbagi satu filter lengan ini.
+  const [lenganFilter, setLenganFilter] = useState<"SEMUA" | "PENDEK" | "PANJANG">("SEMUA");
+  // Daftar roll dalam proses klaim dibuka lewat popup (bukan container yang selalu terbuka).
+  const [claimListOpen, setClaimListOpen] = useState(false);
   // Revisi 2026-09-19 (owner, alur Cutting baru): tahap "Timbang roll" yang berdiri sendiri DIHAPUS.
   // Begitu Good Receive selesai, roll langsung masuk pilihan aduan pola. Di sini user memilih warna ->
   // mencentang roll di popup -> roll masuk "List roll", tempat berat bersih (kg), gramasi, setting &
@@ -531,84 +536,13 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
     setCuttingGroupEditAll(false);
   }
 
-  return (
-    <>
-      <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
-        <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Mulai Produksi — pilih MRP</div>
-        <select
-          value={selectedMrpId}
-          onChange={(e) => pickMrp(e.target.value)}
-          className="mt-1 w-full max-w-[420px] rounded-md border border-[#DDE4EB] px-[11px] py-[9px] font-sans text-[12.5px] font-medium text-text-primary"
-        >
-          <option value="">— pilih MRP —</option>
-          {readyMrps.map((d) => (
-            <option key={d.mrp.id} value={d.mrp.id}>
-              {d.mrp.id}
-              {pendingMarker(countCuttingAwaitingUpdateForMrp(d.mrp.id, vendorId, productionBatches, invoices, claimDicts), "roll belum selesai")}
-            </option>
-          ))}
-        </select>
-        {readyMrps.length === 0 && <div className="mt-2 font-sans text-xs text-text-muted">Belum ada MRP dengan bahan siap dan pekerjaan belum selesai.</div>}
-      </div>
+  // Urutan tampil: PENDEK dulu, baru PANJANG; filter lengan berlaku untuk kedua tabel.
+  const visibleLengan = (["PENDEK", "PANJANG"] as const).filter((l) => lenganFilter === "SEMUA" || lenganFilter === l);
+  // Tabel "Input Resting dan Cutting" KOSONG sampai MRP dipilih.
+  const scopedSessions = selectedMrpId ? sessionGroups.filter((g) => g.mrpId === selectedMrpId) : [];
 
-      {selectedMrpId && claimRolls.length > 0 && (
-        <div className="w-full overflow-hidden rounded-lg border border-[#F0DFC2] bg-warning-bg">
-          <div className="border-b border-[#F0DFC2] px-4 py-2.5 font-sans text-[13px] font-semibold text-warning-fg">Roll dalam proses klaim — {claimRolls.length} roll (terkunci)</div>
-          {claimRolls.map(({ claim, stage }) => (
-            <div key={claim.key} className="flex flex-wrap items-center justify-between gap-2 border-b border-[#F0DFC2] bg-white/60 px-4 py-2 last:border-b-0">
-              <div className="font-sans text-[11.5px] text-[#31414F]">
-                <span className="font-semibold">
-                  {claim.warna} · {claim.lengan} — Roll {claim.rollIndex + 1}
-                </span>{" "}
-                <span className="font-mono text-[10.5px] text-text-muted">{claim.codeRoll || "—"}</span>
-                <div className="mt-0.5 text-[11px] text-text-muted">{stageBanner(stage, claim.reason === "FISIK", materialClaimReturDeliveries[claim.key]?.note)}</div>
-              </div>
-              {stage === "RETUR_DIKIRIM" && (
-                <Button onClick={() => confirmMaterialClaimReturReceived(claim.key)} variant="primary" size="xs">
-                  Tandai Diterima
-                </Button>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {selectedDetail && (
-        <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-          <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Aduan pola — {selectedDetail.mrp.id}</div>
-          <div className="px-4 py-2 font-sans text-[11px] leading-[1.5] text-info-fg bg-info-bg border-b border-[#CFE0EF]">
-            Roll yang sudah diterima di Good Receive otomatis masuk di sini. Pilih aduan pola untuk melihat materialnya, lalu pilih warna &amp; roll yang akan di-resting.
-          </div>
-          <div className="grid grid-cols-4 gap-2 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
-            <span>Kode aduan / lengan</span>
-            <span className="text-right">Total roll aduan MRP</span>
-            <span className="text-right">Total roll tersedia</span>
-            <span />
-          </div>
-          {groupList.map((g) => {
-            const key = g.kode + "|" + g.lengan;
-            const isSel = selectedGroupKey === key;
-            return (
-              <div key={key} className={"grid grid-cols-4 items-center gap-2 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0 " + (isSel ? "bg-[#F3F8FE]" : "")}>
-                <span className="font-mono font-medium">
-                  {g.kode} · {g.lengan}
-                </span>
-                <span className="text-right font-mono font-semibold text-info-fg">{g.totalQty}</span>
-                <span className={"text-right font-mono font-semibold " + (g.totalAvailable > 0 ? "text-info-fg" : "text-danger-fg")}>{g.totalAvailable}</span>
-                <span className="text-right">
-                  <button
-                    onClick={() => pickGroup(key)}
-                    disabled={g.totalAvailable <= 0 && !isSel}
-                    className="font-sans text-[11px] font-semibold text-action-primary disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {isSel ? "Tutup ✕" : "Pilih"}
-                  </button>
-                </span>
-              </div>
-            );
-          })}
-
-          {selectedGroup && (
+  // Panel "List roll" untuk aduan pola terpilih -- dirender tepat di bawah tabel lengan-nya.
+  const builderPanel = selectedGroup ? (
             <div className="border-t border-[#CFE0EF] bg-info-bg p-4">
               <div className="font-sans text-xs font-semibold text-info-fg">
                 {selectedGroup.kode} · {selectedGroup.lengan} — roll yang akan di-resting
@@ -727,7 +661,111 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 <span className="font-sans text-[11px] text-text-muted">Waktu mulai resting dicatat otomatis saat tombol Resting diklik.</span>
               </div>
             </div>
-          )}
+  ) : null;
+
+  return (
+    <>
+      <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
+        <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Mulai Produksi — pilih MRP</div>
+        <select
+          value={selectedMrpId}
+          onChange={(e) => pickMrp(e.target.value)}
+          className="mt-1 w-full max-w-[420px] rounded-md border border-[#DDE4EB] px-[11px] py-[9px] font-sans text-[12.5px] font-medium text-text-primary"
+        >
+          <option value="">— pilih MRP —</option>
+          {readyMrps.map((d) => (
+            <option key={d.mrp.id} value={d.mrp.id}>
+              {d.mrp.id}
+              {pendingMarker(countCuttingAwaitingUpdateForMrp(d.mrp.id, vendorId, productionBatches, invoices, claimDicts), "roll belum selesai")}
+            </option>
+          ))}
+        </select>
+        {readyMrps.length === 0 && <div className="mt-2 font-sans text-xs text-text-muted">Belum ada MRP dengan bahan siap dan pekerjaan belum selesai.</div>}
+        {selectedMrpId && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Tampilkan lengan</span>
+            {(["SEMUA", "PENDEK", "PANJANG"] as const).map((opt) => (
+              <button
+                key={opt}
+                onClick={() => {
+                  setLenganFilter(opt);
+                  // aduan pola yang sedang dipilih ikut ditutup kalau lengannya tersembunyi filter ini.
+                  if (opt !== "SEMUA" && selectedGroup && selectedGroup.lengan !== opt) {
+                    setSelectedGroupKey("");
+                    setLines([]);
+                    closePick();
+                  }
+                }}
+                className={
+                  "rounded-md border px-2.5 py-[6px] font-sans text-[11px] font-semibold " +
+                  (lenganFilter === opt ? "border-action-primary bg-action-primary text-white" : "border-[#CBD5DF] bg-white text-action-primary")
+                }
+              >
+                {opt === "SEMUA" ? "Pendek + Panjang" : opt === "PENDEK" ? "Pendek saja" : "Panjang saja"}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {selectedMrpId && claimRolls.length > 0 && (
+        <button
+          onClick={() => setClaimListOpen(true)}
+          className="flex w-full items-center justify-between gap-3 rounded-lg border border-[#F0DFC2] bg-warning-bg px-4 py-2.5 text-left"
+        >
+          <span className="font-sans text-[13px] font-semibold text-warning-fg">Roll dalam proses klaim — {claimRolls.length} roll (terkunci)</span>
+          <span className="font-sans text-[11px] font-semibold text-warning-fg underline">Lihat detail →</span>
+        </button>
+      )}
+
+      {selectedDetail && (
+        <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
+          <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Aduan pola — {selectedDetail.mrp.id}</div>
+          <div className="px-4 py-2 font-sans text-[11px] leading-[1.5] text-info-fg bg-info-bg border-b border-[#CFE0EF]">
+            Roll yang sudah diterima di Good Receive otomatis masuk di sini. Pilih aduan pola untuk melihat materialnya, lalu pilih warna &amp; roll yang akan di-resting.
+          </div>
+          {visibleLengan.map((len) => {
+            const gl = groupList.filter((g) => g.lengan === len);
+            const totalAvail = gl.reduce((sum, g) => sum + g.totalAvailable, 0);
+            return (
+              <div key={len} className="border-b border-[#CFE0EF] last:border-b-0">
+                <div className="flex items-center justify-between gap-2 bg-[#EAF2FB] px-4 py-2 font-sans text-[11.5px] font-semibold text-info-fg">
+                  <span>Lengan {len}</span>
+                  <span className="font-mono text-[10.5px] font-normal">
+                    {gl.length} aduan pola · {totalAvail} roll tersedia
+                  </span>
+                </div>
+                <div className="grid grid-cols-4 gap-2 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
+                  <span>Kode aduan</span>
+                  <span className="text-right">Total roll aduan MRP</span>
+                  <span className="text-right">Total roll tersedia</span>
+                  <span />
+                </div>
+                {gl.length === 0 && <div className="px-4 py-4 text-center font-sans text-xs text-text-muted">Tidak ada aduan pola lengan {len} di MRP ini.</div>}
+                {gl.map((g) => {
+                  const key = g.kode + "|" + g.lengan;
+                  const isSel = selectedGroupKey === key;
+                  return (
+                    <div key={key} className={"grid grid-cols-4 items-center gap-2 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0 " + (isSel ? "bg-[#F3F8FE]" : "")}>
+                      <span className="font-mono font-medium">{g.kode}</span>
+                      <span className="text-right font-mono font-semibold text-info-fg">{g.totalQty}</span>
+                      <span className={"text-right font-mono font-semibold " + (g.totalAvailable > 0 ? "text-info-fg" : "text-danger-fg")}>{g.totalAvailable}</span>
+                      <span className="text-right">
+                        <button
+                          onClick={() => pickGroup(key)}
+                          disabled={g.totalAvailable <= 0 && !isSel}
+                          className="font-sans text-[11px] font-semibold text-action-primary disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {isSel ? "Tutup ✕" : "Pilih"}
+                        </button>
+                      </span>
+                    </div>
+                  );
+                })}
+                {selectedGroup?.lengan === len && builderPanel}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -737,6 +775,20 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
           {/* Revisi 2026-09-19: wrapper ini min-w-[1550px] -- header, baris grup, dan sub-tabel per-roll
               semua berbagi lebar yang SAMA sehingga latar/border-nya tidak terpotong saat digulir. */}
           <div className="min-w-[1550px]">
+            {!selectedMrpId && (
+              <div className="px-4 py-8 text-center font-sans text-xs text-text-muted">
+                Pilih MRP di atas untuk menampilkan kode aduan, progres input resting &amp; cutting, dan riwayatnya.
+              </div>
+            )}
+            {selectedMrpId &&
+              visibleLengan.map((len) => {
+                const list = scopedSessions.filter((g) => g.lengan === len);
+                return (
+                  <div key={len} className="border-b border-[#CFE0EF] last:border-b-0">
+                    <div className="flex min-w-[1550px] items-center justify-between gap-2 bg-[#EAF2FB] px-4 py-2 font-sans text-[11.5px] font-semibold text-info-fg">
+                      <span>Lengan {len}</span>
+                      <span className="font-mono text-[10.5px] font-normal">{list.length} sesi resting</span>
+                    </div>
             <div
               className="grid min-w-[1550px] gap-x-5 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
               style={{ gridTemplateColumns: CUTTING_SESSION_COLUMNS }}
@@ -753,8 +805,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               <span>Hasil Aduan / Yield</span>
               <span className="text-center">Detail</span>
             </div>
-            {sessionGroups.length === 0 && <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada batch produksi.</div>}
-            {sessionGroups.map((g) => {
+                    {list.length === 0 && <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Belum ada batch produksi lengan {len} untuk MRP ini.</div>}
+                    {list.map((g) => {
               const isExpanded = expandedSessions.has(g.key);
               const detail = mrpDetails.find((d) => d.mrp.id === g.mrpId);
               const distinctWarna = Array.from(new Set(g.batches.map((b) => b.warna))).join(", ");
@@ -888,10 +940,63 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   )}
                 </div>
               );
-            })}
+                    })}
+                  </div>
+                );
+              })}
           </div>
         </div>
       </div>
+
+      {/* Popup daftar roll dalam proses klaim -- dibuka dari baris ringkasan di atas. */}
+      {claimListOpen && claimRolls.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4">
+          <div className="flex max-h-[88vh] w-full max-w-[640px] flex-col rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]">
+            <div className="border-b border-border-subtle px-5 py-3.5">
+              <div className="font-sans text-[13px] font-semibold text-text-primary">Roll dalam proses klaim — {selectedMrpId}</div>
+              <div className="mt-0.5 font-sans text-[11px] text-text-muted">{claimRolls.length} roll terkunci, tidak bisa dipilih untuk resting sampai klaimnya selesai.</div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-3">
+              {Array.from(new Set(claimRolls.map((x) => x.claim.warna + "|" + x.claim.lengan))).map((wk) => {
+                const [warna, lengan] = wk.split("|");
+                const items = claimRolls.filter((x) => x.claim.warna === warna && x.claim.lengan === lengan);
+                return (
+                  <div key={wk} className="mb-4 last:mb-0">
+                    <div className="mb-1.5 flex items-center justify-between border-b border-[#F0DFC2] pb-1 font-sans text-[12px] font-semibold text-warning-fg">
+                      <span>
+                        {warna} · {lengan}
+                      </span>
+                      <span className="font-mono text-[10.5px] font-normal">{items.length} roll</span>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      {items.map(({ claim, stage }) => (
+                        <div key={claim.key} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[#F0DFC2] bg-[#FFFBF3] px-3 py-2">
+                          <div className="font-sans text-[11.5px] text-[#31414F]">
+                            <span className="font-semibold">Roll {claim.rollIndex + 1}</span>{" "}
+                            <span className="font-mono text-[10.5px] text-text-muted">{claim.codeRoll || "—"}</span>
+                            <span className="ml-2 rounded bg-danger-bg px-1.5 py-px font-sans text-[10px] font-semibold text-danger-fg">{claim.reason === "FISIK" ? "CACAT FISIK" : "SELISIH BERAT"}</span>
+                            <div className="mt-0.5 text-[11px] text-text-muted">{stageBanner(stage, claim.reason === "FISIK", materialClaimReturDeliveries[claim.key]?.note)}</div>
+                          </div>
+                          {stage === "RETUR_DIKIRIM" && (
+                            <Button onClick={() => confirmMaterialClaimReturReceived(claim.key)} variant="primary" size="xs">
+                              Tandai Diterima
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex justify-end border-t border-border-subtle px-5 py-3.5">
+              <button onClick={() => setClaimListOpen(false)} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary">
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Popup form "Tambah roll" -- 1) pilih warna (hanya yang sudah diterima), 2) tentukan jumlah roll yang
           masuk tahap resting (ditimbang, dll di List roll). */}

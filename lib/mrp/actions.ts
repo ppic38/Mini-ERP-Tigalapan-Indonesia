@@ -3201,6 +3201,16 @@ export async function startProductionBatchesAction(input: {
   mrpId: string;
   restingAt: string;
   lines: { aduanRowId: string; gramasi: number; codeRoll?: string; setting?: string }[];
+}): Promise<ActionResult<ProductionBatch[]>> {
+  // Alasan gagal dikembalikan sebagai nilai (bukan throw) -- di production Next.js menyembunyikan
+  // pesan Error dari Server Action ("Minified React error #441"), lihat action-result.ts.
+  return toActionResult(() => startProductionBatchesImpl(input));
+}
+
+async function startProductionBatchesImpl(input: {
+  mrpId: string;
+  restingAt: string;
+  lines: { aduanRowId: string; gramasi: number; codeRoll?: string; setting?: string }[];
 }): Promise<ProductionBatch[]> {
   await requireVendorSession();
   const db = supabaseServer();
@@ -3227,7 +3237,14 @@ export async function startProductionBatchesAction(input: {
       // kalau migration itu belum dijalankan dan vendor tidak mengisi Setting.
       ...(line.setting?.trim() ? { setting: line.setting.trim() } : {}),
     });
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (/setting/i.test(error.message)) {
+        throw new Error(
+          'Kolom "Setting" belum ada di database (migration 0048 belum dijalankan). Kosongkan isian Setting lalu klik Resting lagi, atau minta admin menjalankan migration 0048.'
+        );
+      }
+      throw new Error(error.message);
+    }
     created.push({
       id,
       mrpId: input.mrpId,

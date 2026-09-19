@@ -1150,7 +1150,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // jadi di-patch LANGSUNG dari hasil nyatanya (pola sama sendPoToFinance/updateBatchToCutting)
   // -- SATU round-trip untuk semua roll, bukan N berurutan seperti startProductionBatch (lama).
   startProductionBatches: async (input) => {
-    const created = await actions.startProductionBatchesAction(input);
+    const created = unwrapAction(await actions.startProductionBatchesAction(input));
     set({ productionBatches: [...get().productionBatches, ...created] });
     backgroundRefresh();
   },
