@@ -10,6 +10,7 @@ import { useMrpStore } from "@/lib/mrp/store";
 import { addDays, formatDate, invoiceBadge, receivedNotYetProducedRows } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { Lengan, RawMaterialInvoice } from "@/lib/mrp/types";
+import { seenPoKey, useMarkPoSeen } from "@/lib/shell/seen-po";
 // Revisi 2026-09-19: link Bukti PV & Bukti Bayar (revisi 2026-09-06) dicabut lagi dari halaman ini
 // -- owner: vendor produksi tidak perlu melihat lampiran PV/bukti bayar di PO Material Saya.
 
@@ -159,6 +160,8 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
   const productionBatches = useMrpStore((s) => s.productionBatches);
 
   const myPOs = materialPOs.filter((p) => p.vendorProduksi === vendorId && p.approved && p.status !== "CANCELLED");
+  // Badge sidebar "PO Material Saya" hilang begitu halaman ini dibuka (lib/shell/seen-po.ts).
+  useMarkPoSeen(seenPoKey(vendorId, "po-material"), myPOs.map((p) => p.id));
   const myInvoices = invoices.filter((i) => i.destinationVendor === vendorId);
   const groupRows = receivedNotYetProducedRows(vendorId, invoices, productionBatches);
 

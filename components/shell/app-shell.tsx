@@ -8,6 +8,7 @@ import { NAV } from "@/lib/shell/nav";
 import { useMrpStore } from "@/lib/mrp/store";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
 import { useVendorAuthStore } from "@/lib/mrp/vendor-auth-store";
+import { seenPoKey, useSeenPoIds } from "@/lib/shell/seen-po";
 import type { InternalRole } from "@/lib/internal-auth";
 import {
   GOOGLE_SHEET_URLS,
@@ -169,6 +170,12 @@ export function AppShell({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [role, hydrated, hargaMaklon.length, hargaKain.length, hargaKainPks.length, entitasList.length]);
 
+  // Badge "PO Produksi Saya" / "PO Material Saya" = PO tujuan vendor ini yang belum pernah dilihat
+  // (lib/shell/seen-po.ts). Hook dipanggil tanpa syarat (aturan hooks); nilainya cuma dipakai di
+  // cabang vendorMaklon di bawah.
+  const seenPoProduksi = useSeenPoIds(seenPoKey(vendorId, "po-produksi"));
+  const seenPoMaterial = useSeenPoIds(seenPoKey(vendorId, "po-material"));
+
   let badgeOverrides: Record<string, number> | undefined;
   if (role === "finance") {
     badgeOverrides = {
@@ -210,9 +217,12 @@ export function AppShell({
     };
   } else if (role === "vendorMaklon" && vendorId) {
     badgeOverrides = {
-      // PO Produksi Saya sengaja TIDAK dikasih badge — sekarang 100% monitoring, tidak ada
-      // satu pun tombol aksi di halaman itu (semua trigger sudah pindah ke Good Receive,
-      // Produksi, dan Invoice & Payment).
+      // PO Produksi Saya & PO Material Saya 100% monitoring (tidak ada tombol aksi), jadi badge-nya
+      // bukan "pekerjaan pending" melainkan PO baru yang belum pernah dibuka -- hilang begitu
+      // halamannya dikunjungi sekali (revisi 2026-09-19, lihat lib/shell/seen-po.ts). Filter PO
+      // di sini HARUS sama dengan yang ditampilkan halamannya masing-masing.
+      "/vendor-maklon/po-produksi": maklonPOs.filter((p) => p.vendorProduksi === vendorId && p.approved && !seenPoProduksi.has(p.id)).length,
+      "/vendor-maklon/po-material": materialPOs.filter((p) => p.vendorProduksi === vendorId && p.approved && p.status !== "CANCELLED" && !seenPoMaterial.has(p.id)).length,
       "/vendor-maklon/receiving": countVendorGoodReceiveEligible(vendorId, invoices),
       "/vendor-maklon/production": countVendorProduksiActionable(vendorId, productionBatches, productionResults, invoices, productionGroupMeta, {
         resolutions: materialClaimResolutions,

@@ -9,6 +9,7 @@ import { useMrpStore } from "@/lib/mrp/store";
 import { addDays, formatDate, formatPcs, formatRupiah, maklonPoBadgeWithApproval, maklonPoDisplayStatus, materialReceivedForMaklon, mrpDetailFor } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { MaklonPO } from "@/lib/mrp/types";
+import { seenPoKey, useMarkPoSeen } from "@/lib/shell/seen-po";
 
 function PoProduksiContent({ vendorId }: { vendorId: string }) {
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
@@ -18,6 +19,8 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
   const vendorProduksiList = useMrpStore((s) => s.vendorProduksiList);
 
   const myPOs = maklonPOs.filter((p) => p.vendorProduksi === vendorId && p.approved);
+  // Badge sidebar "PO Produksi Saya" hilang begitu halaman ini dibuka (lib/shell/seen-po.ts).
+  useMarkPoSeen(seenPoKey(vendorId, "po-produksi"), myPOs.map((p) => p.id));
   // Revisi 2026-09-06: kapasitas produksi PER MINGGU vendor ini sendiri (data asli dari
   // spreadsheet Procurement, lihat migration 0019_vendor_kapasitas_asli.sql) -- dipakai di kolom
   // "Qty vs Kapasitas" di bawah supaya vendor bisa lihat seberapa besar tiap PO dibanding
