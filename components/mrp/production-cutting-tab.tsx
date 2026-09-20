@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useMrpStore } from "@/lib/mrp/store";
 import {
   availableRollsByAduanRow,
+  startedRollsForAduan,
   formatDateTime,
   formatDecimal,
   formatDuration,
@@ -83,7 +84,7 @@ function batchNeedsCuttingInput(b: ProductionBatch): boolean {
   return Object.values(b.sizeQty).every((v) => !v || v <= 0);
 }
 
-type AduanGroup = { kode: string; lengan: Lengan; rows: (AduanPolaRow & { available: number })[]; totalQty: number; totalAvailable: number };
+type AduanGroup = { kode: string; lengan: Lengan; rows: (AduanPolaRow & { available: number })[]; totalQty: number; totalAvailable: number; totalStarted: number; totalMissing: number };
 
 /** 1 baris di "List roll" (sebelum Resting): roll yang sudah dipilih lewat popup + isian per roll. */
 type RollLine = { id: string; roll: RestingCandidateRoll; netKg: number; gramasi: number; setting: string; codeRoll: string };
@@ -314,10 +315,16 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   for (const row of aduanRows) {
     const available = availableByRow[row.id] ?? 0;
     const key = row.kode + "|" + row.lengan;
-    const g = groups.get(key) ?? { kode: row.kode, lengan: row.lengan, rows: [], totalQty: 0, totalAvailable: 0 };
+    const g = groups.get(key) ?? { kode: row.kode, lengan: row.lengan, rows: [], totalQty: 0, totalAvailable: 0, totalStarted: 0, totalMissing: 0 };
+    // Revisi 2026-09-20 (owner): roll yang SUDAH di-resting dicatat terpisah supaya kelihatan sisa yang
+    // masih harus diterima -- belum diterima = kebutuhan aduan - sudah diresting - tersedia sekarang.
+    const started = startedRollsForAduan(row.id, productionBatches);
+    const missing = Math.max(0, row.qtyRoll - started - available);
     g.rows.push({ ...row, available });
     g.totalQty += row.qtyRoll;
     g.totalAvailable += available;
+    g.totalStarted += started;
+    g.totalMissing += missing;
     groups.set(key, g);
   }
   const groupList = Array.from(groups.values());
@@ -706,10 +713,12 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
             const gl = groupList.filter((g) => g.lengan === len);
             return (
               <div key={len} className="border-b border-[#CFE0EF] last:border-b-0">
-                <div className="grid grid-cols-4 gap-2 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
+                <div className="grid grid-cols-6 gap-2 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
                   <span>Kode Aduan (Lengan {len === "PENDEK" ? "Pendek" : "Panjang"})</span>
                   <span className="text-right">Total roll aduan MRP</span>
+                  <span className="text-right">Sudah diresting</span>
                   <span className="text-right">Total roll tersedia</span>
+                  <span className="text-right">Belum diterima</span>
                   <span />
                 </div>
                 {gl.length === 0 && <div className="px-4 py-4 text-center font-sans text-xs text-text-muted">Tidak ada aduan pola lengan {len} di MRP ini.</div>}
@@ -717,10 +726,12 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   const key = g.kode + "|" + g.lengan;
                   const isSel = selectedGroupKey === key;
                   return (
-                    <div key={key} className={"grid grid-cols-4 items-center gap-2 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0 " + (isSel ? "bg-[#F3F8FE]" : "")}>
+                    <div key={key} className={"grid grid-cols-6 items-center gap-2 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0 " + (isSel ? "bg-[#F3F8FE]" : "")}>
                       <span className="font-mono font-medium">{g.kode}</span>
                       <span className="text-right font-mono font-semibold text-info-fg">{g.totalQty}</span>
+                      <span className={"text-right font-mono " + (g.totalStarted > 0 ? "font-semibold text-success-fg" : "text-text-muted")}>{g.totalStarted}</span>
                       <span className={"text-right font-mono font-semibold " + (g.totalAvailable > 0 ? "text-info-fg" : "text-danger-fg")}>{g.totalAvailable}</span>
+                      <span className={"text-right font-mono " + (g.totalMissing > 0 ? "font-semibold text-warning-fg" : "text-text-muted")}>{g.totalMissing}</span>
                       <span className="text-right">
                         <button
                           onClick={() => pickGroup(key)}
