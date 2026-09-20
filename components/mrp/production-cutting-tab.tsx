@@ -185,7 +185,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   // Tab lengan di tabel Aduan pola (sama seperti Good Receive): Pendek dulu, Panjang kalau hanya itu.
   const [aduanLengan, setAduanLengan] = useState<"PENDEK" | "PANJANG">("PENDEK");
   // Tab lengan untuk tabel "Input Resting dan Cutting" (terpisah dari tab tabel Aduan pola).
-  const [sessionLengan, setSessionLengan] = useState<"PENDEK" | "PANJANG">("PENDEK");
+  // null = otomatis (Pendek kalau ada sesinya, kalau tidak Panjang); terisi begitu user mengklik tab.
+  const [sessionLengan, setSessionLengan] = useState<"PENDEK" | "PANJANG" | null>(null);
   // Daftar roll dalam proses klaim dibuka lewat popup (bukan container yang selalu terbuka).
   const [claimListOpen, setClaimListOpen] = useState(false);
   // Revisi 2026-09-19 (owner, alur Cutting baru): tahap "Timbang roll" yang berdiri sendiri DIHAPUS.
@@ -346,6 +347,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
     setLines([]);
     closePick();
     setRestingError(null);
+    setSessionLengan(null);
   }
 
   function pickGroup(key: string) {
@@ -566,10 +568,12 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   // Tabel "Input Resting dan Cutting" KOSONG sampai MRP dipilih.
   const scopedSessions = selectedMrpId ? sessionGroups.filter((g) => g.mrpId === selectedMrpId) : [];
   // Sub-tab lengan (Pendek dulu, Panjang kalau hanya itu); badge = sesi yang masih butuh input hasil cutting.
+  // Revisi 2026-09-20 (owner): kedua tab (Pendek & Panjang) SELALU tampil begitu MRP dipilih, walau hanya
+  // salah satu lengan yang sudah punya sesi resting -- tab tanpa sesi menampilkan keterangan kosong.
   const lenganWithSessions = (["PENDEK", "PANJANG"] as const).filter((l) => scopedSessions.some((g) => g.lengan === l));
-  const activeSessionLengan = lenganWithSessions.includes(sessionLengan) ? sessionLengan : lenganWithSessions[0];
-  const visibleSessions = activeSessionLengan ? scopedSessions.filter((g) => g.lengan === activeSessionLengan) : scopedSessions;
-  const sessionLenganTabs = lenganWithSessions.map((l) => ({
+  const activeSessionLengan: "PENDEK" | "PANJANG" = sessionLengan ?? lenganWithSessions[0] ?? "PENDEK";
+  const visibleSessions = scopedSessions.filter((g) => g.lengan === activeSessionLengan);
+  const sessionLenganTabs = (["PENDEK", "PANJANG"] as const).map((l) => ({
     key: l,
     label: l === "PENDEK" ? "Lengan Pendek" : "Lengan Panjang",
     badge: scopedSessions.filter((g) => g.lengan === l && g.batches.some(batchNeedsCuttingInput)).length,
@@ -807,12 +811,12 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
       )}
 
       <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-        <div className={"px-4 py-3 font-sans text-[13px] font-semibold text-text-primary " + (selectedMrpId && sessionLenganTabs.length > 1 ? "" : "border-b border-border-subtle")}>
+        <div className={"px-4 py-3 font-sans text-[13px] font-semibold text-text-primary " + (selectedMrpId ? "" : "border-b border-border-subtle")}>
           Input Resting dan Cutting
         </div>
-        {selectedMrpId && sessionLenganTabs.length > 1 && (
+        {selectedMrpId && (
           <div className="border-b border-border-subtle px-4">
-            <Tabs items={sessionLenganTabs} active={activeSessionLengan ?? ""} onChange={(key) => setSessionLengan(key as "PENDEK" | "PANJANG")} />
+            <Tabs items={sessionLenganTabs} active={activeSessionLengan} onChange={(key) => setSessionLengan(key as "PENDEK" | "PANJANG")} />
           </div>
         )}
         <div className="overflow-x-auto">
@@ -842,7 +846,11 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               <span>Hasil Aduan / Yield</span>
               <span className="text-center">Detail</span>
             </div>
-                    {scopedSessions.length === 0 && <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Belum ada batch produksi untuk MRP ini.</div>}
+                    {visibleSessions.length === 0 && (
+                      <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">
+                        Belum ada batch resting lengan {activeSessionLengan === "PENDEK" ? "Pendek" : "Panjang"} untuk MRP ini.
+                      </div>
+                    )}
                     {visibleSessions.map((g) => {
               const isExpanded = expandedSessions.has(g.key);
               const detail = mrpDetails.find((d) => d.mrp.id === g.mrpId);
