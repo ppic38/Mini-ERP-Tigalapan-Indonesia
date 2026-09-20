@@ -3392,6 +3392,31 @@ async function closeProductionBatchImpl(batchId: string, fgSizeQty: Record<strin
   await maybeAdvanceMaklonToDelivery(batch.mrp_id, batch.vendor_produksi);
 }
 
+/** Revisi 2026-09-20 (owner: "sisa jadi reject" bisa dibatalkan): buka lagi roll yang sudah ditutup (Tutup Roll /
+ *  penutupan otomatis), selama grup warna/lengannya BELUM "Selesai Produksi" dan roll belum masuk koli pengiriman.
+ *  FG yang sudah tersimpan tetap utuh; roll kembali bisa diisi. */
+export async function reopenProductionBatchAction(batchId: string): Promise<ActionResult<void>> {
+  return toActionResult(() => reopenProductionBatchImpl(batchId));
+}
+
+async function reopenProductionBatchImpl(batchId: string): Promise<void> {
+  const vendorId = await requireVendorSession();
+  const db = supabaseServer();
+  const { data: batch } = await db.from("production_batches").select("id,mrp_id,vendor_produksi,warna,lengan,closed_at").eq("id", batchId).single();
+  if (!batch) throw new Error("Roll tidak ditemukan.");
+  if (batch.vendor_produksi !== vendorId) throw new Error("Roll ini bukan milik vendor Anda.");
+  if (!batch.closed_at) return;
+  const groupKey = `${batch.mrp_id}|${batch.warna}|${batch.lengan}`;
+  const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at").eq("group_key", groupKey).maybeSingle();
+  if (meta?.fg_confirmed_at) {
+    throw new Error(`Grup ${batch.warna} · ${batch.lengan} sudah "Selesai Produksi" -- klik "Buka kunci" dulu sebelum membuka roll ini lagi.`);
+  }
+  const { data: shipped } = await db.from("delivery_koli_items").select("delivery_koli_id").eq("source_batch_id", batchId).limit(1);
+  if ((shipped ?? []).length > 0) throw new Error("Roll ini sudah masuk koli pengiriman -- tidak bisa dibuka lagi.");
+  const { error } = await db.from("production_batches").update({ closed_at: null }).eq("id", batchId);
+  if (error) throw new Error(error.message);
+}
+
 /** Item revisi 2026-09-12 (owner: "kenapa tidak bisa klik selesai produksi jika qtynya tidak
  *  maksimal... jadikan tombol selesai produksi trigger untuk selesaikan finish good, selisih size
  *  yang tidak terpenuhi jadi reject") -- dipanggil dari confirmFgDoneAction SEBELUM

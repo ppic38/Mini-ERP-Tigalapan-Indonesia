@@ -92,6 +92,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
   // Revisi 2026-09-07 (HPP per roll) -- "Tutup Roll" per ProductionBatch (roll), lihat
   // closeProductionBatchAction. Menggantikan input size bebas per grup untuk kind="FG".
   const closeProductionBatch = useMrpStore((s) => s.closeProductionBatch);
+  const reopenProductionBatch = useMrpStore((s) => s.reopenProductionBatch);
   // Revisi 2026-09-08 -- "Simpan progres" (belum menutup roll), lihat saveFgProgressAction.
   const saveFgProgress = useMrpStore((s) => s.saveFgProgress);
 
@@ -459,10 +460,9 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                           function defaultSizeQtyFor(b: (typeof openBatches)[number]): Record<string, number> {
                             return b.fgSizeQty ?? {};
                           }
-                          async function saveSizeTotals() {
-                            // Distribusi (roll pertama dulu, isi sisa kapasitasnya) LANGSUNG jadi
-                            // sizeQty absolute baru per roll yang tersentuh, lalu disimpan
-                            // sungguhan -- logFgProgressDelta (server) yang mencatatnya ke Riwayat.
+                          // Distribusi (roll pertama dulu, isi sisa kapasitasnya) LANGSUNG jadi sizeQty absolute
+                          // baru per roll yang tersentuh -- dipakai "Simpan" dan "Sisa jadi reject".
+                          function computeTouched(): Record<string, Record<string, number>> {
                             const touched: Record<string, Record<string, number>> = {};
                             for (const size of sizesOpen) {
                               let sisa = sizeTotalDraft[size] ?? 0;
@@ -477,6 +477,10 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                 sisa -= isi;
                               }
                             }
+                            return touched;
+                          }
+                          async function saveSizeTotals() {
+                            const touched = computeTouched();
                             const batchIds = Object.keys(touched);
                             if (batchIds.length === 0) return;
                             // Revisi 2026-09-20 (owner): kalau simpan ini membuat SEMUA roll terbuka grup ini
@@ -499,10 +503,73 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                             );
                             setSizeTotalDraft({});
                           }
+                          // Revisi 2026-09-20 (owner: "sisa jadi reject" per size): roll yang punya SISA di size ini
+                          // (setelah isian yang sedang diketik disimpan dulu) ditutup dengan Finish Good apa adanya --
+                          // selisih target-vs-FG-nya (semua size roll itu) jadi reject saat "Selesai Produksi". Bisa
+                          // dibatalkan lewat "Buka lagi" selama warna ini belum Selesai Produksi.
+                          async function markSizeRemainderAsReject(size: string) {
+                            const touched = computeTouched();
+                            const finalFor = (bt: (typeof openBatches)[number]) => touched[bt.id] ?? defaultSizeQtyFor(bt);
+                            const isFull = (bt: (typeof openBatches)[number]) => Object.entries(bt.sizeQty ?? {}).every(([sz, t]) => (finalFor(bt)[sz] ?? 0) >= t);
+                            const toClose = openBatches.filter((bt) => (bt.sizeQty?.[size] ?? 0) - (finalFor(bt)[size] ?? 0) > 0 || (!!touched[bt.id] && isFull(bt)));
+                            const rejectBySize: Record<string, number> = {};
+                            for (const bt of toClose) {
+                              for (const [sz, t] of Object.entries(bt.sizeQty ?? {})) {
+                                const short = t - (finalFor(bt)[sz] ?? 0);
+                                if (short > 0) rejectBySize[sz] = (rejectBySize[sz] ?? 0) + short;
+                              }
+                            }
+                            const rejectText = Object.entries(rejectBySize).map(([sz, q]) => `${sz} ${q} pcs`).join(" · ") || "tidak ada";
+                            if (
+                              !window.confirm(
+                                `Tandai sisa ${size} sebagai reject?\n\nRoll yang ditutup (${toClose.length}): ${toClose.map((bt) => bt.codeRoll || bt.id).join(", ")}\nReject yang tercatat: ${rejectText}\n\nBisa dibatalkan lewat "Buka lagi" selama warna ini belum Selesai Produksi.`
+                              )
+                            ) {
+                              return;
+                            }
+                            const closeIds = new Set(toClose.map((bt) => bt.id));
+                            if (openBatches.every((bt) => closeIds.has(bt.id))) setExpandedGroupKey("");
+                            await Promise.all(
+                              openBatches
+                                .filter((bt) => closeIds.has(bt.id) || touched[bt.id])
+                                .map((bt) => (closeIds.has(bt.id) ? closeProductionBatch(bt.id, finalFor(bt)) : saveFgProgress(bt.id, touched[bt.id]))
+                              )
+                            );
+                            setSizeTotalDraft({});
+                          }
+                          // Reject SEMENTARA = selisih target-vs-FG dari roll yang sudah DITUTUP (final per roll); angka resmi
+                          // tetap dihitung server saat "Selesai Produksi".
+                          const closedWithShortfall = groupBatches
+                            .filter((bt) => bt.closedAt)
+                            .map((bt) => ({
+                              bt,
+                              short: Object.entries(bt.sizeQty ?? {})
+                                .map(([sz, t]) => [sz, Math.max(0, t - (bt.fgSizeQty?.[sz] ?? 0))] as const)
+                                .filter(([, v]) => v > 0),
+                            }))
+                            .filter((x) => x.short.length > 0);
+                          const rejectSummary =
+                            closedWithShortfall.length > 0 ? (
+                              <div className="border-t border-[#F0DFC2] bg-warning-bg px-4 py-2.5 font-sans text-[11px] leading-[1.5] text-warning-fg">
+                                <div className="font-semibold">Reject sementara (dari roll yang sudah ditutup) — final saat Selesai Produksi</div>
+                                <div className="mt-1.5 flex flex-col gap-1">
+                                  {closedWithShortfall.map(({ bt, short }) => (
+                                    <div key={bt.id} className="flex flex-wrap items-center gap-2">
+                                      <span className="font-mono">{bt.codeRoll || bt.id}</span>
+                                      <span className="font-mono font-semibold">{short.map(([sz, v]) => `${sz} ${v} pcs`).join(" · ")}</span>
+                                      <button onClick={() => runAction("reopen-" + bt.id, reopenProductionBatch(bt.id))} className="font-semibold text-action-primary underline">
+                                        Buka lagi
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null;
                           if (sizesOpen.length === 0) {
                             return groupBatches.length > 0 ? (
-                              <div className="rounded-md border border-[#CFE0EF] bg-white px-3 py-3 text-center font-sans text-[11.5px] text-text-muted">
-                                Semua roll grup ini sudah tertutup.
+                              <div className="overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
+                                <div className="px-3 py-3 text-center font-sans text-[11.5px] text-text-muted">Semua roll grup ini sudah tertutup.</div>
+                                {rejectSummary}
                               </div>
                             ) : null;
                           }
@@ -548,6 +615,13 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                             {rec}/{tgt} pcs
                                           </span>
                                         </div>
+                                        <button
+                                          onClick={() => runAction(quickSaveKey + size, markSizeRemainderAsReject(size))}
+                                          title={`Sisa ${size} tidak akan diproduksi lagi -- roll yang memuat size ini ditutup & selisihnya tercatat reject`}
+                                          className="self-start font-sans text-[10.5px] font-semibold text-danger-fg underline"
+                                        >
+                                          Sisa jadi reject
+                                        </button>
                                       </div>
                                     );
                                   })}
@@ -590,6 +664,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                   </Button>
                                 )}
                               </div>
+                              {rejectSummary}
                               {overflow.length > 0 && (
                                 <div className="border-t border-[#F0DFC2] bg-warning-bg px-3 py-1.5 font-sans text-[10.5px] text-warning-fg">
                                   Size {overflow.join(", ")} melebihi SISA kapasitas roll terbuka — kelebihannya tidak ikut terisi ke roll mana pun.
@@ -648,6 +723,14 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                   <span className="text-right">
                                     {/* closeProductionBatch sudah optimistic penuh -- isPending/teks
                                        "Menutup…" dilepas. */}
+                                    {b.closedAt && (
+                                      <button
+                                        onClick={() => runAction("reopen-" + b.id, reopenProductionBatch(b.id))}
+                                        className="font-sans text-[10.5px] font-semibold text-action-primary underline"
+                                      >
+                                        Buka lagi
+                                      </button>
+                                    )}
                                     {!b.closedAt && (
                                       <button
                                         onClick={() => runAction(closeKey, closeProductionBatch(b.id, b.fgSizeQty ?? {}))}

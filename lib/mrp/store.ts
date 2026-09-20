@@ -342,6 +342,8 @@ type FlowActions = {
   submitProductionResult: (input: { mrpId: string; vendorProduksi: string; warna: string; lengan: Lengan; kind: "FG" | "REJECT"; sizeQty: Record<string, number>; note?: string }) => Promise<void>;
   /** "Tutup Roll" (HPP per roll) -- lihat closeProductionBatchAction di lib/mrp/actions.ts. */
   closeProductionBatch: (batchId: string, fgSizeQty: Record<string, number>) => Promise<void>;
+  /** Buka lagi roll yang sudah ditutup (batalkan "sisa jadi reject") -- lihat reopenProductionBatchAction. */
+  reopenProductionBatch: (batchId: string) => Promise<void>;
   /** "Simpan progres" (belum menutup roll) -- lihat saveFgProgressAction di lib/mrp/actions.ts. */
   saveFgProgress: (batchId: string, sizeQty: Record<string, number>) => Promise<void>;
   createDeliveryKoli: (input: { mrpId: string; vendorProduksi: string; ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }) => Promise<void>;
@@ -1173,6 +1175,20 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       set({ productionBatches: previous });
       dropOptimisticResult(tmpResultId);
       window.alert("Gagal menutup roll -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  // Optimistic PATCH -- closedAt dikosongkan seketika; gagal (grup sudah Selesai Produksi / roll sudah
+  // dikirim) -> rollback + alert dengan alasan asli.
+  reopenProductionBatch: async (batchId) => {
+    const previous = get().productionBatches;
+    set({ productionBatches: previous.map((b) => (b.id === batchId ? { ...b, closedAt: undefined } : b)) });
+    try {
+      unwrapAction(await actions.reopenProductionBatchAction(batchId));
+    } catch (err) {
+      set({ productionBatches: previous });
+      window.alert("Gagal membuka roll -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
