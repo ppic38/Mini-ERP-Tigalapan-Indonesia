@@ -649,16 +649,16 @@ export function PaymentPanel() {
       )}
 
       {selected.size > 0 && (
-        <div className="rounded-lg border border-[#CFE0EF] bg-info-bg p-4">
+        <div className="rounded-lg border border-border-subtle bg-surface-card p-4">
           <div className="flex items-center justify-between">
-            <span className="font-sans text-xs font-medium text-info-fg">{selected.size} dipilih</span>
+            <span className="font-sans text-[13px] font-semibold text-text-primary">{selected.size} dipilih</span>
             {selectableToUnpay.length > 0 && (
               <button
                 onClick={() => {
                   setInvoicesPaid(selectableToUnpay.map((i) => i.id), false);
                   setSelected(new Set());
                 }}
-                className="rounded-md border border-[#A8C5DF] bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-semibold text-danger-fg"
+                className="rounded-md border border-[#EFC9C4] bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-semibold text-danger-fg"
               >
                 Batalkan Bayar ({selectableToUnpay.length})
               </button>
@@ -673,20 +673,24 @@ export function PaymentPanel() {
                  SAMA LEBAR (h-full menyamakan tinggi keduanya ke baris tertinggi), tombol Bayar
                  dipindah ke barisnya sendiri di bawah supaya tidak perlu ikut menyesuaikan tinggi
                  box sama sekali. */}
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <div className="flex h-full flex-col gap-1.5 rounded-md border border-dashed border-[#8FB3D9] bg-white px-3.5 py-3">
-                  <label className="font-sans text-[10.5px] font-semibold uppercase tracking-wider text-info-fg">
+              {/* Revisi 2026-09-20 (owner): container putih (bukan biru), judul hitam; kotak Bukti Pembayaran
+                 memakai LEBAR PENUH selama tidak ada kotak Saldo Deposit (dulu selalu 50% dengan kolom
+                 kosong di kanan) -- baru dibagi 2 kolom kalau saldo deposit memang tampil. Tombol Bayar
+                 selebar container supaya presisi dengan kotak di atasnya. */}
+              <div className={"mt-3 grid gap-3 " + (depositSupplier && depositBalance > 0 ? "lg:grid-cols-2" : "")}>
+                <div className="flex h-full flex-col gap-1.5 rounded-md border border-dashed border-[#CBD5DF] bg-[#FAFBFC] px-4 py-3.5">
+                  <label className="font-sans text-[11px] font-semibold uppercase tracking-wider text-text-primary">
                     Bukti Pembayaran (PDF) <span className="text-danger-fg">*wajib</span>
                   </label>
                   <input
                     type="file"
                     accept="application/pdf"
                     onChange={(e) => handleProofFileChange(e.target.files?.[0] ?? null)}
-                    className="w-full text-[10.5px] file:mr-1.5 file:rounded file:border-0 file:bg-info-bg file:px-2 file:py-1 file:font-sans file:text-[10.5px] file:font-semibold file:text-info-fg"
+                    className="w-full text-[11.5px] file:mr-2 file:rounded-md file:border-0 file:bg-[#EEF1F4] file:px-3 file:py-1.5 file:font-sans file:text-[11.5px] file:font-semibold file:text-text-primary"
                   />
-                  {proofFileName && !proofError && <span className="font-sans text-[10.5px] font-medium text-success-fg">✓ {proofFileName} terupload.</span>}
-                  {!proofFileName && !proofError && <span className="font-sans text-[10.5px] text-text-muted">Belum ada file dipilih.</span>}
-                  {proofError && <span className="font-sans text-[10.5px] font-medium text-danger-fg">{proofError}</span>}
+                  {proofFileName && !proofError && <span className="font-sans text-[11px] font-medium text-success-fg">✓ {proofFileName} terupload.</span>}
+                  {!proofFileName && !proofError && <span className="font-sans text-[11px] text-text-muted">Belum ada file dipilih.</span>}
+                  {proofError && <span className="font-sans text-[11px] font-medium text-danger-fg">{proofError}</span>}
                 </div>
 
                 {/* Saldo deposit vendor (dari klaim yang diselesaikan lewat "retur + pesan ulang")
@@ -696,7 +700,7 @@ export function PaymentPanel() {
                    sama & supplier itu punya saldo > 0 -- kalau tidak, kolom kedua kosong (bukan
                    dipaksa 1 kolom penuh) supaya grid tetap presisi & tidak "loncat" lebar. */}
                 {depositSupplier && depositBalance > 0 ? (
-                  <div className="flex h-full flex-col gap-1.5 rounded-md border border-dashed border-[#B7DFC5] bg-white px-3.5 py-3">
+                  <div className="flex h-full flex-col gap-1.5 rounded-md border border-dashed border-[#B7DFC5] bg-[#FAFBFC] px-4 py-3.5">
                     <div className="flex items-center gap-1.5">
                       <label className="font-sans text-[10.5px] font-semibold uppercase tracking-wider text-success-fg">Saldo Deposit {depositSupplier}</label>
                       <button type="button" onClick={() => setShowDepositDetail((v) => !v)} className="font-sans text-[10px] font-semibold text-action-primary underline">
@@ -765,26 +769,29 @@ export function PaymentPanel() {
                   </div>
                 ) : (
                   paySuppliers.size > 1 && (
-                    <div className="flex h-full items-center rounded-md border border-dashed border-[#DDE4EB] bg-white px-3.5 py-3 font-sans text-[10.5px] text-text-muted">
-                      Pilih invoice dari 1 supplier yang sama untuk bisa pakai saldo deposit.
-                    </div>
+                    <div className="font-sans text-[11px] text-text-muted">Catatan: pilih invoice dari 1 supplier yang sama kalau ingin memakai saldo deposit.</div>
                   )
                 )}
               </div>
 
-              <div className="mt-3 flex items-center justify-end gap-2.5">
-                {depositAmount > 0 && (
-                  <span className="font-sans text-[11.5px] text-text-muted">
-                    Total {formatRupiah(totalTagihan)} − saldo {formatRupiah(depositAmount)} = <span className="font-semibold text-info-fg">net {formatRupiah(Math.max(0, totalTagihan - depositAmount))}</span>
+              <div className="mt-3 flex flex-col gap-2">
+                <div className="flex items-baseline justify-between gap-3 font-sans text-[12px] text-text-muted">
+                  <span>
+                    Total tagihan <span className="font-mono font-semibold text-text-primary">{formatRupiah(totalTagihan)}</span>
                   </span>
-                )}
+                  {depositAmount > 0 && (
+                    <span>
+                      − saldo {formatRupiah(depositAmount)} = <span className="font-semibold text-text-primary">net {formatRupiah(Math.max(0, totalTagihan - depositAmount))}</span>
+                    </span>
+                  )}
+                </div>
                 <button
                   onClick={handlePay}
                   disabled={!canPay}
                   title={!proofDataUrl ? "Upload bukti pembayaran (PDF) dulu" : undefined}
-                  className="flex-none rounded-md border border-[#A8C5DF] bg-white px-3.5 py-[8px] font-sans text-[11.5px] font-semibold text-success-fg disabled:cursor-not-allowed disabled:opacity-50"
+                  className="w-full rounded-md bg-success px-4 py-3 font-sans text-[13px] font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Bayar ({selectableToPay.length})
+                  Bayar ({selectableToPay.length} invoice)
                 </button>
               </div>
             </>
