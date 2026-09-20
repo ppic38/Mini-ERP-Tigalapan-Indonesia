@@ -14,6 +14,7 @@ import {
   materialClaimsList,
   materialClaimStage,
   materialReceivedForMaklon,
+  mrpProductionStarted,
   restingCandidateRolls,
   restingMinutes,
   restingSessionGroups,
@@ -251,8 +252,12 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
           (p) =>
             p.vendorProduksi === vendorId &&
             p.approved &&
-            ((activeStages.includes(p.status) && materialReceivedForMaklon(p.mrpId, vendorId, invoices)) ||
-              restingCandidateRolls(p.mrpId, vendorId, invoices, productionBatches, lockedKeys).length > 0 ||
+            // Revisi 2026-09-20: roll yang sudah diterima BARU muncul di sini setelah "Mulai Produksi" ditekan
+            // di Good Receive (PO tidak lagi *_WAITING_MATERIAL). Pekerjaan yang sudah berjalan (batch yang
+            // masih butuh input cutting) tetap tampil apa pun status PO-nya.
+            ((mrpProductionStarted(p.mrpId, vendorId, maklonPOs) &&
+              ((activeStages.includes(p.status) && materialReceivedForMaklon(p.mrpId, vendorId, invoices)) ||
+                restingCandidateRolls(p.mrpId, vendorId, invoices, productionBatches, lockedKeys).length > 0)) ||
               productionBatches.some((b) => b.mrpId === p.mrpId && b.vendorProduksi === vendorId && batchNeedsCuttingInput(b)))
         )
         .map((p) => p.mrpId)
@@ -674,7 +679,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
           {readyMrps.map((d) => (
             <option key={d.mrp.id} value={d.mrp.id}>
               {d.mrp.id}
-              {pendingMarker(countCuttingAwaitingUpdateForMrp(d.mrp.id, vendorId, productionBatches, invoices, claimDicts), "roll belum selesai")}
+              {pendingMarker(countCuttingAwaitingUpdateForMrp(d.mrp.id, vendorId, productionBatches, invoices, claimDicts, maklonPOs), "roll belum selesai")}
             </option>
           ))}
         </select>

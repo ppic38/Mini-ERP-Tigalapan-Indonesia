@@ -229,7 +229,7 @@ export function AppShell({
         returRequests: materialClaimReturRequests,
         returDeliveries: materialClaimReturDeliveries,
         returReceipts: materialClaimReturReceipts,
-      }),
+      }, maklonPOs),
       "/vendor-maklon/pengiriman": countVendorPengirimanReady(vendorId, productionResults, deliveryKolis, productionGroupMeta, maklonPOs, productionBatches),
       // Item migration 0026: Invoice & Payment sekarang 100% arsip (Create Invoice manual
       // dihapus, submit invoice pindah ke Pengiriman per resi-group) -- countVendorInvoicePaymentTotal

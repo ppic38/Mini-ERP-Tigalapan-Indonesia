@@ -134,9 +134,10 @@ export function countVendorProduksiActionable(
   productionResults: ProductionResult[],
   invoices: RawMaterialInvoice[],
   productionGroupMeta: ProductionGroupMeta[],
-  claimDicts: ClaimResolutionDicts = {}
+  claimDicts: ClaimResolutionDicts = {},
+  maklonPOs?: MaklonPO[]
 ): number {
-  const awaitingWeigh = pendingWeighRollsCount(vendorId, invoices, productionBatches, undefined, claimDicts);
+  const awaitingWeigh = pendingWeighRollsCount(vendorId, invoices, productionBatches, undefined, claimDicts, maklonPOs);
   const awaitingCuttingUpdate = productionBatches.filter((b) => b.vendorProduksi === vendorId && !b.cuttingAt).length;
   const mrpWithRemainingReject = mrpIdsWithRemainingReject(vendorId, productionBatches, productionResults, productionGroupMeta).length;
   return awaitingWeigh + awaitingCuttingUpdate + mrpWithRemainingReject;
@@ -148,9 +149,10 @@ export function countCuttingAwaitingUpdate(
   vendorId: string,
   productionBatches: ProductionBatch[],
   invoices: RawMaterialInvoice[],
-  claimDicts: ClaimResolutionDicts = {}
+  claimDicts: ClaimResolutionDicts = {},
+  maklonPOs?: MaklonPO[]
 ): number {
-  const awaitingWeigh = pendingWeighRollsCount(vendorId, invoices, productionBatches, undefined, claimDicts);
+  const awaitingWeigh = pendingWeighRollsCount(vendorId, invoices, productionBatches, undefined, claimDicts, maklonPOs);
   const awaitingCuttingUpdate = productionBatches.filter((b) => b.vendorProduksi === vendorId && !b.cuttingAt).length;
   return awaitingWeigh + awaitingCuttingUpdate;
 }
@@ -168,9 +170,10 @@ export function countCuttingAwaitingUpdateForMrp(
   vendorId: string,
   productionBatches: ProductionBatch[],
   invoices: RawMaterialInvoice[],
-  claimDicts: ClaimResolutionDicts = {}
+  claimDicts: ClaimResolutionDicts = {},
+  maklonPOs?: MaklonPO[]
 ): number {
-  const awaitingWeigh = pendingWeighRollsCount(vendorId, invoices, productionBatches, mrpId, claimDicts);
+  const awaitingWeigh = pendingWeighRollsCount(vendorId, invoices, productionBatches, mrpId, claimDicts, maklonPOs);
   const awaitingCuttingUpdate = productionBatches.filter((b) => b.mrpId === mrpId && b.vendorProduksi === vendorId && !b.cuttingAt).length;
   return awaitingWeigh + awaitingCuttingUpdate;
 }

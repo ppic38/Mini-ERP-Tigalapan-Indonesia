@@ -1809,12 +1809,23 @@ export function confirmedWeighedRolls(mrpId: string, vendorId: string, invoices:
  *  sama persis dengan badge menu-level di atas (termasuk roll "sudah ditimbang tapi belum
  *  dikonfirmasi", yang sebelumnya salah dihitung pakai `pendingWeighRolls` yang TIDAK mencakup
  *  kasus itu). Kalau tidak diisi, perilaku sama seperti sebelumnya (semua MRP vendor ini). */
+/** Revisi 2026-09-20 (bug: "belum klik Mulai Produksi tapi sudah masuk tahap produksi"): bahan yang sudah
+ *  diterima di Good Receive BARU boleh masuk tab Cutting setelah vendor menekan "Mulai Produksi" di
+ *  Good Receive (PO Maklon berpindah dari *_WAITING_MATERIAL ke PRODUCTION). Sebelum itu roll hanya
+ *  "diterima", belum "siap diproduksi". */
+export function mrpProductionStarted(mrpId: string, vendorId: string, maklonPOs: MaklonPO[]): boolean {
+  return maklonPOs.some(
+    (p) => p.mrpId === mrpId && p.vendorProduksi === vendorId && p.status !== "FULL_WAITING_MATERIAL" && p.status !== "PARTIAL_WAITING_MATERIAL"
+  );
+}
+
 export function pendingWeighRollsCount(
   vendorId: string,
   invoices: RawMaterialInvoice[],
   batches: ProductionBatch[],
   mrpId?: string,
-  claimDicts: ClaimResolutionDicts = {}
+  claimDicts: ClaimResolutionDicts = {},
+  maklonPOs?: MaklonPO[]
 ): number {
   // Revisi 2026-09-19 (alur Cutting baru): nama fungsi dipertahankan (dipakai badge sidebar/tab
   // Cutting di lib/shell/badges.ts), tapi artinya sekarang "roll yang sudah diterima & siap dimasukkan
@@ -1822,7 +1833,11 @@ export function pendingWeighRollsCount(
   const locked = lockedClaimKeys(invoices, claimDicts);
   const mrpIds = new Set(invoices.filter((i) => i.destinationVendor === vendorId && (!mrpId || i.mrpId === mrpId)).map((i) => i.mrpId));
   let count = 0;
-  for (const id of mrpIds) count += restingCandidateRolls(id, vendorId, invoices, batches, locked).length;
+  for (const id of mrpIds) {
+    // Kalau daftar PO Maklon diberikan, roll MRP yang produksinya BELUM dimulai tidak dihitung.
+    if (maklonPOs && !mrpProductionStarted(id, vendorId, maklonPOs)) continue;
+    count += restingCandidateRolls(id, vendorId, invoices, batches, locked).length;
+  }
   return count;
 }
 
