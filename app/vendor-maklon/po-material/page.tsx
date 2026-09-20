@@ -7,7 +7,7 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { useMrpStore } from "@/lib/mrp/store";
-import { addDays, formatDate, invoiceBadge, receivedNotYetProducedRows } from "@/lib/mrp/derive";
+import { addDays, formatDate, formatDecimal, invoiceBadge, receivedNotYetProducedRows } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { Lengan, RawMaterialInvoice } from "@/lib/mrp/types";
 import { seenPoKey, useMarkPoSeen } from "@/lib/shell/seen-po";
@@ -40,7 +40,11 @@ const REMARK_BY_STATUS: Record<string, string> = {
 // jadi ada 2 tingkat klik: buka grup MRP -> klik salah satu invoice/PO di dalamnya.
 type InvoiceSub = {
   invoiceId: string;
+  /** No. invoice supplier yang diinput Procurement (Paying Voucher). */
+  noInvoiceVendor?: string;
   colorDetail: { warna: string; lengan: Lengan; roll: number }[];
+  /** Item tambahan (Rib/Kerah/Manset/dst) invoice ini, dipakai untuk kolom kg per warna. */
+  addBuys: { item: string; warna: string; beratKg: number }[];
   warnaLabel: string;
   roll: number;
   rollProduksi: number;
@@ -89,22 +93,57 @@ function InvoiceCard({ vendorId, inv }: { vendorId: string; inv: InvoiceSub }) {
         <span>{formatDate(inv.productionStart)}</span>
         <span>{inv.receivedAt ? formatDate(addDays(inv.receivedAt, VENDOR_PRODUKSI[vendorId]?.productionLeadDays ?? 7)) : "—"}</span>
       </div>
-      {inv.colorDetail.length > 0 && (
-        <>
-          <div className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-            <span>Warna</span>
-            <span>Lengan</span>
-            <span className="text-right">Roll</span>
-          </div>
-          {inv.colorDetail.map((c, i) => (
-            <div key={i} className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-              <span className="font-medium">{c.warna}</span>
-              <span>{c.lengan}</span>
-              <span className="text-right font-mono">{c.roll}</span>
+      {(() => {
+        // Revisi 2026-09-20 (owner: "fokus monitoring material"): 1 baris per WARNA -- roll dipisah
+        // per lengan (Pendek/Panjang) + total roll, plus kg Rib/Kerah/Manset warna itu.
+        const warnaList = Array.from(new Set([...inv.colorDetail.map((c) => c.warna), ...inv.addBuys.map((b) => b.warna || "")]));
+        if (warnaList.length === 0) return null;
+        const itemKg = (warna: string, item: string) =>
+          inv.addBuys.filter((b) => (b.warna || "") === warna && b.item.trim().toLowerCase() === item).reduce((sum, b) => sum + b.beratKg, 0);
+        const rows = warnaList.map((warna) => {
+          const pendek = inv.colorDetail.filter((c) => c.warna === warna && c.lengan === "PENDEK").reduce((sum, c) => sum + c.roll, 0);
+          const panjang = inv.colorDetail.filter((c) => c.warna === warna && c.lengan === "PANJANG").reduce((sum, c) => sum + c.roll, 0);
+          return { warna, pendek, panjang, total: pendek + panjang, rib: itemKg(warna, "rib"), kerah: itemKg(warna, "kerah"), manset: itemKg(warna, "manset") };
+        });
+        const sum = (f: (r: (typeof rows)[number]) => number) => rows.reduce((t, r) => t + f(r), 0);
+        const cols = "grid-cols-[minmax(150px,1.6fr)_repeat(6,minmax(84px,1fr))]";
+        const num = (n: number, kg = false) => (n > 0 ? (kg ? formatDecimal(n) : n) : "—");
+        return (
+          <div className="overflow-x-auto">
+            <div className="min-w-[760px]">
+              <div className={"grid gap-x-2 border-t border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted " + cols}>
+                <span>Warna</span>
+                <span className="text-right">Roll (Lengan Pendek)</span>
+                <span className="text-right">Roll (Lengan Panjang)</span>
+                <span className="text-right">Total Roll</span>
+                <span className="text-right">Rib (kg)</span>
+                <span className="text-right">Kerah (kg)</span>
+                <span className="text-right">Manset (kg)</span>
+              </div>
+              {rows.map((r) => (
+                <div key={r.warna || "__none"} className={"grid gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F] " + cols}>
+                  <span className="font-medium">{r.warna || "Tanpa warna"}</span>
+                  <span className="text-right font-mono">{num(r.pendek)}</span>
+                  <span className="text-right font-mono">{num(r.panjang)}</span>
+                  <span className="text-right font-mono font-semibold">{num(r.total)}</span>
+                  <span className="text-right font-mono">{num(r.rib, true)}</span>
+                  <span className="text-right font-mono">{num(r.kerah, true)}</span>
+                  <span className="text-right font-mono">{num(r.manset, true)}</span>
+                </div>
+              ))}
+              <div className={"grid gap-x-2 border-t-2 border-[#E4E8EE] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[11.5px] font-semibold text-text-primary " + cols}>
+                <span>Total</span>
+                <span className="text-right font-mono">{num(sum((r) => r.pendek))}</span>
+                <span className="text-right font-mono">{num(sum((r) => r.panjang))}</span>
+                <span className="text-right font-mono">{num(sum((r) => r.total))}</span>
+                <span className="text-right font-mono">{num(sum((r) => r.rib), true)}</span>
+                <span className="text-right font-mono">{num(sum((r) => r.kerah), true)}</span>
+                <span className="text-right font-mono">{num(sum((r) => r.manset), true)}</span>
+              </div>
             </div>
-          ))}
-        </>
-      )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -132,6 +171,11 @@ function InvoiceListExpanded({ vendorId, group }: { vendorId: string; group: Row
                   {isOpen ? <ChevronDown className="h-3.5 w-3.5 flex-none text-text-muted" /> : <ChevronRight className="h-3.5 w-3.5 flex-none text-text-muted" />}
                   <span className="font-mono">{inv.invoiceId}</span>
                   <span className="font-mono text-text-muted">({po.poId})</span>
+                  {inv.noInvoiceVendor && (
+                    <span className="text-text-muted">
+                      No. Invoice: <span className="font-mono font-medium text-text-primary">{inv.noInvoiceVendor}</span>
+                    </span>
+                  )}
                   {inv.status === "WAITING_INVOICE" ? (
                     <StatusPill tone="warning">WAITING INVOICE</StatusPill>
                   ) : (
@@ -181,6 +225,8 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
       const rollSisa = receivedColorEntries.reduce((sum, c) => sum + (groupFor(i.mrpId, c.warna, c.lengan)?.remaining ?? 0), 0);
       return {
         invoiceId: i.id,
+        noInvoiceVendor: i.noInvoiceVendor?.trim() || undefined,
+        addBuys: i.addBuys.map((b) => ({ item: b.item, warna: b.warna, beratKg: b.beratKg })),
         colorDetail: i.colorEntries.map((c) => ({ warna: c.warna, lengan: c.lengan, roll: c.rolls.length })),
         warnaLabel: receivedColorEntries.length > 0 ? receivedColorEntries.map((c) => `${c.warna} · ${c.lengan}`).join(", ") : "Menunggu diterima",
         roll: i.qtyReady,

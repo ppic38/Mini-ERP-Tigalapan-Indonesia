@@ -368,8 +368,9 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
           {/* Item revisi 2026-09-08 (owner: "Hilangkan saja untuk kolom warna" — terlalu padat
               untuk PO multi-warna, apalagi sekarang detail per-warna sudah ada di ringkasan roll
               + qty pendek/panjang begitu PO ini dipilih, lihat di bawah). */}
-          <div className="grid grid-cols-8 gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+          <div className="grid grid-cols-9 gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
             <span>No PO</span>
+            <span>No. Invoice</span>
             <span>Supplier</span>
             <span>Status</span>
             <span className="text-right">Roll diterima</span>
@@ -384,8 +385,11 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
           {mrpInvoices.map((i) => {
             const progress = rollArrivalProgress(i);
             return (
-              <div key={i.id} className="grid grid-cols-8 items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0">
+              <div key={i.id} className="grid grid-cols-9 items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0">
                 <span className="font-mono font-medium">{i.poId}</span>
+                {/* Revisi 2026-09-20 (owner): nomor invoice supplier yang diinput Procurement di Paying Voucher
+                    disematkan di daftar PO material ini. */}
+                <span className="break-all font-mono text-[11px]">{i.noInvoiceVendor || "—"}</span>
                 <span>{i.supplier}</span>
                 {/* Item revisi 2026-09-06: sebelumnya 2 pill (status invoice + status kedatangan
                     roll) tampil berdampingan di baris yang sama — dobel & membingungkan menurut
