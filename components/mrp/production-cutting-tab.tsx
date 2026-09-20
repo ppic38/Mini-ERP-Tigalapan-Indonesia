@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { Info } from "lucide-react";
 import { NumberInput } from "@/components/mrp/number-input";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Button } from "@/components/ui/button";
@@ -183,6 +184,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   const [selectedGroupKey, setSelectedGroupKey] = useState("");
   // Tab lengan di tabel Aduan pola (sama seperti Good Receive): Pendek dulu, Panjang kalau hanya itu.
   const [aduanLengan, setAduanLengan] = useState<"PENDEK" | "PANJANG">("PENDEK");
+  // Tab lengan untuk tabel "Input Resting dan Cutting" (terpisah dari tab tabel Aduan pola).
+  const [sessionLengan, setSessionLengan] = useState<"PENDEK" | "PANJANG">("PENDEK");
   // Daftar roll dalam proses klaim dibuka lewat popup (bukan container yang selalu terbuka).
   const [claimListOpen, setClaimListOpen] = useState(false);
   // Revisi 2026-09-19 (owner, alur Cutting baru): tahap "Timbang roll" yang berdiri sendiri DIHAPUS.
@@ -562,6 +565,15 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   }));
   // Tabel "Input Resting dan Cutting" KOSONG sampai MRP dipilih.
   const scopedSessions = selectedMrpId ? sessionGroups.filter((g) => g.mrpId === selectedMrpId) : [];
+  // Sub-tab lengan (Pendek dulu, Panjang kalau hanya itu); badge = sesi yang masih butuh input hasil cutting.
+  const lenganWithSessions = (["PENDEK", "PANJANG"] as const).filter((l) => scopedSessions.some((g) => g.lengan === l));
+  const activeSessionLengan = lenganWithSessions.includes(sessionLengan) ? sessionLengan : lenganWithSessions[0];
+  const visibleSessions = activeSessionLengan ? scopedSessions.filter((g) => g.lengan === activeSessionLengan) : scopedSessions;
+  const sessionLenganTabs = lenganWithSessions.map((l) => ({
+    key: l,
+    label: l === "PENDEK" ? "Lengan Pendek" : "Lengan Panjang",
+    badge: scopedSessions.filter((g) => g.lengan === l && g.batches.some(batchNeedsCuttingInput)).length,
+  }));
 
   // Panel "List roll" untuk aduan pola terpilih -- dirender tepat di bawah tabel lengan-nya.
   const builderPanel = selectedGroup ? (
@@ -717,9 +729,22 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
 
       {selectedDetail && (
         <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-          <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Aduan pola — {selectedDetail.mrp.id}</div>
-          <div className="px-4 py-2 font-sans text-[11px] leading-[1.5] text-info-fg bg-info-bg border-b border-[#CFE0EF]">
-            Roll yang sudah diterima di Good Receive otomatis masuk di sini. Pilih aduan pola untuk melihat materialnya, lalu pilih warna &amp; roll yang akan di-resting.
+          <div className="flex items-center justify-between gap-3 border-b border-border-subtle px-4 py-3">
+            <span className="font-sans text-[13px] font-semibold text-text-primary">Aduan pola — {selectedDetail.mrp.id}</span>
+            {/* Revisi 2026-09-20 (owner): catatan cara pakai dipindah jadi ikon info di kanan judul (muncul saat
+                di-hover / difokuskan / diklik) supaya tidak memakan satu baris penuh. */}
+            <span className="group relative">
+              <button
+                type="button"
+                aria-label="Petunjuk aduan pola"
+                className="flex h-6 w-6 items-center justify-center rounded-full text-info-fg hover:bg-info-bg focus:bg-info-bg focus:outline-none"
+              >
+                <Info size={16} strokeWidth={2} />
+              </button>
+              <span className="pointer-events-none absolute right-0 top-full z-20 mt-1 hidden w-[320px] rounded-md border border-[#CFE0EF] bg-white px-3 py-2 font-sans text-[11.5px] font-normal leading-[1.5] text-[#31414F] shadow-[0_6px_18px_rgba(11,19,27,.12)] group-focus-within:block group-hover:block">
+                Roll yang sudah diterima di Good Receive otomatis masuk di sini. Pilih aduan pola untuk melihat materialnya, lalu pilih warna &amp; roll yang akan di-resting.
+              </span>
+            </span>
           </div>
           {/* Tab lengan di dalam container tabel -- hanya kalau MRP ini punya aduan Pendek DAN Panjang. Badge = roll tersedia. */}
           {lenganTabsAduan.length > 1 && (
@@ -782,7 +807,14 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
       )}
 
       <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-        <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Input Resting dan Cutting</div>
+        <div className={"px-4 py-3 font-sans text-[13px] font-semibold text-text-primary " + (selectedMrpId && sessionLenganTabs.length > 1 ? "" : "border-b border-border-subtle")}>
+          Input Resting dan Cutting
+        </div>
+        {selectedMrpId && sessionLenganTabs.length > 1 && (
+          <div className="border-b border-border-subtle px-4">
+            <Tabs items={sessionLenganTabs} active={activeSessionLengan ?? ""} onChange={(key) => setSessionLengan(key as "PENDEK" | "PANJANG")} />
+          </div>
+        )}
         <div className="overflow-x-auto">
           {/* Revisi 2026-09-19: wrapper ini min-w-[1550px] -- header, baris grup, dan sub-tabel per-roll
               semua berbagi lebar yang SAMA sehingga latar/border-nya tidak terpotong saat digulir. */}
@@ -811,7 +843,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               <span className="text-center">Detail</span>
             </div>
                     {scopedSessions.length === 0 && <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Belum ada batch produksi untuk MRP ini.</div>}
-                    {scopedSessions.map((g) => {
+                    {visibleSessions.map((g) => {
               const isExpanded = expandedSessions.has(g.key);
               const detail = mrpDetails.find((d) => d.mrp.id === g.mrpId);
               const distinctWarna = Array.from(new Set(g.batches.map((b) => b.warna))).join(", ");
