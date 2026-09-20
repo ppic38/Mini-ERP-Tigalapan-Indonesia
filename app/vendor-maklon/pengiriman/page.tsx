@@ -22,7 +22,6 @@ import {
   resiGroupInvoiceLines,
   rollRemainingBySizeForMrp,
   vendorCumulativeQtyByLengan,
-  sizeIndex,
 } from "@/lib/mrp/derive";
 import { countPengirimanPendingForMrp, pendingMarker } from "@/lib/shell/badges";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -58,15 +57,6 @@ function rowKey(kind: DeliveryKoliItem["kind"], r: Pick<AvailableFgRow, "warna" 
  *  qty roll DAN untuk mengagregasi `RollRemainingRow[]` (per roll) jadi 1 baris per size (roll bisa
  *  banyak untuk warna·lengan yang sama). Beda dari `rowKey` di atas (yang juga menyertakan
  *  kind/usia) karena roll FG di sini selalu kind FG & tidak berusia. */
-function lenganRank(l: string): number {
-  return l === "PENDEK" ? 0 : 1;
-}
-
-function sizeRank(size: string): number {
-  const i = sizeIndex(size);
-  return i < 0 ? 999 : i;
-}
-
 function rollSizeKey(warna: string, lengan: Lengan, size: string): string {
   return [warna, lengan, size].join("|");
 }
@@ -219,6 +209,9 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   // cuma referensi teknis, bikin form penuh sebelum sempat diisi -- default disembunyikan, mirip
   // pola "Lihat daftar roll" di tab Finish Good (production-result-panel.tsx).
   const [showRollList, setShowRollList] = useState(false);
+  // Filter warna untuk tabel "qty per size" (kosong = semua warna). Hanya memfilter tampilan -- qty yang sudah
+  // diisi di warna lain tetap ikut tersimpan.
+  const [warnaFilter, setWarnaFilter] = useState("");
   // Klik baris "Koli belum dikirim"/"Riwayat pengiriman" untuk expand/collapse rincian isi koli
   // per item — id koli unik lintas kedua tabel jadi aman pakai 1 Set gabungan.
   const [expandedKoli, setExpandedKoli] = useState<Set<string>>(new Set());
@@ -296,23 +289,11 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
       const [warna, lengan, size] = key.split("|");
       return { key, warna, lengan: lengan as Lengan, size, available };
     })
-    .filter((r) => r.available > 0)
-    .sort((a, b) => a.warna.localeCompare(b.warna) || lenganRank(a.lengan) - lenganRank(b.lengan) || sizeRank(a.size) - sizeRank(b.size) || a.size.localeCompare(b.size));
-
-  // Matriks: 1 baris per warna/lengan (Pendek dulu baru Panjang), kolom = size yang tersedia.
-  const matrixSizes = Array.from(new Set(rollSizeRows.map((r) => r.size))).sort((a, b) => sizeRank(a) - sizeRank(b) || a.localeCompare(b));
-  const matrixGroups = (() => {
-    const map = new Map<string, { warna: string; lengan: Lengan; cells: Map<string, { key: string; available: number }> }>();
-    for (const r of rollSizeRows) {
-      const gk = r.warna + "|" + r.lengan;
-      if (!map.has(gk)) map.set(gk, { warna: r.warna, lengan: r.lengan, cells: new Map() });
-      map.get(gk)!.cells.set(r.size, { key: r.key, available: r.available });
-    }
-    return Array.from(map.values());
-  })();
-  const matrixGridCols = `minmax(170px,1.3fr) repeat(${matrixSizes.length}, minmax(96px,1fr)) 84px 110px`;
-  const rollDraftTotal = rollSizeRows.reduce((sum, r) => sum + (rollQtyDraft[r.key] ?? 0), 0);
-  const rollAvailableTotal = rollSizeRows.reduce((sum, r) => sum + r.available, 0);
+    // Urut per warna (A-Z), di dalam tiap warna Pendek dulu baru Panjang, lalu size.
+    .sort((a, b) => a.warna.localeCompare(b.warna) || (a.lengan === b.lengan ? 0 : a.lengan === "PENDEK" ? -1 : 1) || a.size.localeCompare(b.size));
+  const warnaOptions = Array.from(new Set(rollSizeRows.map((r) => r.warna)));
+  const activeWarnaFilter = warnaOptions.includes(warnaFilter) ? warnaFilter : "";
+  const visibleRollSizeRows = activeWarnaFilter ? rollSizeRows.filter((r) => r.warna === activeWarnaFilter) : rollSizeRows;
 
   function setRowQty(key: string, qty: number) {
     setQtyDraft((prev) => ({ ...prev, [key]: qty }));
@@ -327,6 +308,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
     setQtyDraft({});
     setRollQtyDraft({});
     setShowRollList(false);
+    setWarnaFilter("");
   }
 
   function editKoli(k: (typeof deliveryKolis)[number]) {
@@ -625,106 +607,45 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
             {rollSizeRows.length === 0 && (
               <div className="mt-2 font-sans text-xs text-text-muted">Belum ada roll selesai untuk MRP ini.</div>
             )}
+            {warnaOptions.length > 1 && (
+              <div className="mt-2 flex items-center gap-2">
+                <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Filter warna</span>
+                <select value={activeWarnaFilter} onChange={(e) => setWarnaFilter(e.target.value)} className="input w-[220px]">
+                  <option value="">Semua warna</option>
+                  {warnaOptions.map((w) => (
+                    <option key={w} value={w}>
+                      {w}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             {rollSizeRows.length > 0 && (
               <div className="mt-2 overflow-hidden rounded-md border border-border-subtle bg-white">
-                <div className="flex items-center justify-between gap-2 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5">
-                  <span className="font-sans text-[10.5px] text-text-muted">Isi qty di kolom size. Angka kecil di bawah kolom = sisa yang bisa dikirim.</span>
-                  <span className="flex flex-none gap-1.5">
-                    <Button
-                      onClick={() => setRollQtyDraft(Object.fromEntries(rollSizeRows.map((r) => [r.key, r.available])))}
-                      disabled={!noKoli.trim()}
-                      variant="accent"
-                      size="xs"
-                    >
-                      Isi semua sisa
-                    </Button>
-                    <Button onClick={() => setRollQtyDraft({})} disabled={!noKoli.trim() || rollDraftTotal === 0} variant="ghost" size="xs">
-                      Kosongkan
-                    </Button>
-                  </span>
+                <div className="grid grid-cols-4 gap-x-2 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                  <span>Warna / lengan</span>
+                  <span>Size</span>
+                  <span className="text-right">Sisa bisa dikirim</span>
+                  <span className="text-right">Qty</span>
                 </div>
-                <div className="overflow-x-auto">
-                  <div className="min-w-fit">
-                    <div
-                      className="grid items-center gap-x-2 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted"
-                      style={{ gridTemplateColumns: matrixGridCols }}
-                    >
-                      <span>Warna / lengan</span>
-                      {matrixSizes.map((sz) => (
-                        <span key={sz} className="text-center">
-                          {sz}
-                        </span>
-                      ))}
-                      <span className="text-right">Total</span>
-                      <span />
-                    </div>
-                    {matrixGroups.map((g) => {
-                      const cells = Array.from(g.cells.values());
-                      const rowTotal = cells.reduce((sum, c) => sum + (rollQtyDraft[c.key] ?? 0), 0);
-                      const rowAvail = cells.reduce((sum, c) => sum + c.available, 0);
-                      const rowFull = rowTotal === rowAvail;
-                      return (
-                        <div
-                          key={g.warna + "|" + g.lengan}
-                          className="grid items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-2 font-sans text-xs text-[#31414F] last:border-b-0"
-                          style={{ gridTemplateColumns: matrixGridCols }}
-                        >
-                          <span className="font-medium">
-                            {g.warna} · {g.lengan}
-                          </span>
-                          {matrixSizes.map((sz) => {
-                            const c = g.cells.get(sz);
-                            if (!c) {
-                              return (
-                                <span key={sz} className="text-center font-mono text-[11px] text-[#C3CDD6]">
-                                  —
-                                </span>
-                              );
-                            }
-                            return (
-                              <span key={sz} className="flex flex-col items-center gap-0.5">
-                                <NumberInput
-                                  value={rollQtyDraft[c.key] ?? 0}
-                                  decimals={0}
-                                  disabled={!noKoli.trim()}
-                                  onChange={(v) => setRollQty(c.key, Math.max(0, Math.min(v, c.available)))}
-                                  className="input w-full text-right disabled:cursor-not-allowed disabled:bg-[#F7F9FB] disabled:text-text-muted"
-                                />
-                                <span className="font-mono text-[10px] text-text-muted">sisa {c.available}</span>
-                              </span>
-                            );
-                          })}
-                          <span className="text-right font-mono font-medium">
-                            {rowTotal}
-                            <span className="text-text-muted"> / {rowAvail}</span>
-                          </span>
-                          <span className="flex justify-end">
-                            <Button
-                              onClick={() =>
-                                setRollQtyDraft((prev) => {
-                                  const next = { ...prev };
-                                  for (const c of cells) next[c.key] = rowFull ? 0 : c.available;
-                                  return next;
-                                })
-                              }
-                              disabled={!noKoli.trim()}
-                              variant="ghost"
-                              size="xs"
-                            >
-                              {rowFull ? "Kosongkan" : "Isi sisa"}
-                            </Button>
-                          </span>
-                        </div>
-                      );
-                    })}
+                {visibleRollSizeRows.map((r) => (
+                  <div key={r.key} className="grid grid-cols-4 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0">
+                    <span>
+                      {r.warna} · {r.lengan}
+                    </span>
+                    <span>{r.size}</span>
+                    <span className="text-right font-mono text-text-muted">{r.available} pcs</span>
+                    <span className="flex justify-end">
+                      <NumberInput
+                        value={rollQtyDraft[r.key] ?? 0}
+                        decimals={0}
+                        disabled={!noKoli.trim()}
+                        onChange={(v) => setRollQty(r.key, Math.max(0, Math.min(v, r.available)))}
+                        className="input w-[90px] text-right disabled:cursor-not-allowed disabled:bg-[#F7F9FB] disabled:text-text-muted"
+                      />
+                    </span>
                   </div>
-                </div>
-                <div className="flex items-center justify-between border-t border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[11.5px] text-text-muted">
-                  <span>Total dikirim di koli ini</span>
-                  <span className="font-mono font-semibold text-text-primary">
-                    {rollDraftTotal} <span className="font-normal text-text-muted">/ {rollAvailableTotal} pcs</span>
-                  </span>
-                </div>
+                ))}
               </div>
             )}
             {/* Item 2026-09-12 (user-reported): daftar roll mentah dihide default (toggle), lihat
