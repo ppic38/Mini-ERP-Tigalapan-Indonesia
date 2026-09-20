@@ -25,6 +25,11 @@ import type { Lengan } from "@/lib/mrp/types";
 
 type DraftCode = { codeRoll: string };
 
+// Revisi 2026-09-20 (owner): item tambahan (Rib/Kerah/Manset) ikut terfilter per warna. Item yang warnanya
+// kosong (mis. Bur/umum) dikelompokkan ke pilihan "Tanpa warna (umum)" memakai sentinel ini.
+const NO_WARNA = "__TANPA_WARNA__";
+const warnaLabel = (w: string) => (w === NO_WARNA ? "Tanpa warna (umum)" : w);
+
 // Kolom kartu "Terima Material": Roll/Item | Code roll/Warna | Code lot | Berat | Status/Aksi (lebar tetap, rata kanan).
 const RECEIVE_GRID = "minmax(80px,0.6fr) minmax(220px,2fr) minmax(80px,0.6fr) minmax(120px,0.8fr) 190px";
 
@@ -152,16 +157,26 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     }
     setSelectedInvoiceId(id);
     const inv = eligible.find((i) => i.id === id);
-    const first = inv?.colorEntries[0];
-    // Warna pertama langsung terbuka dengan lengan default-nya (Pendek dulu kalau ada, kalau tidak Panjang).
-    setSelectedWarna(first?.warna ?? "");
-    setSelectedColorKey(first ? defaultColorKeyFor(first.warna, inv?.colorEntries ?? []) : "");
+    // Warna pertama (gabungan warna roll + warna item tambahan) langsung terbuka dengan lengan
+    // default-nya (Pendek dulu kalau ada, kalau tidak Panjang). Invoice yang cuma berisi item
+    // tambahan (tanpa roll) tetap punya warna pertama dari item tambahannya.
+    const firstWarna = inv ? warnaListFor(inv)[0] : undefined;
+    setSelectedWarna(firstWarna ?? "");
+    setSelectedColorKey(firstWarna && inv ? defaultColorKeyFor(firstWarna, inv.colorEntries) : "");
     setDraftCode({});
     setShowAllColors(false);
   }
 
   // Revisi 2026-09-20 (owner): TIDAK perlu klik lengan dulu -- begitu warna dipilih, tampilan pertama
   // langsung lengan PENDEK kalau warna itu punya Pendek & Panjang; kalau cuma Panjang ya Panjang.
+  function warnaListFor(inv: { colorEntries: { warna: string }[]; addBuys: { warna: string }[] }): string[] {
+    const list = Array.from(new Set(inv.colorEntries.map((c) => c.warna)));
+    for (const b of inv.addBuys) {
+      const w = b.warna || NO_WARNA;
+      if (!list.includes(w)) list.push(w);
+    }
+    return list;
+  }
   function defaultColorKeyFor(warna: string, entries: { warna: string; lengan: string; rolls: number[] }[]): string {
     const ofWarna = entries.filter((c) => c.warna === warna && c.rolls.length > 0);
     const pick = ofWarna.find((c) => c.lengan === "PENDEK") ?? ofWarna[0];
@@ -207,7 +222,9 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   // Keduanya tetap 1 optimistic patch + 1 tulisan server (receiveMaterialBatch), tanpa flicker.
   const pendingRollIdx =
     selectedInvoice && selectedColor ? selectedColor.rolls.map((_, i) => i).filter((i) => !selectedInvoice.rollArrivals[selectedColorKey]?.[i]) : [];
-  const pendingAddBuyIds = selectedInvoice ? selectedInvoice.addBuys.filter((b) => !selectedInvoice.addBuyReceipts[b.id]).map((b) => b.id) : [];
+  // Item tambahan yang ditampilkan/diterima = HANYA yang warnanya cocok dengan warna terpilih.
+  const selectedWarnaItems = selectedInvoice && selectedWarna ? selectedInvoice.addBuys.filter((b) => (b.warna || NO_WARNA) === selectedWarna) : [];
+  const pendingAddBuyIds = selectedInvoice ? selectedWarnaItems.filter((b) => !selectedInvoice.addBuyReceipts[b.id]).map((b) => b.id) : [];
   // Code roll WAJIB terisi sebelum roll boleh diterima (Terima / Terima semua roll).
   const rollsMissingCode = pendingRollIdx.filter((i) => !draftCode[i]?.codeRoll?.trim());
   function receiveAllRolls() {
@@ -477,15 +494,21 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                 tampil apa pun statusnya, supaya tidak tiba-tiba hilang dari layar begitu selesai
                 ditandai lengkap. */}
             {(() => {
-              // Kelompokkan per WARNA (gabungan lengan Pendek + Panjang).
-              const groups = Array.from(new Set(colorOptions.map((c) => c.warna))).map((warna) => {
+              // Kelompokkan per WARNA (gabungan lengan Pendek + Panjang) + item tambahan warna itu. Warna yang
+              // HANYA punya item tambahan (mis. Rib susulan tanpa roll baru) tetap muncul sebagai pilihan.
+              const groups = warnaListFor(selectedInvoice).map((warna) => {
                 const entries = colorOptions.filter((c) => c.warna === warna);
                 const total = entries.reduce((sum, c) => sum + c.rolls.length, 0);
                 const arrived = entries.reduce(
                   (sum, c) => sum + c.rolls.filter((_, idx) => selectedInvoice.rollArrivals[c.warna + "|" + c.lengan]?.[idx]).length,
                   0
                 );
-                return { warna, entries, total, arrived, complete: total > 0 && arrived === total };
+                const items = selectedInvoice.addBuys.filter((it) => (it.warna || NO_WARNA) === warna);
+                const itemTotal = items.length;
+                const itemReceived = items.filter((it) => selectedInvoice.addBuyReceipts[it.id]).length;
+                const rollsDone = total === 0 || arrived === total;
+                const itemsDone = itemTotal === 0 || itemReceived === itemTotal;
+                return { warna, entries, total, arrived, itemTotal, itemReceived, complete: (total > 0 || itemTotal > 0) && rollsDone && itemsDone };
               });
               const completeCount = groups.filter((g) => g.complete).length;
               const visibleGroups = showAllColors ? groups : groups.filter((g) => g.warna === selectedWarna || !g.complete);
@@ -504,14 +527,16 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                       <button
                         key={g.warna}
                         onClick={() => pickWarna(g.warna)}
-                        disabled={g.total === 0}
+                        disabled={g.total === 0 && g.itemTotal === 0}
                         className={
                           "rounded-md border px-2.5 py-[6px] font-sans text-[11.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-40 " +
                           (selectedWarna === g.warna ? "border-action-primary bg-action-primary text-white" : "border-[#CBD5DF] bg-white text-action-primary")
                         }
                       >
                         <span className="mr-1">{g.complete ? "✅" : "○"}</span>
-                        {g.warna} ({g.arrived}/{g.total} diterima)
+                        {warnaLabel(g.warna)} (
+                        {g.total > 0 ? `${g.arrived}/${g.total} roll` : "tanpa roll"}
+                        {g.itemTotal > 0 ? ` · ${g.itemReceived}/${g.itemTotal} item` : ""} diterima)
                       </button>
                     ))}
                   </div>
@@ -526,7 +551,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
             )}
           </div>
 
-          {(selectedColor || selectedInvoice.addBuys.length > 0) && (
+          {(selectedColor || selectedWarnaItems.length > 0) && (
             // Revisi 2026-09-20 (owner: "berantakan, susunan button tidak presisi, buat lebih simpel"):
             // kartu "Terima Material" disusun ulang jadi 2 bagian (Roll, Item Tambahan) yang berbagi
             // SATU grid kolom (RECEIVE_GRID) -- kolom Aksi lebar tetap & rata kanan, semua tombol
@@ -534,7 +559,12 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
             // bagian dengan ukuran yang sama.
             <div className="w-full overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
               <div className={"px-4 py-3 font-sans text-[13px] font-semibold text-text-primary " + (lenganTabs.length > 1 ? "" : "border-b border-border-subtle")}>
-                Terima Material{selectedColor ? ` — ${selectedColor.warna}${lenganTabs.length > 1 ? "" : ` · ${selectedColor.lengan}`}` : ""}
+                Terima Material
+                {selectedColor
+                  ? ` — ${selectedColor.warna}${lenganTabs.length > 1 ? "" : ` · ${selectedColor.lengan}`}`
+                  : selectedWarna
+                    ? ` — ${warnaLabel(selectedWarna)}`
+                    : ""}
               </div>
               {/* Tab lengan (Pendek / Panjang) di dalam container tabel -- hanya kalau warna ini punya 2 lengan. */}
               {lenganTabs.length > 1 && (
@@ -616,7 +646,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                     </>
                   )}
 
-                  {selectedInvoice.addBuys.length > 0 && (
+                  {selectedWarnaItems.length > 0 && (
                     <>
                       <div className={"flex items-center justify-between gap-3 border-b border-[#E4E8EE] bg-[#F7F9FB] px-4 py-2 " + (selectedColor ? "border-t border-t-[#E4E8EE]" : "")}>
                         <span className="font-sans text-[12px] font-semibold text-text-primary">
@@ -638,7 +668,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                         <span className="text-right">Berat (kg)</span>
                         <span className="text-right">Status</span>
                       </div>
-                      {selectedInvoice.addBuys.map((b) => {
+                      {selectedWarnaItems.map((b) => {
                         const receipt = selectedInvoice.addBuyReceipts[b.id];
                         return (
                           <div
