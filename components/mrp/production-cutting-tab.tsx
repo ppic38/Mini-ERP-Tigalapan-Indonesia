@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { NumberInput } from "@/components/mrp/number-input";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Button } from "@/components/ui/button";
+import { Tabs } from "@/components/ui/tabs";
 import { useMrpStore } from "@/lib/mrp/store";
 import {
   availableRollsByAduanRow,
@@ -180,6 +181,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
 
   const [selectedMrpId, setSelectedMrpId] = useState("");
   const [selectedGroupKey, setSelectedGroupKey] = useState("");
+  // Tab lengan di tabel Aduan pola (sama seperti Good Receive): Pendek dulu, Panjang kalau hanya itu.
+  const [aduanLengan, setAduanLengan] = useState<"PENDEK" | "PANJANG">("PENDEK");
   // Daftar roll dalam proses klaim dibuka lewat popup (bukan container yang selalu terbuka).
   const [claimListOpen, setClaimListOpen] = useState(false);
   // Revisi 2026-09-19 (owner, alur Cutting baru): tahap "Timbang roll" yang berdiri sendiri DIHAPUS.
@@ -547,7 +550,16 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
 
   // Revisi 2026-09-19 (owner): tabel Aduan pola dibagi 2 (lengan PENDEK dulu, baru PANJANG), tanpa filter.
   // Tabel "Input Resting dan Cutting" TIDAK dibagi.
-  const visibleLengan = ["PENDEK", "PANJANG"] as const;
+  // Revisi 2026-09-20 (owner: "pisah tabel panjang & pendek seperti di Good Receive"): tabel Aduan pola
+  // ditampilkan per TAB lengan (satu tabel sekali tampil), default Pendek; kalau hanya ada Panjang ya Panjang.
+  const lenganWithAduan = (["PENDEK", "PANJANG"] as const).filter((l) => groupList.some((g) => g.lengan === l));
+  const activeLengan = lenganWithAduan.includes(aduanLengan) ? aduanLengan : lenganWithAduan[0];
+  const visibleLengan = activeLengan ? [activeLengan] : [];
+  const lenganTabsAduan = lenganWithAduan.map((l) => ({
+    key: l,
+    label: l === "PENDEK" ? "Lengan Pendek" : "Lengan Panjang",
+    badge: groupList.filter((g) => g.lengan === l).reduce((sum, g) => sum + g.totalAvailable, 0),
+  }));
   // Tabel "Input Resting dan Cutting" KOSONG sampai MRP dipilih.
   const scopedSessions = selectedMrpId ? sessionGroups.filter((g) => g.mrpId === selectedMrpId) : [];
 
@@ -709,6 +721,24 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
           <div className="px-4 py-2 font-sans text-[11px] leading-[1.5] text-info-fg bg-info-bg border-b border-[#CFE0EF]">
             Roll yang sudah diterima di Good Receive otomatis masuk di sini. Pilih aduan pola untuk melihat materialnya, lalu pilih warna &amp; roll yang akan di-resting.
           </div>
+          {/* Tab lengan di dalam container tabel -- hanya kalau MRP ini punya aduan Pendek DAN Panjang. Badge = roll tersedia. */}
+          {lenganTabsAduan.length > 1 && (
+            <div className="border-b border-border-subtle px-4">
+              <Tabs
+                items={lenganTabsAduan}
+                active={activeLengan ?? ""}
+                onChange={(key) => {
+                  setAduanLengan(key as "PENDEK" | "PANJANG");
+                  // aduan pola terpilih di lengan lain ikut ditutup supaya panel List roll tidak "menggantung".
+                  if (selectedGroup && selectedGroup.lengan !== key) {
+                    setSelectedGroupKey("");
+                    setLines([]);
+                    closePick();
+                  }
+                }}
+              />
+            </div>
+          )}
           {visibleLengan.map((len) => {
             const gl = groupList.filter((g) => g.lengan === len);
             return (
