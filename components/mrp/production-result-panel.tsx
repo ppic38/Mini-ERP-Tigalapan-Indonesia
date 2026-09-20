@@ -415,6 +415,32 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                     )}
                     {expanded && !isFgConfirmed && kind === "FG" && (
                       <div className="border-b border-[#CFE0EF] bg-info-bg p-4">
+                        {/* Revisi 2026-09-20 (owner): rekap Finish Good PER SIZE untuk monitoring -- selalu tampil begitu
+                            baris dibuka (juga saat semua roll sudah tertutup tapi warna belum diklik Selesai). */}
+                        {sizes.length > 0 && (
+                          <div className="mb-3 overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
+                            <div className="border-b border-[#CFE0EF] bg-white px-4 py-2 font-sans text-[11.5px] font-semibold text-text-primary">Finish Good per size</div>
+                            <div className="grid grid-cols-4 gap-x-2 bg-[#F7F9FB] px-4 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                              <span>Size</span>
+                              <span className="text-right">Target (hasil cutting)</span>
+                              <span className="text-right">Finish Good</span>
+                              <span className="text-right">Kurang</span>
+                            </div>
+                            {sizes.map((size) => {
+                              const tgt = target[size] ?? 0;
+                              const rec = recorded[size] ?? 0;
+                              const kurang = tgt - rec;
+                              return (
+                                <div key={size} className="grid grid-cols-4 items-center gap-x-2 border-t border-[#F1F4F7] px-4 py-1.5 font-sans text-xs text-[#31414F]">
+                                  <span className="font-mono font-medium">{size}</span>
+                                  <span className="text-right font-mono">{tgt}</span>
+                                  <span className="text-right font-mono font-semibold">{rec}</span>
+                                  <span className={"text-right font-mono " + (kurang > 0 ? "font-semibold text-danger-fg" : "text-success-fg")}>{kurang > 0 ? kurang : kurang < 0 ? `+${-kurang}` : "—"}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                         {groupBatches.length === 0 && (
                           <div className="rounded-md border border-[#CFE0EF] bg-white px-3 py-3 text-center font-sans text-[11.5px] text-text-muted">
                             Belum ada roll tercutting untuk grup ini.
