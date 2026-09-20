@@ -141,7 +141,13 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
   // warnaLenganGroupsWithFg (bukan cutWarnaLenganGroups) -- ikutkan grup TUJUAN rework lintas
   // lengan yang tidak pernah dicutting sendiri (lihat catatan di lib/mrp/derive.ts), supaya FG
   // hasil rework itu punya baris sendiri yang bisa di-"Selesai Produksi"-kan juga.
-  const groups = selectedMrpId ? warnaLenganGroupsWithFg(selectedMrpId, vendorId, productionBatches, productionResults) : [];
+  const allGroups = selectedMrpId ? warnaLenganGroupsWithFg(selectedMrpId, vendorId, productionBatches, productionResults) : [];
+  // Revisi 2026-09-20 (owner): tab Reject hanya menampilkan warna/lengan yang ADA rejectnya (reject kotor > 0, termasuk yang
+  // sudah dirework); warna tanpa reject tidak perlu tampil. Tab Finish Good tetap menampilkan semua.
+  const groups =
+    kind === "REJECT"
+      ? allGroups.filter((g) => Object.values(rejectGrossForGroup(selectedMrpId + "|" + g.warna + "|" + g.lengan, productionResults)).some((q) => q > 0))
+      : allGroups;
   const gridColumns = kind === "FG" ? FG_COLUMNS : REJECT_COLUMNS;
   // Revisi 2026-09-19 (owner: "Selesai Produksi di paling kanan, level judul tabel"): tombol pindah
   // ke header tabel Finish Good -- menutup SEMUA grup warna/lengan MRP ini yang belum "FG Selesai"
@@ -294,7 +300,11 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                 )}
                 <span className="text-right">Aksi</span>
               </div>
-              {groups.length === 0 && <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada warna yang tercutting untuk MRP ini.</div>}
+              {groups.length === 0 && (
+                <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">
+                  {kind === "REJECT" ? "Belum ada reject untuk MRP ini." : "Belum ada warna yang tercutting untuk MRP ini."}
+                </div>
+              )}
               {groups.map((g) => {
                 const groupKey = selectedMrpId + "|" + g.warna + "|" + g.lengan;
                 // Total Qty sekarang dari hasil aduan AKTUAL yang diinput vendor per roll di

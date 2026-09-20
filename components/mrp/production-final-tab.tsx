@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import type { Lengan } from "@/lib/mrp/types";
 import { StatusPill } from "@/components/ui/status-pill";
+import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { CloseProductionPoModal } from "@/components/mrp/close-production-po-modal";
 import { useMrpStore } from "@/lib/mrp/store";
 import { usePendingActions } from "@/lib/mrp/usePendingActions";
@@ -30,6 +32,41 @@ import { countProductionFinalReadyForMrp, pendingMarker } from "@/lib/shell/badg
  *  Pengiriman -- FG sudah shippable sejak TAHAP 1 (lihat banner di bawah). Item 21: "Close PO"
  *  (header, per MRP/PO Produksi terpilih) mengunci SEMUA warna/lengan sekaligus & memblokir
  *  Pengiriman untuk sisa FG yang belum masuk koli. */
+type FinalStatus = "Belum ada Finish Good" | "Berjalan" | "Menunggu Final" | "Final";
+
+type FinalRow = {
+  key: string;
+  groupKey: string;
+  warna: string;
+  lengan: Lengan;
+  plannedPcs: number;
+  totalTarget: number;
+  totalFg: number;
+  selisih: number;
+  progressPct: number;
+  rework: number;
+  reject: number;
+  isFgConfirmed: boolean;
+  isDone: boolean;
+  openRollCount: number;
+  status: FinalStatus;
+  openClaims: ReturnType<typeof openMaterialClaimsForGroup>;
+  closeSummary: ReturnType<typeof groupCloseSummary>;
+  sizes: string[];
+  target: Record<string, number>;
+  fgRecorded: Record<string, number>;
+  reworkPerSize: Record<string, number>;
+  currentRejectPerSize: Record<string, number>;
+  fgFromReworkPerSize: Record<string, number>;
+};
+
+const STATUS_TONE: Record<FinalStatus, "success" | "info" | "warning" | "neutral"> = {
+  Final: "success",
+  "Menunggu Final": "info",
+  Berjalan: "warning",
+  "Belum ada Finish Good": "neutral",
+};
+
 export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const productionBatches = useMrpStore((s) => s.productionBatches);
@@ -49,7 +86,6 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
   const reopenProductionPo = useMrpStore((s) => s.reopenProductionPo);
 
   const [selectedMrpId, setSelectedMrpId] = useState("");
-  const [expandedGroupKey, setExpandedGroupKey] = useState("");
   const [closePoOpen, setClosePoOpen] = useState(false);
   // Bug fix (2026-09-06): tombol2 di bawah dulu fire-and-forget tanpa .catch -- kalau server
   // menolak, error-nya cuma jadi unhandled rejection di console, tidak pernah terlihat user (lihat
@@ -93,10 +129,7 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
             <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Pilih MRP (sudah tercutting)</div>
             <select
               value={selectedMrpId}
-              onChange={(e) => {
-                setSelectedMrpId(e.target.value);
-                setExpandedGroupKey("");
-              }}
+              onChange={(e) => setSelectedMrpId(e.target.value)}
               className="mt-1 w-full max-w-[420px] rounded-md border border-[#DDE4EB] px-[11px] py-[9px] font-sans text-[12.5px] font-medium text-text-primary"
             >
               <option value="">— pilih MRP —</option>
@@ -164,188 +197,199 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
         />
       )}
 
-      {selectedMrpId && (
-        <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-          <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Final Produksi — {selectedMrpId}</div>
-          {groups.length === 0 && <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada warna pada rencana MRP ini.</div>}
-          {groups.map((g) => {
+      {selectedMrpId &&
+        (() => {
+          // Revisi 2026-09-20 (owner: "berantakan, tidak presisi, tidak berurutan, tidak ada filter"): daftar warna/lengan
+          // dijadikan tabel terstruktur (DataTable yang sama dengan halaman lain) -- kolom rata, urut Pendek dulu baru
+          // Panjang lalu nama warna, dengan pencarian warna + filter Lengan & Status, dan rincian by size di baris yang dibuka.
+          const rows: FinalRow[] = groups.map((g) => {
             const groupKey = selectedMrpId + "|" + g.warna + "|" + g.lengan;
             const target = cuttingSizesForGroup(selectedMrpId, g.warna, g.lengan, mrpDetails, productionBatches);
             const fgRecorded = cumulativeSizeQtyForGroup(groupKey, "FG", productionResults);
-            const totalTarget = Object.values(target).reduce((a, b) => a + b, 0);
-            const totalFg = Object.values(fgRecorded).reduce((a, b) => a + b, 0);
-            const totalSelisih = totalFg - totalTarget;
-            const progressPct = totalTarget > 0 ? Math.min(100, Math.round((totalFg / totalTarget) * 100)) : 0;
-            // Item revisi 2026-09-08 (owner: "Hilangkan saja yang reject, pake saja reject sisa
-            // jadi reject saat ini") -- dulu tampil DUA angka reject berdampingan (gross sebelum
-            // rework + sisa setelah rework), sekarang cukup SATU: sisa reject SAAT INI (setelah
-            // rework dikurangkan), diberi label "Reject" biasa (bukan lagi "Sisa reject").
-            const currentReject = Object.values(cumulativeSizeQtyForGroup(groupKey, "REJECT", productionResults)).reduce((a, b) => a + b, 0);
-            const rework = reworkQtyForGroup(groupKey, productionResults);
+            const totalTarget = Object.values(target).reduce((x, y) => x + y, 0);
+            const totalFg = Object.values(fgRecorded).reduce((x, y) => x + y, 0);
             const meta = productionGroupMetaFor(groupKey, productionGroupMeta);
             const isFgConfirmed = !!meta?.fgConfirmedAt;
             const isDone = !!meta?.doneAt;
-            // Revisi 2026-09-20 (owner: Final = konfirmasi terakhir): tidak bisa kalau masih ada roll yang belum ditutup.
+            // Final = konfirmasi terakhir: tidak bisa kalau masih ada roll yang belum ditutup.
             const openRollCount = productionBatches.filter(
-              (b) => b.mrpId === selectedMrpId && b.vendorProduksi === vendorId && b.warna === g.warna && b.lengan === g.lengan && !b.closedAt
+              (b2) => b2.mrpId === selectedMrpId && b2.vendorProduksi === vendorId && b2.warna === g.warna && b2.lengan === g.lengan && !b2.closedAt
             ).length;
-            const expanded = expandedGroupKey === groupKey;
-            const fgSplit = fgMurniAndReworkForGroup(groupKey, productionResults);
-            const sizes = Array.from(new Set([...Object.keys(target), ...Object.keys(fgRecorded)]));
-            const reworkPerSize = reworkedAwayBySize(groupKey, productionResults);
-            const currentRejectPerSize = cumulativeSizeQtyForGroup(groupKey, "REJECT", productionResults);
-            const fgFromReworkPerSize = reworkBySizeForGroup(groupKey, productionResults);
-            // BUG FIX (2026-09-12, user-reported): "Selesai Produksi" (tahap 2) BUKAN gate
-            // Pengiriman lagi -- FG sudah shippable sejak tahap 1 -- jadi tidak ada alasan
-            // buru-buru mengunci tahap 2 selama masih ada klaim material yang belum selesai untuk
-            // warna/lengan ini (roll penggantinya bisa jadi masih "dalam perjalanan" lewat proses
-            // klaim, dan begitu tahap 2 terkunci, roll baru itu TIDAK BISA lagi di-cutting --
-            // lihat guard done_at di updateBatchToCuttingAction). Warning, bukan hard-block --
-            // vendor tetap boleh lanjut kalau memang yakin klaimnya tidak relevan lagi.
-            const openClaims = openMaterialClaimsForGroup(
-              selectedMrpId,
-              vendorId,
-              g.warna,
-              g.lengan,
-              rawInvoices,
-              materialClaimResolutions,
-              materialClaimReturRequests,
-              materialClaimReturDeliveries,
-              materialClaimReturReceipts,
-              materialClaimReplacements,
-              materialClaimAcceptances
-            );
-            // Revisi 2026-09-19: peringatan sebelum menutup warna -- bahan belum diterima / sudah diterima
-            // tapi belum diproduksi / Finish Good masih di bawah qty rencana MRP.
-            const closeSummary = groupCloseSummary(selectedMrpId, vendorId, g.warna, g.lengan, mrpDetails, rawInvoices, productionBatches, productionResults);
-            const plannedPcs = plannedGroups.find((x) => x.warna === g.warna && x.lengan === g.lengan)?.plannedPcs ?? 0;
-            function confirmAndMarkDone() {
-              const warnings = groupCloseWarningLines(`${g.warna} · ${g.lengan}`, closeSummary);
-              if (openClaims.length > 0) warnings.push(`• ${openClaims.length} klaim material belum selesai (roll pengganti bisa jadi masih dalam proses)`);
-              if (
-                warnings.length > 0 &&
-                !window.confirm(
-                  "PERHATIAN sebelum menutup warna ini:\n\n" +
-                    warnings.join("\n") +
-                    '\n\nSetelah "Selesai Produksi", roll BARU untuk warna/lengan ini tidak bisa di-cutting lagi kecuali dibuka kunci dulu. Tetap lanjutkan?'
-                )
-              ) {
-                return;
-              }
-              runAction(groupKey, markProductionGroupDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan));
+            const status: FinalStatus = isDone ? "Final" : isFgConfirmed && openRollCount === 0 ? "Menunggu Final" : totalFg > 0 || isFgConfirmed ? "Berjalan" : "Belum ada Finish Good";
+            return {
+              key: groupKey,
+              groupKey,
+              warna: g.warna,
+              lengan: g.lengan,
+              plannedPcs: plannedGroups.find((x) => x.warna === g.warna && x.lengan === g.lengan)?.plannedPcs ?? 0,
+              totalTarget,
+              totalFg,
+              selisih: totalFg - totalTarget,
+              progressPct: totalTarget > 0 ? Math.min(100, Math.round((totalFg / totalTarget) * 100)) : 0,
+              rework: reworkQtyForGroup(groupKey, productionResults),
+              reject: Object.values(cumulativeSizeQtyForGroup(groupKey, "REJECT", productionResults)).reduce((x, y) => x + y, 0),
+              isFgConfirmed,
+              isDone,
+              openRollCount,
+              status,
+              // BUG FIX (2026-09-12): jangan buru-buru mengunci Final selama klaim material warna ini belum selesai
+              // (roll pengganti bisa masih dalam perjalanan) -- warning, bukan hard-block.
+              openClaims: openMaterialClaimsForGroup(
+                selectedMrpId,
+                vendorId,
+                g.warna,
+                g.lengan,
+                rawInvoices,
+                materialClaimResolutions,
+                materialClaimReturRequests,
+                materialClaimReturDeliveries,
+                materialClaimReturReceipts,
+                materialClaimReplacements,
+                materialClaimAcceptances
+              ),
+              closeSummary: groupCloseSummary(selectedMrpId, vendorId, g.warna, g.lengan, mrpDetails, rawInvoices, productionBatches, productionResults),
+              sizes: Array.from(new Set([...Object.keys(target), ...Object.keys(fgRecorded)])),
+              target,
+              fgRecorded,
+              reworkPerSize: reworkedAwayBySize(groupKey, productionResults),
+              currentRejectPerSize: cumulativeSizeQtyForGroup(groupKey, "REJECT", productionResults),
+              fgFromReworkPerSize: reworkBySizeForGroup(groupKey, productionResults),
+            };
+          });
+          // Urut: Pendek dulu, baru Panjang, lalu nama warna.
+          rows.sort((x, y) => (x.lengan === y.lengan ? 0 : x.lengan === "PENDEK" ? -1 : 1) || x.warna.localeCompare(y.warna, "id-ID"));
+
+          function finalize(r: FinalRow) {
+            const warnings = groupCloseWarningLines(`${r.warna} · ${r.lengan}`, r.closeSummary);
+            if (r.openClaims.length > 0) warnings.push(`• ${r.openClaims.length} klaim material belum selesai (roll pengganti bisa jadi masih dalam proses)`);
+            if (
+              warnings.length > 0 &&
+              !window.confirm(
+                "PERHATIAN sebelum menutup warna ini:\n\n" +
+                  warnings.join("\n") +
+                  '\n\nSetelah "Selesai Produksi", roll BARU untuk warna/lengan ini tidak bisa di-cutting lagi kecuali dibuka kunci dulu. Tetap lanjutkan?'
+              )
+            ) {
+              return;
             }
-            return (
-              <div key={groupKey} className="border-b border-[#F1F4F7] last:border-b-0">
-                <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-[13px] font-sans text-xs text-[#31414F]">
-                  <span className="flex min-w-[160px] items-center gap-1.5 font-medium">
-                    {g.warna} · {g.lengan}
-                    {isFgConfirmed && <StatusPill tone="success">Finish Good Selesai</StatusPill>}
-                    {isDone && <StatusPill tone="success">Final</StatusPill>}
+            runAction(r.groupKey, markProductionGroupDone(r.groupKey, selectedMrpId, vendorId, r.warna, r.lengan));
+          }
+
+          const num = (n: number, cls = "") => <span className={"font-mono " + cls}>{n}</span>;
+          const columns: ColumnDef<FinalRow>[] = [
+            { key: "plan", label: "Rencana MRP (pcs)", default: true, align: "right", render: (r) => (r.plannedPcs > 0 ? num(r.plannedPcs) : <span className="text-text-muted">—</span>) },
+            { key: "fg", label: "Finish Good / Hasil cutting", default: true, align: "right", render: (r) => (
+              <span className="font-mono">
+                <span className="font-semibold">{r.totalFg}</span> <span className="text-text-muted">/ {r.totalTarget}</span>
+              </span>
+            ) },
+            {
+              key: "progres",
+              label: "Progres",
+              default: true,
+              render: (r) => (
+                <span className="flex min-w-[130px] items-center gap-2">
+                  <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#EEF0F3]">
+                    <span className="block h-full rounded-full bg-success" style={{ width: `${r.progressPct}%` }} />
                   </span>
-                  <div className="flex min-w-[170px] flex-col gap-1">
-                    <div className="flex items-baseline gap-1.5 font-mono text-[11px]">
-                      <span className="text-text-muted">FG</span>
-                      <span className="font-semibold">{totalFg}</span>
-                      <span className="text-text-muted">/ {totalTarget} pcs</span>
-                      <span className={"font-semibold " + (totalSelisih < 0 ? "text-danger-fg" : "text-success-fg")}>
-                        ({totalSelisih >= 0 ? "+" : ""}
-                        {totalSelisih})
-                      </span>
-                    </div>
-                    {fgSplit.rework > 0 && (
-                      <span className="font-mono text-[10px] text-text-muted">
-                        {fgSplit.murni} Finish Good Saja + {fgSplit.rework} dari rework
-                      </span>
-                    )}
-                    {plannedPcs > 0 && <span className="font-mono text-[10px] text-text-muted">Rencana MRP: {plannedPcs} pcs</span>}
-                    <div className="flex items-center gap-1.5">
-                      <span className="h-1.5 w-full max-w-[130px] flex-1 overflow-hidden rounded-full bg-[#EEF0F3]">
-                        <span className="block h-full rounded-full bg-success" style={{ width: `${progressPct}%` }} />
-                      </span>
-                      <span className="font-mono text-[10.5px] text-text-muted">{progressPct}%</span>
-                    </div>
-                  </div>
-                  <span className="font-mono text-[11px]">
-                    <span className="text-text-muted">Rework</span> <span className="font-semibold text-success-fg">{rework}</span>
-                  </span>
-                  <span className="font-mono text-[11px]">
-                    <span className="text-text-muted">Reject</span> <span className="font-semibold text-danger-fg">{currentReject}</span>
-                  </span>
-                  <span className="ml-auto flex flex-none items-center gap-2">
+                  <span className="w-9 font-mono text-[10.5px] text-text-muted">{r.progressPct}%</span>
+                </span>
+              ),
+            },
+            { key: "selisih", label: "Selisih", default: true, align: "right", render: (r) => num(r.selisih, r.selisih < 0 ? "font-semibold text-danger-fg" : "text-text-muted") },
+            { key: "rework", label: "Rework", default: true, align: "right", render: (r) => num(r.rework, r.rework > 0 ? "font-semibold text-success-fg" : "text-text-muted") },
+            { key: "reject", label: "Reject", default: true, align: "right", render: (r) => num(r.reject, r.reject > 0 ? "font-semibold text-danger-fg" : "text-text-muted") },
+            { key: "status", label: "Status", default: true, render: (r) => <StatusPill tone={STATUS_TONE[r.status]}>{r.status}</StatusPill> },
+            {
+              key: "aksi",
+              label: "Aksi",
+              default: true,
+              align: "right",
+              render: (r) => (
+                // stopPropagation: klik tombol tidak ikut membuka/menutup rincian baris.
+                <span className="flex flex-col items-end gap-1" onClick={(e) => e.stopPropagation()}>
+                  {isPoClosed ? null : r.isDone ? (
                     <button
-                      onClick={() => setExpandedGroupKey(expanded ? "" : groupKey)}
-                      className="font-sans text-[11px] font-semibold text-action-primary"
+                      onClick={() => runAction(r.groupKey, undoProductionGroupDone(r.groupKey))}
+                      title="Buka kunci grup ini supaya Finish Good/Reject/Rework bisa dibuka lagi (mulai dari tab Finish Good)"
+                      className="rounded-md border border-[#CBD5DF] bg-white px-3 py-[6px] font-sans text-[11px] font-semibold text-action-primary"
                     >
-                      {expanded ? "Sembunyikan" : "Lihat by size →"}
+                      Buka kunci ↺
                     </button>
-                    {/* undoProductionGroupDone & markProductionGroupDone sudah optimistic penuh di
-                       store.ts -- isPending/teks "Membuka…"/"Menyimpan…" dilepas (redundant,
-                       cuma bikin sempat kelihatan walau state lokal sudah berubah seketika). */}
-                    {isPoClosed ? null : isDone ? (
-                      <button
-                        onClick={() => runAction(groupKey, undoProductionGroupDone(groupKey))}
-                        title="Buka kunci grup ini supaya Finish Good/Reject/Rework bisa dibuka lagi (mulai dari tab Finish Good)"
-                        className="rounded-md border border-[#CBD5DF] bg-white px-3 py-[6px] font-sans text-[11px] font-semibold text-action-primary"
-                      >
-                        Buka kunci ↺
-                      </button>
-                    ) : isFgConfirmed && openRollCount > 0 ? (
-                      <span className="font-sans text-[10.5px] text-text-muted">Masih {openRollCount} roll belum selesai — selesaikan di tab Finish Good</span>
-                    ) : isFgConfirmed ? (
-                      <button
-                        onClick={confirmAndMarkDone}
-                        title={openClaims.length > 0 || closeSummary.hasWarning ? "Ada hal yang belum tuntas untuk grup ini -- akan diminta konfirmasi dulu" : undefined}
-                        className="rounded-md bg-action-primary px-3 py-[6px] font-sans text-[11px] font-semibold text-white"
-                      >
-                        {openClaims.length > 0 ? `Selesai Produksi ⚠ ${openClaims.length} klaim aktif` : "Selesai Produksi"}
-                      </button>
-                    ) : (
-                      <span className="font-sans text-[10.5px] text-text-muted">Selesaikan dulu Finish Good (tab Finish Good)</span>
-                    )}
-                  </span>
-                </div>
-                {expanded && (
-                  <div className="border-t border-[#CFE0EF] bg-info-bg p-4">
-                    <div className="overflow-x-auto">
-                      <div className="min-w-[860px] overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
-                        <div className="grid grid-cols-7 gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                          <span>Size</span>
-                          <span className="text-right">FG Target</span>
-                          <span className="text-right">FG Terinput</span>
-                          <span className="text-right">FG dari Rework</span>
-                          <span className="text-right">FG Selisih</span>
-                          <span className="text-right">Rework</span>
-                          <span className="text-right">Reject</span>
-                        </div>
-                        {sizes.length === 0 && <div className="px-3 py-3 text-center font-sans text-[11px] text-text-muted">Belum ada size tercatat.</div>}
-                        {sizes.map((size) => {
-                          const t = target[size] ?? 0;
-                          const f = fgRecorded[size] ?? 0;
-                          const s = f - t;
-                          return (
-                            <div key={size} className="grid grid-cols-7 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F]">
-                              <span className="font-mono font-medium">{size}</span>
-                              <span className="text-right font-mono">{t}</span>
-                              <span className="text-right font-mono text-text-muted">{f}</span>
-                              <span className="text-right font-mono text-success-fg">{fgFromReworkPerSize[size] ?? 0}</span>
-                              <span className={"text-right font-mono font-semibold " + (s < 0 ? "text-danger-fg" : "text-success-fg")}>
-                                {s >= 0 ? "+" : ""}
-                                {s}
-                              </span>
-                              <span className="text-right font-mono text-success-fg">{reworkPerSize[size] ?? 0}</span>
-                              <span className="text-right font-mono text-danger-fg">{currentRejectPerSize[size] ?? 0}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
+                  ) : r.isFgConfirmed && r.openRollCount > 0 ? (
+                    <span className="max-w-[210px] text-right font-sans text-[10.5px] leading-[1.4] text-text-muted">Masih {r.openRollCount} roll belum selesai — selesaikan di tab Finish Good</span>
+                  ) : r.isFgConfirmed ? (
+                    <button
+                      onClick={() => finalize(r)}
+                      title={r.openClaims.length > 0 || r.closeSummary.hasWarning ? "Ada hal yang belum tuntas untuk grup ini -- akan diminta konfirmasi dulu" : undefined}
+                      className="rounded-md bg-action-primary px-3 py-[6px] font-sans text-[11px] font-semibold text-white"
+                    >
+                      {r.openClaims.length > 0 ? `Selesai Produksi ⚠ ${r.openClaims.length} klaim aktif` : "Selesai Produksi"}
+                    </button>
+                  ) : (
+                    <span className="max-w-[210px] text-right font-sans text-[10.5px] leading-[1.4] text-text-muted">Selesaikan dulu Finish Good (tab Finish Good)</span>
+                  )}
+                </span>
+              ),
+            },
+          ];
+
+          return (
+            <DataTable
+              title={`Final Produksi — ${selectedMrpId}`}
+              columns={columns}
+              rows={rows}
+              keyOf={(r) => r.key}
+              firstColumnLabel="Warna / Lengan"
+              firstColumnRender={(r) => (
+                <span className="font-medium">
+                  {r.warna} <span className="font-normal text-text-muted">· {r.lengan}</span>
+                </span>
+              )}
+              search={{ placeholder: "Cari warna…", getText: (r) => r.warna }}
+              filterDefs={[
+                { label: "Lengan", options: ["PENDEK", "PANJANG"], test: (r, v) => r.lengan === v },
+                { label: "Status", options: ["Belum ada Finish Good", "Berjalan", "Menunggu Final", "Final"], test: (r, v) => r.status === v },
+              ]}
+              emptyText={groups.length === 0 ? "Belum ada warna pada rencana MRP ini." : "Tidak ada warna yang cocok dengan filter."}
+              renderExpanded={(r) => (
+                <div className="overflow-x-auto">
+                  <div className="min-w-[760px] overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
+                    <div className="grid grid-cols-7 gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                      <span>Size</span>
+                      <span className="text-right">FG Target</span>
+                      <span className="text-right">FG Terinput</span>
+                      <span className="text-right">FG dari Rework</span>
+                      <span className="text-right">FG Selisih</span>
+                      <span className="text-right">Rework</span>
+                      <span className="text-right">Reject</span>
                     </div>
+                    {r.sizes.length === 0 && <div className="px-3 py-3 text-center font-sans text-[11px] text-text-muted">Belum ada size tercatat.</div>}
+                    {r.sizes.map((size) => {
+                      const t = r.target[size] ?? 0;
+                      const f = r.fgRecorded[size] ?? 0;
+                      const sel = f - t;
+                      return (
+                        <div key={size} className="grid grid-cols-7 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F]">
+                          <span className="font-mono font-medium">{size}</span>
+                          <span className="text-right font-mono">{t}</span>
+                          <span className="text-right font-mono text-text-muted">{f}</span>
+                          <span className="text-right font-mono text-success-fg">{r.fgFromReworkPerSize[size] ?? 0}</span>
+                          <span className={"text-right font-mono font-semibold " + (sel < 0 ? "text-danger-fg" : "text-success-fg")}>
+                            {sel >= 0 ? "+" : ""}
+                            {sel}
+                          </span>
+                          <span className="text-right font-mono text-success-fg">{r.reworkPerSize[size] ?? 0}</span>
+                          <span className="text-right font-mono text-danger-fg">{r.currentRejectPerSize[size] ?? 0}</span>
+                        </div>
+                      );
+                    })}
                   </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+                </div>
+              )}
+            />
+          );
+        })()}
     </>
   );
 }
