@@ -24,6 +24,9 @@ import type { Lengan } from "@/lib/mrp/types";
 
 type DraftCode = { codeRoll: string };
 
+// Kolom kartu "Terima Material": Roll/Item | Code roll/Warna | Code lot | Berat | Status/Aksi (lebar tetap, rata kanan).
+const RECEIVE_GRID = "minmax(80px,0.6fr) minmax(220px,2fr) minmax(80px,0.6fr) minmax(120px,0.8fr) 190px";
+
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 function randomLetters(n: number): string {
@@ -498,126 +501,138 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
           </div>
 
           {(selectedColor || selectedInvoice.addBuys.length > 0) && (
-            // Revisi 2026-09-19 (owner, Vendor Produksi Gambar 1): tabel "Tandai roll diterima" +
-            // "Add Buy" digabung jadi SATU tabel "Terima Material" (roll di atas, "Item Tambahan"
-            // di bawah), semua kolom (Code Lot, Berat, Status) center (header + isi) & pakai
-            // <table table-fixed> supaya penempatannya presisi. Tombol per baris "Terima" (dulu
-            // "Tandai diterima") sama bentuk/warna untuk roll & item tambahan, + "Terima semua".
-            <div className="w-full overflow-x-auto rounded-lg border border-border-subtle bg-surface-card">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle px-4 py-3">
-                <span className="font-sans text-[13px] font-semibold text-text-primary">
-                  Terima Material{selectedColor ? ` — ${selectedColor.warna} · ${selectedColor.lengan}` : ""}
-                </span>
-                {pendingRollIdx.length > 0 && (
-                  <span className="flex items-center gap-2">
-                    {rollsMissingCode.length > 0 && <span className="font-sans text-[10.5px] text-warning-fg">{rollsMissingCode.length} roll belum diisi code roll</span>}
-                    <Button onClick={receiveAllRolls} disabled={rollsMissingCode.length > 0} variant="primary" size="xs">
-                      Terima semua roll ({pendingRollIdx.length}) →
-                    </Button>
-                  </span>
-                )}
+            // Revisi 2026-09-20 (owner: "berantakan, susunan button tidak presisi, buat lebih simpel"):
+            // kartu "Terima Material" disusun ulang jadi 2 bagian (Roll, Item Tambahan) yang berbagi
+            // SATU grid kolom (RECEIVE_GRID) -- kolom Aksi lebar tetap & rata kanan, semua tombol
+            // per baris seragam (lebar/tinggi sama), tombol "Terima semua" ada di bar judul tiap
+            // bagian dengan ukuran yang sama.
+            <div className="w-full overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
+              <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">
+                Terima Material{selectedColor ? ` — ${selectedColor.warna} · ${selectedColor.lengan}` : ""}
               </div>
-              <table className="w-full min-w-[820px] table-fixed border-collapse">
-                <colgroup>
-                  <col style={{ width: "20%" }} />
-                  <col style={{ width: "26%" }} />
-                  <col style={{ width: "14%" }} />
-                  <col style={{ width: "16%" }} />
-                  <col style={{ width: "24%" }} />
-                </colgroup>
-                <thead>
-                  <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
-                    <th className="px-4 py-[9px] text-left">Roll / Item</th>
-                    <th className="px-3 py-[9px] text-left">Code Roll / Warna</th>
-                    <th className="px-3 py-[9px] text-center">Code Lot</th>
-                    <th className="px-3 py-[9px] text-center">Berat kotor (kg)</th>
-                    <th className="px-3 py-[9px] text-center">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(selectedColor?.rolls ?? []).map((grossKg, idx) => {
-                    const arrival = selectedInvoice.rollArrivals[selectedColorKey]?.[idx] ?? null;
-                    const code = draftCode[idx] ?? { codeRoll: arrival?.codeRoll ?? "" };
-                    // Code Lot sekarang murni informasi dari Procurement (diinput saat Paying
-                    // Voucher, lihat ColorEntry.lots) — read-only di sini, bukan lagi diisi vendor.
-                    const codeLot = selectedColor?.lots?.[idx]?.trim() || "";
-                    return (
-                      <tr key={idx} className="border-b border-[#F1F4F7] font-sans text-xs text-[#31414F]">
-                        <td className="px-4 py-[9px] font-mono font-medium">Roll {idx + 1}</td>
-                        <td className="px-3 py-[9px]">
-                          {arrival ? (
-                            <span className="font-mono text-[11px]">{arrival.codeRoll || "—"}</span>
-                          ) : (
-                            <input
-                              value={code.codeRoll}
-                              onChange={(e) => setDraftCode((prev) => ({ ...prev, [idx]: { ...code, codeRoll: e.target.value } }))}
-                              className="input text-[11px]"
-                              placeholder="Code roll"
-                            />
-                          )}
-                        </td>
-                        <td className="px-3 py-[9px] text-center font-mono text-[11px] text-text-muted">{codeLot || "—"}</td>
-                        <td className="px-3 py-[9px] text-center font-mono">{formatDecimal(grossKg)}</td>
-                        <td className="px-3 py-[9px]">
-                          <div className="flex items-center justify-center gap-2.5">
-                            {arrival ? (
-                              <>
-                                <span className="font-mono text-[11px] text-text-muted">{formatDate(arrival.arrivedAt)}</span>
-                                <StatusPill tone="success">Diterima</StatusPill>
-                              </>
-                            ) : (
-                              <Button onClick={() => markArrived(idx)} disabled={!code.codeRoll.trim()} variant="primary" size="xs">
-                                Terima →
-                              </Button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {selectedInvoice.addBuys.length > 0 && (
+              <div className="overflow-x-auto">
+                <div className="min-w-[760px]">
+                  {selectedColor && (
                     <>
-                      <tr className="border-b border-[#CFE0EF] bg-info-bg/60">
-                        <td colSpan={5} className="px-4 py-1.5 font-sans text-[10.5px] font-semibold uppercase tracking-wider text-info-fg">
-                          <span className="flex items-center justify-between gap-2">
-                            <span>Item Tambahan (Rib, Kerah, Manset)</span>
-                            {pendingAddBuyIds.length > 0 && (
-                              <Button onClick={receiveAllAddBuys} variant="primary" size="xs">
-                                Terima semua item ({pendingAddBuyIds.length}) →
-                              </Button>
-                            )}
+                      <div className="flex items-center justify-between gap-3 border-b border-[#E4E8EE] bg-[#F7F9FB] px-4 py-2">
+                        <span className="font-sans text-[12px] font-semibold text-text-primary">
+                          Roll <span className="font-mono text-[11px] font-normal text-text-muted">({selectedColor.rolls.length - pendingRollIdx.length}/{selectedColor.rolls.length} diterima)</span>
+                        </span>
+                        {pendingRollIdx.length > 0 && (
+                          <span className="flex items-center gap-3">
+                            {rollsMissingCode.length > 0 && <span className="font-sans text-[11px] text-warning-fg">{rollsMissingCode.length} roll belum diisi code roll</span>}
+                            <Button onClick={receiveAllRolls} disabled={rollsMissingCode.length > 0} variant="primary" size="sm" className="min-w-[170px]">
+                              Terima semua roll ({pendingRollIdx.length})
+                            </Button>
                           </span>
-                        </td>
-                      </tr>
-                      {selectedInvoice.addBuys.map((b) => {
-                        const receipt = selectedInvoice.addBuyReceipts[b.id];
+                        )}
+                      </div>
+                      <div
+                        className="grid items-center gap-x-4 border-b-2 border-accent-blue bg-info-bg px-4 py-[8px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
+                        style={{ gridTemplateColumns: RECEIVE_GRID }}
+                      >
+                        <span>Roll</span>
+                        <span>Code roll</span>
+                        <span>Code lot</span>
+                        <span className="text-right">Berat kotor (kg)</span>
+                        <span className="text-right">Status</span>
+                      </div>
+                      {selectedColor.rolls.map((grossKg, idx) => {
+                        const arrival = selectedInvoice.rollArrivals[selectedColorKey]?.[idx] ?? null;
+                        const code = draftCode[idx] ?? { codeRoll: arrival?.codeRoll ?? "" };
+                        // Code Lot murni informasi dari Procurement (diinput saat Paying Voucher, lihat
+                        // ColorEntry.lots) — read-only di sini.
+                        const codeLot = selectedColor.lots?.[idx]?.trim() || "";
                         return (
-                          <tr key={b.id} className="border-b border-[#F1F4F7] font-sans text-xs text-[#31414F]">
-                            <td className="px-4 py-[9px] font-medium">{b.item}</td>
-                            <td className="px-3 py-[9px] text-text-muted">{b.warna || "—"}</td>
-                            <td className="px-3 py-[9px] text-center font-mono text-[11px] text-text-muted">—</td>
-                            <td className="px-3 py-[9px] text-center font-mono">{formatDecimal(b.beratKg)}</td>
-                            <td className="px-3 py-[9px]">
-                              <div className="flex items-center justify-center gap-2.5">
-                                {receipt ? (
-                                  <>
-                                    <span className="font-mono text-[11px] text-text-muted">{formatDate(receipt.receivedAt)}</span>
-                                    <StatusPill tone="success">Diterima</StatusPill>
-                                  </>
-                                ) : (
-                                  <Button onClick={() => receiveRawMaterialAddBuy(selectedInvoice.id, b.id)} variant="primary" size="xs">
-                                    Terima →
-                                  </Button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
+                          <div
+                            key={idx}
+                            className="grid items-center gap-x-4 border-b border-[#F1F4F7] px-4 py-2 font-sans text-xs text-[#31414F]"
+                            style={{ gridTemplateColumns: RECEIVE_GRID }}
+                          >
+                            <span className="font-mono font-medium">Roll {idx + 1}</span>
+                            {arrival ? (
+                              <span className="font-mono text-[11px]">{arrival.codeRoll || "—"}</span>
+                            ) : (
+                              <input
+                                value={code.codeRoll}
+                                onChange={(e) => setDraftCode((prev) => ({ ...prev, [idx]: { ...code, codeRoll: e.target.value } }))}
+                                className="input w-full max-w-[240px] !py-1.5 font-mono text-[11px]"
+                                placeholder="Code roll"
+                              />
+                            )}
+                            <span className="font-mono text-[11px] text-text-muted">{codeLot || "—"}</span>
+                            <span className="text-right font-mono">{formatDecimal(grossKg)}</span>
+                            <span className="flex items-center justify-end gap-2">
+                              {arrival ? (
+                                <>
+                                  <span className="font-mono text-[11px] text-text-muted">{formatDate(arrival.arrivedAt)}</span>
+                                  <StatusPill tone="success">Diterima</StatusPill>
+                                </>
+                              ) : (
+                                <Button onClick={() => markArrived(idx)} disabled={!code.codeRoll.trim()} variant="accent" size="sm" className="w-[96px]">
+                                  Terima
+                                </Button>
+                              )}
+                            </span>
+                          </div>
                         );
                       })}
                     </>
                   )}
-                </tbody>
-              </table>
+
+                  {selectedInvoice.addBuys.length > 0 && (
+                    <>
+                      <div className={"flex items-center justify-between gap-3 border-b border-[#E4E8EE] bg-[#F7F9FB] px-4 py-2 " + (selectedColor ? "border-t border-t-[#E4E8EE]" : "")}>
+                        <span className="font-sans text-[12px] font-semibold text-text-primary">
+                          Item Tambahan <span className="text-[11px] font-normal text-text-muted">(Rib, Kerah, Manset)</span>
+                        </span>
+                        {pendingAddBuyIds.length > 0 && (
+                          <Button onClick={receiveAllAddBuys} variant="primary" size="sm" className="min-w-[170px]">
+                            Terima semua item ({pendingAddBuyIds.length})
+                          </Button>
+                        )}
+                      </div>
+                      <div
+                        className="grid items-center gap-x-4 border-b-2 border-accent-blue bg-info-bg px-4 py-[8px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
+                        style={{ gridTemplateColumns: RECEIVE_GRID }}
+                      >
+                        <span>Item</span>
+                        <span>Warna</span>
+                        <span />
+                        <span className="text-right">Berat (kg)</span>
+                        <span className="text-right">Status</span>
+                      </div>
+                      {selectedInvoice.addBuys.map((b) => {
+                        const receipt = selectedInvoice.addBuyReceipts[b.id];
+                        return (
+                          <div
+                            key={b.id}
+                            className="grid items-center gap-x-4 border-b border-[#F1F4F7] px-4 py-2 font-sans text-xs text-[#31414F] last:border-b-0"
+                            style={{ gridTemplateColumns: RECEIVE_GRID }}
+                          >
+                            <span className="font-medium">{b.item}</span>
+                            <span className="text-[11.5px] text-text-muted">{b.warna || "—"}</span>
+                            <span />
+                            <span className="text-right font-mono">{formatDecimal(b.beratKg)}</span>
+                            <span className="flex items-center justify-end gap-2">
+                              {receipt ? (
+                                <>
+                                  <span className="font-mono text-[11px] text-text-muted">{formatDate(receipt.receivedAt)}</span>
+                                  <StatusPill tone="success">Diterima</StatusPill>
+                                </>
+                              ) : (
+                                <Button onClick={() => receiveRawMaterialAddBuy(selectedInvoice.id, b.id)} variant="accent" size="sm" className="w-[96px]">
+                                  Terima
+                                </Button>
+                              )}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </>
