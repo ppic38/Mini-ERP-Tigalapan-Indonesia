@@ -1399,8 +1399,9 @@ export function receivedRollCountForColor(mrpId: string, vendorProduksi: string,
   let count = 0;
   for (const i of invoices) {
     if (i.mrpId !== mrpId || i.destinationVendor !== vendorProduksi) continue;
-    const receipts = i.rollReceipts[key] ?? [];
-    count += receipts.filter((r) => r != null).length;
+    // Revisi 2026-09-20: "diterima" = roll yang sudah ditandai diterima di Good Receive (rollArrivals), BUKAN
+    // roll yang sudah ditimbang (rollReceipts) -- penimbangan sekarang terjadi belakangan, saat Resting.
+    count += (i.rollArrivals[key] ?? []).filter((r) => r != null).length;
   }
   return count;
 }
@@ -2302,8 +2303,11 @@ export function receivedNotYetProducedRows(vendorId: string, invoices: RawMateri
   const receivedMap = new Map<string, { mrpId: string; warna: string; lengan: Lengan; count: number }>();
   for (const inv of invoices) {
     if (inv.destinationVendor !== vendorId) continue;
-    for (const [key, receipts] of Object.entries(inv.rollReceipts)) {
-      const count = receipts.filter((r) => r != null).length;
+    // Revisi 2026-09-20: dasar "diterima" = rollArrivals (Good Receive). Dulu rollReceipts (sudah ditimbang) --
+    // sejak penimbangan pindah ke Resting, roll yang diterima tapi belum ditimbang tidak terhitung sama
+    // sekali (mis. peringatan "bahan belum diterima 3 roll" padahal 5 dari 5 sudah diterima).
+    for (const [key, arrivals] of Object.entries(inv.rollArrivals)) {
+      const count = arrivals.filter((r) => r != null).length;
       if (count === 0) continue;
       const [warna, lengan] = key.split("|");
       const mapKey = inv.mrpId + "|" + key;

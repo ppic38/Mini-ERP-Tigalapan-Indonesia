@@ -216,10 +216,10 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
   const poRows: (PoRow & { mrpId: string })[] = myPOs.map((p) => {
     const poInvoices = myInvoices.filter((i) => i.poId === p.id);
     const invoiceSubs: InvoiceSub[] = poInvoices.map((i) => {
-      // Hanya warna yang benar-benar sudah diterima (ada roll receipt) yang ditampilkan di label Warna.
+      // Hanya warna yang benar-benar sudah diterima (roll ditandai diterima di Good Receive) yang dihitung.
       const receivedColorEntries = i.colorEntries.filter((c) => {
         const key = c.warna + "|" + c.lengan;
-        return (i.rollReceipts[key] ?? []).some((r) => r != null);
+        return (i.rollArrivals[key] ?? []).some((r) => r != null);
       });
       const rollProduksi = receivedColorEntries.reduce((sum, c) => sum + (groupFor(i.mrpId, c.warna, c.lengan)?.used ?? 0), 0);
       const rollSisa = receivedColorEntries.reduce((sum, c) => sum + (groupFor(i.mrpId, c.warna, c.lengan)?.remaining ?? 0), 0);
