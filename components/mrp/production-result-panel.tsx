@@ -5,6 +5,7 @@ import { NumberInput } from "@/components/mrp/number-input";
 import { StatusPill } from "@/components/ui/status-pill";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { Button } from "@/components/ui/button";
+import { SizeQtyControl } from "@/components/mrp/size-qty-control";
 import { useMrpStore } from "@/lib/mrp/store";
 import { usePendingActions } from "@/lib/mrp/usePendingActions";
 import {
@@ -57,7 +58,7 @@ function FgProgressHistory({ poId, results }: { poId: string; results: Productio
         // tahu size apa yang benar-benar dikerjakan tanggal/jam itu.
         const sizeBreakdown = Object.entries(r.sizeQty)
           .filter(([, q]) => q !== 0)
-          .map(([size, q]) => `${size} +${q}`)
+          .map(([size, q]) => `${size} ${q > 0 ? "+" : ""}${q}`)
           .join(", ");
         return (
           <div key={r.id} className="flex items-center justify-between gap-2 rounded-md border border-[#EEF1F4] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
@@ -69,7 +70,10 @@ function FgProgressHistory({ poId, results }: { poId: string; results: Productio
               {r.note && <span className="text-[10px] text-text-muted">({r.note})</span>}
             </span>
             <span className="flex flex-col items-end">
-              <span className="font-mono font-semibold text-success-fg">+{qty} pcs</span>
+              <span className={"font-mono font-semibold " + (qty < 0 ? "text-danger-fg" : "text-success-fg")}>
+                {qty > 0 ? "+" : ""}
+                {qty} pcs
+              </span>
               <span className="font-mono text-[10px] text-text-muted">{sizeBreakdown}</span>
             </span>
             </div>
@@ -93,6 +97,10 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
   // closeProductionBatchAction. Menggantikan input size bebas per grup untuk kind="FG".
   const closeProductionBatch = useMrpStore((s) => s.closeProductionBatch);
   const reopenProductionBatch = useMrpStore((s) => s.reopenProductionBatch);
+  const editRollFg = useMrpStore((s) => s.editRollFg);
+  // Modal "Edit FG" per roll (koreksi Finish Good aktual, naik/turun).
+  const [editFgBatchId, setEditFgBatchId] = useState<string | null>(null);
+  const [editFgDraft, setEditFgDraft] = useState<Record<string, number>>({});
   // Revisi 2026-09-08 -- "Simpan progres" (belum menutup roll), lihat saveFgProgressAction.
   const saveFgProgress = useMrpStore((s) => s.saveFgProgress);
 
@@ -720,7 +728,17 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                   <span className="text-right">
                                     {b.closedAt ? <StatusPill tone="success">Ditutup</StatusPill> : <StatusPill tone="neutral">Terbuka</StatusPill>}
                                   </span>
-                                  <span className="text-right">
+                                  <span className="flex items-center justify-end gap-3 text-right">
+                                    <button
+                                      onClick={() => {
+                                        setEditFgBatchId(b.id);
+                                        setEditFgDraft({ ...(b.fgSizeQty ?? {}) });
+                                      }}
+                                      title="Koreksi Finish Good roll ini per size (bisa menaikkan atau menurunkan)"
+                                      className="font-sans text-[10.5px] font-semibold text-action-primary underline"
+                                    >
+                                      Edit FG
+                                    </button>
                                     {/* closeProductionBatch sudah optimistic penuh -- isPending/teks
                                        "Menutup…" dilepas. */}
                                     {b.closedAt && (
@@ -918,6 +936,60 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
           </div>
         </div>
       </div>
+      {/* Modal Edit FG per roll (revisi 2026-09-20): koreksi Finish Good aktual, naik maupun turun. */}
+      {editFgBatchId &&
+        (() => {
+          const eb = productionBatches.find((x) => x.id === editFgBatchId);
+          if (!eb) return null;
+          const ebTarget = eb.sizeQty ?? {};
+          const ebSizes = Object.keys(ebTarget);
+          const ebTotal = ebSizes.reduce((sum, sz) => sum + (editFgDraft[sz] ?? 0), 0);
+          const ebTargetTotal = ebSizes.reduce((sum, sz) => sum + (ebTarget[sz] ?? 0), 0);
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4">
+              <div className="flex max-h-[88vh] w-full max-w-[560px] flex-col rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]">
+                <div className="border-b border-border-subtle px-5 py-3.5">
+                  <div className="font-sans text-[13px] font-semibold text-text-primary">Edit Finish Good — {eb.codeRoll || eb.id}</div>
+                  <div className="mt-0.5 font-sans text-[11px] text-text-muted">
+                    {eb.warna} · {eb.lengan} · {eb.closedAt ? "roll sudah ditutup" : "roll masih terbuka"} — angka boleh dinaikkan atau diturunkan (maksimal sebesar hasil cutting).
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto px-5 py-4">
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3">
+                    {ebSizes.map((sz) => (
+                      <SizeQtyControl key={sz} size={sz} max={ebTarget[sz] ?? 0} value={editFgDraft[sz] ?? 0} onChange={(v) => setEditFgDraft((prev) => ({ ...prev, [sz]: v }))} />
+                    ))}
+                  </div>
+                  {eb.closedAt && ebTotal < ebTargetTotal && (
+                    <div className="mt-3 rounded-md border border-[#F0DFC2] bg-warning-bg px-3 py-2 font-sans text-[11px] text-warning-fg">
+                      Roll ini sudah ditutup: kekurangan {ebTargetTotal - ebTotal} pcs akan tercatat sebagai reject sementara.
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center justify-between gap-2 border-t border-border-subtle px-5 py-3.5">
+                  <span className="font-mono text-[11.5px] text-text-muted">
+                    Total {ebTotal} / {ebTargetTotal} pcs
+                  </span>
+                  <div className="flex gap-2">
+                    <button onClick={() => setEditFgBatchId(null)} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary">
+                      Batal
+                    </button>
+                    <Button
+                      onClick={() => {
+                        runAction("editfg-" + eb.id, editRollFg(eb.id, editFgDraft));
+                        setEditFgBatchId(null);
+                      }}
+                      variant="success"
+                      size="sm"
+                    >
+                      Simpan
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
     </>
   );
 }

@@ -3392,6 +3392,81 @@ async function closeProductionBatchImpl(batchId: string, fgSizeQty: Record<strin
   await maybeAdvanceMaklonToDelivery(batch.mrp_id, batch.vendor_produksi);
 }
 
+/** Revisi 2026-09-20 (owner: "Edit FG"): koreksi Finish Good AKTUAL 1 roll per size -- boleh MENAIKKAN maupun
+ *  MENURUNKAN (salah input). Status roll (terbuka/tertutup) TIDAK berubah. Ditolak kalau grup warna/lengan-nya sudah
+ *  "Selesai Produksi" (Buka kunci dulu), roll sudah masuk koli pengiriman, atau qty melebihi hasil cutting size itu.
+ *  Riwayat FG (production_results, dasar progres/reject) dikoreksi lewat 1 baris FG dengan selisih (bisa NEGATIF),
+ *  catatan "Roll {code} (koreksi)" -- supaya jumlah kumulatif grup tetap sama dengan angka roll. */
+export async function editRollFgAction(batchId: string, sizeQty: Record<string, number>): Promise<ActionResult<void>> {
+  return toActionResult(() => editRollFgImpl(batchId, sizeQty));
+}
+
+async function editRollFgImpl(batchId: string, sizeQty: Record<string, number>): Promise<void> {
+  const vendorId = await requireVendorSession();
+  const db = supabaseServer();
+  const { data: batch } = await db
+    .from("production_batches")
+    .select("id,mrp_id,vendor_produksi,warna,lengan,code_roll,cutting_at,fg_logged_snapshot,production_batch_sizes(size,qty)")
+    .eq("id", batchId)
+    .single();
+  if (!batch) throw new Error("Roll tidak ditemukan.");
+  if (batch.vendor_produksi !== vendorId) throw new Error("Roll ini bukan milik vendor Anda.");
+  if (!batch.cutting_at) throw new Error("Roll ini belum dicutting.");
+  const groupKey = `${batch.mrp_id}|${batch.warna}|${batch.lengan}`;
+  const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at").eq("group_key", groupKey).maybeSingle();
+  if (meta?.fg_confirmed_at) {
+    throw new Error(`Grup ${batch.warna} · ${batch.lengan} sudah "Selesai Produksi" -- klik "Buka kunci" dulu sebelum mengedit FG roll ini.`);
+  }
+  const { data: shipped } = await db.from("delivery_koli_items").select("delivery_koli_id").eq("source_batch_id", batchId).limit(1);
+  if ((shipped ?? []).length > 0) throw new Error("Roll ini sudah masuk koli pengiriman -- FG-nya tidak bisa diedit lagi.");
+
+  const target: Record<string, number> = {};
+  for (const t of batch.production_batch_sizes ?? []) target[t.size] = t.qty;
+  const clean: Record<string, number> = {};
+  for (const [size, raw] of Object.entries(sizeQty)) {
+    const n = Math.round(Number(raw));
+    if (!(size in target)) throw new Error(`Size ${size} tidak ada di hasil cutting roll ini.`);
+    if (!Number.isFinite(n) || n < 0) throw new Error(`Qty size ${size} tidak valid.`);
+    if (n > target[size]) throw new Error(`Size ${size} melebihi hasil cutting roll ini (${target[size]}).`);
+    if (n > 0) clean[size] = n;
+  }
+
+  // Koreksi riwayat FG: selisih terhadap baseline yang SUDAH tercatat (fg_logged_snapshot) -- bisa negatif.
+  const baseline: Record<string, number> = batch.fg_logged_snapshot ?? {};
+  const sizes = Array.from(new Set([...Object.keys(baseline), ...Object.keys(clean)]));
+  const deltaRows = sizes.map((sz) => [sz, (clean[sz] ?? 0) - (baseline[sz] ?? 0)] as const).filter(([, d]) => d !== 0);
+  if (deltaRows.length > 0) {
+    const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", batch.mrp_id).eq("vendor_produksi", batch.vendor_produksi).maybeSingle();
+    const resultId = await nextReadableId("PR");
+    const { error: resErr } = await db.from("production_results").insert({
+      id: resultId,
+      group_key: groupKey,
+      mrp_id: batch.mrp_id,
+      vendor_produksi: batch.vendor_produksi,
+      po_id: maklon?.id ?? "",
+      warna: batch.warna,
+      lengan: batch.lengan,
+      kind: "FG",
+      recorded_at: nowIso(),
+      note: `Roll ${batch.code_roll ?? batch.id} (koreksi)`,
+    });
+    if (resErr) throw new Error(resErr.message);
+    const { error: sizeErr } = await db.from("production_result_sizes").insert(deltaRows.map(([size, qty]) => ({ production_result_id: resultId, size, qty })));
+    if (sizeErr) throw new Error(sizeErr.message);
+  }
+
+  const { error: delErr } = await db.from("production_batch_fg_sizes").delete().eq("production_batch_id", batchId);
+  if (delErr) throw new Error(delErr.message);
+  const rows = Object.entries(clean);
+  if (rows.length > 0) {
+    const { error: insErr } = await db.from("production_batch_fg_sizes").insert(rows.map(([size, qty]) => ({ production_batch_id: batchId, size, qty })));
+    if (insErr) throw new Error(insErr.message);
+  }
+  const { error: snapErr } = await db.from("production_batches").update({ fg_logged_snapshot: clean }).eq("id", batchId);
+  if (snapErr) throw new Error(snapErr.message);
+  await maybeAdvanceMaklonToDelivery(batch.mrp_id, batch.vendor_produksi);
+}
+
 /** Revisi 2026-09-20 (owner: "sisa jadi reject" bisa dibatalkan): buka lagi roll yang sudah ditutup (Tutup Roll /
  *  penutupan otomatis), selama grup warna/lengannya BELUM "Selesai Produksi" dan roll belum masuk koli pengiriman.
  *  FG yang sudah tersimpan tetap utuh; roll kembali bisa diisi. */
