@@ -10,6 +10,7 @@ import { useMrpStore } from "@/lib/mrp/store";
 import { usePendingActions } from "@/lib/mrp/usePendingActions";
 import {
   cumulativeSizeQtyForGroup,
+  expectedRejectGrossForGroup,
   fgMurniAndReworkForGroup,
   groupCloseSummary,
   groupCloseWarningLines,
@@ -146,10 +147,27 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
   // ke header tabel Finish Good -- menutup SEMUA grup warna/lengan MRP ini yang belum "FG Selesai"
   // sekaligus (action per grup-nya sama persis: confirmFgDone). Kalau ada >1 grup, per-baris masih
   // ada tombol "Selesai" kecil supaya 1 warna bisa diselesaikan lebih dulu.
-  const pendingFgGroups =
-    kind === "FG" && selectedMrpId
-      ? groups.filter((g) => !productionGroupMetaFor(selectedMrpId + "|" + g.warna + "|" + g.lengan, productionGroupMeta)?.fgConfirmedAt)
-      : [];
+  // Revisi 2026-09-20 (owner, alur "Selesai per gelombang"): "Selesai" menyelesaikan roll yang SUDAH punya Finish Good
+  // (ditutup -> langsung bisa dikirim, rejectnya bisa dirework) TANPA mengunci warna -- roll baru tetap bisa diisi. Sebuah
+  // warna/lengan "perlu diselesaikan" kalau: ada roll terbuka yang sudah ada FG-nya; ATAU belum pernah Selesai tapi sudah
+  // punya roll tertutup / FG hasil rework; ATAU reject-nya belum sinkron dengan roll yang sudah ditutup.
+  function groupNeedsFinish(g: { warna: string; lengan: string }): boolean {
+    const gk = selectedMrpId + "|" + g.warna + "|" + g.lengan;
+    const meta = productionGroupMetaFor(gk, productionGroupMeta);
+    if (meta?.doneAt) return false;
+    const gb = productionBatches.filter((b) => b.mrpId === selectedMrpId && b.warna === g.warna && b.lengan === g.lengan && b.cuttingAt);
+    const openWithFg = gb.some((b) => !b.closedAt && Object.values(b.fgSizeQty ?? {}).some((q) => q > 0));
+    if (openWithFg) return true;
+    if (!meta?.fgConfirmedAt) {
+      if (gb.some((b) => b.closedAt)) return true;
+      if (gb.length === 0) return Object.values(cumulativeSizeQtyForGroup(gk, "FG", productionResults)).some((q) => q > 0);
+      return false;
+    }
+    const expected = expectedRejectGrossForGroup(selectedMrpId, g.warna, g.lengan as Lengan, productionBatches, productionResults);
+    const actual = rejectGrossForGroup(gk, productionResults);
+    return Array.from(new Set([...Object.keys(expected), ...Object.keys(actual)])).some((sz) => (expected[sz] ?? 0) !== (actual[sz] ?? 0));
+  }
+  const pendingFgGroups = kind === "FG" && selectedMrpId ? groups.filter((g) => groupNeedsFinish(g)) : [];
   // Revisi 2026-09-19 (bug: "klik Simpan langsung tutup roll, tidak bisa input lagi"): "Selesai
   // Produksi" menutup SEMUA roll yang masih terbuka & selisih target-vs-FG langsung jadi reject --
   // tombolnya sebelumnya bisa terklik tanpa konfirmasi (dekat tombol Simpan). Sekarang selalu tanya dulu.
@@ -166,7 +184,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
     return window.confirm(
       `Selesaikan Finish Good ${scope}?\n\n` +
         (detail.length > 0 ? `PERHATIAN -- masih ada yang belum tuntas:\n${detail.join("\n")}\n\n` : "") +
-        'Semua roll yang masih terbuka akan DITUTUP dan qty yang belum terpenuhi dihitung sebagai reject.\n\nKalau hanya ingin menyimpan progres, pilih Batal lalu klik "Simpan →".'
+        'Roll yang SUDAH punya Finish Good akan DITUTUP dan langsung bisa dikirim; kekurangan qty-nya dihitung sebagai reject (bisa dirework). Roll yang belum diisi tetap terbuka, dan roll baru masih bisa ditambahkan nanti.\n\nKalau hanya ingin menyimpan progres, pilih Batal lalu klik "Simpan →".'
     );
   }
   function finishAllGroups() {
@@ -249,7 +267,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                 disabled={isPending("fg-all:" + selectedMrpId)}
                 variant="primary"
                 size="sm"
-                title="Kunci FG — roll yang masih terbuka otomatis ditutup pakai FG yang sudah diisi, lalu selisihnya jadi reject"
+                title="Selesaikan roll yang sudah ada Finish Good (ditutup, siap dikirim); kekurangannya jadi reject. Warna tidak dikunci."
               >
                 {isPending("fg-all:" + selectedMrpId) ? "Menyimpan…" : pendingFgGroups.length > 1 ? `Selesai Produksi (${pendingFgGroups.length})` : "Selesai Produksi"}
               </Button>
@@ -320,7 +338,12 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                         <span className="font-medium">
                           {g.warna} · {g.lengan}
                         </span>
-                        {isFgConfirmed && <StatusPill tone="success">Finish Good Selesai</StatusPill>}
+                        {isFgConfirmed &&
+                          (groupBatches.length === 0 || groupBatches.every((b) => b.closedAt) ? (
+                            <StatusPill tone="success">Finish Good Selesai</StatusPill>
+                          ) : (
+                            <StatusPill tone="info">Sebagian selesai</StatusPill>
+                          ))}
                         {isFinalDone && <StatusPill tone="success">Final</StatusPill>}
                       </span>
                       {kind === "REJECT" ? (
@@ -363,7 +386,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                             Buka kunci ↺
                           </Button>
                         )}
-                        {kind === "FG" && !isFgConfirmed && pendingFgGroups.length > 1 && (
+                        {kind === "FG" && !isFinalDone && groupNeedsFinish(g) && pendingFgGroups.length > 1 && (
                           <Button
                             onClick={() => confirmFinish([g]) && runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan))}
                             disabled={isPending(groupKey)}
@@ -413,7 +436,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                         </div>
                       </div>
                     )}
-                    {expanded && !isFgConfirmed && kind === "FG" && (
+                    {expanded && kind === "FG" && (
                       <div className="border-b border-[#CFE0EF] bg-info-bg p-4">
                         {/* Revisi 2026-09-20 (owner): rekap Finish Good PER SIZE untuk monitoring -- selalu tampil begitu
                             baris dibuka (juga saat semua roll sudah tertutup tapi warna belum diklik Selesai). */}
@@ -686,7 +709,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                    sudah diisi apa adanya, TIDAK menambah/mengubah angka) sebelum
                                    menghitung reject, jadi tombol ini sendiri sudah jadi satu-satunya
                                    trigger yang perlu diklik. */}
-                                {!isFgConfirmed && (
+                                {!isFinalDone && groupNeedsFinish(g) && (
                                   <Button
                                     onClick={() => confirmFinish([g]) && runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan))}
                                     disabled={isPending(groupKey)}
@@ -794,39 +817,6 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                             })}
                           </div>
                         )}
-                      </div>
-                    )}
-                    {expanded && isFgConfirmed && kind === "FG" && (
-                      <div className="border-b border-[#CFE0EF] bg-info-bg p-4">
-                        <div className="mb-2 font-sans text-[11px] text-info-fg">
-                          FG sudah dikunci (tahap 1) — read-only. Baris &quot;Dari rework&quot; bisa terus bertambah kalau ada reject dari grup lain yang
-                          dirework ke sini.
-                        </div>
-                        <div className="overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
-                          <div className="grid grid-cols-4 gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                            <span>Size</span>
-                            <span className="text-right">Target</span>
-                            <span className="text-right">Total</span>
-                            <span className="text-right">Murni / Dari rework</span>
-                          </div>
-                          {(() => {
-                            const reworkPerSize = reworkBySizeForGroup(groupKey, productionResults);
-                            return sizes.map((size) => {
-                              const total = recorded[size] ?? 0;
-                              const rw = reworkPerSize[size] ?? 0;
-                              return (
-                                <div key={size} className="grid grid-cols-4 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F]">
-                                  <span className="font-mono font-medium">{size}</span>
-                                  <span className="text-right font-mono">{target[size] ?? 0}</span>
-                                  <span className="text-right font-mono font-semibold">{total}</span>
-                                  <span className="text-right font-mono text-[11px] text-text-muted">
-                                    {total - rw} Finish Good Saja{rw > 0 ? ` + ${rw} rework` : ""}
-                                  </span>
-                                </div>
-                              );
-                            });
-                          })()}
-                        </div>
                       </div>
                     )}
                   </div>

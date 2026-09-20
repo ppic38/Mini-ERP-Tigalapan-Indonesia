@@ -46,6 +46,7 @@ import {
   reworkQtyForGroup,
   wasteQtyForGroup,
   cumulativeSizeQtyForGroup,
+  expectedRejectGrossForGroup,
   weightVariance,
   movableRollCountForInvoiceColor,
   warnaLenganGroupsWithFg,
@@ -3368,8 +3369,10 @@ async function closeProductionBatchImpl(batchId: string, fgSizeQty: Record<strin
   if (!batch.cutting_at) throw new Error("Roll ini belum dicutting — isi Hasil Cutting dulu di tab Cutting.");
   if (batch.closed_at) return;
   const groupKey = `${batch.mrp_id}|${batch.warna}|${batch.lengan}`;
-  const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at").eq("group_key", groupKey).maybeSingle();
-  if (meta?.fg_confirmed_at) throw new Error(`Grup ${batch.warna} · ${batch.lengan} sudah "Selesai Produksi" — tidak bisa menutup roll baru di grup ini.`);
+  // Revisi 2026-09-20: roll baru BOLEH ditutup walau warnanya sudah pernah "Selesai" (gelombang berikutnya) -- yang
+  // dikunci hanya Final Produksi (done_at).
+  const { data: meta } = await db.from("production_group_meta").select("done_at").eq("group_key", groupKey).maybeSingle();
+  if (meta?.done_at) throw new Error(`Grup ${batch.warna} · ${batch.lengan} sudah Final Produksi — tidak bisa menutup roll lagi. Buka kunci Final dulu.`);
 
   // Replace (bukan tambah) -- hapus dulu baris progres yang mungkin sudah tersimpan dari
   // "Simpan progres" (saveFgProgressAction, di bawah) sebelum roll ini ditutup, supaya tidak
@@ -3406,16 +3409,18 @@ async function editRollFgImpl(batchId: string, sizeQty: Record<string, number>):
   const db = supabaseServer();
   const { data: batch } = await db
     .from("production_batches")
-    .select("id,mrp_id,vendor_produksi,warna,lengan,code_roll,cutting_at,fg_logged_snapshot,production_batch_sizes(size,qty)")
+    .select("id,mrp_id,vendor_produksi,warna,lengan,code_roll,cutting_at,closed_at,fg_logged_snapshot,production_batch_sizes(size,qty)")
     .eq("id", batchId)
     .single();
   if (!batch) throw new Error("Roll tidak ditemukan.");
   if (batch.vendor_produksi !== vendorId) throw new Error("Roll ini bukan milik vendor Anda.");
   if (!batch.cutting_at) throw new Error("Roll ini belum dicutting.");
   const groupKey = `${batch.mrp_id}|${batch.warna}|${batch.lengan}`;
-  const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at").eq("group_key", groupKey).maybeSingle();
-  if (meta?.fg_confirmed_at) {
-    throw new Error(`Grup ${batch.warna} · ${batch.lengan} sudah "Selesai Produksi" -- klik "Buka kunci" dulu sebelum mengedit FG roll ini.`);
+  const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).maybeSingle();
+  if (meta?.done_at) throw new Error(`Grup ${batch.warna} · ${batch.lengan} sudah Final Produksi -- buka kunci Final dulu sebelum mengedit FG.`);
+  // Roll TERTUTUP yang FG-nya diubah memengaruhi reject; kalau reject warna ini sudah dirework/dibuang, ditolak.
+  if (batch.closed_at && meta?.fg_confirmed_at && (await groupHasReworkOrWaste(db, groupKey))) {
+    throw new Error("Reject warna ini sudah dirework/dibuang -- FG roll yang sudah ditutup tidak bisa diubah lagi.");
   }
   const { data: shipped } = await db.from("delivery_koli_items").select("delivery_koli_id").eq("source_batch_id", batchId).limit(1);
   if ((shipped ?? []).length > 0) throw new Error("Roll ini sudah masuk koli pengiriman -- FG-nya tidak bisa diedit lagi.");
@@ -3464,7 +3469,20 @@ async function editRollFgImpl(batchId: string, sizeQty: Record<string, number>):
   }
   const { error: snapErr } = await db.from("production_batches").update({ fg_logged_snapshot: clean }).eq("id", batchId);
   if (snapErr) throw new Error(snapErr.message);
+  if (batch.closed_at && meta?.fg_confirmed_at) await recomputeAutoRejectForGroup(db, groupKey, batch.mrp_id, batch.vendor_produksi, batch.warna, batch.lengan as Lengan);
   await maybeAdvanceMaklonToDelivery(batch.mrp_id, batch.vendor_produksi);
+}
+
+/** True kalau reject grup ini SUDAH sempat dirework/dibuang -- dipakai sebagai pengaman: membuka/mengubah roll yang sudah
+ *  ditutup akan menghitung ulang reject, dan itu tidak boleh membuat deduksi rework kehilangan reject dasarnya. */
+async function groupHasReworkOrWaste(db: SupabaseClient, groupKey: string): Promise<boolean> {
+  const { data } = await db.from("production_results").select("group_key, kind, note, production_result_sizes(size,qty)").eq("group_key", groupKey);
+  const rs = (data ?? []).map((r) => {
+    const sizeQty: Record<string, number> = {};
+    for (const sz of r.production_result_sizes ?? []) sizeQty[sz.size] = sz.qty;
+    return { groupKey: r.group_key, kind: r.kind, note: r.note ?? undefined, sizeQty };
+  }) as unknown as ProductionResult[];
+  return reworkQtyForGroup(groupKey, rs) > 0 || wasteQtyForGroup(groupKey, rs) > 0;
 }
 
 /** Revisi 2026-09-20 (owner: "sisa jadi reject" bisa dibatalkan): buka lagi roll yang sudah ditutup (Tutup Roll /
@@ -3482,14 +3500,17 @@ async function reopenProductionBatchImpl(batchId: string): Promise<void> {
   if (batch.vendor_produksi !== vendorId) throw new Error("Roll ini bukan milik vendor Anda.");
   if (!batch.closed_at) return;
   const groupKey = `${batch.mrp_id}|${batch.warna}|${batch.lengan}`;
-  const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at").eq("group_key", groupKey).maybeSingle();
-  if (meta?.fg_confirmed_at) {
-    throw new Error(`Grup ${batch.warna} · ${batch.lengan} sudah "Selesai Produksi" -- klik "Buka kunci" dulu sebelum membuka roll ini lagi.`);
+  const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).maybeSingle();
+  if (meta?.done_at) throw new Error(`Grup ${batch.warna} · ${batch.lengan} sudah Final Produksi -- buka kunci Final dulu.`);
+  if (meta?.fg_confirmed_at && (await groupHasReworkOrWaste(db, groupKey))) {
+    throw new Error("Reject warna ini sudah dirework/dibuang -- roll tidak bisa dibuka lagi supaya hitungan reject tetap konsisten.");
   }
   const { data: shipped } = await db.from("delivery_koli_items").select("delivery_koli_id").eq("source_batch_id", batchId).limit(1);
   if ((shipped ?? []).length > 0) throw new Error("Roll ini sudah masuk koli pengiriman -- tidak bisa dibuka lagi.");
   const { error } = await db.from("production_batches").update({ closed_at: null }).eq("id", batchId);
   if (error) throw new Error(error.message);
+  // Reject warna yang sudah pernah "Selesai" dihitung ulang (roll ini tidak lagi dihitung sebagai roll tertutup).
+  if (meta?.fg_confirmed_at) await recomputeAutoRejectForGroup(db, groupKey, batch.mrp_id, batch.vendor_produksi, batch.warna, batch.lengan as Lengan);
 }
 
 /** Item revisi 2026-09-12 (owner: "kenapa tidak bisa klik selesai produksi jika qtynya tidak
@@ -3636,7 +3657,7 @@ async function fetchProductionScopeForMrp(
     // production_results+production_result_sizes di baris bawah (dan pola sizeQty yang sudah
     // benar di lib/mrp/repo/snapshot.ts, dibaca ulang saat menulis fix ini untuk memastikan
     // pemetaannya identik).
-    db.from("production_batches").select("*, production_batch_sizes(size,qty)").eq("mrp_id", mrpId).eq("vendor_produksi", vendorProduksi),
+    db.from("production_batches").select("*, production_batch_sizes(size,qty), production_batch_fg_sizes(size,qty)").eq("mrp_id", mrpId).eq("vendor_produksi", vendorProduksi),
     db.from("production_results").select("*, production_result_sizes(size,qty)").eq("mrp_id", mrpId).eq("vendor_produksi", vendorProduksi).eq("kind", "FG"),
   ]);
 
@@ -3681,6 +3702,14 @@ async function fetchProductionScopeForMrp(
       // hasil aduan sama sekali, supaya `!b.sizeQty` di actualCutSizesForGroup (derive.ts) tetap
       // konsisten membedakan "belum diisi" vs "diisi tapi semua size kebetulan 0".
       sizeQty: sizeRows.length > 0 ? sizeQty : undefined,
+      // FG aktual per roll -- dipakai recomputeAutoRejectForGroup (reject dihitung dari roll yang sudah ditutup).
+      fgSizeQty: (() => {
+        const fgRows = b.production_batch_fg_sizes ?? [];
+        if (fgRows.length === 0) return undefined;
+        const out: Record<string, number> = {};
+        for (const f of fgRows) out[f.size] = f.qty;
+        return out;
+      })(),
     };
   });
 
@@ -3841,13 +3870,11 @@ async function recomputeAutoRejectForGroup(
   scope?: { mrpDetail: MrpDetail; batches: ProductionBatch[]; results: ProductionResult[] }
 ): Promise<void> {
   const s = scope ?? (await fetchProductionScopeForMrp(db, mrpId, vendorProduksi));
-  const target = cuttingSizesForGroup(mrpId, warna, lengan, [s.mrpDetail], s.batches);
-  const fgRecorded = cumulativeSizeQtyForGroup(groupKey, "FG", s.results);
-  const rejectSizeQty: Record<string, number> = {};
-  for (const [size, t] of Object.entries(target)) {
-    const shortfall = t - (fgRecorded[size] ?? 0);
-    if (shortfall > 0) rejectSizeQty[size] = shortfall;
-  }
+  // Revisi 2026-09-20 (alur "Selesai per gelombang"): reject KOTOR dihitung dari roll yang sudah DITUTUP saja (lihat
+  // expectedRejectGrossForGroup) -- roll yang masih terbuka/belum dicutting belum final. Baris reject otomatis lama
+  // (note kosong) diganti hasil hitung ulang; baris rework/waste (ber-note) tidak disentuh, jadi reject yang sudah
+  // dirework dari gelombang sebelumnya tetap tercatat.
+  const rejectSizeQty = expectedRejectGrossForGroup(mrpId, warna, lengan, s.batches, s.results);
 
   const { data: oldAutoRejects } = await db.from("production_results").select("id").eq("group_key", groupKey).eq("kind", "REJECT").is("note", null);
   if (oldAutoRejects && oldAutoRejects.length > 0) {
@@ -3893,17 +3920,16 @@ async function confirmFgDoneImpl(groupKey: string, mrpId: string, vendorProduksi
   if (hasCutBatches && Object.keys(baseline).length === 0) {
     throw new Error('Isi "Input Hasil Cutting" untuk semua roll grup ini dulu — reject dihitung dari hasil cutting aktual, bukan dari target PO/MRP.');
   }
-  // Item revisi 2026-09-12 (owner: "kenapa tidak bisa klik selesai produksi jika qtynya tidak
-  // maksimal... jadikan tombol selesai produksi trigger untuk selesaikan finish good"): dulu di
-  // sini kita MENOLAK confirm kalau ada roll grup ini yang belum "Tutup Roll" manual (lihat commit
-  // lama, item revisi 2026-09-08) -- alasannya waktu itu: roll yang belum closedAt tidak pernah
-  // shippable (closedUnshippedRollsForMrp murni basis ProductionBatch.closedAt), jadi FG bisa
-  // "terkunci selesai" tapi mustahil dikirim. Alasan itu MASIH VALID, tapi solusinya sekarang
-  // dibalik: BUKAN menolak user, tapi "Selesai Produksi" SENDIRI yang menutup roll-roll itu
-  // (autoCloseOpenBatchesForGroup, pakai FG yang sudah diisi apa adanya) sebelum lanjut -- jadi
-  // invariant "grup fg_confirmed_at terisi -> semua roll closedAt" tetap terjaga, TANPA
-  // mewajibkan user klik "Tutup Roll" manual dulu satu-satu.
-  await autoCloseOpenBatchesForGroup(db, groupBatches);
+  // Revisi 2026-09-20 (owner: "Selesai" = menyelesaikan roll di gelombang itu saja, warna tidak dikunci): yang ditutup
+  // HANYA roll terbuka yang SUDAH punya Finish Good (>0). Roll yang belum diisi sama sekali tetap terbuka (bisa dikerjakan
+  // nanti), dan roll baru yang masuk sesudahnya tetap bisa diisi tanpa "Buka kunci". Pengiriman cukup butuh roll ditutup.
+  const fgTotal = (b: ProductionBatch) => Object.values(b.fgSizeQty ?? {}).reduce((sum, q) => sum + q, 0);
+  const toClose = groupBatches.filter((b) => !b.closedAt && fgTotal(b) > 0);
+  const hasClosed = groupBatches.some((b) => !!b.closedAt);
+  if (hasCutBatches && toClose.length === 0 && !hasClosed) {
+    throw new Error("Belum ada roll dengan Finish Good untuk diselesaikan -- isi Finish Good dulu.");
+  }
+  await autoCloseOpenBatchesForGroup(db, toClose);
 
   // Refetch scope (bukan reuse yang di atas) -- groupBatches/closedAt & production_results di atas
   // sudah berubah setelah autoCloseOpenBatchesForGroup (roll baru ditutup + kemungkinan baris FG
@@ -3991,16 +4017,23 @@ async function undoFgConfirmImpl(groupKey: string): Promise<void> {
  *  (TAHAP 1) terisi (lihat gate di availableFgToShip di lib/mrp/derive.ts). `done_at` sekarang
  *  murni kunci final + basis status tepat-waktu/telat (productionStatusFromDates). */
 export async function markProductionGroupDoneAction(groupKey: string, mrpId: string, vendorProduksi: string, warna: string, lengan: Lengan): Promise<void> {
-  // warna/lengan dipertahankan di signature (dipanggil dgn argumen yang sama seperti
-  // confirmFgDoneAction dari UI) walau tidak dipakai lagi di sini -- reject sudah dihitung di
-  // TAHAP 1 (confirmFgDoneAction), bukan tugas action ini lagi.
-  void warna;
-  void lengan;
   await requireVendorSession();
   const db = supabaseServer();
   const { data: existing } = await db.from("production_group_meta").select("group_key,fg_confirmed_at").eq("group_key", groupKey).maybeSingle();
   if (!existing?.fg_confirmed_at) {
     throw new Error('Selesaikan dulu Finish Good ("Selesai Produksi" di tab Finish Good) sebelum bisa Selesai Produksi di sini -- supaya reject sempat dihitung & dirework dulu kalau perlu.');
+  }
+  // Revisi 2026-09-20 (owner: Final = konfirmasi terakhir vendor): tidak boleh masih ada roll yang belum ditutup.
+  const { data: openRolls } = await db
+    .from("production_batches")
+    .select("id")
+    .eq("mrp_id", mrpId)
+    .eq("vendor_produksi", vendorProduksi)
+    .eq("warna", warna)
+    .eq("lengan", lengan)
+    .is("closed_at", null);
+  if ((openRolls ?? []).length > 0) {
+    throw new Error(`Masih ada ${(openRolls ?? []).length} roll di warna ini yang belum selesai -- selesaikan di tab Finish Good dulu sebelum Final Produksi.`);
   }
   await db.from("production_group_meta").update({ done_at: today() }).eq("group_key", groupKey);
   await maybeAdvanceMaklonToDelivery(mrpId, vendorProduksi);
@@ -4035,9 +4068,13 @@ export async function closeProductionPoAction(maklonPoId: string, reason: string
     const groupKey = `${po.mrp_id}|${g.warna}|${g.lengan}`;
     const { data: meta } = await db.from("production_group_meta").select("group_key,fg_confirmed_at,done_at").eq("group_key", groupKey).maybeSingle();
     if (meta?.done_at) continue;
-    if (!meta?.fg_confirmed_at) {
-      await recomputeAutoRejectForGroup(db, groupKey, po.mrp_id, po.vendor_produksi, g.warna, g.lengan, scope);
-    }
+    // Revisi 2026-09-20: reject dihitung dari roll TERTUTUP -- roll terbuka yang sudah punya Finish Good ditutup dulu
+    // (yang belum diisi sama sekali dibiarkan, sisa PO memang tidak diproduksi), baru reject dihitung dari kondisi terkini.
+    const openWithFg = scope.batches.filter(
+      (b) => b.warna === g.warna && b.lengan === g.lengan && b.cuttingAt && !b.closedAt && Object.values(b.fgSizeQty ?? {}).reduce((sum, q) => sum + q, 0) > 0
+    );
+    await autoCloseOpenBatchesForGroup(db, openWithFg);
+    await recomputeAutoRejectForGroup(db, groupKey, po.mrp_id, po.vendor_produksi, g.warna, g.lengan);
     if (meta) {
       await db.from("production_group_meta").update({ fg_confirmed_at: meta.fg_confirmed_at ?? today(), done_at: today() }).eq("group_key", groupKey);
     } else {

@@ -145,10 +145,11 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
           </div>
         )}
         <div className="mt-2.5 rounded-md border border-[#CFE0EF] bg-info-bg px-3 py-2 font-sans text-[11px] leading-[1.5] text-info-fg">
-          Rekap Finish Good + Reject + Rework per warna/lengan. Finish Good sudah bisa dikirim begitu &quot;Selesai Produksi&quot; di tab{" "}
-          <b>Finish Good</b> (tahap 1) — halaman ini (tahap 2) untuk konfirmasi TERAKHIR (mengunci grup, dasar status tepat waktu/telat), bukan gerbang
-          Pengiriman lagi. Pakai <b>Close PO</b> kalau PO Produksi ini mau ditutup lebih awal (sisa Finish Good yang belum masuk koli jadi tidak bisa
-          dikirim lagi).
+          Rekap Finish Good + Reject + Rework per warna/lengan. Roll yang sudah diselesaikan di tab <b>Finish Good</b> langsung bisa dikirim &amp; rejectnya
+          bisa dirework, sambil roll lain tetap bisa dikerjakan. Halaman ini untuk konfirmasi TERAKHIR vendor ke ERP: semua bahan warna itu sudah
+          diterima &amp; diproduksi, Finish Good, rework, dan reject sudah final (mengunci warna, dasar status tepat waktu/telat) — hanya bisa kalau tidak ada
+          roll yang belum selesai. Pakai <b>Close PO</b> kalau PO Produksi ini mau ditutup lebih awal (sisa Finish Good yang belum masuk koli jadi tidak
+          bisa dikirim lagi).
         </div>
       </div>
 
@@ -184,6 +185,10 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
             const meta = productionGroupMetaFor(groupKey, productionGroupMeta);
             const isFgConfirmed = !!meta?.fgConfirmedAt;
             const isDone = !!meta?.doneAt;
+            // Revisi 2026-09-20 (owner: Final = konfirmasi terakhir): tidak bisa kalau masih ada roll yang belum ditutup.
+            const openRollCount = productionBatches.filter(
+              (b) => b.mrpId === selectedMrpId && b.vendorProduksi === vendorId && b.warna === g.warna && b.lengan === g.lengan && !b.closedAt
+            ).length;
             const expanded = expandedGroupKey === groupKey;
             const fgSplit = fgMurniAndReworkForGroup(groupKey, productionResults);
             const sizes = Array.from(new Set([...Object.keys(target), ...Object.keys(fgRecorded)]));
@@ -284,6 +289,8 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
                       >
                         Buka kunci ↺
                       </button>
+                    ) : isFgConfirmed && openRollCount > 0 ? (
+                      <span className="font-sans text-[10.5px] text-text-muted">Masih {openRollCount} roll belum selesai — selesaikan di tab Finish Good</span>
                     ) : isFgConfirmed ? (
                       <button
                         onClick={confirmAndMarkDone}

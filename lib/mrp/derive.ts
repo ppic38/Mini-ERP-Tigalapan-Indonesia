@@ -2615,13 +2615,11 @@ export function rollRemainingBySizeForMrp(
   if (maklonPO?.closedAt) return [];
   const otherKolis = deliveryKolis.filter((k) => k.id !== excludeKoliId);
   const legacyShippedElsewhere = new Set(otherKolis.flatMap((k) => k.sourceBatchIds ?? []));
-  const closedRolls = batches.filter(
-    (b) =>
-      b.mrpId === mrpId &&
-      b.vendorProduksi === vendorProduksi &&
-      b.closedAt &&
-      productionGroupMetaFor(mrpId + "|" + b.warna + "|" + b.lengan, productionGroupMeta)?.fgConfirmedAt
-  );
+  // Revisi 2026-09-20 (owner, alur "Selesai per gelombang"): roll yang SUDAH DITUTUP langsung bisa dikirim -- tidak
+  // lagi menunggu warna/lengannya berstatus "Selesai" (fgConfirmedAt). `productionGroupMeta` dipertahankan di signature
+  // (dipanggil dengan argumen yang sama oleh banyak pemanggil) walau tidak dipakai lagi di sini.
+  void productionGroupMeta;
+  const closedRolls = batches.filter((b) => b.mrpId === mrpId && b.vendorProduksi === vendorProduksi && b.closedAt);
   const out: RollRemainingRow[] = [];
   for (const roll of closedRolls) {
     const fgSizeQty = roll.fgSizeQty ?? {};
@@ -3026,6 +3024,34 @@ export function wasteQtyForGroup(groupKey: string, results: ProductionResult[]):
   return results
     .filter((r) => r.groupKey === groupKey && r.kind === "WASTE")
     .reduce((sum, r) => sum + Object.values(r.sizeQty).reduce((a, b) => a + b, 0), 0);
+}
+
+/** Revisi 2026-09-20 (alur "Selesai per gelombang", owner): reject KOTOR yang SEHARUSNYA tercatat untuk 1 warna/lengan =
+ *  selisih hasil cutting vs Finish Good dari roll yang sudah DITUTUP saja (roll yang masih terbuka/belum dicutting belum
+ *  final, jadi belum dihitung), dikurangi FG hasil rework yang masuk ke grup ini. Dipakai server (recomputeAutoRejectForGroup)
+ *  DAN client (deteksi reject belum tersinkron) supaya angkanya SATU sumber. */
+export function expectedRejectGrossForGroup(
+  mrpId: string,
+  warna: string,
+  lengan: Lengan,
+  batches: ProductionBatch[],
+  results: ProductionResult[]
+): Record<string, number> {
+  const groupKey = mrpId + "|" + warna + "|" + lengan;
+  const target: Record<string, number> = {};
+  const fg: Record<string, number> = {};
+  for (const b of batches) {
+    if (b.mrpId !== mrpId || b.warna !== warna || b.lengan !== lengan || !b.cuttingAt || !b.closedAt) continue;
+    for (const [size, qty] of Object.entries(b.sizeQty ?? {})) target[size] = (target[size] ?? 0) + qty;
+    for (const [size, qty] of Object.entries(b.fgSizeQty ?? {})) fg[size] = (fg[size] ?? 0) + qty;
+  }
+  const rework = reworkBySizeForGroup(groupKey, results);
+  const out: Record<string, number> = {};
+  for (const size of Object.keys(target)) {
+    const shortfall = target[size] - ((fg[size] ?? 0) + (rework[size] ?? 0));
+    if (shortfall > 0) out[size] = shortfall;
+  }
+  return out;
 }
 
 export function rejectGrossForGroup(groupKey: string, results: ProductionResult[]): Record<string, number> {
