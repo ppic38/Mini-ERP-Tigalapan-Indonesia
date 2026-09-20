@@ -66,6 +66,10 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   const [statusFilter, setStatusFilter] = useState<"ALL" | "DELIVERY" | "RECEIVING" | "PARSIAL">("ALL");
   const [selectedInvoiceId, setSelectedInvoiceId] = useState("");
   const [selectedColorKey, setSelectedColorKey] = useState("");
+  // Revisi 2026-09-20 (owner): daftar "Pilih warna" digabung PER WARNA (bukan per warna·lengan) supaya
+  // tidak panjang; kalau 1 warna punya 2 lengan, user memilih sub-tab lengannya (Pendek/Panjang) dulu
+  // sebelum menerima bahan. selectedWarna = warna yang dibuka; selectedColorKey = warna|lengan aktif.
+  const [selectedWarna, setSelectedWarna] = useState("");
   const [draftCode, setDraftCode] = useState<Record<number, DraftCode>>({});
   // Item revisi 2026-09-18 (owner, Gambar 3) -- toggle "Pilih warna" chip row, lihat catatan
   // panjang di dekat pemakaiannya di bawah.
@@ -129,6 +133,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     setSelectedMrpId(mrpId);
     setSelectedInvoiceId("");
     setSelectedColorKey("");
+    setSelectedWarna("");
     setDraftCode({});
   }
 
@@ -140,19 +145,32 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     if (selectedInvoiceId === id) {
       setSelectedInvoiceId("");
       setSelectedColorKey("");
+      setSelectedWarna("");
       setDraftCode({});
       return;
     }
     setSelectedInvoiceId(id);
     const inv = eligible.find((i) => i.id === id);
     const first = inv?.colorEntries[0];
-    setSelectedColorKey(first ? first.warna + "|" + first.lengan : "");
+    // Warna pertama langsung terbuka; kalau warna itu punya >1 lengan, lengannya WAJIB dipilih user.
+    const lenganCount = first ? (inv?.colorEntries.filter((c) => c.warna === first.warna).length ?? 0) : 0;
+    setSelectedWarna(first?.warna ?? "");
+    setSelectedColorKey(first && lenganCount === 1 ? first.warna + "|" + first.lengan : "");
     setDraftCode({});
     setShowAllColors(false);
   }
 
+  // Pilih warna: kalau cuma 1 lengan langsung aktif; kalau 2 lengan, tunggu user memilih sub-tab lengan.
+  function pickWarna(warna: string) {
+    setSelectedWarna(warna);
+    const entries = colorOptions.filter((c) => c.warna === warna);
+    setSelectedColorKey(entries.length === 1 && entries[0].rolls.length > 0 ? warna + "|" + entries[0].lengan : "");
+    setDraftCode({});
+  }
+
   function pickColor(key: string) {
     setSelectedColorKey(key);
+    setSelectedWarna(key.split("|")[0]);
     setDraftCode({});
   }
 
@@ -169,6 +187,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   function startProduction(maklonPoId: string) {
     setSelectedInvoiceId("");
     setSelectedColorKey("");
+    setSelectedWarna("");
     setDraftCode({});
     setShowAllColors(false);
     advanceMaklonProduction(maklonPoId);
@@ -441,20 +460,21 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                 tampil apa pun statusnya, supaya tidak tiba-tiba hilang dari layar begitu selesai
                 ditandai lengkap. */}
             {(() => {
-              const completeCount = colorOptions.filter((c) => {
-                const key = c.warna + "|" + c.lengan;
-                const arrivedCount = c.rolls.filter((_, idx) => selectedInvoice.rollArrivals[key]?.[idx]).length;
-                return c.rolls.length > 0 && arrivedCount === c.rolls.length;
-              }).length;
-              const visibleColors = showAllColors
-                ? colorOptions
-                : colorOptions.filter((c) => {
-                    const key = c.warna + "|" + c.lengan;
-                    if (key === selectedColorKey) return true;
-                    const arrivedCount = c.rolls.filter((_, idx) => selectedInvoice.rollArrivals[key]?.[idx]).length;
-                    const complete = c.rolls.length > 0 && arrivedCount === c.rolls.length;
-                    return !complete;
-                  });
+              // Kelompokkan per WARNA (gabungan lengan Pendek + Panjang).
+              const groups = Array.from(new Set(colorOptions.map((c) => c.warna))).map((warna) => {
+                const entries = colorOptions.filter((c) => c.warna === warna);
+                const total = entries.reduce((sum, c) => sum + c.rolls.length, 0);
+                const arrived = entries.reduce(
+                  (sum, c) => sum + c.rolls.filter((_, idx) => selectedInvoice.rollArrivals[c.warna + "|" + c.lengan]?.[idx]).length,
+                  0
+                );
+                return { warna, entries, total, arrived, complete: total > 0 && arrived === total };
+              });
+              const completeCount = groups.filter((g) => g.complete).length;
+              const visibleGroups = showAllColors ? groups : groups.filter((g) => g.warna === selectedWarna || !g.complete);
+              const openGroup = groups.find((g) => g.warna === selectedWarna);
+              // Pendek dulu, baru Panjang.
+              const lenganOrder = (l: string) => (l === "PENDEK" ? 0 : 1);
               return (
                 <>
                   <div className="mt-3 flex items-center gap-2">
@@ -466,30 +486,51 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                     )}
                   </div>
                   <div className="mt-1.5 flex flex-wrap gap-2">
-                    {visibleColors.map((c) => {
-                      const key = c.warna + "|" + c.lengan;
-                      const arrivedCount = c.rolls.filter((_, idx) => selectedInvoice.rollArrivals[key]?.[idx]).length;
-                      const complete = c.rolls.length > 0 && arrivedCount === c.rolls.length;
-                      return (
-                        <button
-                          key={key}
-                          onClick={() => pickColor(key)}
-                          disabled={c.rolls.length === 0}
-                          className={
-                            "rounded-md border px-2.5 py-[6px] font-sans text-[11.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-40 " +
-                            (selectedColorKey === key ? "border-action-primary bg-action-primary text-white" : "border-[#CBD5DF] bg-white text-action-primary")
-                          }
-                        >
-                          {/* Item revisi 2026-09-08 (owner, Gambar 4: "Tambahkan simbol atau icon centang
-                              hijau pada card warna jika sudah lengkap untuk menandai roll sudah
-                              diterima"). Item 7 (feedback batch 2026-09-10): tambah state awal eksplisit
-                              ("○") sebelum lengkap, supaya ✅ tidak kesannya muncul tiba-tiba. */}
-                          <span className="mr-1">{complete ? "✅" : "○"}</span>
-                          {c.warna} · {c.lengan} ({arrivedCount}/{c.rolls.length} diterima)
-                        </button>
-                      );
-                    })}
+                    {visibleGroups.map((g) => (
+                      <button
+                        key={g.warna}
+                        onClick={() => pickWarna(g.warna)}
+                        disabled={g.total === 0}
+                        className={
+                          "rounded-md border px-2.5 py-[6px] font-sans text-[11.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-40 " +
+                          (selectedWarna === g.warna ? "border-action-primary bg-action-primary text-white" : "border-[#CBD5DF] bg-white text-action-primary")
+                        }
+                      >
+                        <span className="mr-1">{g.complete ? "✅" : "○"}</span>
+                        {g.warna} ({g.arrived}/{g.total} diterima)
+                      </button>
+                    ))}
                   </div>
+
+                  {/* Sub-tab lengan: tampil kalau warna terbuka punya lebih dari 1 lengan -- user memilih
+                      Pendek/Panjang dulu sebelum tabel Terima Material muncul. */}
+                  {openGroup && openGroup.entries.length > 1 && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#F1F4F7] pt-3">
+                      <span className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Lengan</span>
+                      {[...openGroup.entries]
+                        .sort((a, b) => lenganOrder(a.lengan) - lenganOrder(b.lengan))
+                        .map((c) => {
+                          const key = c.warna + "|" + c.lengan;
+                          const arrivedCount = c.rolls.filter((_, idx) => selectedInvoice.rollArrivals[key]?.[idx]).length;
+                          const complete = c.rolls.length > 0 && arrivedCount === c.rolls.length;
+                          return (
+                            <button
+                              key={key}
+                              onClick={() => pickColor(key)}
+                              disabled={c.rolls.length === 0}
+                              className={
+                                "rounded-md border px-3 py-[6px] font-sans text-[11.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-40 " +
+                                (selectedColorKey === key ? "border-action-primary bg-action-primary text-white" : "border-[#CBD5DF] bg-white text-action-primary")
+                              }
+                            >
+                              <span className="mr-1">{complete ? "✅" : "○"}</span>
+                              {c.lengan === "PENDEK" ? "Pendek" : "Panjang"} ({arrivedCount}/{c.rolls.length})
+                            </button>
+                          );
+                        })}
+                      {!selectedColorKey && <span className="font-sans text-[11px] text-text-muted">Pilih lengan untuk mulai menerima bahan.</span>}
+                    </div>
+                  )}
                 </>
               );
             })()}
