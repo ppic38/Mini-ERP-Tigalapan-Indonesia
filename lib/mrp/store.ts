@@ -693,7 +693,8 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     const note = `Roll ${b.codeRoll ?? b.id}`;
     const baseline: Record<string, number> = {};
     for (const r of get().productionResults) {
-      if (r.kind !== "FG" || r.groupKey !== groupKey || r.note !== note) continue;
+      // Baris koreksi (Edit FG, note "Roll X (koreksi)") ikut dihitung supaya baseline sama dengan yang di server.
+      if (r.kind !== "FG" || r.groupKey !== groupKey || (r.note !== note && r.note !== note + " (koreksi)")) continue;
       for (const [size, qty] of Object.entries(r.sizeQty)) baseline[size] = (baseline[size] ?? 0) + qty;
     }
     const delta: Record<string, number> = {};
@@ -709,6 +710,37 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       productionResults: [
         ...get().productionResults,
         { id, groupKey, mrpId: b.mrpId, vendorProduksi: b.vendorProduksi, poId: "", warna: b.warna, lengan: b.lengan, kind: "FG", sizeQty: delta, recordedAt, note },
+      ],
+    });
+    return id;
+  }
+  // Edit FG (koreksi naik/TURUN): meniru editRollFgAction di sisi client -- 1 baris FG sementara berisi selisih
+  // (bisa negatif) terhadap yang sudah tercatat untuk roll ini, supaya progres bar (dihitung dari riwayat
+  // productionResults) bergerak seketika, tidak menunggu snapshot berikutnya (dulu progres sempat tertinggal,
+  // mis. tampil 395/400 padahal sudah 390/400).
+  function optimisticFgCorrection(batchId: string, newSizeQty: Record<string, number>): string | null {
+    const b = get().productionBatches.find((x) => x.id === batchId);
+    if (!b) return null;
+    const groupKey = `${b.mrpId}|${b.warna}|${b.lengan}`;
+    const note = `Roll ${b.codeRoll ?? b.id}`;
+    const baseline: Record<string, number> = {};
+    for (const r of get().productionResults) {
+      if (r.kind !== "FG" || r.groupKey !== groupKey || (r.note !== note && r.note !== note + " (koreksi)")) continue;
+      for (const [size, qty] of Object.entries(r.sizeQty)) baseline[size] = (baseline[size] ?? 0) + qty;
+    }
+    const delta: Record<string, number> = {};
+    for (const size of new Set([...Object.keys(baseline), ...Object.keys(newSizeQty)])) {
+      const d = (newSizeQty[size] ?? 0) - (baseline[size] ?? 0);
+      if (d !== 0) delta[size] = d;
+    }
+    if (Object.keys(delta).length === 0) return null;
+    const d = new Date();
+    const recordedAt = `${localDateString(d)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    const id = `tmp-fgfix-${batchId}-${d.getTime()}`;
+    set({
+      productionResults: [
+        ...get().productionResults,
+        { id, groupKey, mrpId: b.mrpId, vendorProduksi: b.vendorProduksi, poId: "", warna: b.warna, lengan: b.lengan, kind: "FG", sizeQty: delta, recordedAt, note: note + " (koreksi)" },
       ],
     });
     return id;
@@ -1186,11 +1218,13 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   editRollFg: async (batchId, sizeQty) => {
     const previous = get().productionBatches;
     const cleaned = Object.fromEntries(Object.entries(sizeQty).filter(([, q]) => q > 0));
+    const tmpResultId = optimisticFgCorrection(batchId, cleaned);
     set({ productionBatches: previous.map((b) => (b.id === batchId ? { ...b, fgSizeQty: Object.keys(cleaned).length > 0 ? cleaned : undefined } : b)) });
     try {
       unwrapAction(await actions.editRollFgAction(batchId, sizeQty));
     } catch (err) {
       set({ productionBatches: previous });
+      dropOptimisticResult(tmpResultId);
       window.alert("Gagal menyimpan koreksi FG -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
