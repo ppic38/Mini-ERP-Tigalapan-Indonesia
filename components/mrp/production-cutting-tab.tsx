@@ -131,6 +131,10 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   const [selectedGroupKey, setSelectedGroupKey] = useState("");
   // Tab lengan di tabel Aduan pola (sama seperti Good Receive): Pendek dulu, Panjang kalau hanya itu.
   const [aduanLengan, setAduanLengan] = useState<"PENDEK" | "PANJANG">("PENDEK");
+  // Revisi 2026-09-20 (owner): mode tampilan tabel Aduan pola -- "ADUAN" (default, seperti semula: mulai dari aduan
+  // pola) atau "WARNA" (mulai dari warna yang bahannya sudah diterima, baru pilih aduan polanya).
+  const [aduanView, setAduanView] = useState<"ADUAN" | "WARNA">("ADUAN");
+  const [warnaOpen, setWarnaOpen] = useState("");
   // Tab lengan untuk tabel "Input Resting dan Cutting" (terpisah dari tab tabel Aduan pola).
   // null = otomatis (Pendek kalau ada sesinya, kalau tidak Panjang); terisi begitu user mengklik tab.
   const [sessionLengan, setSessionLengan] = useState<"PENDEK" | "PANJANG" | null>(null);
@@ -368,6 +372,16 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
     closePick();
   }
 
+  // Mode Per Warna: pilih aduan pola untuk warna tertentu -> langsung buka popup "Tambah roll" dengan warna itu.
+  function startPickForWarna(key: string, warna: string) {
+    setSelectedGroupKey(key);
+    setLines([]);
+    setRestingError(null);
+    setPickOpen(true);
+    setPickWarna(warna);
+    setPickChecked(new Set());
+  }
+
   function updateLine(id: string, patch: Partial<RollLine>) {
     setLines((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
   }
@@ -526,6 +540,27 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
     badge: scopedSessions.filter((g) => g.lengan === l && g.batches.some(batchNeedsCuttingInput)).length,
   }));
 
+  // Mode Per Warna: agregasi per WARNA untuk lengan aktif -- total kebutuhan/sudah diresting/tersedia/belum diterima
+  // (angka yang sama dengan mode Per Aduan Pola, hanya dikelompokkan per warna) + daftar aduan pola yang butuh warna itu.
+  const warnaTableFor = (len: "PENDEK" | "PANJANG") => {
+    const map = new Map<string, { warna: string; total: number; started: number; available: number; missing: number; needs: { key: string; kode: string; total: number; started: number; available: number; missing: number }[] }>();
+    for (const g of groupList) {
+      if (g.lengan !== len) continue;
+      for (const r of g.rows) {
+        const started = startedRollsForAduan(r.id, productionBatches);
+        const missing = Math.max(0, r.qtyRoll - started - r.available);
+        const w = map.get(r.warna) ?? { warna: r.warna, total: 0, started: 0, available: 0, missing: 0, needs: [] };
+        w.total += r.qtyRoll;
+        w.started += started;
+        w.available += r.available;
+        w.missing += missing;
+        w.needs.push({ key: g.kode + "|" + g.lengan, kode: g.kode, total: r.qtyRoll, started, available: r.available, missing });
+        map.set(r.warna, w);
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.warna.localeCompare(b.warna, "id-ID"));
+  };
+
   // Panel "List roll" untuk aduan pola terpilih -- dirender tepat di bawah tabel lengan-nya.
   const builderPanel = selectedGroup ? (
             <div className="border-t border-[#CFE0EF] bg-info-bg p-4">
@@ -682,6 +717,33 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
         <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
           <div className="flex items-center justify-between gap-3 border-b border-border-subtle px-4 py-3">
             <span className="font-sans text-[13px] font-semibold text-text-primary">Aduan pola — {selectedDetail.mrp.id}</span>
+            <span className="ml-auto flex items-center gap-1 rounded-md border border-[#CBD5DF] bg-white p-0.5">
+              {(
+                [
+                  { key: "ADUAN", label: "Per Aduan Pola" },
+                  { key: "WARNA", label: "Per Warna" },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => {
+                    setAduanView(opt.key);
+                    // ganti mode -> tutup pilihan/List roll yang sedang terbuka supaya tidak menggantung.
+                    setSelectedGroupKey("");
+                    setLines([]);
+                    closePick();
+                    setWarnaOpen("");
+                  }}
+                  className={
+                    "rounded-[5px] px-2.5 py-[4px] font-sans text-[11px] font-semibold " +
+                    (aduanView === opt.key ? "bg-action-primary text-white" : "text-text-muted hover:text-text-primary")
+                  }
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </span>
             {/* Revisi 2026-09-20 (owner): catatan cara pakai dipindah jadi ikon info di kanan judul (muncul saat
                 di-hover / difokuskan / diklik) supaya tidak memakan satu baris penuh. */}
             <span className="group relative">
@@ -719,6 +781,77 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
             const gl = groupList.filter((g) => g.lengan === len);
             return (
               <div key={len} className="border-b border-[#CFE0EF] last:border-b-0">
+                {aduanView === "WARNA" ? (
+                  (() => {
+                    const wt = warnaTableFor(len);
+                    return (
+                      <>
+                        <div className="grid grid-cols-6 gap-2 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
+                          <span>Warna (Lengan {len === "PENDEK" ? "Pendek" : "Panjang"})</span>
+                          <span className="text-right">Total roll aduan MRP</span>
+                          <span className="text-right">Sudah diresting</span>
+                          <span className="text-right">Total roll tersedia</span>
+                          <span className="text-right">Belum diterima</span>
+                          <span />
+                        </div>
+                        {wt.length === 0 && <div className="px-4 py-4 text-center font-sans text-xs text-text-muted">Tidak ada warna lengan {len} di MRP ini.</div>}
+                        {wt.map((w) => {
+                          const open = warnaOpen === len + "|" + w.warna;
+                          return (
+                            <div key={w.warna} className="border-b border-[#F1F4F7] last:border-b-0">
+                              <div className={"grid grid-cols-6 items-center gap-2 px-4 py-[11px] font-sans text-xs text-[#31414F] " + (open ? "bg-[#F3F8FE]" : "")}>
+                                <span className="font-medium">{w.warna}</span>
+                                <span className="text-right font-mono font-semibold text-info-fg">{w.total}</span>
+                                <span className={"text-right font-mono " + (w.started > 0 ? "font-semibold text-success-fg" : "text-text-muted")}>{w.started}</span>
+                                <span className={"text-right font-mono font-semibold " + (w.available > 0 ? "text-info-fg" : "text-danger-fg")}>{w.available}</span>
+                                <span className={"text-right font-mono " + (w.missing > 0 ? "font-semibold text-warning-fg" : "text-text-muted")}>{w.missing}</span>
+                                <span className="text-right">
+                                  <button
+                                    onClick={() => setWarnaOpen(open ? "" : len + "|" + w.warna)}
+                                    disabled={w.available <= 0 && !open}
+                                    className="font-sans text-[11px] font-semibold text-action-primary disabled:cursor-not-allowed disabled:opacity-40"
+                                  >
+                                    {open ? "Tutup ✕" : "Pilih"}
+                                  </button>
+                                </span>
+                              </div>
+                              {open && (
+                                <div className="border-t border-[#CFE0EF] bg-info-bg px-4 py-3">
+                                  <div className="mb-1.5 font-sans text-[11px] font-semibold text-info-fg">Pilih aduan pola yang akan memakai {w.warna}</div>
+                                  <div className="overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
+                                    <div className="grid grid-cols-6 gap-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                                      <span>Kode aduan</span>
+                                      <span className="text-right">Roll aduan</span>
+                                      <span className="text-right">Sudah diresting</span>
+                                      <span className="text-right">Tersedia</span>
+                                      <span className="text-right">Belum diterima</span>
+                                      <span />
+                                    </div>
+                                    {w.needs.map((n) => (
+                                      <div key={n.key} className="grid grid-cols-6 items-center gap-2 border-t border-[#F1F4F7] px-3 py-2 font-sans text-xs text-[#31414F]">
+                                        <span className="font-mono font-medium">{n.kode}</span>
+                                        <span className="text-right font-mono">{n.total}</span>
+                                        <span className="text-right font-mono text-text-muted">{n.started}</span>
+                                        <span className={"text-right font-mono font-semibold " + (n.available > 0 ? "text-info-fg" : "text-danger-fg")}>{n.available}</span>
+                                        <span className={"text-right font-mono " + (n.missing > 0 ? "text-warning-fg" : "text-text-muted")}>{n.missing}</span>
+                                        <span className="text-right">
+                                          <Button onClick={() => startPickForWarna(n.key, w.warna)} disabled={n.available <= 0} variant="primary" size="xs">
+                                            Pilih roll →
+                                          </Button>
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </>
+                    );
+                  })()
+                ) : (
+                  <>
                 <div className="grid grid-cols-6 gap-2 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
                   <span>Kode Aduan (Lengan {len === "PENDEK" ? "Pendek" : "Panjang"})</span>
                   <span className="text-right">Total roll aduan MRP</span>
@@ -750,6 +883,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                     </div>
                   );
                 })}
+                  </>
+                )}
                 {selectedGroup?.lengan === len && builderPanel}
               </div>
             );
