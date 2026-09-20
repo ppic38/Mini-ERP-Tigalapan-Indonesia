@@ -479,6 +479,14 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                             }
                             const batchIds = Object.keys(touched);
                             if (batchIds.length === 0) return;
+                            // Revisi 2026-09-20 (owner): kalau simpan ini membuat SEMUA roll terbuka grup ini
+                            // penuh (maks) & otomatis tertutup, daftar/isian grup warna ini langsung disembunyikan
+                            // (tidak perlu klik "Sembunyikan" lagi). Ditentukan dari angka yang akan disimpan --
+                            // penutupan roll sendiri sudah optimistic di store, jadi tidak menunggu server.
+                            const allWillClose = openBatches.every(
+                              (b) => !!touched[b.id] && Object.entries(b.sizeQty ?? {}).every(([size, tQty]) => (touched[b.id][size] ?? 0) >= tQty)
+                            );
+                            if (allWillClose) setExpandedGroupKey("");
                             await Promise.all(
                               batchIds.map((id) => {
                                 const b = openBatches.find((x) => x.id === id);
@@ -501,10 +509,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                           return (
                             <div className="overflow-hidden rounded-md border border-[#A8C5DF] bg-white">
                               <div className="border-b border-[#CFE0EF] bg-info-bg px-4 py-2.5 font-sans text-[11.5px] font-semibold leading-[1.5] text-info-fg">
-                                Isi qty per size — qty BARU yang baru selesai
-                                <span className="block text-[10.5px] font-normal text-info-fg/80">
-                                  Otomatis dipetakan &amp; disimpan ke roll (roll pertama dulu); roll yang penuh otomatis ditutup.
-                                </span>
+                                Input qty per size
                               </div>
                               {sizesToShow.length === 0 ? (
                                 <div className="px-3 py-3 text-center font-sans text-[11.5px] text-text-muted">
