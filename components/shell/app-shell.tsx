@@ -29,7 +29,7 @@ import {
   countPoApprovalTotal,
   countProductionYieldUnresolved,
   countVendorGoodReceiveEligible,
-  countVendorInvoicePaymentTotal,
+  countVendorInvoicePaymentUpdates,
   countVendorInvoicesAwaitingReview,
   countVendorPengirimanReady,
   countVendorProduksiActionable,
@@ -175,6 +175,7 @@ export function AppShell({
   // cabang vendorMaklon di bawah.
   const seenPoProduksi = useSeenPoIds(seenPoKey(vendorId, "po-produksi"));
   const seenPoMaterial = useSeenPoIds(seenPoKey(vendorId, "po-material"));
+  const seenInvoicePayment = useSeenPoIds(seenPoKey(vendorId, "invoice-payment"));
 
   let badgeOverrides: Record<string, number> | undefined;
   if (role === "finance") {
@@ -231,10 +232,9 @@ export function AppShell({
         returReceipts: materialClaimReturReceipts,
       }, maklonPOs),
       "/vendor-maklon/pengiriman": countVendorPengirimanReady(vendorId, productionResults, deliveryKolis, productionGroupMeta, maklonPOs, productionBatches),
-      // Item migration 0026: Invoice & Payment sekarang 100% arsip (Create Invoice manual
-      // dihapus, submit invoice pindah ke Pengiriman per resi-group) -- countVendorInvoicePaymentTotal
-      // selalu 0 sekarang (lib/shell/badges.ts), jadi baris ini efektif tidak pernah menyala lagi.
-      "/vendor-maklon/invoice-payment": countVendorInvoicePaymentTotal(vendorId, mrpDetails, deliveryKolis, vendorInvoices, maklonInvoices),
+      // Invoice & Payment 100% arsip (tidak ada aksi), jadi badge = invoice BARU terbit / BERUBAH STATUS
+      // (disetujui, revisi, lunas, dst.) sejak halamannya terakhir dibuka (revisi 2026-09-20).
+      "/vendor-maklon/invoice-payment": countVendorInvoicePaymentUpdates(vendorId, vendorInvoices, maklonInvoices, seenInvoicePayment),
     };
   }
 

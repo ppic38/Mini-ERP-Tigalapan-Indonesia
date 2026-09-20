@@ -8,10 +8,14 @@ import { useEffect, useMemo, useSyncExternalStore } from "react";
 // dilihat vendor. Daftar ID PO yang sudah dilihat disimpan di localStorage (per vendor, per
 // halaman), BUKAN di Supabase: tidak perlu migration baru, konsekuensinya status "sudah dilihat"
 // per browser/perangkat -- login dari perangkat lain akan melihat badge lagi sekali.
+//
+// Revisi 2026-09-20 (owner: badge Invoice & Payment untuk invoice baru / perubahan status): pola yang
+// sama dipakai lagi dengan "token" `<id invoice>#<status>` sebagai pengganti ID PO -- invoice baru atau
+// invoice yang statusnya berubah (mis. sudah dibayar) menghasilkan token baru yang belum pernah dilihat.
 
 const EVENT = "seen-po-changed";
 
-export function seenPoKey(vendorId: string | undefined, page: "po-produksi" | "po-material") {
+export function seenPoKey(vendorId: string | undefined, page: "po-produksi" | "po-material" | "invoice-payment") {
   return `seen-po:${page}:${vendorId ?? ""}`;
 }
 
