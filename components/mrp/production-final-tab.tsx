@@ -256,8 +256,8 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
               fgFromReworkPerSize: reworkBySizeForGroup(groupKey, productionResults),
             };
           });
-          // Urut: Pendek dulu, baru Panjang, lalu nama warna.
-          rows.sort((x, y) => (x.lengan === y.lengan ? 0 : x.lengan === "PENDEK" ? -1 : 1) || x.warna.localeCompare(y.warna, "id-ID"));
+          // Urut per warna (A-Z), di dalam tiap warna Pendek dulu baru Panjang -- sama dengan tab Finish Good/Reject/Rework.
+          rows.sort((x, y) => x.warna.localeCompare(y.warna, "id-ID") || (x.lengan === y.lengan ? 0 : x.lengan === "PENDEK" ? -1 : 1));
 
           function finalize(r: FinalRow) {
             const warnings = groupCloseWarningLines(`${r.warna} · ${r.lengan}`, r.closeSummary);

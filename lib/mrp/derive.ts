@@ -1941,7 +1941,13 @@ export function cutWarnaLenganGroups(mrpId: string, vendorProduksi: string, batc
     const key = b.warna + "|" + b.lengan;
     if (!seen.has(key)) seen.set(key, { warna: b.warna, lengan: b.lengan });
   }
-  return Array.from(seen.values());
+  return sortWarnaLengan(Array.from(seen.values()));
+}
+
+/** Urut per warna (A-Z), di dalam tiap warna PENDEK dulu baru PANJANG (revisi 2026-09-20, owner):
+ *  mis. Burgundy Pendek, Burgundy Panjang, Cream Pendek, Cream Panjang. */
+function sortWarnaLengan(groups: { warna: string; lengan: Lengan }[]): { warna: string; lengan: Lengan }[] {
+  return groups.sort((x, y) => x.warna.localeCompare(y.warna) || (x.lengan === y.lengan ? 0 : x.lengan === "PENDEK" ? -1 : 1));
 }
 
 export type RestingSessionGroup = {
@@ -2035,7 +2041,7 @@ export function warnaLenganGroupsWithFg(mrpId: string, vendorProduksi: string, b
     const key = r.warna + "|" + r.lengan;
     if (!seen.has(key)) seen.set(key, { warna: r.warna, lengan: r.lengan });
   }
-  return Array.from(seen.values());
+  return sortWarnaLengan(Array.from(seen.values()));
 }
 
 export function targetSizesForGroup(mrpId: string, warna: string, lengan: Lengan, mrpDetails: MrpDetail[], batches: ProductionBatch[]): Record<string, number> {
