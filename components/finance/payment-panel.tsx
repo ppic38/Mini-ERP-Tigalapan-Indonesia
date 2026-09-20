@@ -630,7 +630,13 @@ export function PaymentPanel() {
           rows={scopedReadyInvoices}
           keyOf={(i) => i.id}
           firstColumnLabel=""
-          firstColumnRender={(i) => <Checkbox checked={selected.has(i.id)} onChange={() => toggle(i.id)} />}
+          // Revisi 2026-09-20 (owner): klik checkbox HANYA memilih invoice (untuk bayar banyak sekaligus),
+          // tidak ikut membuka detail baris -- stopPropagation supaya klik ke <tr> (expand) tidak terpicu.
+          firstColumnRender={(i) => (
+            <span onClick={(e) => e.stopPropagation()}>
+              <Checkbox checked={selected.has(i.id)} onChange={() => toggle(i.id)} />
+            </span>
+          )}
           filterDefs={[
             { label: "No PO", options: Array.from(new Set(scopedReadyInvoices.map((i) => i.poId))), test: (i, v) => i.poId === v },
             { label: "Supplier", options: Array.from(new Set(scopedReadyInvoices.map((i) => i.supplier))), test: (i, v) => i.supplier === v },
@@ -858,7 +864,13 @@ export function PaymentPanel() {
                                       // "Batalkan Bayar"); DELIVERY/RECEIVING/dst sudah tidak ada aksi apa
                                       // pun di halaman ini, jadi tidak ditampilkan sama sekali (bukan
                                       // sekadar di-disable).
-                                      firstColumnRender={(i) => (i.status === "PAID" ? <Checkbox checked={selected.has(i.id)} onChange={() => toggle(i.id)} /> : null)}
+                                      firstColumnRender={(i) =>
+                                        i.status === "PAID" ? (
+                                          <span onClick={(e) => e.stopPropagation()}>
+                                            <Checkbox checked={selected.has(i.id)} onChange={() => toggle(i.id)} />
+                                          </span>
+                                        ) : null
+                                      }
                                       filterDefs={[
                                         { label: "No PO", options: Array.from(new Set(s.list.map((i) => i.poId))), test: (i, v) => i.poId === v },
                                         { label: "Entitas", options: Array.from(new Set(s.list.map((i) => i.entity))), test: (i, v) => i.entity === v },
