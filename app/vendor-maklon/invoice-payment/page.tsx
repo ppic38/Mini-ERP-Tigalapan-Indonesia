@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { AppShell } from "@/components/shell/app-shell";
 import { Tabs } from "@/components/ui/tabs";
+import { KeepAliveTab } from "@/components/ui/keep-alive-tab";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { InvoiceVendorPanel } from "@/components/vendor-maklon/invoice-vendor-panel";
 import { InvoiceMaklonPanel } from "@/components/vendor-maklon/invoice-maklon-panel";
@@ -44,7 +45,8 @@ function InvoicePaymentContent({ vendorId }: { vendorId: string }) {
         active={tab}
         onChange={(k) => setTab(k as "vendor" | "maklon")}
       />
-      {tab === "vendor" ? <InvoiceVendorPanel vendorId={vendorId} /> : <InvoiceMaklonPanel vendorId={vendorId} />}
+      <KeepAliveTab active={tab === "vendor"}><InvoiceVendorPanel vendorId={vendorId} /></KeepAliveTab>
+      <KeepAliveTab active={tab === "maklon"}><InvoiceMaklonPanel vendorId={vendorId} /></KeepAliveTab>
     </AppShell>
   );
 }

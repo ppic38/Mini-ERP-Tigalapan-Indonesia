@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/shell/app-shell";
 import { Tabs } from "@/components/ui/tabs";
+import { KeepAliveTab } from "@/components/ui/keep-alive-tab";
 import { HargaMaklonPanel } from "@/components/procurement/harga-maklon-panel";
 import { HargaKainPanel } from "@/components/procurement/harga-kain-panel";
 import { HargaKainPksPanel } from "@/components/procurement/harga-kain-pks-panel";
@@ -53,18 +54,18 @@ export default function ProcurementMasterDataPage() {
         active={tab}
         onChange={(k) => setTab(k as Tab)}
       />
-      {tab === "maklon" && <HargaMaklonPanel />}
-      {tab === "kain" && <HargaKainPanel />}
-      {tab === "kainPks" && <HargaKainPksPanel />}
-      {tab === "rib" && <HargaRibPanel />}
-      {tab === "ekspedisi" && <EkspedisiRatePanel />}
-      {tab === "kerahManset" && (
+      <KeepAliveTab active={tab === "maklon"}><HargaMaklonPanel /></KeepAliveTab>
+      <KeepAliveTab active={tab === "kain"}><HargaKainPanel /></KeepAliveTab>
+      <KeepAliveTab active={tab === "kainPks"}><HargaKainPksPanel /></KeepAliveTab>
+      <KeepAliveTab active={tab === "rib"}><HargaRibPanel /></KeepAliveTab>
+      <KeepAliveTab active={tab === "ekspedisi"}><EkspedisiRatePanel /></KeepAliveTab>
+      <KeepAliveTab active={tab === "kerahManset"}>
         <div className="flex flex-col gap-4">
           <KerahMansetSettingsPanel />
           <HargaKerahMansetPanel />
         </div>
-      )}
-      {tab === "vendorSupplier" && <VendorSupplierPanel />}
+      </KeepAliveTab>
+      <KeepAliveTab active={tab === "vendorSupplier"}><VendorSupplierPanel /></KeepAliveTab>
     </AppShell>
   );
 }

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/shell/app-shell";
 import { Tabs } from "@/components/ui/tabs";
+import { KeepAliveTab } from "@/components/ui/keep-alive-tab";
 import { PoMaterialPanel } from "@/components/finance/po-material-panel";
 import { PoMaklonPanel } from "@/components/finance/po-maklon-panel";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -31,7 +32,8 @@ export default function FinancePoApprovalPage() {
         active={tab}
         onChange={(k) => setTab(k as "material" | "maklon")}
       />
-      {tab === "material" ? <PoMaterialPanel /> : <PoMaklonPanel />}
+      <KeepAliveTab active={tab === "material"}><PoMaterialPanel /></KeepAliveTab>
+      <KeepAliveTab active={tab === "maklon"}><PoMaklonPanel /></KeepAliveTab>
     </AppShell>
   );
 }

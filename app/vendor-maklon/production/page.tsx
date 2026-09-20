@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { AppShell } from "@/components/shell/app-shell";
+import { KeepAliveTab } from "@/components/ui/keep-alive-tab";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { ProductionCuttingTab } from "@/components/mrp/production-cutting-tab";
 import { ProductionResultPanel } from "@/components/mrp/production-result-panel";
@@ -76,11 +77,11 @@ function ProductionContent({ vendorId }: { vendorId: string }) {
         ))}
       </div>
 
-      {tab === "CUTTING" && <ProductionCuttingTab vendorId={vendorId} />}
-      {tab === "FG" && <ProductionResultPanel vendorId={vendorId} kind="FG" title="Finish Good" />}
-      {tab === "REJECT" && <ProductionResultPanel vendorId={vendorId} kind="REJECT" title="Reject" />}
-      {tab === "REWORK" && <ProductionReworkTab vendorId={vendorId} />}
-      {tab === "FINAL" && <ProductionFinalTab vendorId={vendorId} />}
+      <KeepAliveTab active={tab === "CUTTING"}><ProductionCuttingTab vendorId={vendorId} /></KeepAliveTab>
+      <KeepAliveTab active={tab === "FG"}><ProductionResultPanel vendorId={vendorId} kind="FG" title="Finish Good" /></KeepAliveTab>
+      <KeepAliveTab active={tab === "REJECT"}><ProductionResultPanel vendorId={vendorId} kind="REJECT" title="Reject" /></KeepAliveTab>
+      <KeepAliveTab active={tab === "REWORK"}><ProductionReworkTab vendorId={vendorId} /></KeepAliveTab>
+      <KeepAliveTab active={tab === "FINAL"}><ProductionFinalTab vendorId={vendorId} /></KeepAliveTab>
     </AppShell>
   );
 }

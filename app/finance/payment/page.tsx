@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/shell/app-shell";
 import { Tabs } from "@/components/ui/tabs";
+import { KeepAliveTab } from "@/components/ui/keep-alive-tab";
 import { PaymentPanel } from "@/components/finance/payment-panel";
 import { PaymentMaklonPanel } from "@/components/finance/payment-maklon-panel";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -33,7 +34,8 @@ function FinancePaymentContent() {
         active={tab}
         onChange={(k) => setTab(k as "material" | "maklon")}
       />
-      {tab === "material" ? <PaymentPanel /> : <PaymentMaklonPanel />}
+      <KeepAliveTab active={tab === "material"}><PaymentPanel /></KeepAliveTab>
+      <KeepAliveTab active={tab === "maklon"}><PaymentMaklonPanel /></KeepAliveTab>
     </AppShell>
   );
 }

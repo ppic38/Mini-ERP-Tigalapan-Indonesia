@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/shell/app-shell";
 import { Tabs } from "@/components/ui/tabs";
+import { KeepAliveTab } from "@/components/ui/keep-alive-tab";
 import { PayingVoucherMaterialPanel } from "@/components/procurement/paying-voucher-material-panel";
 import { InvoiceVendorReviewPanel } from "@/components/procurement/invoice-vendor-review-panel";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -41,7 +42,8 @@ function RawMaterialContent() {
         active={tab}
         onChange={(k) => setTab(k as Tab)}
       />
-      {tab === "material" ? <PayingVoucherMaterialPanel /> : <InvoiceVendorReviewPanel />}
+      <KeepAliveTab active={tab === "material"}><PayingVoucherMaterialPanel /></KeepAliveTab>
+      <KeepAliveTab active={tab === "vendor"}><InvoiceVendorReviewPanel /></KeepAliveTab>
     </AppShell>
   );
 }
