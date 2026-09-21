@@ -78,6 +78,9 @@ let writeEpoch = 0;
 // [hemat-egress] Angka versi data (migration 0049) pada snapshot terakhir yang berhasil dimuat. null =
 // belum diketahui / migration belum jalan -> refreshIfChanged() selalu ambil snapshot penuh.
 let lastDataVersion: number | null = null;
+// [hemat-egress] Versi tabel master harga (migration 0050) yang datanya SUDAH dipegang store. Dikirim ke
+// server supaya 6 tabel master harga tidak ditarik ulang kalau tidak berubah. null = belum diketahui.
+let lastMasterVersion: number | null = null;
 // Fix (feedback batch 2026-09-10, item 6/10 "tombol ngeflick"): dipakai oleh refresh() di bawah
 // supaya SEMUA pemanggilnya (bukan cuma scheduleRefresh/backgroundRefresh) menunggu semua tulisan
 // yang sedang berlangsung selesai dulu sebelum fetch snapshot -- lihat catatan panjang di refresh().
@@ -776,7 +779,11 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     for (let attempt = 0; attempt < 4; attempt++) {
       await waitForNoInFlightWrites();
       const epochAtStart = writeEpoch;
-      const { busy: _snapshotBusy, dataVersion, ...snapshot } = await actions.getFlowSnapshotAction();
+      // Versi master hanya dikirim kalau store MEMANG sudah memegang data master (pengaman: kalau kosong,
+      // minta penuh) -- server membuang field master dari hasil kalau versinya sama.
+      const st = get();
+      const holdsMaster = st.hargaKain.length > 0 || st.hargaMaklon.length > 0 || st.itemSellingPrices.length > 0;
+      const { busy: _snapshotBusy, dataVersion, masterVersion, ...snapshot } = await actions.getFlowSnapshotAction(holdsMaster ? lastMasterVersion : null);
       // Ada tulisan baru yang mulai selama snapshot di perjalanan -> snapshot ini bisa basi &
       // akan menimpa patch optimistic tulisan itu. Buang, ulangi (maks 4x; kalau tetap ada
       // tulisan terus-menerus, refresh milik tulisan terakhir yang akan menyegarkan).
@@ -787,6 +794,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       // akan salah kalau ada action LAIN yang kebetulan masih berjalan bersamaan.
       set({ ...snapshot, hydrated: true });
       lastDataVersion = dataVersion;
+      lastMasterVersion = masterVersion;
       return;
     }
   },

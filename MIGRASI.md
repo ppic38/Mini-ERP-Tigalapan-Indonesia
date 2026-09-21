@@ -1,5 +1,12 @@
 # Migrasi Project — Status & Riwayat
 
+## Hemat egress tahap 2 -- migration 0050 (2026-09-21)
+`supabase/migrations/0050_master_data_version.sql`: versi khusus 6 tabel master harga (harga_maklon, harga_kain,
+harga_kain_pks, harga_rib, harga_kerah_manset, item_selling_prices) + RPC `get_flow_snapshot_core()` (snapshot tanpa
+tabel itu). `getFlowSnapshotAction(clientMasterVersion)` hanya menarik master kalau versinya berbeda; sesi vendor
+murni tidak pernah menarik master. **Owner menjalankan manual.** Aman kalau belum jalan (snapshot penuh seperti dulu).
+Rollback: "kembalikan hemat egress".
+
 ## Hemat egress -- migration 0049 (2026-09-21)
 `supabase/migrations/0049_data_version.sql` menambah sequence + trigger tingkat-statement di semua tabel `public` dan
 fungsi `get_data_version()`. Dipakai `refreshIfChanged()` (lib/mrp/store.ts) supaya fokus-tab tidak menarik snapshot

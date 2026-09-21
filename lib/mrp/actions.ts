@@ -30,7 +30,7 @@ async function toActionResult<T>(fn: () => Promise<T>): Promise<ActionResult<T>>
 import { requireSession, requireInternalRole, requireAnyInternalRole } from "../auth/session";
 import { supabaseServer } from "../supabase/server";
 import { nextReadableId, nextPoDisplayId } from "./repo/ids";
-import { getFlowSnapshot } from "./repo/snapshot";
+import { getFlowSnapshot, getFlowSnapshotWithMeta } from "./repo/snapshot";
 import {
   localDateString,
   maklonAmountForLenganBuckets,
@@ -4709,16 +4709,43 @@ export async function getDataVersionAction(): Promise<number | null> {
   return readDataVersion();
 }
 
-export async function getFlowSnapshotAction() {
+/** [hemat-egress] Versi tabel master harga (migration 0050). null = tidak bisa dibaca -> pemanggil
+ *  WAJIB menganggap master "mungkin berubah" (ambil penuh). */
+async function readMasterDataVersion(): Promise<number | null> {
+  try {
+    const { data, error } = await supabaseServer().rpc("get_master_data_version");
+    if (error || data === null || data === undefined) return null;
+    const n = Number(data);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `clientMasterVersion` = versi master harga yang SUDAH dipegang browser (dari snapshot sebelumnya).
+ *  Kalau sama dengan versi di server, 6 tabel master harga (item_selling_prices dkk) tidak ditarik
+ *  ulang dan field-nya dibuang dari hasil sehingga data master di browser tidak tertimpa. Perubahan
+ *  harga menaikkan versi (trigger migration 0050) -> refresh berikutnya otomatis membawa harga baru. */
+export async function getFlowSnapshotAction(clientMasterVersion?: number | null) {
   const session = await requireSession();
+  const vendorOnly = !!session.vendorId && session.internalRoles.length === 0;
   // Versi dibaca SEBELUM snapshot: kalau ada tulisan di sela-selanya, versi yang tersimpan di client
   // lebih lama dari data sebenarnya -> pengecekan berikutnya melihat "berubah" dan refetch (aman).
   const dataVersion = await readDataVersion();
-  const snapshot = await getFlowSnapshot();
-  if (session.vendorId && session.internalRoles.length === 0) {
-    return { ...snapshot, hargaMaklon: [], hargaKain: [], hargaKainPks: [], hargaRib: [], hargaKerahManset: [], itemSellingPrices: [], dataVersion };
+  const masterVersion = vendorOnly ? null : await readMasterDataVersion();
+  const masterUnchanged = masterVersion !== null && clientMasterVersion !== null && clientMasterVersion !== undefined && masterVersion === clientMasterVersion;
+  const { state, masterIncluded } = await getFlowSnapshotWithMeta({ skipMaster: vendorOnly || masterUnchanged });
+  if (vendorOnly) {
+    // Sesi vendor MURNI tidak pernah butuh tabel harga (dulu dibuang di sini setelah ditarik; sekarang
+    // tidak ditarik sama sekali kalau migration 0050 sudah jalan).
+    return { ...state, hargaMaklon: [], hargaKain: [], hargaKainPks: [], hargaRib: [], hargaKerahManset: [], itemSellingPrices: [], dataVersion, masterVersion: null as number | null };
   }
-  return { ...snapshot, dataVersion };
+  if (!masterIncluded) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { hargaMaklon, hargaKain, hargaKainPks, hargaRib, hargaKerahManset, itemSellingPrices, ...rest } = state;
+    return { ...rest, dataVersion, masterVersion: masterVersion as number | null };
+  }
+  return { ...state, dataVersion, masterVersion };
 }
 
 // =========================================================================

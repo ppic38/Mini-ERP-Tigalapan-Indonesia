@@ -267,13 +267,27 @@ async function fetchFlowRowsLegacy(db: SupabaseClient): Promise<RawTables> {
  *  Postgres, jadi cuma 1 round-trip jaringan total (dulu: 32 round-trip paralel, tiap satu
  *  tetap punya overhead koneksi/HTTP sendiri-sendiri). Throw kalau RPC-nya belum ada/gagal --
  *  fetchFlowRows di bawah yang menangkap ini dan fallback ke cara lama. */
-async function fetchFlowRowsFast(db: SupabaseClient): Promise<RawTables> {
-  const { data, error } = await db.rpc("get_flow_snapshot_raw");
-  if (error || !data) throw error ?? new Error("get_flow_snapshot_raw: hasil kosong");
+async function fetchFlowRowsFast(db: SupabaseClient, skipMaster: boolean): Promise<{ tables: RawTables; masterIncluded: boolean }> {
+  // [hemat-egress] skipMaster: coba get_flow_snapshot_core (migration 0050, tanpa 6 tabel master harga).
+  // Kalau RPC-nya belum ada / gagal, jatuh ke snapshot penuh (masterIncluded = true).
+  let masterIncluded = true;
+  let data: unknown = null;
+  if (skipMaster) {
+    const core = await db.rpc("get_flow_snapshot_core");
+    if (!core.error && core.data) {
+      data = core.data;
+      masterIncluded = false;
+    }
+  }
+  if (!data) {
+    const full = await db.rpc("get_flow_snapshot_raw");
+    if (full.error || !full.data) throw full.error ?? new Error("get_flow_snapshot_raw: hasil kosong");
+    data = full.data;
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const raw = data as Record<string, any[]>;
   const wrap = (key: string): TableResult => ({ data: raw[key] ?? [], error: null });
-  return {
+  const tables: RawTables = {
     mrpRows: wrap("mrp"),
     lenganGroupRows: wrap("lengan_groups"),
     lenganGroupSizeRows: wrap("lengan_group_sizes"),
@@ -322,21 +336,31 @@ async function fetchFlowRowsFast(db: SupabaseClient): Promise<RawTables> {
     hargaKerahMansetRows: wrap("harga_kerah_manset"),
     materialSupplierRows: wrap("material_suppliers"),
   };
+  return { tables, masterIncluded };
 }
 
-async function fetchFlowRows(db: SupabaseClient): Promise<RawTables> {
+async function fetchFlowRows(db: SupabaseClient, skipMaster: boolean): Promise<{ tables: RawTables; masterIncluded: boolean }> {
   try {
-    return await fetchFlowRowsFast(db);
+    return await fetchFlowRowsFast(db, skipMaster);
   } catch (err) {
     // Migration 0008 belum di-apply, atau RPC gagal karena sebab lain -- diam-diam fallback ke
     // cara lama (lebih lambat, tapi tetap benar) alih-alih bikin SELURUH app gagal muat data.
     console.warn("getFlowSnapshot: get_flow_snapshot_raw gagal, fallback ke query per-tabel —", err instanceof Error ? err.message : err);
-    return fetchFlowRowsLegacy(db);
+    return { tables: await fetchFlowRowsLegacy(db), masterIncluded: true };
   }
 }
 
 export async function getFlowSnapshot(): Promise<FlowState> {
+  return (await getFlowSnapshotWithMeta({})).state;
+}
+
+/** [hemat-egress] Sama seperti getFlowSnapshot, tapi `skipMaster` boleh melewati 6 tabel master harga
+ *  (hasilnya `masterIncluded: false` -> field harga di `state` KOSONG, pemanggil WAJIB menghapusnya dari hasil
+ *  supaya tidak menimpa data yang sudah dipegang client). */
+export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): Promise<{ state: FlowState; masterIncluded: boolean }> {
   const db = supabaseServer();
+  const fetched = await fetchFlowRows(db, !!opts.skipMaster);
+  const masterIncluded = fetched.masterIncluded;
 
   const {
     mrpRows,
@@ -386,7 +410,7 @@ export async function getFlowSnapshot(): Promise<FlowState> {
     hargaRibRows,
     hargaKerahMansetRows,
     materialSupplierRows,
-  } = await fetchFlowRows(db);
+  } = fetched.tables;
 
   for (const [name, res] of Object.entries({
     mrpRows,
@@ -984,7 +1008,7 @@ export async function getFlowSnapshot(): Promise<FlowState> {
     weeklyCapacity: Number(r.base_capacity ?? 0),
   }));
 
-  return {
+  const state: FlowState = {
     mrpDetails,
     staticMrps,
     materialPOs,
@@ -1027,6 +1051,7 @@ export async function getFlowSnapshot(): Promise<FlowState> {
     // menimpa flag yang lagi di-set true oleh action pemanggilnya -- lihat komentar di refresh().
     busy: false,
   };
+  return { state, masterIncluded };
 }
 
 function groupBy<T, K extends string | number>(rows: T[], keyFn: (row: T) => K): Record<K, T[]> {
