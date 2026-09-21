@@ -411,8 +411,7 @@ export function exportMaterialPoPdfBatch(pos: MaterialPO[], mrpDetails: MrpDetai
 /** Generate & download PDF Proposal Purchase Order Produksi (maklon vendor), rincian per warna
  *  menampilkan Qty PDK/PJG -- dihitung dari aduanRows MRP terkait untuk vendor ini, bukan langsung dari
  *  MaklonPO. Tidak ada nominal harga/biaya maklon di dokumen ini. */
-export function exportMaklonPoPdf(po: MaklonPO, mrpDetails: MrpDetail[]) {
-  const doc = new jsPDF({ unit: "pt", format: "a4" });
+function renderMaklonPoPage(doc: jsPDF, po: MaklonPO, mrpDetails: MrpDetail[]) {
   const vendorName = VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi;
   const detail = mrpDetailFor(po.mrpId, mrpDetails);
   const kategori = detail?.mrp.kategori ?? "—";
@@ -477,6 +476,22 @@ export function exportMaklonPoPdf(po: MaklonPO, mrpDetails: MrpDetail[]) {
   }
 
   drawApprovalBoxesSafe(doc, y, { submittedDate: detail?.dates.poSent, approved: po.approved, approvedDate: detail?.dates.poApproved });
+}
 
+export function exportMaklonPoPdf(po: MaklonPO, mrpDetails: MrpDetail[]) {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  renderMaklonPoPage(doc, po, mrpDetails);
   doc.save(`PO-${po.id}.pdf`);
+}
+
+/** Semua `pos` (PO produksi satu MRP) digambar ke SATU dokumen, 1 halaman per PO -- pasangan
+ *  exportMaterialPoPdfBatch untuk tombol "Download PO" di baris MRP tabel PO Produksi. */
+export function exportMaklonPoPdfBatch(pos: MaklonPO[], mrpDetails: MrpDetail[], fileName: string) {
+  if (pos.length === 0) return;
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  pos.forEach((po, i) => {
+    if (i > 0) doc.addPage();
+    renderMaklonPoPage(doc, po, mrpDetails);
+  });
+  doc.save(fileName);
 }
