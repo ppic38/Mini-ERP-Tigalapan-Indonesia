@@ -52,28 +52,33 @@ export function StoreHydrator() {
   // dulu (lihat catatan panjang di refresh(), lib/mrp/store.ts), jadi trigger di sini (mount,
   // focus, visibilitychange, poll 30 detik) aman dipanggil kapan saja tanpa risiko flicker.
   const refresh = useMrpStore((s) => s.refresh);
+  const refreshIfChanged = useMrpStore((s) => s.refreshIfChanged);
   const lastFetchAt = useRef(0);
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
+  const refreshIfChangedRef = useRef(refreshIfChanged);
+  refreshIfChangedRef.current = refreshIfChanged;
 
   useEffect(() => {
     // Fix (feedback batch 2026-09-10): `cancelled` guard yang dulu ada di sini cuma menjaga
     // supaya hydrate(snapshot) (set() mentah) tidak dipanggil setelah unmount -- sekarang
     // refresh() itu sendiri yang melakukan fetch+set (lihat lib/mrp/store.ts), jadi tidak ada lagi
     // snapshot lokal yang perlu dijaga di sini; refresh() aman dipanggil dari effect manapun.
-    function fetchNow(force = false) {
+    // [hemat-egress] `checkOnly`: pemicu pasif (fokus tab) cukup tanya angka versi dulu, snapshot penuh
+    // hanya diambil kalau ada yang berubah. Mount & poll berkala TETAP snapshot penuh (jaring pengaman).
+    function fetchNow(force = false, checkOnly = false) {
       const now = Date.now();
       if (!force && now - lastFetchAt.current < MIN_REFETCH_INTERVAL_MS) return;
       lastFetchAt.current = now;
-      refreshRef.current().catch(() => {
+      (checkOnly ? refreshIfChangedRef.current() : refreshRef.current()).catch(() => {
         // Belum login / sesi kedaluwarsa di halaman ini -- biarkan store tetap kosong.
       });
     }
 
     fetchNow(true);
-    const onFocus = () => fetchNow();
+    const onFocus = () => fetchNow(false, true);
     const onVisibility = () => {
-      if (document.visibilityState === "visible") fetchNow();
+      if (document.visibilityState === "visible") fetchNow(false, true);
     };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);

@@ -4690,13 +4690,35 @@ export async function resetMrpAction(mrpId: string): Promise<void> {
  *  halaman Finance. Sekarang cuma di-strip kalau BENAR-BENAR sesi vendor MURNI (tidak punya role
  *  internal apa pun sama sekali) -- begitu ada 1 saja internal role aktif, snapshot penuh tetap
  *  dikirim (sesuai jaminan komentar di atas: "sesi internal TIDAK terpengaruh sama sekali"). */
+/** [hemat-egress] Angka versi data (migration 0049) -- naik setiap ada tulisan di tabel manapun.
+ *  null = tidak bisa dibaca (migration belum dijalankan / error) -> pemanggil WAJIB jatuh ke
+ *  perilaku lama (ambil snapshot penuh), jangan pernah dianggap "tidak ada perubahan". */
+async function readDataVersion(): Promise<number | null> {
+  try {
+    const { data, error } = await supabaseServer().rpc("get_data_version");
+    if (error || data === null || data === undefined) return null;
+    const n = Number(data);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getDataVersionAction(): Promise<number | null> {
+  await requireSession();
+  return readDataVersion();
+}
+
 export async function getFlowSnapshotAction() {
   const session = await requireSession();
+  // Versi dibaca SEBELUM snapshot: kalau ada tulisan di sela-selanya, versi yang tersimpan di client
+  // lebih lama dari data sebenarnya -> pengecekan berikutnya melihat "berubah" dan refetch (aman).
+  const dataVersion = await readDataVersion();
   const snapshot = await getFlowSnapshot();
   if (session.vendorId && session.internalRoles.length === 0) {
-    return { ...snapshot, hargaMaklon: [], hargaKain: [], hargaKainPks: [], hargaRib: [], hargaKerahManset: [], itemSellingPrices: [] };
+    return { ...snapshot, hargaMaklon: [], hargaKain: [], hargaKainPks: [], hargaRib: [], hargaKerahManset: [], itemSellingPrices: [], dataVersion };
   }
-  return snapshot;
+  return { ...snapshot, dataVersion };
 }
 
 // =========================================================================

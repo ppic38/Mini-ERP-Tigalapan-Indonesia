@@ -75,6 +75,9 @@ let inFlightWriteCount = 0;
 // sampai refresh berikutnya datang. writeEpoch naik SETIAP ada tulisan baru dimulai; refresh()
 // membuang snapshot yang diambil selama epoch berubah (tulisan itu punya refresh sendiri).
 let writeEpoch = 0;
+// [hemat-egress] Angka versi data (migration 0049) pada snapshot terakhir yang berhasil dimuat. null =
+// belum diketahui / migration belum jalan -> refreshIfChanged() selalu ambil snapshot penuh.
+let lastDataVersion: number | null = null;
 // Fix (feedback batch 2026-09-10, item 6/10 "tombol ngeflick"): dipakai oleh refresh() di bawah
 // supaya SEMUA pemanggilnya (bukan cuma scheduleRefresh/backgroundRefresh) menunggu semua tulisan
 // yang sedang berlangsung selesai dulu sebelum fetch snapshot -- lihat catatan panjang di refresh().
@@ -141,7 +144,7 @@ function guardAction<Args extends unknown[], R>(
 const actions = Object.fromEntries(
   Object.entries(rawActions).map(([key, fn]) => [
     key,
-    guardAction(fn as (...args: unknown[]) => Promise<unknown>, key !== "getFlowSnapshotAction", key !== "getFlowSnapshotAction"),
+    guardAction(fn as (...args: unknown[]) => Promise<unknown>, key !== "getFlowSnapshotAction" && key !== "getDataVersionAction", key !== "getFlowSnapshotAction" && key !== "getDataVersionAction"),
   ])
 ) as typeof rawActions;
 
@@ -284,6 +287,9 @@ export type FlowState = {
 type FlowActions = {
   hydrate: (snapshot: FlowState) => void;
   refresh: () => Promise<void>;
+  /** [hemat-egress] Sama seperti refresh(), tapi dilewati kalau angka versi data di server tidak berubah
+   *  sejak snapshot terakhir. Dipakai pemicu pasif saja (fokus tab) -- aksi user tetap pakai refresh(). */
+  refreshIfChanged: () => Promise<void>;
 
   importMrp: (parsed: ParsedMrpImport, customId?: string) => Promise<string>;
   assignMaterialSupplier: (mrpId: string, materialRowIds: string[], supplier: string) => Promise<void>;
@@ -770,7 +776,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     for (let attempt = 0; attempt < 4; attempt++) {
       await waitForNoInFlightWrites();
       const epochAtStart = writeEpoch;
-      const { busy: _snapshotBusy, ...snapshot } = await actions.getFlowSnapshotAction();
+      const { busy: _snapshotBusy, dataVersion, ...snapshot } = await actions.getFlowSnapshotAction();
       // Ada tulisan baru yang mulai selama snapshot di perjalanan -> snapshot ini bisa basi &
       // akan menimpa patch optimistic tulisan itu. Buang, ulangi (maks 4x; kalau tetap ada
       // tulisan terus-menerus, refresh milik tulisan terakhir yang akan menyegarkan).
@@ -780,8 +786,15 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       // withBusyTracking), bukan bagian data server; overwrite balik pakai kosong/false dari sini
       // akan salah kalau ada action LAIN yang kebetulan masih berjalan bersamaan.
       set({ ...snapshot, hydrated: true });
+      lastDataVersion = dataVersion;
       return;
     }
+  },
+  refreshIfChanged: async () => {
+    if (!get().hydrated || lastDataVersion === null) return get().refresh();
+    const v = await actions.getDataVersionAction();
+    if (v !== null && v === lastDataVersion) return; // tidak ada tulisan baru di server -- lewati snapshot penuh
+    return get().refresh();
   },
 
   importMrp: async (parsed, customId) => {

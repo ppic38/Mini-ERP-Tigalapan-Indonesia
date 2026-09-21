@@ -1,5 +1,12 @@
 # Migrasi Project — Status & Riwayat
 
+## Hemat egress -- migration 0049 (2026-09-21)
+`supabase/migrations/0049_data_version.sql` menambah sequence + trigger tingkat-statement di semua tabel `public` dan
+fungsi `get_data_version()`. Dipakai `refreshIfChanged()` (lib/mrp/store.ts) supaya fokus-tab tidak menarik snapshot
+penuh kalau tidak ada tulisan baru. **Owner menjalankan manual di SQL Editor.** Kode aman kalau migration belum jalan
+(otomatis ambil snapshot penuh seperti dulu). Tabel BARU di masa depan: jalankan ulang blok `do $$ ... $$` di file itu.
+Rollback: keyword "kembalikan hemat egress" (commit ber-prefix `[hemat-egress]`, baseline `19ad97e`).
+
 ## Alur Cutting baru -- migration 0048 (2026-09-19)
 Tambah kolom `production_batches.setting` (teks, opsional) untuk isian "Setting" kain per roll di List roll
 (tab Cutting vendor produksi). **Owner perlu menjalankan `supabase/migrations/0048_production_batch_setting.sql`
