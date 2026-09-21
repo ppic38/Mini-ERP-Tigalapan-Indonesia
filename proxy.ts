@@ -31,7 +31,9 @@ const INTERNAL_ROLE_PREFIXES: [prefix: string, role: InternalRole][] = [
   ["/warehouse", "warehouse"],
 ];
 
-const PUBLIC_PATHS = ["/", "/vendor-maklon/login", "/gate-to-gate"];
+// Logo kop PO (public/tigalapan-logo-kop.png) dimuat browser untuk dicetak ke PDF -- tanpa pengecualian ini
+// proxy mengalihkan requestnya ke "/" (HTML, bukan gambar) sehingga logo tidak pernah muncul di PO.
+const PUBLIC_PATHS = ["/", "/vendor-maklon/login", "/gate-to-gate", "/tigalapan-logo-kop.png"];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;

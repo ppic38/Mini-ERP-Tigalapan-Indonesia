@@ -388,7 +388,7 @@ export default function PoApprovalPage() {
       label: "Aksi",
       default: true,
       render: (p) => (
-        <Button onClick={() => exportMaklonPoPdf(p, mrpDetails, hargaMaklon)} variant="ghost" size="xs">
+        <Button onClick={() => exportMaklonPoPdf(p, mrpDetails)} variant="ghost" size="xs">
           Download PO
         </Button>
       ),
@@ -860,7 +860,7 @@ export default function PoApprovalPage() {
                     <Button
                       onClick={(e) => {
                         e.stopPropagation();
-                        exportMaterialPoPdfBatch(m.pos, mrpDetails, hargaKain, hargaKainPks, `PO-Material-${m.mrpId}.pdf`);
+                        exportMaterialPoPdfBatch(m.pos, mrpDetails, `PO-Material-${m.mrpId}.pdf`);
                       }}
                       disabled={m.pos.every((p) => !p.supplier)}
                       title={m.pos.every((p) => !p.supplier) ? "Belum ada PO di MRP ini yang punya vendor material" : `Download semua ${m.pos.length} PO material MRP ini jadi 1 file`}
@@ -904,7 +904,7 @@ export default function PoApprovalPage() {
                             <Button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                exportMaterialPoPdfBatch(s.pos, mrpDetails, hargaKain, hargaKainPks, `PO-Material-${m.mrpId}-${s.supplier}.pdf`);
+                                exportMaterialPoPdfBatch(s.pos, mrpDetails, `PO-Material-${m.mrpId}-${s.supplier}.pdf`);
                               }}
                               disabled={s.pos.every((p) => !p.supplier)}
                               title={s.pos.every((p) => !p.supplier) ? "Belum ada vendor material untuk grup ini" : `Download semua ${s.pos.length} PO material supplier ini jadi 1 file`}
@@ -951,7 +951,7 @@ export default function PoApprovalPage() {
                                     <Button
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        exportMaterialPoPdf(p, mrpDetails, hargaKain, hargaKainPks);
+                                        exportMaterialPoPdf(p, mrpDetails);
                                       }}
                                       disabled={!p.supplier}
                                       title={!p.supplier ? "Tetapkan vendor material dulu" : undefined}

@@ -1,15 +1,19 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { formatRupiah, formatDate, formatDecimal, formatPcs, localDateString, hargaKainRate, hargaMaklonRate, materialKgPerRollForGroup, mrpDetailFor, type AduanMaterialKind } from "./derive";
+import { formatDate, formatDecimal, formatPcs, localDateString, materialKgPerRollForGroup, mrpDetailFor, type AduanMaterialKind } from "./derive";
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "./seed";
 import type { MrpDetail } from "./store";
-import type { HargaKainPksRow, HargaKainRow, HargaMaklonRow } from "./masterData";
-import type { Lengan, MaklonPO, MaterialPO } from "./types";
+import type { MaklonPO, MaterialPO } from "./types";
 
-// Format PDF ini SENGAJA meniru tata letak PO dari ERP lama user (logo+subjudul di kiri atas,
-// judul dokumen di tengah, info wajib dalam kotak 2 kolom, tabel rincian ber-header hijau
-// dengan subtotal, garis TOTAL besar, lalu kotak tanda tangan 2 kolom di bagian bawah) — supaya
-// dokumen yang di-download dari sini terasa konsisten dengan dokumen lama yang sudah dikenal tim.
+// Format PDF ini meniru tata letak PO dari ERP lama user (logo + nama perusahaan di kiri atas,
+// judul dokumen di tengah, info wajib dalam kotak 2 kolom, tabel rincian ber-header hijau dengan
+// garis tabel, lalu blok "Diajukan oleh / Disetujui oleh" di bagian bawah).
+//
+// Revisi 2026-09-21 (owner): (1) kop = logo + "TIGALAPAN INDONESIA" (subjudul lama dihapus), judul dokumen
+// jadi "PROPOSAL PURCHASE ORDER ..."; (2) nilai di kotak info yang panjang tidak lagi terpotong (teks
+// dibungkus, tinggi baris menyesuaikan); (3) semua tabel diberi garis; (4) SEMUA nominal harga (Harga/Kg,
+// Biaya, Subtotal, Total Biaya) dihapus dari PO -- harga master tidak untuk ditunjukkan ke supplier/vendor,
+// sebagai gantinya ada baris total Roll/Kg (material) atau Qty (maklon); (5) blok tanda tangan didesain ulang.
 const PAGE_W = 595.28;
 const MARGIN = 40;
 const CONTENT_W = PAGE_W - MARGIN * 2;
@@ -17,65 +21,175 @@ const CENTER_X = PAGE_W / 2;
 const TEAL: [number, number, number] = [13, 148, 136];
 const GRAY_LABEL: [number, number, number] = [130, 130, 140];
 const GRAY_BORDER: [number, number, number] = [225, 225, 230];
+const TABLE_LINE: [number, number, number] = [160, 165, 175];
 const INK: [number, number, number] = [26, 26, 31];
+const GREEN: [number, number, number] = [22, 128, 61];
+const AMBER: [number, number, number] = [180, 110, 0];
+
+// Logo kop: file gambar di `public/tigalapan-logo-kop.png`. Kalau ada, dipakai di kiri nama perusahaan;
+// kalau tidak ada / gagal dimuat, kop cukup teks (tidak pernah bikin download PO gagal). Dimuat sekali di
+// browser saat modul ini pertama diimpor supaya export PDF tetap sinkron (tidak perlu menunggu fetch).
+const LOGO_URL = "/tigalapan-logo-kop.png";
+const LOGO_H = 40;
+const LOGO_MAX_W = 64;
+let logoCache: { dataUrl: string; w: number; h: number } | null = null;
+let logoRequested = false;
+
+function preloadLogo() {
+  if (typeof window === "undefined" || logoRequested) return;
+  logoRequested = true;
+  const img = new Image();
+  img.onload = () => {
+    try {
+      // Perkecil dulu kalau gambarnya sangat besar supaya file PDF tidak membengkak.
+      const scale = Math.min(1, 500 / Math.max(img.naturalWidth, img.naturalHeight));
+      const cw = Math.max(1, Math.round(img.naturalWidth * scale));
+      const ch = Math.max(1, Math.round(img.naturalHeight * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = cw;
+      canvas.height = ch;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.drawImage(img, 0, 0, cw, ch);
+      // Pangkas margin kosong (transparan / putih) di sekeliling logo supaya ukurannya di kop pas.
+      const { data } = ctx.getImageData(0, 0, cw, ch);
+      let minX = cw, minY = ch, maxX = -1, maxY = -1;
+      for (let py = 0; py < ch; py++) {
+        for (let px = 0; px < cw; px++) {
+          const i = (py * cw + px) * 4;
+          const isContent = data[i + 3] > 20 && !(data[i] > 245 && data[i + 1] > 245 && data[i + 2] > 245);
+          if (!isContent) continue;
+          if (px < minX) minX = px;
+          if (px > maxX) maxX = px;
+          if (py < minY) minY = py;
+          if (py > maxY) maxY = py;
+        }
+      }
+      if (maxX < minX || maxY < minY) {
+        logoCache = { dataUrl: canvas.toDataURL("image/png"), w: cw, h: ch };
+        return;
+      }
+      const pad = 2;
+      const sx = Math.max(0, minX - pad);
+      const sy = Math.max(0, minY - pad);
+      const sw = Math.min(cw - sx, maxX - minX + 1 + pad * 2);
+      const sh = Math.min(ch - sy, maxY - minY + 1 + pad * 2);
+      const out = document.createElement("canvas");
+      out.width = sw;
+      out.height = sh;
+      out.getContext("2d")?.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+      logoCache = { dataUrl: out.toDataURL("image/png"), w: sw, h: sh };
+    } catch {
+      logoCache = null;
+    }
+  };
+  img.src = LOGO_URL;
+}
+preloadLogo();
 
 function drawHeader(doc: jsPDF, title: string): number {
+  const top = 24;
+  let textX = MARGIN;
+  if (logoCache) {
+    const ratio = Math.min(LOGO_H / logoCache.h, LOGO_MAX_W / logoCache.w);
+    const w = logoCache.w * ratio;
+    const h = logoCache.h * ratio;
+    doc.addImage(logoCache.dataUrl, "PNG", MARGIN, top + (LOGO_H - h) / 2, w, h);
+    textX = MARGIN + w + 12;
+  }
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(17);
+  doc.setFontSize(19);
   doc.setTextColor(...INK);
-  doc.text("TIGALAPAN KAOS", MARGIN, 42);
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8.5);
-  doc.setTextColor(...GRAY_LABEL);
-  doc.text("Tigalapan Indonesia · Sistem ERP Terintegrasi · Modul Procurement", MARGIN, 55);
+  doc.text("TIGALAPAN INDONESIA", textX, top + LOGO_H / 2 + 6.5);
 
   doc.setDrawColor(...GRAY_BORDER);
-  doc.line(MARGIN, 65, PAGE_W - MARGIN, 65);
+  doc.line(MARGIN, 76, PAGE_W - MARGIN, 76);
 
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(15);
+  doc.setFontSize(14);
   doc.setTextColor(...INK);
-  doc.text(title, CENTER_X, 92, { align: "center" });
+  doc.text(title, CENTER_X, 104, { align: "center" });
 
-  return 116;
+  return 126;
 }
 
-// Tabel info 2-kolom (label tebal | value normal) bersambung dengan garis internal — BUKAN kotak
-// terpisah label-di-atas-value-di-bawah seperti versi sebelumnya. Ini meniru persis dokumen lama
-// user: 1 blok kiri + 1 blok kanan, tiap blok 2 kolom (label ~38% lebar, value sisanya), 4 baris,
-// garis horizontal antar baris & garis vertikal antara label/value, label DAN value sama-sama
-// warna gelap (label tebal, value normal) — bukan label abu-abu redup.
+// Tabel info 2-kolom (label tebal | value normal) bersambung dengan garis internal. Teks label & value
+// DIBUNGKUS ke lebar kolomnya dan tinggi tiap baris menyesuaikan jumlah barisnya (dulu teks panjang
+// seperti "PO-SUP-MRP-W36-AWL-KNITTO" / "Vendor Material (Supplier)" meluber melewati garis kolom).
+const INFO_FONT = 9;
+const INFO_LINE_H = 11;
+const INFO_MIN_ROW_H = 30;
+const INFO_PAD_X = 8;
+
+/** Bungkus teks ke `width`. Teks tanpa spasi yang kepanjangan (mis. nomor PO) TIDAK dipotong di tengah kata --
+ *  ukuran font-nya dikecilkan (min 7pt) supaya muat satu baris; baru kalau tetap tidak muat dibungkus per karakter. */
+function wrapLines(doc: jsPDF, text: string, width: number, bold: boolean): { lines: string[]; fontSize: number } {
+  const t = text || "—";
+  doc.setFont("helvetica", bold ? "bold" : "normal");
+  let fontSize = INFO_FONT;
+  doc.setFontSize(fontSize);
+  if (!t.includes(" ")) {
+    while (doc.getTextWidth(t) > width && fontSize > 7) {
+      fontSize -= 0.5;
+      doc.setFontSize(fontSize);
+    }
+    if (doc.getTextWidth(t) <= width) return { lines: [t], fontSize };
+    fontSize = INFO_FONT;
+    doc.setFontSize(fontSize);
+  }
+  return { lines: doc.splitTextToSize(t, width) as string[], fontSize };
+}
+
 function drawInfoGrid(doc: jsPDF, startY: number, left: [string, string][], right: [string, string][]): number {
-  const halfW = (CONTENT_W - 16) / 2;
+  const gap = 16;
+  const blockW = (CONTENT_W - gap) / 2;
+  const labelW = blockW * 0.36;
+  const valueW = blockW - labelW;
+  const textW = (col: number) => col - INFO_PAD_X * 2;
   const rows = Math.max(left.length, right.length);
-  drawInfoBlock(doc, MARGIN, startY, halfW, left);
-  drawInfoBlock(doc, MARGIN + halfW + 16, startY, halfW, right);
-  return startY + rows * 34 + 20;
+
+  // Tinggi baris = yang tertinggi dari kiri/kanan pada indeks yang sama, supaya garis kedua blok sejajar.
+  const heights: number[] = [];
+  for (let i = 0; i < rows; i++) {
+    let lines = 1;
+    for (const block of [left, right]) {
+      const f = block[i];
+      if (!f) continue;
+      lines = Math.max(lines, wrapLines(doc, f[0], textW(labelW), true).lines.length, wrapLines(doc, f[1], textW(valueW), false).lines.length);
+    }
+    heights.push(Math.max(INFO_MIN_ROW_H, lines * INFO_LINE_H + 12));
+  }
+
+  drawInfoBlock(doc, MARGIN, startY, blockW, labelW, heights, left);
+  drawInfoBlock(doc, MARGIN + blockW + gap, startY, blockW, labelW, heights, right);
+  return startY + heights.reduce((s, h) => s + h, 0) + 20;
 }
 
-function drawInfoBlock(doc: jsPDF, x: number, y: number, w: number, fields: [string, string][]) {
-  const rowH = 34;
-  const labelW = w * 0.4;
-  const h = fields.length * rowH;
+function drawInfoBlock(doc: jsPDF, x: number, y: number, w: number, labelW: number, heights: number[], fields: [string, string][]) {
+  const total = heights.slice(0, fields.length).reduce((s, h) => s + h, 0);
+  doc.setDrawColor(...TABLE_LINE);
+  doc.setLineWidth(0.5);
+  doc.rect(x, y, w, total);
+  doc.line(x + labelW, y, x + labelW, y + total);
 
-  doc.setDrawColor(...GRAY_BORDER);
-  doc.rect(x, y, w, h);
-  doc.line(x + labelW, y, x + labelW, y + h);
-  for (let i = 1; i < fields.length; i++) doc.line(x, y + i * rowH, x + w, y + i * rowH);
-
+  let rowY = y;
   fields.forEach(([label, value], i) => {
-    const rowY = y + i * rowH;
-    const textY = rowY + rowH / 2 + 3;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9.5);
-    doc.setTextColor(...INK);
-    doc.text(label, x + 10, textY);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9.5);
-    doc.setTextColor(...INK);
-    doc.text(value || "—", x + labelW + 10, textY);
+    const rowH = heights[i];
+    if (i > 0) doc.line(x, rowY, x + w, rowY);
+    const labelLines = wrapLines(doc, label, labelW - INFO_PAD_X * 2, true);
+    const valueLines = wrapLines(doc, value, w - labelW - INFO_PAD_X * 2, false);
+    const drawLines = ({ lines, fontSize }: { lines: string[]; fontSize: number }, tx: number, bold: boolean) => {
+      doc.setFont("helvetica", bold ? "bold" : "normal");
+      doc.setFontSize(fontSize);
+      doc.setTextColor(...INK);
+      const startTextY = rowY + (rowH - lines.length * INFO_LINE_H) / 2 + INFO_LINE_H - 2.5;
+      lines.forEach((ln, li) => doc.text(ln, tx, startTextY + li * INFO_LINE_H));
+    };
+    drawLines(labelLines, x + INFO_PAD_X, true);
+    drawLines(valueLines, x + labelW + INFO_PAD_X, false);
+    rowY += rowH;
   });
+  doc.setLineWidth(0.2);
 }
 
 function drawSectionHeading(doc: jsPDF, y: number, text: string): number {
@@ -90,80 +204,108 @@ function lastAutoTableY(doc: jsPDF): number {
   return (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
 }
 
-function drawSubtotal(doc: jsPDF, y: number, label: string, amount: number): number {
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(9);
-  doc.setTextColor(...INK);
-  doc.text(`${label}: ${formatRupiah(amount)}`, PAGE_W - MARGIN, y, { align: "right" });
-  return y + 22;
-}
+// Opsi umum semua tabel rincian: bergaris (grid), header hijau, baris total abu-abu tebal.
+const TABLE_BASE = {
+  theme: "grid" as const,
+  margin: { left: MARGIN, right: MARGIN },
+  styles: { fontSize: 8.5, textColor: INK, lineColor: TABLE_LINE, lineWidth: 0.5 },
+  headStyles: { fillColor: TEAL, textColor: [255, 255, 255] as [number, number, number], fontStyle: "bold" as const },
+  footStyles: { fillColor: [240, 243, 246] as [number, number, number], textColor: INK, fontStyle: "bold" as const },
+};
 
-function drawGrandTotal(doc: jsPDF, y: number, label: string, amount: number): number {
-  doc.setDrawColor(...INK);
-  doc.line(MARGIN + CONTENT_W / 2, y, PAGE_W - MARGIN, y);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(13);
-  doc.setTextColor(...INK);
-  doc.text(`${label}: ${formatRupiah(amount)}`, PAGE_W - MARGIN, y + 20, { align: "right" });
-  return y + 44;
-}
+// ---- Blok "Diajukan oleh / Disetujui oleh" ----
+const APPROVAL_H = 96;
 
-function drawSignatureBoxes(doc: jsPDF, y: number, leftLabel: string, leftName: string, rightLabel: string, rightName: string) {
-  const boxW = (CONTENT_W - 16) / 2;
-  const boxH = 66;
-  doc.setDrawColor(...GRAY_BORDER);
-  doc.rect(MARGIN, y, boxW, boxH);
-  doc.rect(MARGIN + boxW + 16, y, boxW, boxH);
+function drawApprovalBox(
+  doc: jsPDF,
+  x: number,
+  y: number,
+  w: number,
+  o: { heading: string; role: string; status: string; statusColor: [number, number, number]; name: string; meta: string }
+) {
+  doc.setDrawColor(...TABLE_LINE);
+  doc.setLineWidth(0.5);
+  doc.rect(x, y, w, APPROVAL_H);
+  // Pita judul
+  doc.setFillColor(240, 243, 246);
+  doc.rect(x, y, w, 20, "FD");
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(7.5);
-  doc.setTextColor(...GRAY_LABEL);
-  doc.text(leftLabel, MARGIN + 10, y + 16);
-  doc.text(rightLabel, MARGIN + boxW + 26, y + 16);
+  doc.setFontSize(8);
+  doc.setTextColor(...INK);
+  doc.text(o.heading, x + 10, y + 13);
   doc.setFont("helvetica", "normal");
+  doc.setTextColor(...GRAY_LABEL);
+  doc.text(o.role, x + w - 10, y + 13, { align: "right" });
+  // Status (area tanda tangan)
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(...o.statusColor);
+  doc.text(o.status, x + w / 2, y + 38, { align: "center" });
+  // Garis tanda tangan + nama + keterangan
+  doc.setDrawColor(...INK);
+  doc.setLineWidth(0.6);
+  doc.line(x + 24, y + APPROVAL_H - 30, x + w - 24, y + APPROVAL_H - 30);
+  doc.setFont("helvetica", "bold");
   doc.setFontSize(9.5);
   doc.setTextColor(...INK);
-  doc.text(leftName, MARGIN + 10, y + 48);
-  doc.text(rightName, MARGIN + boxW + 26, y + 48);
+  doc.text(o.name, x + w / 2, y + APPROVAL_H - 18, { align: "center" });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(...GRAY_LABEL);
+  doc.text(o.meta, x + w / 2, y + APPROVAL_H - 7, { align: "center" });
+  doc.setLineWidth(0.2);
+}
+
+function drawApprovalBoxes(doc: jsPDF, y: number, o: { submittedDate?: string; approved: boolean; approvedDate?: string }) {
+  const gap = 16;
+  const w = (CONTENT_W - gap) / 2;
+  drawApprovalBox(doc, MARGIN, y, w, {
+    heading: "DIAJUKAN OLEH",
+    role: "Procurement",
+    status: "DIAJUKAN",
+    statusColor: TEAL,
+    name: "Tim Procurement",
+    meta: o.submittedDate ? `Tanggal pengajuan: ${formatDate(o.submittedDate)}` : "Tanggal pengajuan: —",
+  });
+  drawApprovalBox(doc, MARGIN + w + gap, y, w, {
+    heading: "DISETUJUI OLEH",
+    role: "Finance",
+    status: o.approved ? "DISETUJUI" : "MENUNGGU PERSETUJUAN",
+    statusColor: o.approved ? GREEN : AMBER,
+    name: "Finance",
+    meta: o.approved ? (o.approvedDate ? `Tanggal persetujuan: ${formatDate(o.approvedDate)}` : "Sudah disetujui") : "Belum disetujui Finance",
+  });
 }
 
 function footerY(doc: jsPDF): number {
   const pageH = doc.internal.pageSize.getHeight();
-  return pageH - 40 - 66; // ruang tanda tangan selalu di bagian bawah halaman
+  return pageH - 40 - APPROVAL_H; // ruang tanda tangan selalu di bagian bawah halaman
 }
 
-/** Item 8(d): dulu drawSignatureBoxes(doc, Math.max(y, footerY(doc)), …) memakai footerY() dari
- *  halaman SAAT INI — kalau autoTable di atasnya sudah spill ke halaman 2+ (PO panjang, banyak
- *  warna/rincian), `y` (posisi setelah tabel) bisa lebih besar dari footerY halaman itu, TAPI
- *  kotak tanda tangan tetap digambar di halaman yang sama, numpuk di atas baris tabel terakhir.
- *  Fix: kalau `y` sudah lewat footerY halaman saat ini, mulai halaman BARU dan gambar kotak tanda
- *  tangan di footerY halaman baru itu (selalu di bagian bawah, tidak pernah menabrak tabel). */
-function drawSignatureBoxesSafe(doc: jsPDF, y: number, leftLabel: string, leftName: string, rightLabel: string, rightName: string) {
+/** Item 8(d): kalau `y` (posisi setelah tabel) sudah lewat footerY halaman saat ini (tabel spill ke
+ *  halaman 2+), mulai halaman BARU dan gambar blok tanda tangan di footerY halaman baru itu supaya
+ *  tidak pernah menimpa baris tabel terakhir. */
+function drawApprovalBoxesSafe(doc: jsPDF, y: number, o: Parameters<typeof drawApprovalBoxes>[2]) {
   let targetY = y;
   if (y > footerY(doc)) {
     doc.addPage();
     targetY = footerY(doc);
   }
-  drawSignatureBoxes(doc, targetY, leftLabel, leftName, rightLabel, rightName);
+  drawApprovalBoxes(doc, targetY, o);
 }
 
-/** Item revisi 2026-09-17 (owner: "download PO per level -- per MRP, per supplier, atau per satu
- *  PO"): badan asli exportMaterialPoPdf (1 halaman lengkap 1 PO -- header, info grid, rincian,
- *  RIB/Kerah/Manset, tanda tangan) diekstrak ke fungsi ini SUPAYA bisa dipanggil berkali-kali di
- *  atas SATU instance jsPDF yang sama (1 PO = 1 halaman, digabung jadi 1 file multi-halaman),
- *  bukan tiap PO bikin `new jsPDF()` + `.save()` sendiri-sendiri (dulu begitu -- lihat
- *  exportMaterialPoPdf di bawah, sekarang cuma wrapper 1-PO di atas fungsi ini). TIDAK memanggil
- *  `new jsPDF()`/`doc.save()` sama sekali -- itu tanggung jawab pemanggil (exportMaterialPoPdf
- *  untuk 1 PO, exportMaterialPoPdfBatch untuk banyak PO sekaligus). */
-function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[], hargaKain: HargaKainRow[], hargaKainPks: HargaKainPksRow[]) {
+/** Badan 1 halaman PO Material (header, info, rincian, RIB/Kerah/Manset, tanda tangan). TIDAK
+ *  memanggil `new jsPDF()`/`doc.save()` -- itu tanggung jawab pemanggil (1 PO = exportMaterialPoPdf,
+ *  banyak PO sekaligus = exportMaterialPoPdfBatch). Tidak ada nominal harga di dokumen ini. */
+function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[]) {
   const vendorName = VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi;
   const mrpDetail = mrpDetailFor(po.mrpId, mrpDetails);
   const kategori = mrpDetail?.mrp.kategori ?? "—";
+  const totalRoll = po.colorBreakdown.reduce((s, c) => s + c.rollCount, 0);
+  const totalKg = totalRoll * ROLL_KG_ESTIMATE;
 
-  let y = drawHeader(doc, "PURCHASE ORDER - BAHAN BAKU");
+  let y = drawHeader(doc, "PROPOSAL PURCHASE ORDER MATERIAL BAHAN");
 
-  // Item 8b: "Jumlah Warna" (nilai rendah, sudah kelihatan dari jumlah baris tabel) diganti
-  // "Vendor Material (Supplier)" (supplier bahan ini SEBELUMNYA cuma muncul di judul section,
-  // tidak ada di info grid ringkasan) + tambah "Tanggal PO" (mrpDetail.dates.poSent).
   y = drawInfoGrid(
     doc,
     y,
@@ -178,88 +320,61 @@ function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[
       ["Vendor Produksi", vendorName],
       ["Vendor Material (Supplier)", po.supplier],
       ["Entitas", po.approved ? po.entity : "Menunggu input Finance"],
-      ["Total Biaya Bahan", formatRupiah(po.amount)],
+      ["Total Roll", formatDecimal(totalRoll, 1)],
+      ["Total Kg (estimasi)", formatDecimal(totalKg, 1)],
     ]
   );
 
   y = drawSectionHeading(doc, y, `1. Rincian Bahan — ${po.supplier}`);
 
-  // Rate per kg dicari SEKALI per warna (tonase dikumulasi lintas lengan warna yang sama dalam PO
-  // ini), lalu dipakai untuk semua baris warna itu — sama seperti materialAmountForPo di derive.ts.
-  const kgByWarna = new Map<string, number>();
-  for (const c of po.colorBreakdown) kgByWarna.set(c.warna, (kgByWarna.get(c.warna) ?? 0) + c.rollCount * ROLL_KG_ESTIMATE);
-  const rateByWarna = new Map<string, number>();
-  for (const [warna, kg] of kgByWarna) rateByWarna.set(warna, hargaKainRate(hargaKain, hargaKainPks, po.supplier, warna, kg));
-
-  const rows = po.colorBreakdown.map((c, i) => {
-    const kg = c.rollCount * ROLL_KG_ESTIMATE;
-    const rate = rateByWarna.get(c.warna) ?? 0;
-    return [String(i + 1), kategori, c.lengan ? `${c.warna} · ${c.lengan}` : c.warna, formatDecimal(c.rollCount, 1), formatDecimal(kg, 1), formatRupiah(rate), formatRupiah(kg * rate)];
-  });
+  const rows = po.colorBreakdown.map((c, i) => [String(i + 1), kategori, c.lengan ? `${c.warna} · ${c.lengan}` : c.warna, formatDecimal(c.rollCount, 1), formatDecimal(c.rollCount * ROLL_KG_ESTIMATE, 1)]);
 
   autoTable(doc, {
+    ...TABLE_BASE,
     startY: y,
-    margin: { left: MARGIN, right: MARGIN },
-    head: [["No", "Kategori", "Warna", "Roll", "Kg", "Harga/Kg", "Biaya"]],
+    head: [["No", "Kategori", "Warna", "Roll", "Kg"]],
     body: rows,
-    styles: { fontSize: 8.5, textColor: INK, lineColor: GRAY_BORDER },
-    headStyles: { fillColor: TEAL, textColor: [255, 255, 255], fontStyle: "bold" },
+    foot: [["", "", "TOTAL", formatDecimal(totalRoll, 1), formatDecimal(totalKg, 1)]],
+    showFoot: "lastPage",
     columnStyles: {
-      0: { cellWidth: 24 },
-      3: { halign: "right", cellWidth: 45 },
-      4: { halign: "right", cellWidth: 50 },
-      5: { halign: "right", cellWidth: 75 },
-      6: { halign: "right", cellWidth: 85 },
+      0: { cellWidth: 28, halign: "center" },
+      3: { halign: "right", cellWidth: 70 },
+      4: { halign: "right", cellWidth: 80 },
     },
   });
+  y = lastAutoTableY(doc) + 22;
 
-  y = lastAutoTableY(doc) + 14;
-  y = drawSubtotal(doc, y, `Subtotal ${po.id}`, po.amount);
-  y = drawGrandTotal(doc, y, "TOTAL BIAYA BAHAN", po.amount);
-
-  // Item 8c: "2. Permintaan RIB" -- Σ ribKgPerRollForGroup(group) * rollCount per baris warna/
-  // lengan, group dicari dari mrpDetail.lenganGroups (warna+lengan match). Section (dan
-  // penomoran) di-skip total kalau total rib 0 (mis. kategori tanpa rib sama sekali).
-  //
-  // Item BAGIAN 2 (Req 21): Kerah/Manset mengikuti struktur tabel IDENTIK, digeneralisasi lewat
-  // drawMaterialSection di bawah -- penomoran section DINAMIS (sectionCounter cuma naik untuk
-  // section yang benar-benar dirender), supaya PO lama tanpa kerah/manset menghasilkan PDF PERSIS
-  // sama seperti sebelumnya (tetap section "2. Permintaan RIB", tidak ada lompatan nomor).
+  // Section tambahan RIB / Kerah / Manset: penomoran DINAMIS (hanya naik untuk section yang dirender)
+  // dan section di-skip total kalau kebutuhannya 0 (mis. kategori tanpa rib sama sekali).
   let sectionCounter = 1;
 
   function materialRowsForKind(kind: AduanMaterialKind) {
-    const rows = po.colorBreakdown.map((c) => {
+    const list = po.colorBreakdown.map((c) => {
       const group = mrpDetail?.lenganGroups.find((g) => g.warna === c.warna && g.lengan === c.lengan);
       const kgPerRoll = group ? materialKgPerRollForGroup(group, kind) : 0;
       return { warna: c.warna, lengan: c.lengan, rollCount: c.rollCount, kgPerRoll, kgForLine: kgPerRoll * c.rollCount };
     });
-    const totalKg = rows.reduce((s, r) => s + r.kgForLine, 0);
-    return { rows, totalKg };
+    return { rows: list, totalKg: list.reduce((s, r) => s + r.kgForLine, 0) };
   }
 
-  function drawMaterialSection(label: string, rows: ReturnType<typeof materialRowsForKind>["rows"], totalKg: number) {
+  function drawMaterialSection(label: string, list: ReturnType<typeof materialRowsForKind>["rows"], totalKgForKind: number) {
     sectionCounter += 1;
     y = drawSectionHeading(doc, y, `${sectionCounter}. Permintaan ${label}`);
     autoTable(doc, {
+      ...TABLE_BASE,
       startY: y,
-      margin: { left: MARGIN, right: MARGIN },
       head: [["No", "Warna", "Lengan", "Roll", `${label}/roll (kg)`, `Total ${label} (kg)`]],
-      body: rows.map((r, i) => [String(i + 1), r.warna, r.lengan, formatDecimal(r.rollCount, 1), formatDecimal(r.kgPerRoll, 2), formatDecimal(r.kgForLine, 2)]),
-      styles: { fontSize: 8.5, textColor: INK, lineColor: GRAY_BORDER },
-      headStyles: { fillColor: TEAL, textColor: [255, 255, 255], fontStyle: "bold" },
+      body: list.map((r, i) => [String(i + 1), r.warna, r.lengan, formatDecimal(r.rollCount, 1), formatDecimal(r.kgPerRoll, 2), formatDecimal(r.kgForLine, 2)]),
+      foot: [["", "", "TOTAL", formatDecimal(list.reduce((s, r) => s + r.rollCount, 0), 1), "", formatDecimal(totalKgForKind, 2)]],
+      showFoot: "lastPage",
       columnStyles: {
-        0: { cellWidth: 24 },
-        3: { halign: "right", cellWidth: 45 },
-        4: { halign: "right", cellWidth: 80 },
-        5: { halign: "right", cellWidth: 85 },
+        0: { cellWidth: 28, halign: "center" },
+        3: { halign: "right", cellWidth: 50 },
+        4: { halign: "right", cellWidth: 85 },
+        5: { halign: "right", cellWidth: 90 },
       },
     });
-    y = lastAutoTableY(doc) + 14;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
-    doc.setTextColor(...INK);
-    doc.text(`TOTAL ${label.toUpperCase()}: ${formatDecimal(totalKg, 2)} kg`, PAGE_W - MARGIN, y, { align: "right" });
-    y += 22;
+    y = lastAutoTableY(doc) + 22;
   }
 
   const rib = materialRowsForKind("rib");
@@ -271,71 +386,37 @@ function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[
   const manset = materialRowsForKind("manset");
   if (manset.totalKg > 0) drawMaterialSection("MANSET", manset.rows, manset.totalKg);
 
-  drawSignatureBoxesSafe(doc, y, "DIAJUKAN OLEH (PROCUREMENT)", "Tim Procurement", "DISETUJUI OLEH (FINANCE)", po.approved ? "Disetujui" : "Menunggu tanda tangan");
+  drawApprovalBoxesSafe(doc, y, { submittedDate: mrpDetail?.dates.poSent, approved: po.approved, approvedDate: mrpDetail?.dates.poApproved });
 }
 
-/** Generate & download PDF Purchase Order — Bahan Baku (Material) untuk SATU PO, format meniru
- *  dokumen PO lama user: header brand, kotak info 2 kolom, 1 tabel rincian per warna dengan
- *  header hijau, subtotal + total, kotak tanda tangan Procurement/Finance. */
-export function exportMaterialPoPdf(po: MaterialPO, mrpDetails: MrpDetail[], hargaKain: HargaKainRow[], hargaKainPks: HargaKainPksRow[]) {
+/** Generate & download PDF Proposal Purchase Order Material Bahan untuk SATU PO. */
+export function exportMaterialPoPdf(po: MaterialPO, mrpDetails: MrpDetail[]) {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
-  renderMaterialPoPage(doc, po, mrpDetails, hargaKain, hargaKainPks);
+  renderMaterialPoPage(doc, po, mrpDetails);
   doc.save(`PO-${po.id}.pdf`);
 }
 
-/** Item revisi 2026-09-17 (owner: "download PO per level -- per MRP, per supplier"): SEMUA `pos`
- *  digambar ke SATU dokumen jsPDF, 1 halaman per PO (persis tata letak exportMaterialPoPdf),
- *  digabung jadi 1 file PDF multi-halaman -- dipakai tombol "Download PO" di baris MRP (semua
- *  supplier) & baris Supplier (semua PO supplier itu) di tabel pohon PO Material. No-op kalau
- *  `pos` kosong (mis. grup tanpa PO sama sekali -- seharusnya tidak pernah terjadi dari UI, tapi
- *  jaga-jaga). */
-export function exportMaterialPoPdfBatch(pos: MaterialPO[], mrpDetails: MrpDetail[], hargaKain: HargaKainRow[], hargaKainPks: HargaKainPksRow[], fileName: string) {
+/** Semua `pos` digambar ke SATU dokumen jsPDF, 1 halaman per PO -- dipakai tombol "Download PO" di
+ *  baris MRP (semua supplier) & baris Supplier (semua PO supplier itu). No-op kalau `pos` kosong. */
+export function exportMaterialPoPdfBatch(pos: MaterialPO[], mrpDetails: MrpDetail[], fileName: string) {
   if (pos.length === 0) return;
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   pos.forEach((po, i) => {
     if (i > 0) doc.addPage();
-    renderMaterialPoPage(doc, po, mrpDetails, hargaKain, hargaKainPks);
+    renderMaterialPoPage(doc, po, mrpDetails);
   });
   doc.save(fileName);
 }
 
-/** Generate & download PDF Purchase Order — Maklon Vendor, format sama dengan Bahan Baku tapi
- *  rincian per warna menampilkan Qty PDK/PJG (bukan roll/kg) — dihitung dari aduanRows MRP
- *  terkait untuk vendor ini, bukan langsung dari MaklonPO (yang cuma simpan total qty & amount). */
-export function exportMaklonPoPdf(po: MaklonPO, mrpDetails: MrpDetail[], hargaMaklon: HargaMaklonRow[]) {
+/** Generate & download PDF Proposal Purchase Order Produksi (maklon vendor), rincian per warna
+ *  menampilkan Qty PDK/PJG -- dihitung dari aduanRows MRP terkait untuk vendor ini, bukan langsung dari
+ *  MaklonPO. Tidak ada nominal harga/biaya maklon di dokumen ini. */
+export function exportMaklonPoPdf(po: MaklonPO, mrpDetails: MrpDetail[]) {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const vendorName = VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi;
   const detail = mrpDetailFor(po.mrpId, mrpDetails);
   const kategori = detail?.mrp.kategori ?? "—";
   const aduanRows = detail?.aduanRows.filter((a) => a.vendor === po.vendorProduksi) ?? [];
-
-  let y = drawHeader(doc, "PURCHASE ORDER - MAKLON VENDOR");
-
-  y = drawInfoGrid(
-    doc,
-    y,
-    [
-      ["No. PO", po.id],
-      ["No. MRP", po.mrpId],
-      ["Tanggal Cetak", formatDate(localDateString(new Date()))],
-      ["Status", po.approved ? "Disetujui" : "Menunggu Persetujuan"],
-    ],
-    [
-      ["Vendor Produksi", vendorName],
-      ["Total Qty", `${formatPcs(po.qty)} pcs`],
-      ["Kategori", kategori],
-      ["Total Biaya Maklon", formatRupiah(po.amount)],
-    ]
-  );
-
-  y = drawSectionHeading(doc, y, `1. ${vendorName}`);
-
-  // Rate per lengan dicari dari kumulatif qty LINTAS WARNA untuk lengan itu di PO ini (sama
-  // seperti maklonAmountForLenganBuckets di derive.ts), lalu dipakai buat semua baris warna.
-  const cumByLengan = new Map<Lengan, number>();
-  for (const a of aduanRows) cumByLengan.set(a.lengan, (cumByLengan.get(a.lengan) ?? 0) + a.qty);
-  const rateByLengan = new Map<Lengan, number>();
-  for (const [lengan, qty] of cumByLengan) rateByLengan.set(lengan, hargaMaklonRate(hargaMaklon, po.vendorProduksi, lengan, qty));
 
   const byWarna = new Map<string, { warna: string; pdk: number; pjg: number }>();
   for (const a of aduanRows) {
@@ -344,43 +425,58 @@ export function exportMaklonPoPdf(po: MaklonPO, mrpDetails: MrpDetail[], hargaMa
     else cur.pjg += a.qty;
     byWarna.set(a.warna, cur);
   }
-
   const warnaRows = Array.from(byWarna.values());
-  const rows = warnaRows.map((r, i) => {
-    const biaya = Math.round(r.pdk * (rateByLengan.get("PENDEK") ?? 0) + r.pjg * (rateByLengan.get("PANJANG") ?? 0));
-    return [String(i + 1), kategori, r.warna, r.pdk ? formatPcs(r.pdk) : "—", r.pjg ? formatPcs(r.pjg) : "—", po.mrpId, formatRupiah(biaya)];
-  });
+  const totalPdk = warnaRows.reduce((s, r) => s + r.pdk, 0);
+  const totalPjg = warnaRows.reduce((s, r) => s + r.pjg, 0);
 
-  if (rows.length > 0) {
+  let y = drawHeader(doc, "PROPOSAL PURCHASE ORDER PRODUKSI");
+
+  y = drawInfoGrid(
+    doc,
+    y,
+    [
+      ["No. PO", po.id],
+      ["No. MRP", po.mrpId],
+      ["Tanggal PO", detail?.dates.poSent ? formatDate(detail.dates.poSent) : "—"],
+      ["Tanggal Cetak", formatDate(localDateString(new Date()))],
+      ["Status", po.approved ? "Disetujui" : "Menunggu Persetujuan"],
+    ],
+    [
+      ["Vendor Produksi", vendorName],
+      ["Kategori", kategori],
+      ["Jumlah Warna", String(warnaRows.length)],
+      ["Total Qty", `${formatPcs(po.qty)} pcs`],
+    ]
+  );
+
+  y = drawSectionHeading(doc, y, `1. ${vendorName}`);
+
+  if (warnaRows.length > 0) {
     autoTable(doc, {
+      ...TABLE_BASE,
       startY: y,
-      margin: { left: MARGIN, right: MARGIN },
-      head: [["No", "Kategori", "Warna", "Qty PDK", "Qty PJG", "No. MRP", "Biaya"]],
-      body: rows,
-      styles: { fontSize: 8.5, textColor: INK, lineColor: GRAY_BORDER },
-      headStyles: { fillColor: TEAL, textColor: [255, 255, 255], fontStyle: "bold" },
+      head: [["No", "Kategori", "Warna", "Qty PDK", "Qty PJG", "No. MRP"]],
+      body: warnaRows.map((r, i) => [String(i + 1), kategori, r.warna, r.pdk ? formatPcs(r.pdk) : "—", r.pjg ? formatPcs(r.pjg) : "—", po.mrpId]),
+      foot: [["", "", "TOTAL", formatPcs(totalPdk), formatPcs(totalPjg), ""]],
+      showFoot: "lastPage",
       columnStyles: {
-        0: { cellWidth: 24 },
-        3: { halign: "right", cellWidth: 55 },
-        4: { halign: "right", cellWidth: 55 },
-        5: { cellWidth: 70 },
-        6: { halign: "right", cellWidth: 85 },
+        0: { cellWidth: 28, halign: "center" },
+        3: { halign: "right", cellWidth: 65 },
+        4: { halign: "right", cellWidth: 65 },
+        5: { cellWidth: 80 },
       },
     });
-    y = lastAutoTableY(doc) + 14;
+    y = lastAutoTableY(doc) + 22;
   } else {
-    // Item 8e: dulu baris dummy "—" di tabel (seolah-olah ada 1 baris rincian kosong) -- diganti
-    // caption eksplisit supaya jelas ini memang tidak ada rincian aduan pola, bukan data hilang.
+    // Bukan baris dummy di tabel -- caption eksplisit supaya jelas memang tidak ada rincian aduan pola.
     doc.setFont("helvetica", "italic");
     doc.setFontSize(9);
     doc.setTextColor(...GRAY_LABEL);
     doc.text("Tidak ada rincian aduan pola untuk vendor ini.", MARGIN, y + 14);
-    y += 32;
+    y += 36;
   }
-  y = drawSubtotal(doc, y, `Subtotal ${vendorName}`, po.amount);
-  y = drawGrandTotal(doc, y, "TOTAL BIAYA MAKLON", po.amount);
 
-  drawSignatureBoxesSafe(doc, y, "DIAJUKAN OLEH (PROCUREMENT)", "Tim Procurement", "DISETUJUI OLEH (FINANCE)", po.approved ? "Disetujui" : "Menunggu tanda tangan");
+  drawApprovalBoxesSafe(doc, y, { submittedDate: detail?.dates.poSent, approved: po.approved, approvedDate: detail?.dates.poApproved });
 
   doc.save(`PO-${po.id}.pdf`);
 }
