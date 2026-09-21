@@ -234,7 +234,7 @@ export function AppShell({
       "/vendor-maklon/pengiriman": countVendorPengirimanReady(vendorId, productionResults, deliveryKolis, productionGroupMeta, maklonPOs, productionBatches),
       // Invoice & Payment 100% arsip (tidak ada aksi), jadi badge = invoice BARU terbit / BERUBAH STATUS
       // (disetujui, revisi, lunas, dst.) sejak halamannya terakhir dibuka (revisi 2026-09-20).
-      "/vendor-maklon/invoice-payment": countVendorInvoicePaymentUpdates(vendorId, vendorInvoices, maklonInvoices, seenInvoicePayment),
+      "/vendor-maklon/invoice-payment": countVendorInvoicePaymentUpdates(vendorId, vendorInvoices, seenInvoicePayment),
     };
   }
 

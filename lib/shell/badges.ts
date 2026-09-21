@@ -482,22 +482,16 @@ export function vendorInvoiceSeenToken(inv: VendorInvoice): string {
   return `V:${inv.id}#${inv.status}|${vendorInvoicePaymentStatus(inv).label}`;
 }
 
-export function maklonInvoiceSeenToken(inv: MaklonInvoice): string {
-  return `M:${inv.id}#${inv.status}`;
-}
-
-/** Semua token invoice milik vendor ini (Invoice Vendor + Invoice Maklon arsip). */
-export function vendorInvoicePaymentTokens(vendorId: string, vendorInvoices: VendorInvoice[], maklonInvoices: MaklonInvoice[]): string[] {
-  return [
-    ...vendorInvoices.filter((i) => i.vendorProduksi === vendorId).map(vendorInvoiceSeenToken),
-    ...maklonInvoices.filter((i) => i.vendorProduksi === vendorId).map(maklonInvoiceSeenToken),
-  ];
+/** Semua token invoice milik vendor ini (tab Invoice Maklon arsip sudah dihapus dari halaman, jadi
+ *  tidak ikut dihitung). */
+export function vendorInvoicePaymentTokens(vendorId: string, vendorInvoices: VendorInvoice[]): string[] {
+  return vendorInvoices.filter((i) => i.vendorProduksi === vendorId).map(vendorInvoiceSeenToken);
 }
 
 /** Badge Invoice & Payment (revisi 2026-09-20): jumlah invoice yang BARU terbit atau BERUBAH STATUS
  *  sejak halamannya terakhir dibuka. Hilang begitu halaman Invoice & Payment dikunjungi. */
-export function countVendorInvoicePaymentUpdates(vendorId: string, vendorInvoices: VendorInvoice[], maklonInvoices: MaklonInvoice[], seen: Set<string>): number {
-  return vendorInvoicePaymentTokens(vendorId, vendorInvoices, maklonInvoices).filter((t) => !seen.has(t)).length;
+export function countVendorInvoicePaymentUpdates(vendorId: string, vendorInvoices: VendorInvoice[], seen: Set<string>): number {
+  return vendorInvoicePaymentTokens(vendorId, vendorInvoices).filter((t) => !seen.has(t)).length;
 }
 
 /** DEPRECATED (migration 0026) — dulu total badge untuk halaman gabungan Invoice & Payment.
