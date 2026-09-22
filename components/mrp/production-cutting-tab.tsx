@@ -595,7 +595,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
 
               <div className="mt-2 overflow-x-auto rounded-md border border-[#CFE0EF] bg-white">
                 <div
-                  className="grid min-w-[980px] gap-x-3 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted"
+                  className="grid min-w-[1080px] gap-x-3 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted"
                   style={{ gridTemplateColumns: LIST_GRID }}
                 >
                   <span>Warna</span>
@@ -613,7 +613,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 {visibleLines.map((l) => {
                   const variance = weightVariance(l.roll.grossKg, l.netKg);
                   return (
-                    <div key={l.id} className="grid min-w-[980px] items-center gap-x-3 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F]" style={{ gridTemplateColumns: LIST_GRID }}>
+                    <div key={l.id} className="grid min-w-[1080px] items-center gap-x-3 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F]" style={{ gridTemplateColumns: LIST_GRID }}>
                       <span className="font-medium">
                         {l.roll.warna}
                         {l.roll.isReplacement && <span className="ml-1.5 font-mono text-[10px] text-success-fg">(roll pengganti)</span>}
@@ -902,9 +902,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
           </div>
         )}
         <div className="overflow-x-auto">
-          {/* Revisi 2026-09-19: wrapper ini min-w-[1550px] -- header, baris grup, dan sub-tabel per-roll
+          {/* Revisi 2026-09-19: wrapper ini min-w-[1740px] -- header, baris grup, dan sub-tabel per-roll
               semua berbagi lebar yang SAMA sehingga latar/border-nya tidak terpotong saat digulir. */}
-          <div className="min-w-[1550px]">
+          <div className="min-w-[1740px]">
             {!selectedMrpId && (
               <div className="px-4 py-8 text-center font-sans text-xs text-text-muted">
                 Pilih MRP di atas untuk menampilkan kode aduan, progres input resting &amp; cutting, dan riwayatnya.
@@ -913,7 +913,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
             {selectedMrpId && (
               <>
             <div
-              className="grid min-w-[1550px] gap-x-5 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
+              className="grid min-w-[1740px] gap-x-5 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
               style={{ gridTemplateColumns: CUTTING_SESSION_COLUMNS }}
             >
               <span>MRP</span>
@@ -952,7 +952,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               const groupYieldAlert = groupYieldPct !== null && groupYieldPct < YIELD_ALERT_THRESHOLD_PCT;
               return (
                 <div key={g.key} className="border-b border-[#F1F4F7] last:border-b-0">
-                  <div className="grid min-w-[1550px] items-center gap-x-5 px-4 py-[11px] font-sans text-xs text-[#31414F]" style={{ gridTemplateColumns: CUTTING_SESSION_COLUMNS }}>
+                  <div className="grid min-w-[1740px] items-center gap-x-5 px-4 py-[11px] font-sans text-xs text-[#31414F]" style={{ gridTemplateColumns: CUTTING_SESSION_COLUMNS }}>
                     <span className="font-mono">{g.mrpId}</span>
                     <span className="font-mono font-medium">
                       {g.kode} · {g.lengan}
@@ -1009,7 +1009,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   {isExpanded && (
                     <div className="bg-[#FAFBFC]">
                       <div
-                        className="grid min-w-[1550px] gap-x-3 border-y border-[#CFE0EF] bg-info-bg/60 px-8 py-[7px] font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg"
+                        className="grid min-w-[1740px] gap-x-3 border-y border-[#CFE0EF] bg-info-bg/60 px-8 py-[7px] font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg"
                         style={{ gridTemplateColumns: CUTTING_BATCH_COLUMNS }}
                       >
                         <span>Warna</span>
@@ -1029,7 +1029,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         return (
                           <div
                             key={b.id}
-                            className="grid min-w-[1550px] items-center gap-x-3 border-b border-[#F1F4F7] px-8 py-[9px] font-sans text-xs text-[#31414F] last:border-b-0"
+                            className="grid min-w-[1740px] items-center gap-x-3 border-b border-[#F1F4F7] px-8 py-[9px] font-sans text-xs text-[#31414F] last:border-b-0"
                             style={{ gridTemplateColumns: CUTTING_BATCH_COLUMNS }}
                           >
                             <span>{b.warna}</span>

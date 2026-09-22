@@ -45,42 +45,62 @@ const REJECT_COLUMNS = "minmax(170px,1.3fr) minmax(130px,0.9fr) minmax(110px,0.7
  *  lib/mrp/store.ts) — tidak ada field tanggal/jam yang bisa diisi manual di form manapun, jadi
  *  tidak mungkin backdate. Diurutkan kronologis (lama → baru) supaya kebaca sebagai timeline. */
 function FgProgressHistory({ poId, results }: { poId: string; results: ProductionResult[] }) {
-  // Di-scope per PO Produksi (bukan per grup warna/lengan lagi) — 1 PO bisa punya beberapa warna,
-  // jadi tiap baris riwayat sekarang juga nampilin warna · lengan-nya supaya tetap jelas
-  // submission itu punya bagian warna mana kalau PO-nya multi-warna.
+  // Di-scope per PO Produksi -- 1 PO bisa punya beberapa warna, jadi riwayat dikelompokkan per warna/lengan
+  // (revisi 2026-09-22, owner): urut warna A-Z, di dalam warna Pendek dulu baru Panjang, tiap grup punya
+  // judul + total qty, dan di dalam grup entri tetap kronologis. Tanggal & jam ada di paling kanan.
   const entries = results.filter((r) => r.poId === poId && r.kind === "FG").sort((a, b) => (a.recordedAt < b.recordedAt ? -1 : 1));
   if (entries.length === 0) return null;
+  const groups = new Map<string, { warna: string; lengan: string; items: ProductionResult[] }>();
+  for (const r of entries) {
+    const key = r.warna + "|" + r.lengan;
+    if (!groups.has(key)) groups.set(key, { warna: r.warna, lengan: r.lengan, items: [] });
+    groups.get(key)!.items.push(r);
+  }
+  const orderedGroups = Array.from(groups.values()).sort(
+    (x, y) => x.warna.localeCompare(y.warna) || (x.lengan === y.lengan ? 0 : x.lengan === "PENDEK" ? -1 : 1)
+  );
   return (
-    <div className="flex flex-col gap-1">
-      {entries.map((r) => {
-        const qty = Object.values(r.sizeQty).reduce((a, b) => a + b, 0);
-        // Rincian size mana saja yang ke-input di submission ini — 1 klik "Simpan hasil
-        // produksi" bisa sekaligus isi beberapa size, jadi total qty saja tidak cukup untuk
-        // tahu size apa yang benar-benar dikerjakan tanggal/jam itu.
-        const sizeBreakdown = Object.entries(r.sizeQty)
-          .filter(([, q]) => q !== 0)
-          .map(([size, q]) => `${size} ${q > 0 ? "+" : ""}${q}`)
-          .join(", ");
+    <div className="flex flex-col gap-3">
+      {orderedGroups.map((g) => {
+        const groupTotal = g.items.reduce((sum, r) => sum + Object.values(r.sizeQty).reduce((a, b) => a + b, 0), 0);
         return (
-          <div key={r.id} className="flex items-center justify-between gap-2 rounded-md border border-[#EEF1F4] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-            <span className="flex items-center gap-2">
-              <span className="font-mono text-text-muted">{formatDateTimeShort(r.recordedAt)}</span>
-              <span className="font-medium">
-                {r.warna} · {r.lengan}
+          <div key={g.warna + "|" + g.lengan} className="overflow-hidden rounded-md border border-[#E4E9EE] bg-white">
+            <div className="flex items-center justify-between gap-2 border-b border-[#E4E9EE] bg-[#F2F5F8] px-3 py-1.5 font-sans text-[11.5px]">
+              <span className="font-semibold text-text-primary">
+                {g.warna} · {g.lengan}
               </span>
-              {r.note && <span className="text-[10px] text-text-muted">({r.note})</span>}
-            </span>
-            <span className="flex flex-col items-end">
-              <span className={"font-mono font-semibold " + (qty < 0 ? "text-danger-fg" : "text-success-fg")}>
-                {qty > 0 ? "+" : ""}
-                {qty} pcs
+              <span className="font-mono font-semibold text-[#31414F]">
+                {groupTotal > 0 ? "+" : ""}
+                {groupTotal} pcs
+                <span className="ml-1.5 font-sans text-[10px] font-normal text-text-muted">({g.items.length} catatan)</span>
               </span>
-              <span className="font-mono text-[10px] text-text-muted">{sizeBreakdown}</span>
-            </span>
             </div>
-          );
-        })}
-      </div>
+            {g.items.map((r) => {
+              const qty = Object.values(r.sizeQty).reduce((a, b) => a + b, 0);
+              // Rincian size mana saja yang ke-input di submission ini -- 1 klik "Simpan hasil produksi" bisa sekaligus
+              // isi beberapa size, jadi total qty saja tidak cukup untuk tahu size apa yang benar-benar dikerjakan.
+              const sizeBreakdown = Object.entries(r.sizeQty)
+                .filter(([, q]) => q !== 0)
+                .map(([size, q]) => `${size} ${q > 0 ? "+" : ""}${q}`)
+                .join(", ");
+              return (
+                <div key={r.id} className="flex items-center gap-3 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F] last:border-b-0">
+                  <span className="min-w-0 flex-1 text-[11px] text-text-muted">{r.note ?? "—"}</span>
+                  <span className="flex flex-none flex-col items-end">
+                    <span className={"font-mono font-semibold " + (qty < 0 ? "text-danger-fg" : "text-success-fg")}>
+                      {qty > 0 ? "+" : ""}
+                      {qty} pcs
+                    </span>
+                    <span className="font-mono text-[10px] text-text-muted">{sizeBreakdown}</span>
+                  </span>
+                  <span className="w-[112px] flex-none text-right font-mono text-[11px] text-text-muted">{formatDateTimeShort(r.recordedAt)}</span>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -288,9 +308,9 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                 <span>Warna / lengan</span>
                 {kind === "REJECT" ? (
                   <>
-                    <span className="text-right">Reject Produksi</span>
-                    <span className="text-right">Reject (Final)</span>
-                    <span className="text-right">Rework</span>
+                    <span className="text-right">Qty reject</span>
+                    <span className="text-right">Qty rework</span>
+                    <span className="text-right">Qty sisa reject</span>
                   </>
                 ) : (
                   <>
@@ -359,10 +379,10 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                       {kind === "REJECT" ? (
                         <>
                           <span className="text-right font-mono">{grossReject}</span>
-                          <span className="text-right font-mono text-danger-fg">{totalRecorded}</span>
                           <span className="text-right font-mono text-success-fg">
                             {Object.values(reworkedAwayBySize(groupKey, productionResults)).reduce((a, b) => a + b, 0)}
                           </span>
+                          <span className="text-right font-mono text-danger-fg">{totalRecorded}</span>
                         </>
                       ) : (
                         <>
@@ -444,6 +464,23 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                             ));
                           })()}
                         </div>
+                        {(() => {
+                          // Remark sisa reject tersimpan per PO Produksi (rejectRemarks[poId]); tabel "Detail Reject -- by PO" yang
+                          // dulu jadi tempat isiannya disembunyikan (revisi 2026-09-22), jadi isiannya pindah ke sini.
+                          const remarkPoId = productionResults.find((r) => r.groupKey === groupKey && r.kind === "REJECT" && r.poId)?.poId;
+                          if (!remarkPoId) return null;
+                          return (
+                            <div className="mt-3">
+                              <div className="mb-1 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Remark sisa reject</div>
+                              <input
+                                value={rejectRemarks[remarkPoId] ?? ""}
+                                onChange={(e) => setRejectRemark(remarkPoId, e.target.value)}
+                                placeholder="Catatan sisa reject…"
+                                className="input w-full text-[11.5px]"
+                              />
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
                     {expanded && kind === "FG" && (
@@ -837,6 +874,9 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
         </div>
       )}
 
+      {/* Tabel "by PO" hanya untuk Finish Good; di tab Reject disembunyikan (revisi 2026-09-22) -- kolom Qty reject/rework/sisa
+          sudah ada di tabel per warna/lengan di atas. `as string` menjaga cabang REJECT di bawah tetap valid secara tipe. */}
+      {(kind as string) === "FG" && (
       <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
         <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">
           {kind === "REJECT" ? "Detail Reject — by PO" : "Riwayat & Hasil Finish Good — by PO"}
@@ -962,6 +1002,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
           </div>
         </div>
       </div>
+      )}
       {/* Modal Edit FG per roll (revisi 2026-09-20): koreksi Finish Good aktual, naik maupun turun. */}
       {editFgBatchId &&
         (() => {
