@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
@@ -8,8 +10,134 @@ import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { useMrpStore } from "@/lib/mrp/store";
 import { addDays, formatDate, formatPcs, formatRupiah, maklonPoBadgeWithApproval, maklonPoDisplayStatus, materialReceivedForMaklon, mrpDetailFor } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
-import type { MaklonPO } from "@/lib/mrp/types";
+import type { AduanPolaRow, MaklonPO } from "@/lib/mrp/types";
 import { seenPoKey, useMarkPoSeen } from "@/lib/shell/seen-po";
+
+/** Item revisi 2026-09-22 (owner: "astaga buat diclick baru tampil informasinya tiap hierarki") --
+ *  dulu (revisi sebelumnya di hari yang sama) langsung tampil SEMUA size sekaligus begitu baris PO
+ *  di-expand -- untuk PO besar (puluhan warna) itu jadi scroll panjang sekali. Sekarang pohon
+ *  Warna -> Lengan -> Size collapsed by default, klik baris Warna buka daftar Lengan-nya, klik
+ *  baris Lengan baru buka daftar Size-nya -- state expand PER BARIS PO (jadi komponen terpisah
+ *  dengan hooks sendiri, bukan lagi inline di dalam renderExpanded seperti sebelumnya karena hooks
+ *  tidak boleh dipanggil dari callback biasa). */
+function AduanDetailTree({ rows }: { rows: AduanPolaRow[] }) {
+  const [openWarna, setOpenWarna] = useState<Set<string>>(new Set());
+  const [openLengan, setOpenLengan] = useState<Set<string>>(new Set());
+
+  function toggleWarna(warna: string) {
+    setOpenWarna((prev) => {
+      const next = new Set(prev);
+      if (next.has(warna)) next.delete(warna);
+      else next.add(warna);
+      return next;
+    });
+  }
+  function toggleLengan(key: string) {
+    setOpenLengan((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  // Grouping Warna -> Lengan -> Size, qty per size dijumlah dari SEMUA aduan yang warna+lengan+
+  // size-nya sama (1 warna/lengan bisa berasal dari >1 kode aduan) -- lihat catatan lengkap di
+  // commit sebelumnya (grouping-nya sendiri, bukan bagian yang diubah di sini).
+  const warnaMap = new Map<string, Map<string, Map<string, number>>>();
+  for (const a of rows) {
+    let lenganMap = warnaMap.get(a.warna);
+    if (!lenganMap) {
+      lenganMap = new Map();
+      warnaMap.set(a.warna, lenganMap);
+    }
+    let sizeMap = lenganMap.get(a.lengan);
+    if (!sizeMap) {
+      sizeMap = new Map();
+      lenganMap.set(a.lengan, sizeMap);
+    }
+    if (a.sizes.length > 0) {
+      for (const s of a.sizes) sizeMap.set(s.size, (sizeMap.get(s.size) ?? 0) + s.qty);
+    } else {
+      // Aduan tanpa breakdown size -- tetap ikut ke total warna/lengan, size ditampilkan "—".
+      sizeMap.set("—", (sizeMap.get("—") ?? 0) + a.qty);
+    }
+  }
+  type SizeAgg = { size: string; qty: number };
+  type LenganAgg = { lengan: string; qty: number; sizes: SizeAgg[] };
+  type WarnaAgg = { warna: string; qty: number; lengans: LenganAgg[] };
+  const warnaAggs: WarnaAgg[] = Array.from(warnaMap.entries()).map(([warna, lenganMap]) => {
+    const lengans: LenganAgg[] = Array.from(lenganMap.entries()).map(([lengan, sizeMap]) => {
+      const sizes = Array.from(sizeMap.entries()).map(([size, qty]) => ({ size, qty }));
+      return { lengan, qty: sizes.reduce((s, x) => s + x.qty, 0), sizes };
+    });
+    return { warna, qty: lengans.reduce((s, x) => s + x.qty, 0), lengans };
+  });
+  const grandTotal = warnaAggs.reduce((s, w) => s + w.qty, 0);
+
+  return (
+    <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
+      <div className="grid grid-cols-3 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+        <span>Warna / Lengan</span>
+        <span>Size</span>
+        <span className="text-right">Qty (pcs)</span>
+      </div>
+      {warnaAggs.map((w) => {
+        const warnaOpen = openWarna.has(w.warna);
+        return (
+          <div key={w.warna}>
+            <button
+              type="button"
+              onClick={() => toggleWarna(w.warna)}
+              className="grid w-full grid-cols-3 gap-x-2 border-t border-[#E4E8EE] bg-[#FAFBFC] px-3 py-1.5 text-left font-sans text-[11.5px] font-semibold text-text-primary hover:bg-[#F2F4F7]"
+            >
+              <span className="flex items-center gap-1.5">
+                {warnaOpen ? <ChevronDown className="h-3 w-3 flex-none text-text-muted" /> : <ChevronRight className="h-3 w-3 flex-none text-text-muted" />}
+                {w.warna}
+              </span>
+              <span />
+              <span className="text-right font-mono">{formatPcs(w.qty)}</span>
+            </button>
+            {warnaOpen &&
+              w.lengans.map((l) => {
+                const lenganKey = w.warna + "|" + l.lengan;
+                const lenganOpen = openLengan.has(lenganKey);
+                return (
+                  <div key={l.lengan}>
+                    <button
+                      type="button"
+                      onClick={() => toggleLengan(lenganKey)}
+                      className="grid w-full grid-cols-3 gap-x-2 border-t border-[#F1F4F7] py-1.5 pl-5 pr-3 text-left font-sans text-[11px] font-medium text-[#31414F] hover:bg-[#FAFBFC]"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        {lenganOpen ? <ChevronDown className="h-3 w-3 flex-none text-text-muted" /> : <ChevronRight className="h-3 w-3 flex-none text-text-muted" />}
+                        {l.lengan}
+                      </span>
+                      <span />
+                      <span className="text-right font-mono">{formatPcs(l.qty)}</span>
+                    </button>
+                    {lenganOpen &&
+                      l.sizes.map((s) => (
+                        <div key={s.size} className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] px-3 py-1 pl-9 font-sans text-[11px] text-text-muted">
+                          <span />
+                          <span>{s.size}</span>
+                          <span className="text-right font-mono">{formatPcs(s.qty)}</span>
+                        </div>
+                      ))}
+                  </div>
+                );
+              })}
+          </div>
+        );
+      })}
+      <div className="grid grid-cols-3 gap-x-2 border-t-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[11.5px] font-semibold text-info-fg">
+        <span>Total</span>
+        <span />
+        <span className="text-right font-mono">{formatPcs(grandTotal)}</span>
+      </div>
+    </div>
+  );
+}
 
 function PoProduksiContent({ vendorId }: { vendorId: string }) {
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
@@ -179,82 +307,7 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
           if (rows.length === 0) {
             return <div className="font-sans text-[11.5px] text-text-muted">Belum ada rincian aduan pola untuk PO ini.</div>;
           }
-          // Item revisi 2026-09-22 (owner, Gambar 2: "grouping per warna, tipe lengan, baru size2,
-          // dan ada total qty di total warna, tipe lengan, dan size") -- dulu 1 baris = 1 aduan
-          // mentah apa adanya, jadi warna/lengan yang sama bisa muncul berkali-kali terpisah kalau
-          // berasal dari >1 kode aduan (mis. "SAGE GREEN 24S" 3x, "BENHUR SPECIAL 24S" 5x di
-          // screenshot). Sekarang digabung jadi 1 pohon Warna -> Lengan -> Size, qty per size
-          // dijumlah dari SEMUA aduan yang warna+lengan+size-nya sama, plus subtotal di tiap
-          // tingkat (warna, lengan) dan grand total di baris paling bawah.
-          const warnaMap = new Map<string, Map<string, Map<string, number>>>();
-          for (const a of rows) {
-            let lenganMap = warnaMap.get(a.warna);
-            if (!lenganMap) {
-              lenganMap = new Map();
-              warnaMap.set(a.warna, lenganMap);
-            }
-            let sizeMap = lenganMap.get(a.lengan);
-            if (!sizeMap) {
-              sizeMap = new Map();
-              lenganMap.set(a.lengan, sizeMap);
-            }
-            if (a.sizes.length > 0) {
-              for (const s of a.sizes) sizeMap.set(s.size, (sizeMap.get(s.size) ?? 0) + s.qty);
-            } else {
-              // Aduan tanpa breakdown size -- tetap ikut ke total warna/lengan, size ditampilkan "—".
-              sizeMap.set("—", (sizeMap.get("—") ?? 0) + a.qty);
-            }
-          }
-          type SizeAgg = { size: string; qty: number };
-          type LenganAgg = { lengan: string; qty: number; sizes: SizeAgg[] };
-          type WarnaAgg = { warna: string; qty: number; lengans: LenganAgg[] };
-          const warnaAggs: WarnaAgg[] = Array.from(warnaMap.entries()).map(([warna, lenganMap]) => {
-            const lengans: LenganAgg[] = Array.from(lenganMap.entries()).map(([lengan, sizeMap]) => {
-              const sizes = Array.from(sizeMap.entries()).map(([size, qty]) => ({ size, qty }));
-              return { lengan, qty: sizes.reduce((s, x) => s + x.qty, 0), sizes };
-            });
-            return { warna, qty: lengans.reduce((s, x) => s + x.qty, 0), lengans };
-          });
-          const grandTotal = warnaAggs.reduce((s, w) => s + w.qty, 0);
-          return (
-            <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
-              <div className="grid grid-cols-3 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                <span>Warna / Lengan</span>
-                <span>Size</span>
-                <span className="text-right">Qty (pcs)</span>
-              </div>
-              {warnaAggs.map((w) => (
-                <div key={w.warna}>
-                  <div className="grid grid-cols-3 gap-x-2 border-t border-[#E4E8EE] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[11.5px] font-semibold text-text-primary">
-                    <span>{w.warna}</span>
-                    <span />
-                    <span className="text-right font-mono">{formatPcs(w.qty)}</span>
-                  </div>
-                  {w.lengans.map((l) => (
-                    <div key={l.lengan}>
-                      <div className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 pl-5 font-sans text-[11px] font-medium text-[#31414F]">
-                        <span>{l.lengan}</span>
-                        <span />
-                        <span className="text-right font-mono">{formatPcs(l.qty)}</span>
-                      </div>
-                      {l.sizes.map((s) => (
-                        <div key={s.size} className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] px-3 py-1 pl-9 font-sans text-[11px] text-text-muted">
-                          <span />
-                          <span>{s.size}</span>
-                          <span className="text-right font-mono">{formatPcs(s.qty)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              ))}
-              <div className="grid grid-cols-3 gap-x-2 border-t-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[11.5px] font-semibold text-info-fg">
-                <span>Total</span>
-                <span />
-                <span className="text-right font-mono">{formatPcs(grandTotal)}</span>
-              </div>
-            </div>
-          );
+          return <AduanDetailTree rows={rows} />;
         }}
       />
     </AppShell>
