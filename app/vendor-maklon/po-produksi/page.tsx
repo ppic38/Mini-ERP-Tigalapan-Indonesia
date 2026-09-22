@@ -117,13 +117,26 @@ function AduanDetailTree({ rows }: { rows: AduanPolaRow[] }) {
                       <span className="text-right font-mono">{formatPcs(l.qty)}</span>
                     </button>
                     {/* Item revisi 2026-09-22 (owner: "buat dalam satu baris saja yang size2 list
-                       itu") -- dulu 1 baris per size (bisa banyak baris kalau size-nya banyak).
-                       Sekarang digabung jadi 1 baris teks "SIZE qty, SIZE qty, ..." -- subtotal
-                       per size tetap ada di teksnya, cuma tidak lagi 1 baris tabel per size. */}
+                       itu", lalu "perbaiki tampilannya, itu kayak tidak bisa didetect baik2") --
+                       versi teks-gabung-koma dulu (col-span di grid-cols-3) kelihatan mengambang di
+                       tengah, susah dipisahkan per size sekilas. Sekarang tiap size jadi chip
+                       kecil terpisah (bukan lagi grid 3 kolom yang sempit -- baris penuh, rata kiri
+                       sejajar indentasi Lengan di atasnya), wrap ke bawah kalau size-nya banyak,
+                       tapi tetap 1 blok ringkas (bukan 1 baris tabel per size seperti sebelum revisi
+                       ini sama sekali). */}
                     {lenganOpen && (
-                      <div className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 pl-9 font-sans text-[11px] text-text-muted">
-                        <span />
-                        <span className="col-span-2 font-mono">{l.sizes.map((s) => `${s.size} ${formatPcs(s.qty)}`).join(", ")}</span>
+                      <div className="border-t border-[#F1F4F7] bg-[#FCFCFD] px-3 py-2 pl-9">
+                        <div className="flex flex-wrap gap-1.5">
+                          {l.sizes.map((s) => (
+                            <span
+                              key={s.size}
+                              className="inline-flex items-center gap-1.5 rounded-md border border-[#E4E8EE] bg-white px-2 py-1 font-mono text-[11px] text-[#31414F]"
+                            >
+                              <span className="font-semibold text-text-primary">{s.size}</span>
+                              <span className="text-text-muted">{formatPcs(s.qty)}</span>
+                            </span>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>
