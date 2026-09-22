@@ -179,24 +179,80 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
           if (rows.length === 0) {
             return <div className="font-sans text-[11.5px] text-text-muted">Belum ada rincian aduan pola untuk PO ini.</div>;
           }
+          // Item revisi 2026-09-22 (owner, Gambar 2: "grouping per warna, tipe lengan, baru size2,
+          // dan ada total qty di total warna, tipe lengan, dan size") -- dulu 1 baris = 1 aduan
+          // mentah apa adanya, jadi warna/lengan yang sama bisa muncul berkali-kali terpisah kalau
+          // berasal dari >1 kode aduan (mis. "SAGE GREEN 24S" 3x, "BENHUR SPECIAL 24S" 5x di
+          // screenshot). Sekarang digabung jadi 1 pohon Warna -> Lengan -> Size, qty per size
+          // dijumlah dari SEMUA aduan yang warna+lengan+size-nya sama, plus subtotal di tiap
+          // tingkat (warna, lengan) dan grand total di baris paling bawah.
+          const warnaMap = new Map<string, Map<string, Map<string, number>>>();
+          for (const a of rows) {
+            let lenganMap = warnaMap.get(a.warna);
+            if (!lenganMap) {
+              lenganMap = new Map();
+              warnaMap.set(a.warna, lenganMap);
+            }
+            let sizeMap = lenganMap.get(a.lengan);
+            if (!sizeMap) {
+              sizeMap = new Map();
+              lenganMap.set(a.lengan, sizeMap);
+            }
+            if (a.sizes.length > 0) {
+              for (const s of a.sizes) sizeMap.set(s.size, (sizeMap.get(s.size) ?? 0) + s.qty);
+            } else {
+              // Aduan tanpa breakdown size -- tetap ikut ke total warna/lengan, size ditampilkan "—".
+              sizeMap.set("—", (sizeMap.get("—") ?? 0) + a.qty);
+            }
+          }
+          type SizeAgg = { size: string; qty: number };
+          type LenganAgg = { lengan: string; qty: number; sizes: SizeAgg[] };
+          type WarnaAgg = { warna: string; qty: number; lengans: LenganAgg[] };
+          const warnaAggs: WarnaAgg[] = Array.from(warnaMap.entries()).map(([warna, lenganMap]) => {
+            const lengans: LenganAgg[] = Array.from(lenganMap.entries()).map(([lengan, sizeMap]) => {
+              const sizes = Array.from(sizeMap.entries()).map(([size, qty]) => ({ size, qty }));
+              return { lengan, qty: sizes.reduce((s, x) => s + x.qty, 0), sizes };
+            });
+            return { warna, qty: lengans.reduce((s, x) => s + x.qty, 0), lengans };
+          });
+          const grandTotal = warnaAggs.reduce((s, w) => s + w.qty, 0);
           return (
             <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
-              <div className="grid grid-cols-4 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                <span>Warna</span>
-                <span>Lengan</span>
-                <span className="text-right">Qty (pcs)</span>
+              <div className="grid grid-cols-3 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                <span>Warna / Lengan</span>
                 <span>Size</span>
+                <span className="text-right">Qty (pcs)</span>
               </div>
-              {rows.map((a) => (
-                <div key={a.id} className="grid grid-cols-4 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-                  <span className="font-medium">{a.warna}</span>
-                  <span>{a.lengan}</span>
-                  <span className="text-right font-mono">{formatPcs(a.qty)}</span>
-                  <span className="font-mono text-[11px] text-text-muted">
-                    {a.sizes.length > 0 ? a.sizes.map((s) => `${s.size} ${s.qty}`).join(", ") : "—"}
-                  </span>
+              {warnaAggs.map((w) => (
+                <div key={w.warna}>
+                  <div className="grid grid-cols-3 gap-x-2 border-t border-[#E4E8EE] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[11.5px] font-semibold text-text-primary">
+                    <span>{w.warna}</span>
+                    <span />
+                    <span className="text-right font-mono">{formatPcs(w.qty)}</span>
+                  </div>
+                  {w.lengans.map((l) => (
+                    <div key={l.lengan}>
+                      <div className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 pl-5 font-sans text-[11px] font-medium text-[#31414F]">
+                        <span>{l.lengan}</span>
+                        <span />
+                        <span className="text-right font-mono">{formatPcs(l.qty)}</span>
+                      </div>
+                      {l.sizes.map((s) => (
+                        <div key={s.size} className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] px-3 py-1 pl-9 font-sans text-[11px] text-text-muted">
+                          <span />
+                          <span>{s.size}</span>
+                          <span className="text-right font-mono">{formatPcs(s.qty)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
                 </div>
               ))}
+              <div className="grid grid-cols-3 gap-x-2 border-t-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[11.5px] font-semibold text-info-fg">
+                <span>Total</span>
+                <span />
+                <span className="text-right font-mono">{formatPcs(grandTotal)}</span>
+              </div>
             </div>
           );
         }}
