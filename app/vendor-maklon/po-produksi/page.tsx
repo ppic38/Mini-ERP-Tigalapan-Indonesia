@@ -116,14 +116,16 @@ function AduanDetailTree({ rows }: { rows: AduanPolaRow[] }) {
                       <span />
                       <span className="text-right font-mono">{formatPcs(l.qty)}</span>
                     </button>
-                    {lenganOpen &&
-                      l.sizes.map((s) => (
-                        <div key={s.size} className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] px-3 py-1 pl-9 font-sans text-[11px] text-text-muted">
-                          <span />
-                          <span>{s.size}</span>
-                          <span className="text-right font-mono">{formatPcs(s.qty)}</span>
-                        </div>
-                      ))}
+                    {/* Item revisi 2026-09-22 (owner: "buat dalam satu baris saja yang size2 list
+                       itu") -- dulu 1 baris per size (bisa banyak baris kalau size-nya banyak).
+                       Sekarang digabung jadi 1 baris teks "SIZE qty, SIZE qty, ..." -- subtotal
+                       per size tetap ada di teksnya, cuma tidak lagi 1 baris tabel per size. */}
+                    {lenganOpen && (
+                      <div className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 pl-9 font-sans text-[11px] text-text-muted">
+                        <span />
+                        <span className="col-span-2 font-mono">{l.sizes.map((s) => `${s.size} ${formatPcs(s.qty)}`).join(", ")}</span>
+                      </div>
+                    )}
                   </div>
                 );
               })}
