@@ -48,6 +48,8 @@ function FgProgressHistory({ poId, results }: { poId: string; results: Productio
   // Di-scope per PO Produksi -- 1 PO bisa punya beberapa warna, jadi riwayat dikelompokkan per warna/lengan
   // (revisi 2026-09-22, owner): urut warna A-Z, di dalam warna Pendek dulu baru Panjang, tiap grup punya
   // judul + total qty, dan di dalam grup entri tetap kronologis. Tanggal & jam ada di paling kanan.
+  // Revisi 2026-09-22: grup tertutup secara default (list warna saja); klik baris warna untuk membuka riwayatnya.
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const entries = results.filter((r) => r.poId === poId && r.kind === "FG").sort((a, b) => (a.recordedAt < b.recordedAt ? -1 : 1));
   if (entries.length === 0) return null;
   const groups = new Map<string, { warna: string; lengan: string; items: ProductionResult[] }>();
@@ -60,13 +62,27 @@ function FgProgressHistory({ poId, results }: { poId: string; results: Productio
     (x, y) => x.warna.localeCompare(y.warna) || (x.lengan === y.lengan ? 0 : x.lengan === "PENDEK" ? -1 : 1)
   );
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-1.5">
       {orderedGroups.map((g) => {
+        const groupKeyStr = g.warna + "|" + g.lengan;
+        const isOpen = openGroups.has(groupKeyStr);
         const groupTotal = g.items.reduce((sum, r) => sum + Object.values(r.sizeQty).reduce((a, b) => a + b, 0), 0);
         return (
           <div key={g.warna + "|" + g.lengan} className="overflow-hidden rounded-md border border-[#E4E9EE] bg-white">
-            <div className="flex items-center justify-between gap-2 border-b border-[#E4E9EE] bg-[#F2F5F8] px-3 py-1.5 font-sans text-[11.5px]">
+            <button
+              type="button"
+              onClick={() =>
+                setOpenGroups((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(groupKeyStr)) next.delete(groupKeyStr);
+                  else next.add(groupKeyStr);
+                  return next;
+                })
+              }
+              className={"flex w-full items-center justify-between gap-2 bg-[#F2F5F8] px-3 py-2 text-left font-sans text-[11.5px] hover:bg-[#EAEFF4] " + (isOpen ? "border-b border-[#E4E9EE]" : "")}
+            >
               <span className="font-semibold text-text-primary">
+                <span className="mr-1.5 text-text-muted">{isOpen ? "▾" : "▸"}</span>
                 {g.warna} · {g.lengan}
               </span>
               <span className="font-mono font-semibold text-[#31414F]">
@@ -74,8 +90,8 @@ function FgProgressHistory({ poId, results }: { poId: string; results: Productio
                 {groupTotal} pcs
                 <span className="ml-1.5 font-sans text-[10px] font-normal text-text-muted">({g.items.length} catatan)</span>
               </span>
-            </div>
-            {g.items.map((r) => {
+            </button>
+            {isOpen && g.items.map((r) => {
               const qty = Object.values(r.sizeQty).reduce((a, b) => a + b, 0);
               // Rincian size mana saja yang ke-input di submission ini -- 1 klik "Simpan hasil produksi" bisa sekaligus
               // isi beberapa size, jadi total qty saja tidak cukup untuk tahu size apa yang benar-benar dikerjakan.
@@ -93,7 +109,7 @@ function FgProgressHistory({ poId, results }: { poId: string; results: Productio
                     </span>
                     <span className="font-mono text-[10px] text-text-muted">{sizeBreakdown}</span>
                   </span>
-                  <span className="w-[112px] flex-none text-right font-mono text-[11px] text-text-muted">{formatDateTimeShort(r.recordedAt)}</span>
+                  <span className="w-[150px] flex-none whitespace-nowrap text-right font-mono text-[11px] text-text-muted">{formatDateTimeShort(r.recordedAt)}</span>
                 </div>
               );
             })}
