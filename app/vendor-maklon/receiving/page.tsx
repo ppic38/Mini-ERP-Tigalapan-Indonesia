@@ -87,6 +87,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   // boolean toggle DIGANTI filter 3-opsi (Semua / Belum lengkap / Lengkap), gaya sama seperti filter
   // Status PO material di atasnya (tombol berjajar, bukan link teks).
   const [colorStatusFilter, setColorStatusFilter] = useState<"ALL" | "BELUM" | "LENGKAP">("BELUM");
+  const [colorWarnaQuery, setColorWarnaQuery] = useState("");
 
   const eligible = invoices.filter((i) => i.destinationVendor === vendorId && (i.status === "DELIVERY" || i.status === "RECEIVING"));
   // MRP tetap tampil di dropdown selama masih ada invoice DELIVERY atau RECEIVING (termasuk yang
@@ -159,6 +160,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   // layar begitu selesai ditandai lengkap.
   const visibleColorGroups = colorGroups.filter((g) => {
     if (g.warna === selectedWarna) return true;
+    if (colorWarnaQuery.trim() && !warnaLabel(g.warna).toLowerCase().includes(colorWarnaQuery.trim().toLowerCase())) return false;
     if (colorStatusFilter === "LENGKAP") return g.complete;
     if (colorStatusFilter === "BELUM") return !g.complete;
     return true;
@@ -226,6 +228,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     setDraftCode({});
     setRollPage(0);
     setColorStatusFilter("BELUM");
+    setColorWarnaQuery("");
   }
 
   // Revisi 2026-09-20 (owner): TIDAK perlu klik lengan dulu -- begitu warna dipilih, tampilan pertama
@@ -239,6 +242,10 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     return list;
   }
   function pickWarna(warna: string) {
+    if (selectedWarna === warna) {
+      closeTerimaMaterial();
+      return;
+    }
     setSelectedWarna(warna);
     setDraftCode({});
     setRollPage(0);
@@ -261,6 +268,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     setDraftCode({});
     setRollPage(0);
     setColorStatusFilter("BELUM");
+    setColorWarnaQuery("");
     advanceMaklonProduction(maklonPoId);
   }
 
@@ -468,16 +476,22 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
           <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
             {/* Revisi 2026-09-23 (owner: "yang ditabel PO-SUP-... apa tidak bisa diheader tabel
                 ditempatkan filternya? jadi di header status dan warna itu ada filternya"): filter
-                Status warna (Belum lengkap/Lengkap/Semua) DIPINDAH ke baris header kartu ini,
-                berdampingan dengan No. PO + status pill PO-nya -- dulu ada bar "Pilih warna"
-                terpisah di bawah, sekarang jadi satu baris header. */}
+                Status (Belum lengkap/Lengkap/Semua) + filter Warna (cari nama warna) DIPINDAH ke
+                baris header kartu ini, berdampingan dengan No. PO + status pill PO-nya -- dulu ada
+                bar "Pilih warna" terpisah di bawah, sekarang jadi satu baris header. */}
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <span className="font-sans text-[13px] font-semibold text-text-primary">{selectedInvoice.poId}</span>
                 <StatusPill tone={invoiceStatusPill(selectedInvoice).tone}>{invoiceStatusPill(selectedInvoice).label}</StatusPill>
               </div>
               {colorGroups.length > 0 && (
-                <div className="flex gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <input
+                    value={colorWarnaQuery}
+                    onChange={(e) => setColorWarnaQuery(e.target.value)}
+                    placeholder="Cari warna…"
+                    className="input h-[30px] w-[140px] !py-1 text-[11px]"
+                  />
                   {(
                     [
                       { key: "BELUM" as const, label: `Belum lengkap (${colorBelumCount})` },
@@ -569,20 +583,13 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
             // roll kedua lengan digabung jadi 1 list (kolom "Lengan" ditambah supaya tetap jelas
             // asalnya), dipaginasi ROLL_PAGE_SIZE baris/halaman.
             <div className="w-full overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-              <div className="flex items-center justify-between gap-2 border-b border-border-subtle px-4 py-3">
-                <span className="font-sans text-[13px] font-semibold text-text-primary">
-                  Terima Material
-                  {selectedWarna ? ` — ${warnaLabel(selectedWarna)}` : ""}
-                </span>
-                {/* Revisi 2026-09-23 (owner: "buat untuk bisa diclose untuk tabel dibawahnya, Terima
-                    Material"): tutup kartu ini tanpa perlu klik warna lain / "Tutup detail" PO. */}
-                <button
-                  onClick={closeTerimaMaterial}
-                  title="Tutup Terima Material"
-                  className="flex-none rounded-md border border-[#CBD5DF] px-2.5 py-1 font-sans text-[11px] font-semibold text-action-primary"
-                >
-                  ✕ Tutup
-                </button>
+              <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">
+                Terima Material
+                {selectedWarna ? ` — ${warnaLabel(selectedWarna)}` : ""}
+                {/* Revisi 2026-09-23 (owner: "untuk close dan open itu berdasarkan click list tabelnya
+                    ... jika diklik lagi maka akan close tabelnya"): kartu ini ditutup dengan klik ULANG
+                    baris warna yang sama di tabel "Pilih warna" (pickWarna toggle) -- tidak perlu
+                    tombol tutup terpisah lagi. */}
               </div>
               <div className="overflow-x-auto">
                 <div className="min-w-[820px]">
