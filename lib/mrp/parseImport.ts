@@ -189,7 +189,6 @@ export async function parseMrpImportFile(
         const kode = String(row["ADUAN POLA"] ?? "").trim();
         const qtyRoll = Number(row["QTY ROLL"] ?? 0);
         const qty1 = Number(row["Qty1"] ?? 0);
-        const qty2 = Number(row["Qty2"] ?? 0);
         if (!warna || !kode) return;
         const group = lenganGroups.find((g) => g.warna === warna && g.lengan === lengan);
         // Sejak 2026-09-12: grup qty 0 TIDAK LAGI dibuang dari lenganGroups (lihat catatan di atas
@@ -200,11 +199,48 @@ export async function parseMrpImportFile(
         // MRP sama sekali), jangan simpan dengan lenganGroupId kosong -- itu melanggar FK
         // aduan_pola_rows.lengan_group_id.
         if (!group) return;
-        const parts = kode.split("-").map((s) => s.trim());
+        // Revisi 2026-09-24 (owner-reported: kode aduan gabungan seperti "M-L-XL" muncul APA ADANYA
+        // sebagai satu "size" sampai ke Rework & SKU WMS -- dilacak sampai ke sini). DULU cuma
+        // menangani pasangan 2-size ("S-2XL": size pertama = Qty1, kedua = Qty2) -- kode dengan >=3
+        // size (dipisah "-") jatuh ke fallback: SATU baris berisi STRING KODE UTUH sebagai "size",
+        // HANYA Qty1 dipakai, Qty2 dst DIAM-DIAM DIABAIKAN. Owner konfirmasi (2026-09-24): sheet yang
+        // diupload PPIC sudah punya kolom Qty1..Qty3 (bahkan lebih) untuk kasus ini -- SEKARANG semua
+        // token size dipecah tuntas, qty-nya dibaca dinamis dari kolom "Qty1"/"Qty2"/"Qty3"/dst SESUAI
+        // URUTAN token muncul, dan token size yang SAMA qty-nya DIJUMLAH jadi 1 baris (pola sama
+        // dengan "L-L" lama). Guard `hasMultiQty`: kalau TIDAK ADA kolom Qty2 dst yang terisi (>0),
+        // jangan dipecah -- menjaga kode dengan tanda hubung yang BUKAN pasangan size.
+        //
+        // Koma ("S-2XL, S-XL", artinya beberapa PASANGAN sekaligus dalam 1 sel) SENGAJA DITOLAK
+        // (owner 2026-09-24: "ada kesalahan pencatatan import file excel ... harusnya beda baris" --
+        // "L-L, M-L" seharusnya 2 baris terpisah "L-L" dan "M-L", BUKAN digabung koma dalam 1 sel)
+        // -- daripada menebak pembagian Qty1/Qty2/Qty3 yang ambigu, gagalkan importnya dengan pesan
+        // jelas supaya baris itu diperbaiki dulu di sheet-nya (jadi 2 baris terpisah) lalu diimpor
+        // ulang, alih-alih diam-diam tersimpan dengan size/qty yang salah.
+        if (kode.includes(",")) {
+          throw new Error(
+            `Sheet "${aduanSheetName}", baris ADUAN POLA "${kode}" (${warna} · ${lengan}) mengandung koma -- ` +
+              `beberapa pasangan size digabung dalam 1 sel. Pisahkan jadi baris terpisah per pasangan ` +
+              `(mis. "L-L, M-L" jadi 1 baris "L-L" dan 1 baris "M-L", masing-masing dengan Qty-nya sendiri), lalu impor ulang.`
+          );
+        }
+        const parts = kode
+          .split("-")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const partQtys = parts.map((_, idx) => Number(row["Qty" + (idx + 1)] ?? 0));
+        // Semua token SAMA (mis. "L-L", "L-L-L" -- size yang sama diulang, bukan pasangan size
+        // berbeda): selalu digabung jadi 1 size, JUMLAHKAN kolom Qty berapa pun yang terisi -- tidak
+        // perlu syarat Qty2 dst terisi seperti kasus size berbeda di bawah, karena "L-L" secara
+        // definisi memang 1 size yang sama, PPIC boleh isi totalnya di Qty1 saja (Qty2 boleh kosong).
+        const allSameSize = parts.length >= 2 && parts.every((p) => p === parts[0]);
+        const hasMultiQty = partQtys.slice(1).some((q) => q > 0);
         let sizes: SizeQty[];
-        if (parts.length === 2 && qty2) {
-          if (parts[0] === parts[1]) sizes = [{ size: parts[0], qty: qty1 + qty2 }];
-          else sizes = [{ size: parts[0], qty: qty1 }, { size: parts[1], qty: qty2 }];
+        if (allSameSize) {
+          sizes = [{ size: parts[0], qty: partQtys.reduce((a, b) => a + b, 0) }];
+        } else if (parts.length >= 2 && hasMultiQty) {
+          const bySize = new Map<string, number>();
+          parts.forEach((tok, idx) => bySize.set(tok, (bySize.get(tok) ?? 0) + partQtys[idx]));
+          sizes = Array.from(bySize.entries()).map(([size, qty]) => ({ size, qty }));
         } else {
           sizes = [{ size: kode, qty: qty1 }];
         }
