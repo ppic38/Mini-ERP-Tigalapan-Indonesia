@@ -129,6 +129,48 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     return selectedInvoice?.rollArrivals[selectedWarna + "|" + lengan]?.[idx] ?? null;
   }
 
+  // Ringkasan per warna (roll diterima/total, qty pendek/panjang, status lengkap) -- dulu dihitung di
+  // dalam IIFE render, sekarang di level komponen supaya dipakai bareng oleh filter Status di header
+  // kartu invoice DAN tabel "Pilih warna" di bawahnya.
+  const colorGroups = (() => {
+    if (!selectedInvoice) return [];
+    const aduanRows = mrpDetailFor(selectedInvoice.mrpId, mrpDetails)?.aduanRows.filter((a) => a.vendor === vendorId) ?? [];
+    return warnaListFor(selectedInvoice).map((warna) => {
+      const entries = colorOptions.filter((c) => c.warna === warna);
+      const totalRoll = entries.reduce((sum, c) => sum + c.rolls.length, 0);
+      const arrivedRoll = entries.reduce(
+        (sum, c) => sum + c.rolls.filter((_, idx) => selectedInvoice.rollArrivals[c.warna + "|" + c.lengan]?.[idx]).length,
+        0
+      );
+      const items = selectedInvoice.addBuys.filter((it) => (it.warna || NO_WARNA) === warna);
+      const itemTotal = items.length;
+      const itemReceived = items.filter((it) => selectedInvoice.addBuyReceipts[it.id]).length;
+      const rollsDone = totalRoll === 0 || arrivedRoll === totalRoll;
+      const itemsDone = itemTotal === 0 || itemReceived === itemTotal;
+      const complete = (totalRoll > 0 || itemTotal > 0) && rollsDone && itemsDone;
+      const qtyPendek = aduanRows.filter((a) => a.warna === warna && a.lengan === "PENDEK").reduce((s, a) => s + a.qty, 0);
+      const qtyPanjang = aduanRows.filter((a) => a.warna === warna && a.lengan === "PANJANG").reduce((s, a) => s + a.qty, 0);
+      return { warna, totalRoll, arrivedRoll, itemTotal, itemReceived, complete, qtyPendek, qtyPanjang };
+    });
+  })();
+  const colorCompleteCount = colorGroups.filter((g) => g.complete).length;
+  const colorBelumCount = colorGroups.length - colorCompleteCount;
+  // Warna yang lagi dipilih SELALU ikut tampil apa pun filternya, supaya tidak tiba-tiba hilang dari
+  // layar begitu selesai ditandai lengkap.
+  const visibleColorGroups = colorGroups.filter((g) => {
+    if (g.warna === selectedWarna) return true;
+    if (colorStatusFilter === "LENGKAP") return g.complete;
+    if (colorStatusFilter === "BELUM") return !g.complete;
+    return true;
+  });
+  // Revisi 2026-09-23 (owner: "buat untuk bisa diclose untuk tabel dibawahnya, Terima Material"):
+  // menutup kartu "Terima Material" = kosongkan warna terpilih (kartu itu dipagari `selectedWarna`).
+  function closeTerimaMaterial() {
+    setSelectedWarna("");
+    setDraftCode({});
+    setRollPage(0);
+  }
+
   // Auto-generate Code Roll per roll (unik dalam batch ini) begitu warna dipilih — demi kebutuhan
   // simulasi supaya tidak perlu input manual. Tetap bisa diedit sebelum "Tandai diterima".
   // Ditandai berdasarkan rollArrivals (bukan rollReceipts lagi) — roll sudah dianggap "selesai di
@@ -424,132 +466,90 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
       {selectedInvoice && (
         <>
           <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
-            <div className="flex items-center gap-2">
-              <span className="font-sans text-[13px] font-semibold text-text-primary">{selectedInvoice.poId}</span>
-              <StatusPill tone={invoiceStatusPill(selectedInvoice).tone}>{invoiceStatusPill(selectedInvoice).label}</StatusPill>
+            {/* Revisi 2026-09-23 (owner: "yang ditabel PO-SUP-... apa tidak bisa diheader tabel
+                ditempatkan filternya? jadi di header status dan warna itu ada filternya"): filter
+                Status warna (Belum lengkap/Lengkap/Semua) DIPINDAH ke baris header kartu ini,
+                berdampingan dengan No. PO + status pill PO-nya -- dulu ada bar "Pilih warna"
+                terpisah di bawah, sekarang jadi satu baris header. */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="font-sans text-[13px] font-semibold text-text-primary">{selectedInvoice.poId}</span>
+                <StatusPill tone={invoiceStatusPill(selectedInvoice).tone}>{invoiceStatusPill(selectedInvoice).label}</StatusPill>
+              </div>
+              {colorGroups.length > 0 && (
+                <div className="flex gap-1.5">
+                  {(
+                    [
+                      { key: "BELUM" as const, label: `Belum lengkap (${colorBelumCount})` },
+                      { key: "LENGKAP" as const, label: `Lengkap (${colorCompleteCount})` },
+                      { key: "ALL" as const, label: `Semua (${colorGroups.length})` },
+                    ]
+                  ).map((opt) => (
+                    <button
+                      key={opt.key}
+                      onClick={() => setColorStatusFilter(opt.key)}
+                      className={
+                        "rounded-md border px-2.5 py-[5px] font-sans text-[10.5px] font-semibold " +
+                        (colorStatusFilter === opt.key ? "border-action-primary bg-action-primary text-white" : "border-[#CBD5DF] bg-white text-action-primary")
+                      }
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="mt-1 font-sans text-xs text-text-muted">
               {selectedInvoice.supplier} · No. invoice supplier: {selectedInvoice.noInvoiceVendor || "—"}
             </div>
-            {/* Item revisi 2026-09-08 (owner, Gambar 3: "buat untuk bisa select dropdown list mrp
-                atau po jadi akan ada informasi detail warna yang diterima itu ada berapa roll,
-                berapa qty totalnya untuk panjang dan pendek") -- ringkasan per warna: roll
-                total/diterima + qty pendek/panjang (pcs) dari aduan pola MRP ini, vendor ini.
-                Qty pendek/panjang murni informasi (dari aduan pola produksi, bukan dari roll
-                material itu sendiri yang cuma dihitung dalam kg) -- bantu vendor tahu berapa
-                banyak yang HARUS diproduksi dari warna ini begitu materialnya lengkap diterima. */}
-            {/* Revisi 2026-09-23 (owner: "mungkin satukan saja select warnanya di bagian dalam tabel"):
-                tabel ringkasan per warna & pemilih warna DIGABUNG jadi satu -- dulu 2 elemen terpisah
-                (tabel murni info + baris chip "Pilih warna" di bawahnya yang datanya tumpang tindih).
-                Sekarang tiap BARIS tabel langsung bisa diklik untuk memilih warna itu (disorot biru
-                kalau aktif), dan baris warna yang HANYA punya item tambahan (mis. Rib susulan tanpa
-                roll baru, tidak muncul di colorOptions) tetap ikut tampil -- sebelumnya cuma ada di
-                chip "Pilih warna", tidak di tabel. Toggle "Tampilkan/Sembunyikan" (owner: "hilangkan
-                saja yang tampilkan dan sembunyikan") DIGANTI filter Status di header tabel (Belum
-                lengkap / Lengkap / Semua), gaya tombol yang sama dengan filter Status PO material
-                di atasnya -- lihat colorStatusFilter. */}
-            {(() => {
-              const aduanRows = mrpDetailFor(selectedInvoice.mrpId, mrpDetails)?.aduanRows.filter((a) => a.vendor === vendorId) ?? [];
-              const groups = warnaListFor(selectedInvoice).map((warna) => {
-                const entries = colorOptions.filter((c) => c.warna === warna);
-                const totalRoll = entries.reduce((sum, c) => sum + c.rolls.length, 0);
-                const arrivedRoll = entries.reduce(
-                  (sum, c) => sum + c.rolls.filter((_, idx) => selectedInvoice.rollArrivals[c.warna + "|" + c.lengan]?.[idx]).length,
-                  0
-                );
-                const items = selectedInvoice.addBuys.filter((it) => (it.warna || NO_WARNA) === warna);
-                const itemTotal = items.length;
-                const itemReceived = items.filter((it) => selectedInvoice.addBuyReceipts[it.id]).length;
-                const rollsDone = totalRoll === 0 || arrivedRoll === totalRoll;
-                const itemsDone = itemTotal === 0 || itemReceived === itemTotal;
-                const complete = (totalRoll > 0 || itemTotal > 0) && rollsDone && itemsDone;
-                const qtyPendek = aduanRows.filter((a) => a.warna === warna && a.lengan === "PENDEK").reduce((s, a) => s + a.qty, 0);
-                const qtyPanjang = aduanRows.filter((a) => a.warna === warna && a.lengan === "PANJANG").reduce((s, a) => s + a.qty, 0);
-                return { warna, totalRoll, arrivedRoll, itemTotal, itemReceived, complete, qtyPendek, qtyPanjang };
-              });
-              if (groups.length === 0) return null;
-              const completeCount = groups.filter((g) => g.complete).length;
-              const belumCount = groups.length - completeCount;
-              // Warna yang lagi dipilih SELALU ikut tampil apa pun filternya, supaya tidak tiba-tiba
-              // hilang dari layar begitu selesai ditandai lengkap.
-              const visibleGroups = groups.filter((g) => {
-                if (g.warna === selectedWarna) return true;
-                if (colorStatusFilter === "LENGKAP") return g.complete;
-                if (colorStatusFilter === "BELUM") return !g.complete;
-                return true;
-              });
-              return (
-                <div className="mt-3 overflow-hidden rounded-md border border-[#E4E8EE]">
-                  <div className="flex flex-wrap items-center justify-between gap-2 bg-[#F2F4F7] px-3 py-1.5">
-                    <span className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Pilih warna</span>
-                    <div className="flex gap-1.5">
-                      {(
-                        [
-                          { key: "BELUM" as const, label: `Belum lengkap (${belumCount})` },
-                          { key: "LENGKAP" as const, label: `Lengkap (${completeCount})` },
-                          { key: "ALL" as const, label: `Semua (${groups.length})` },
-                        ]
-                      ).map((opt) => (
-                        <button
-                          key={opt.key}
-                          onClick={() => setColorStatusFilter(opt.key)}
-                          className={
-                            "rounded-md border px-2.5 py-[5px] font-sans text-[10.5px] font-semibold " +
-                            (colorStatusFilter === opt.key ? "border-action-primary bg-action-primary text-white" : "border-[#CBD5DF] bg-white text-action-primary")
-                          }
-                        >
-                          {opt.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-5 gap-x-2 border-t border-[#E4E8EE] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                    <span>Warna</span>
-                    <span className="text-right">Roll (diterima/total)</span>
-                    <span className="text-right">Qty Pendek (pcs)</span>
-                    <span className="text-right">Qty Panjang (pcs)</span>
-                    {/* Item 7 (feedback batch 2026-09-10, owner: "Apa bisa ada nama header untuk
-                       yang simbol centang itu? dan ada simbol yang menggambarkan kalau belum
-                       diterima") -- dulu kolom ini tanpa label & KOSONG TOTAL sampai warna itu
-                       lengkap diterima, jadi ✅-nya kesannya "muncul dari mana-mana". Sekarang ada
-                       header "Status" + state awal eksplisit ("○ Belum") sebelum berubah jadi ✅. */}
-                    <span className="text-right">Status</span>
-                  </div>
-                  {visibleGroups.map((g) => {
-                    const active = selectedWarna === g.warna;
-                    const disabled = g.totalRoll === 0 && g.itemTotal === 0;
-                    return (
-                      <button
-                        key={g.warna}
-                        type="button"
-                        onClick={() => pickWarna(g.warna)}
-                        disabled={disabled}
-                        className={
-                          "grid w-full grid-cols-5 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 text-left font-sans text-[11.5px] text-[#31414F] disabled:cursor-not-allowed disabled:opacity-50 " +
-                          (active ? "bg-info-bg" : "hover:bg-[#FAFBFC]")
-                        }
-                      >
-                        <span className={"font-medium " + (active ? "text-info-fg" : "")}>{warnaLabel(g.warna)}</span>
-                        <span className={"text-right font-mono " + (g.complete ? "text-success-fg" : "")}>
-                          {g.totalRoll > 0 ? `${g.arrivedRoll}/${g.totalRoll}` : "tanpa roll"}
-                        </span>
-                        <span className="text-right font-mono">{g.qtyPendek > 0 ? formatPcs(g.qtyPendek) : "—"}</span>
-                        <span className="text-right font-mono">{g.qtyPanjang > 0 ? formatPcs(g.qtyPanjang) : "—"}</span>
-                        <span className="flex justify-end">
-                          {g.complete ? (
-                            <span title="Semua roll/item warna ini sudah diterima">✅</span>
-                          ) : (
-                            <span className="text-text-muted" title="Belum semua roll/item warna ini diterima">
-                              ○ Belum{g.itemTotal > 0 ? ` (${g.itemReceived}/${g.itemTotal} item)` : ""}
-                            </span>
-                          )}
-                        </span>
-                      </button>
-                    );
-                  })}
+            {colorGroups.length === 0 ? null : (
+              <div className="mt-3 overflow-hidden rounded-md border border-[#E4E8EE]">
+                <div className="grid grid-cols-5 gap-x-2 border-b border-[#E4E8EE] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                  <span>Warna</span>
+                  <span className="text-right">Qty Pendek (pcs)</span>
+                  <span className="text-right">Qty Panjang (pcs)</span>
+                  <span className="text-right">Roll (diterima/total)</span>
+                  {/* Item 7 (feedback batch 2026-09-10, owner: "Apa bisa ada nama header untuk
+                     yang simbol centang itu? dan ada simbol yang menggambarkan kalau belum
+                     diterima") -- dulu kolom ini tanpa label & KOSONG TOTAL sampai warna itu
+                     lengkap diterima, jadi ✅-nya kesannya "muncul dari mana-mana". Sekarang ada
+                     header "Status" + state awal eksplisit ("○ Belum") sebelum berubah jadi ✅. */}
+                  <span className="text-right">Status</span>
                 </div>
-              );
-            })()}
+                {visibleColorGroups.map((g) => {
+                  const active = selectedWarna === g.warna;
+                  const disabled = g.totalRoll === 0 && g.itemTotal === 0;
+                  return (
+                    <button
+                      key={g.warna}
+                      type="button"
+                      onClick={() => pickWarna(g.warna)}
+                      disabled={disabled}
+                      className={
+                        "grid w-full grid-cols-5 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 text-left font-sans text-[11.5px] text-[#31414F] disabled:cursor-not-allowed disabled:opacity-50 " +
+                        (active ? "bg-info-bg" : "hover:bg-[#FAFBFC]")
+                      }
+                    >
+                      <span className={"font-medium " + (active ? "text-info-fg" : "")}>{warnaLabel(g.warna)}</span>
+                      <span className="text-right font-mono">{g.qtyPendek > 0 ? formatPcs(g.qtyPendek) : "—"}</span>
+                      <span className="text-right font-mono">{g.qtyPanjang > 0 ? formatPcs(g.qtyPanjang) : "—"}</span>
+                      <span className={"text-right font-mono " + (g.complete ? "text-success-fg" : "")}>
+                        {g.totalRoll > 0 ? `${g.arrivedRoll}/${g.totalRoll}` : "tanpa roll"}
+                      </span>
+                      <span className="flex justify-end">
+                        {g.complete ? (
+                          <span title="Semua roll/item warna ini sudah diterima">✅</span>
+                        ) : (
+                          <span className="text-text-muted" title="Belum semua roll/item warna ini diterima">
+                            ○ Belum{g.itemTotal > 0 ? ` (${g.itemReceived}/${g.itemTotal} item)` : ""}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             {colorOptions.some((c) => c.rolls.length === 0) && (
               <div className="mt-2 font-sans text-[11px] text-text-muted">
                 Warna dengan 0 roll belum ada data roll dari Procurement untuk invoice ini — tidak bisa ditandai diterima di sini.
@@ -569,9 +569,20 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
             // roll kedua lengan digabung jadi 1 list (kolom "Lengan" ditambah supaya tetap jelas
             // asalnya), dipaginasi ROLL_PAGE_SIZE baris/halaman.
             <div className="w-full overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-              <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">
-                Terima Material
-                {selectedWarna ? ` — ${warnaLabel(selectedWarna)}` : ""}
+              <div className="flex items-center justify-between gap-2 border-b border-border-subtle px-4 py-3">
+                <span className="font-sans text-[13px] font-semibold text-text-primary">
+                  Terima Material
+                  {selectedWarna ? ` — ${warnaLabel(selectedWarna)}` : ""}
+                </span>
+                {/* Revisi 2026-09-23 (owner: "buat untuk bisa diclose untuk tabel dibawahnya, Terima
+                    Material"): tutup kartu ini tanpa perlu klik warna lain / "Tutup detail" PO. */}
+                <button
+                  onClick={closeTerimaMaterial}
+                  title="Tutup Terima Material"
+                  className="flex-none rounded-md border border-[#CBD5DF] px-2.5 py-1 font-sans text-[11px] font-semibold text-action-primary"
+                >
+                  ✕ Tutup
+                </button>
               </div>
               <div className="overflow-x-auto">
                 <div className="min-w-[820px]">
