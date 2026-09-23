@@ -83,7 +83,10 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   const [draftCode, setDraftCode] = useState<Record<string, DraftCode>>({});
   // Item revisi 2026-09-18 (owner, Gambar 3) -- toggle "Pilih warna" chip row, lihat catatan
   // panjang di dekat pemakaiannya di bawah.
-  const [showAllColors, setShowAllColors] = useState(false);
+  // Revisi 2026-09-23 (owner: "hilangkan tampilkan/sembunyikan, tapi ada filter di header status"):
+  // boolean toggle DIGANTI filter 3-opsi (Semua / Belum lengkap / Lengkap), gaya sama seperti filter
+  // Status PO material di atasnya (tombol berjajar, bukan link teks).
+  const [colorStatusFilter, setColorStatusFilter] = useState<"ALL" | "BELUM" | "LENGKAP">("BELUM");
 
   const eligible = invoices.filter((i) => i.destinationVendor === vendorId && (i.status === "DELIVERY" || i.status === "RECEIVING"));
   // MRP tetap tampil di dropdown selama masih ada invoice DELIVERY atau RECEIVING (termasuk yang
@@ -180,7 +183,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     setSelectedWarna(firstWarna ?? "");
     setDraftCode({});
     setRollPage(0);
-    setShowAllColors(false);
+    setColorStatusFilter("BELUM");
   }
 
   // Revisi 2026-09-20 (owner): TIDAK perlu klik lengan dulu -- begitu warna dipilih, tampilan pertama
@@ -215,7 +218,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     setSelectedWarna("");
     setDraftCode({});
     setRollPage(0);
-    setShowAllColors(false);
+    setColorStatusFilter("BELUM");
     advanceMaklonProduction(maklonPoId);
   }
 
@@ -441,8 +444,10 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                 Sekarang tiap BARIS tabel langsung bisa diklik untuk memilih warna itu (disorot biru
                 kalau aktif), dan baris warna yang HANYA punya item tambahan (mis. Rib susulan tanpa
                 roll baru, tidak muncul di colorOptions) tetap ikut tampil -- sebelumnya cuma ada di
-                chip "Pilih warna", tidak di tabel. Toggle "Tampilkan semua" (sembunyikan warna yang
-                sudah lengkap) dipertahankan, sekarang jadi bagian header tabel. */}
+                chip "Pilih warna", tidak di tabel. Toggle "Tampilkan/Sembunyikan" (owner: "hilangkan
+                saja yang tampilkan dan sembunyikan") DIGANTI filter Status di header tabel (Belum
+                lengkap / Lengkap / Semua), gaya tombol yang sama dengan filter Status PO material
+                di atasnya -- lihat colorStatusFilter. */}
             {(() => {
               const aduanRows = mrpDetailFor(selectedInvoice.mrpId, mrpDetails)?.aduanRows.filter((a) => a.vendor === vendorId) ?? [];
               const groups = warnaListFor(selectedInvoice).map((warna) => {
@@ -464,16 +469,39 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
               });
               if (groups.length === 0) return null;
               const completeCount = groups.filter((g) => g.complete).length;
-              const visibleGroups = showAllColors ? groups : groups.filter((g) => g.warna === selectedWarna || !g.complete);
+              const belumCount = groups.length - completeCount;
+              // Warna yang lagi dipilih SELALU ikut tampil apa pun filternya, supaya tidak tiba-tiba
+              // hilang dari layar begitu selesai ditandai lengkap.
+              const visibleGroups = groups.filter((g) => {
+                if (g.warna === selectedWarna) return true;
+                if (colorStatusFilter === "LENGKAP") return g.complete;
+                if (colorStatusFilter === "BELUM") return !g.complete;
+                return true;
+              });
               return (
                 <div className="mt-3 overflow-hidden rounded-md border border-[#E4E8EE]">
-                  <div className="flex items-center gap-2 bg-[#F2F4F7] px-3 py-1.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 bg-[#F2F4F7] px-3 py-1.5">
                     <span className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Pilih warna</span>
-                    {completeCount > 0 && (
-                      <button onClick={() => setShowAllColors((v) => !v)} className="ml-auto font-sans text-[10.5px] font-semibold text-action-primary underline">
-                        {showAllColors ? "Sembunyikan yang sudah lengkap" : `Tampilkan semua (${completeCount} sudah lengkap)`}
-                      </button>
-                    )}
+                    <div className="flex gap-1.5">
+                      {(
+                        [
+                          { key: "BELUM" as const, label: `Belum lengkap (${belumCount})` },
+                          { key: "LENGKAP" as const, label: `Lengkap (${completeCount})` },
+                          { key: "ALL" as const, label: `Semua (${groups.length})` },
+                        ]
+                      ).map((opt) => (
+                        <button
+                          key={opt.key}
+                          onClick={() => setColorStatusFilter(opt.key)}
+                          className={
+                            "rounded-md border px-2.5 py-[5px] font-sans text-[10.5px] font-semibold " +
+                            (colorStatusFilter === opt.key ? "border-action-primary bg-action-primary text-white" : "border-[#CBD5DF] bg-white text-action-primary")
+                          }
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <div className="grid grid-cols-5 gap-x-2 border-t border-[#E4E8EE] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                     <span>Warna</span>
