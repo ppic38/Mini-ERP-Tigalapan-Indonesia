@@ -789,9 +789,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         <div className="grid grid-cols-6 gap-2 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
                           <span>Warna (Lengan {len === "PENDEK" ? "Pendek" : "Panjang"})</span>
                           <span className="text-right">Total roll aduan MRP</span>
-                          <span className="text-right">Sudah diresting</span>
-                          <span className="text-right">Total roll tersedia</span>
+                          <span className="text-right">Total roll diterima</span>
                           <span className="text-right">Belum diterima</span>
+                          <span className="text-right">Sudah diresting</span>
                           <span />
                         </div>
                         {wt.length === 0 && <div className="px-4 py-4 text-center font-sans text-xs text-text-muted">Tidak ada warna lengan {len} di MRP ini.</div>}
@@ -802,9 +802,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                               <div className={"grid grid-cols-6 items-center gap-2 px-4 py-[11px] font-sans text-xs text-[#31414F] " + (open ? "bg-[#F3F8FE]" : "")}>
                                 <span className="font-medium">{w.warna}</span>
                                 <span className="text-right font-mono font-semibold text-info-fg">{w.total}</span>
-                                <span className={"text-right font-mono " + (w.started > 0 ? "font-semibold text-success-fg" : "text-text-muted")}>{w.started}</span>
                                 <span className={"text-right font-mono font-semibold " + (w.available > 0 ? "text-info-fg" : "text-danger-fg")}>{w.available}</span>
                                 <span className={"text-right font-mono " + (w.missing > 0 ? "font-semibold text-warning-fg" : "text-text-muted")}>{w.missing}</span>
+                                <span className={"text-right font-mono " + (w.started > 0 ? "font-semibold text-success-fg" : "text-text-muted")}>{w.started}</span>
                                 <span className="text-right">
                                   <button
                                     onClick={() => setWarnaOpen(open ? "" : len + "|" + w.warna)}
@@ -822,18 +822,18 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                                     <div className="grid grid-cols-6 gap-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                                       <span>Kode aduan</span>
                                       <span className="text-right">Roll aduan</span>
-                                      <span className="text-right">Sudah diresting</span>
                                       <span className="text-right">Tersedia</span>
                                       <span className="text-right">Belum diterima</span>
+                                      <span className="text-right">Sudah diresting</span>
                                       <span />
                                     </div>
                                     {w.needs.map((n) => (
                                       <div key={n.key} className="grid grid-cols-6 items-center gap-2 border-t border-[#F1F4F7] px-3 py-2 font-sans text-xs text-[#31414F]">
                                         <span className="font-mono font-medium">{n.kode}</span>
                                         <span className="text-right font-mono">{n.total}</span>
-                                        <span className="text-right font-mono text-text-muted">{n.started}</span>
                                         <span className={"text-right font-mono font-semibold " + (n.available > 0 ? "text-info-fg" : "text-danger-fg")}>{n.available}</span>
                                         <span className={"text-right font-mono " + (n.missing > 0 ? "text-warning-fg" : "text-text-muted")}>{n.missing}</span>
+                                        <span className="text-right font-mono text-text-muted">{n.started}</span>
                                         <span className="text-right">
                                           <Button onClick={() => startPickForWarna(n.key, w.warna)} disabled={n.available <= 0} variant="primary" size="xs">
                                             Pilih roll →
@@ -855,9 +855,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 <div className="grid grid-cols-6 gap-2 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
                   <span>Kode Aduan (Lengan {len === "PENDEK" ? "Pendek" : "Panjang"})</span>
                   <span className="text-right">Total roll aduan MRP</span>
-                  <span className="text-right">Sudah diresting</span>
-                  <span className="text-right">Total roll tersedia</span>
+                  <span className="text-right">Total roll diterima</span>
                   <span className="text-right">Belum diterima</span>
+                  <span className="text-right">Sudah diresting</span>
                   <span />
                 </div>
                 {gl.length === 0 && <div className="px-4 py-4 text-center font-sans text-xs text-text-muted">Tidak ada aduan pola lengan {len} di MRP ini.</div>}
@@ -868,9 +868,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                     <div key={key} className={"grid grid-cols-6 items-center gap-2 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0 " + (isSel ? "bg-[#F3F8FE]" : "")}>
                       <span className="font-mono font-medium">{g.kode}</span>
                       <span className="text-right font-mono font-semibold text-info-fg">{g.totalQty}</span>
-                      <span className={"text-right font-mono " + (g.totalStarted > 0 ? "font-semibold text-success-fg" : "text-text-muted")}>{g.totalStarted}</span>
                       <span className={"text-right font-mono font-semibold " + (g.totalAvailable > 0 ? "text-info-fg" : "text-danger-fg")}>{g.totalAvailable}</span>
                       <span className={"text-right font-mono " + (g.totalMissing > 0 ? "font-semibold text-warning-fg" : "text-text-muted")}>{g.totalMissing}</span>
+                      <span className={"text-right font-mono " + (g.totalStarted > 0 ? "font-semibold text-success-fg" : "text-text-muted")}>{g.totalStarted}</span>
                       <span className="text-right">
                         <button
                           onClick={() => pickGroup(key)}

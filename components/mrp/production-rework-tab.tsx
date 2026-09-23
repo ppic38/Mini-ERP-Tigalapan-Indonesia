@@ -4,7 +4,7 @@ import { useState } from "react";
 import { NumberInput } from "@/components/mrp/number-input";
 import { Button } from "@/components/ui/button";
 import { useMrpStore } from "@/lib/mrp/store";
-import { cumulativeSizeQtyForGroup, cutWarnaLenganGroups, formatDateTimeShort, mrpDetailFor, mrpIdsWithRemainingReject, productionGroupMetaFor, reworkSizeAllowed } from "@/lib/mrp/derive";
+import { cumulativeSizeQtyForGroup, cutWarnaLenganGroups, formatDateTimeShort, mrpDetailFor, mrpIdsWithRemainingReject, productionGroupMetaFor, reworkSizeAllowed, sizeIndex } from "@/lib/mrp/derive";
 import { countRemainingRejectGroupsForMrp, pendingMarker } from "@/lib/shell/badges";
 import type { Lengan, Usia } from "@/lib/mrp/types";
 
@@ -50,9 +50,32 @@ export function ProductionReworkTab({ vendorId }: { vendorId: string }) {
   const groups = allGroups.filter((g) => !productionGroupMetaFor(selectedMrpId + "|" + g.warna + "|" + g.lengan, productionGroupMeta)?.doneAt);
   const lockedGroupCount = allGroups.length - groups.length;
   const selectedKategori = selectedMrpId ? (mrpDetailFor(selectedMrpId, mrpDetails)?.mrp.kategori ?? "—") : "";
-  // Size yang dikenal untuk MRP ini (dari rencana aduan pola) -- dipakai sebagai pilihan dropdown
-  // "Size baru (hasil rework)" supaya tidak salah ketik size yang tidak ada di rencana.
-  const knownSizes = Array.from(new Set((mrpDetailFor(selectedMrpId, mrpDetails)?.aduanRows ?? []).flatMap((a) => a.sizes.map((s) => s.size)))).sort();
+  // Size TUNGGAL yang dikenal untuk MRP ini -- dipakai sebagai pilihan dropdown "Size baru (hasil
+  // rework)". Revisi 2026-09-23 (owner: "kenapa malah masuk size aduan pairing? kan ini untuk
+  // rework"): `aduanRows[].sizes[].size` MENTAH bisa berupa label PASANGAN cutting seperti "L-L",
+  // "M-L-XL", atau bahkan "S-2XL, S-XL" (2 pasangan sekaligus, dipisah koma) -- itu representasi
+  // layout potong, BUKAN satu ukuran baju. Rework menghasilkan 1 potongan baju BERUKURAN TUNGGAL,
+  // jadi label pasangan itu dipecah dulu per token (koma & strip) sebelum di-dedup -- "S-2XL, S-XL"
+  // jadi kandidat {S, 2XL, XL} masing-masing berdiri sendiri, bukan tetap sebagai 1 pilihan gabungan.
+  const knownSizes = Array.from(
+    new Set(
+      (mrpDetailFor(selectedMrpId, mrpDetails)?.aduanRows ?? []).flatMap((a) =>
+        a.sizes.flatMap((s) =>
+          s.size
+            .split(/[,-]/)
+            .map((tok) => tok.trim())
+            .filter(Boolean)
+        )
+      )
+    )
+  ).sort((a, b) => {
+    const ia = sizeIndex(a);
+    const ib = sizeIndex(b);
+    if (ia >= 0 && ib >= 0) return ia - ib;
+    if (ia >= 0) return -1;
+    if (ib >= 0) return 1;
+    return a.localeCompare(b);
+  });
 
   function openRework(warna: string, lengan: Lengan, size: string, max: number) {
     setActionError(null);
