@@ -4,9 +4,11 @@ import { useState } from "react";
 import type { Notification } from "@/lib/mrp/types";
 
 // Revisi 2026-09-19 (owner: "untuk sementara notifikasi di semua modul di-hide"): tombol
-// Notifikasi di topbar disembunyikan di SEMUA halaman (Topbar hanya dipakai lewat AppShell).
-// Sengaja cuma disembunyikan, bukan dihapus -- ubah ke true untuk menampilkannya lagi.
-const SHOW_NOTIFICATIONS = false;
+// Notifikasi di topbar disembunyikan di SEMUA halaman.
+// Revisi 2026-09-23 (owner: "tambahkan kembali fitur notifikasi tapi hanya di modul vendor
+// produksi"): sekarang dikontrol per pemanggilan lewat prop `showNotifications` (AppShell
+// mengisinya `role === "vendorMaklon"`) -- modul internal (PPIC/Procurement/Finance/dst) tetap
+// tersembunyi seperti sebelumnya.
 
 function formatNotifTime(time: string) {
   return time;
@@ -28,6 +30,7 @@ export function Topbar({
   onMarkAllRead,
   onDismiss,
   onLogout,
+  showNotifications = false,
 }: {
   role: string;
   entity: string;
@@ -36,6 +39,7 @@ export function Topbar({
   onMarkAllRead?: () => void;
   onDismiss?: (id: string) => void;
   onLogout?: () => void;
+  showNotifications?: boolean;
 }) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -45,7 +49,7 @@ export function Topbar({
     <div className="flex h-[52px] flex-none items-center gap-[14px] border-b border-border-subtle bg-surface-card px-[22px]">
       <div className="font-sans text-[13px] font-semibold text-text-primary">{role}</div>
       <div className="ml-auto flex items-center gap-[14px]">
-        {SHOW_NOTIFICATIONS && (
+        {showNotifications && (
         <>
         <div className="relative">
           <button

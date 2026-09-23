@@ -155,7 +155,6 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
   // & (user-reported) sempat disalahartikan sebagai satu-satunya cara "menyelesaikan" produksi.
   // Cuma 1 grup yang bisa expanded sekaligus (lihat expandedGroupKey), jadi 1 boolean komponen-level
   // sudah cukup -- direset ke false tiap toggleGroup pindah grup (lihat toggleGroup di bawah).
-  const [showRollTable, setShowRollTable] = useState(false);
   // Bug fix (2026-09-06): confirmFgDone/undoFgConfirm dulu dipanggil fire-and-forget (tanpa
   // .catch) -- kalau server menolak (mis. baseline hasil cutting dikira kosong, lihat fix di
   // lib/mrp/actions.ts fetchProductionScopeForMrp), promise-nya cuma jadi unhandled rejection di
@@ -209,7 +208,6 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
     const actual = rejectGrossForGroup(gk, productionResults);
     return Array.from(new Set([...Object.keys(expected), ...Object.keys(actual)])).some((sz) => (expected[sz] ?? 0) !== (actual[sz] ?? 0));
   }
-  const pendingFgGroups = kind === "FG" && selectedMrpId ? groups.filter((g) => groupNeedsFinish(g)) : [];
   // Revisi 2026-09-19 (bug: "klik Simpan langsung tutup roll, tidak bisa input lagi"): "Selesai
   // Produksi" menutup SEMUA roll yang masih terbuka & selisih target-vs-FG langsung jadi reject --
   // tombolnya sebelumnya bisa terklik tanpa konfirmasi (dekat tombol Simpan). Sekarang selalu tanya dulu.
@@ -229,14 +227,6 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
         'Roll yang SUDAH punya Finish Good akan DITUTUP dan langsung bisa dikirim; kekurangan qty-nya dihitung sebagai reject (bisa dirework). Roll yang belum diisi tetap terbuka, dan roll baru masih bisa ditambahkan nanti.\n\nKalau hanya ingin menyimpan progres, pilih Batal lalu klik "Simpan →".'
     );
   }
-  function finishAllGroups() {
-    if (pendingFgGroups.length === 0) return;
-    if (!confirmFinish(pendingFgGroups)) return;
-    runAction(
-      "fg-all:" + selectedMrpId,
-      Promise.all(pendingFgGroups.map((g) => confirmFgDone(selectedMrpId + "|" + g.warna + "|" + g.lengan, selectedMrpId, vendorId, g.warna, g.lengan)))
-    );
-  }
 
   function toggleGroup(warna: string, lengan: string) {
     const key = selectedMrpId + "|" + warna + "|" + lengan;
@@ -245,7 +235,6 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
     } else {
       setExpandedGroupKey(key);
       setSizeTotalDraft({});
-      setShowRollTable(false);
     }
   }
 
@@ -303,17 +292,6 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
             <span className="font-sans text-[13px] font-semibold text-text-primary">
               {title} — {selectedMrpId}
             </span>
-            {kind === "FG" && pendingFgGroups.length > 0 && (
-              <Button
-                onClick={finishAllGroups}
-                disabled={isPending("fg-all:" + selectedMrpId)}
-                variant="primary"
-                size="sm"
-                title="Selesaikan roll yang sudah ada Finish Good (ditutup, siap dikirim); kekurangannya jadi reject. Warna tidak dikunci."
-              >
-                {isPending("fg-all:" + selectedMrpId) ? "Menyimpan…" : pendingFgGroups.length > 1 ? `Selesai Produksi (${pendingFgGroups.length})` : "Selesai Produksi"}
-              </Button>
-            )}
           </div>
           <div className="overflow-x-auto">
             <div className="min-w-[820px]">
@@ -430,17 +408,6 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                           // sudah berubah seketika).
                           <Button onClick={() => runAction(groupKey, undoFgConfirm(groupKey))} variant="muted" size="xs">
                             Buka kunci ↺
-                          </Button>
-                        )}
-                        {kind === "FG" && !isFinalDone && groupNeedsFinish(g) && pendingFgGroups.length > 1 && (
-                          <Button
-                            onClick={() => confirmFinish([g]) && runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan))}
-                            disabled={isPending(groupKey)}
-                            variant="primary"
-                            size="xs"
-                            title="Selesaikan HANYA warna/lengan ini"
-                          >
-                            {isPending(groupKey) ? "Menyimpan…" : "Selesai"}
                           </Button>
                         )}
                         <Button onClick={() => toggleGroup(g.warna, g.lengan)} variant="accent" size="xs">
@@ -750,39 +717,12 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                               <div className="flex items-center gap-2 border-t border-[#CFE0EF] bg-[#F8FBFF] px-4 py-3">
                                 {/* saveFgProgress & closeProductionBatch (dipanggil saveSizeTotals)
                                    sudah optimistic penuh di store.ts -- isPending/teks "Menyimpan…"
-                                   dilepas, disabled cukup dari sizesToShow saja. */}
+                                   dilepas, disabled cukup dari sizesToShow saja. Revisi 2026-09-23
+                                   (owner): tombol "Selesai Produksi" dipindah ke kartu roll per batch
+                                   di bawah (lihat "Progres per batch") -- di sini cuma "Simpan". */}
                                 <Button onClick={() => runAction(quickSaveKey, saveSizeTotals())} disabled={sizesToShow.length === 0} variant="accent" size="sm">
                                   Simpan →
                                 </Button>
-                                {/* Item 2026-09-12 (user-reported): "Tutup Roll" sempat disalahartikan
-                                   sebagai cara menyelesaikan produksi -- padahal aksi itu murni
-                                   per-roll (lihat catatan panjang di bawah). Tombol "Selesai Produksi"
-                                   SEBENARNYA sudah ada (di baris ringkasan grup, tombol "Selesai
-                                   Produksi"/"Buka kunci" jauh di atas), cuma letaknya jauh dari form
-                                   ini jadi gampang tidak ketemu. Ditaruh lagi di sini (persis di
-                                   sebelah Simpan) supaya jelas ini AKSI TERPISAH, bukan efek samping
-                                   Tutup Roll -- action-nya SAMA PERSIS (confirmFgDone), cuma dipanggil
-                                   dari 2 tempat.
-                                   Revisi lanjutan (owner: "kenapa tidak bisa klik selesai produksi
-                                   kalau qtynya tidak maksimal... jadikan tombol ini trigger untuk
-                                   selesaikan finish good, selisih size yang tidak terpenuhi jadi
-                                   reject"): dulu tombol ini disable selama ada roll yang belum
-                                   "Tutup Roll" (allRollsClosed). Sekarang TIDAK -- confirmFgDone di
-                                   server otomatis menutup roll yang masih terbuka (pakai FG yang
-                                   sudah diisi apa adanya, TIDAK menambah/mengubah angka) sebelum
-                                   menghitung reject, jadi tombol ini sendiri sudah jadi satu-satunya
-                                   trigger yang perlu diklik. */}
-                                {!isFinalDone && groupNeedsFinish(g) && (
-                                  <Button
-                                    onClick={() => confirmFinish([g]) && runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan))}
-                                    disabled={isPending(groupKey)}
-                                    title="Selesaikan Finish Good grup ini -- roll yang masih terbuka otomatis ditutup, selisih target vs FG jadi reject"
-                                    variant="primary"
-                                    size="sm"
-                                  >
-                                    {isPending(groupKey) ? "Menyimpan…" : "Selesai Produksi →"}
-                                  </Button>
-                                )}
                               </div>
                               {rejectSummary}
                               {overflow.length > 0 && (
@@ -805,21 +745,19 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                            murni gate sisi UI yang dihapus -- lihat komentar di atas) -- sisa
                            selisih cutting-vs-FG roll ini otomatis terhitung reject saat grup
                            di-"Selesai Produksi"-kan (recomputeAutoRejectForGroup, actions.ts). */}
-                        {/* Item 2026-09-12 (user-reported): tabel Roll default disembunyikan --
-                           dulu selalu tampil penuh di bawah form, bikin panel FG kepanjangan &
-                           kelihatan seperti "harus" ditutup satu-satu dari sini, padahal Tutup Roll
-                           per-roll cuma perlu diakses kalau memang ada roll yang FG-nya tidak akan
-                           mencapai 100% (sisanya jadi reject otomatis). Toggle klik untuk buka. */}
+                        {/* Revisi 2026-09-23 (owner: "buat per batch saja ... begitu suatu warna diklik akan
+                           dropdown progres atau berkas per batch dari resting ke hasil jadi finish good"):
+                           daftar roll (dulu "Lihat daftar roll", toggle tersembunyi) SEKARANG SELALU tampil
+                           begitu grup warna/lengan ini dibuka -- ini jadi tampilan utama progres per batch
+                           (bukan lagi bagian opsional). Tombol "Selesai Produksi" juga DIPINDAH ke sini
+                           (footer kartu ini, gantikan posisi lamanya di bawah "Input qty per size") supaya
+                           aksi penyelesaian selalu berdampingan dengan daftar roll/batch yang jadi dasarnya --
+                           tetap 1 aksi per grup (confirmFgDone), TIDAK ada lagi versi "sekaligus banyak warna". */}
                         {groupBatches.length > 0 && (
-                          <button
-                            onClick={() => setShowRollTable((v) => !v)}
-                            className="mt-3 font-sans text-[11px] font-semibold text-action-primary underline"
-                          >
-                            {showRollTable ? "Sembunyikan daftar roll ↑" : `Lihat daftar roll (${groupBatches.length}) →`}
-                          </button>
-                        )}
-                        {showRollTable && groupBatches.length > 0 && (
-                          <div className="mt-2 overflow-hidden rounded-md border border-[#EEF1F4] bg-white">
+                          <div className="mt-3 overflow-hidden rounded-md border border-[#EEF1F4] bg-white">
+                            <div className="border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[11px] font-semibold text-text-primary">
+                              Progres per batch ({groupBatches.length} roll — Resting → Finish Good)
+                            </div>
                             <div className="grid grid-cols-4 gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                               <span>Roll</span>
                               <span className="text-right">FG / hasil cutting</span>
@@ -878,6 +816,19 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                 </div>
                               );
                             })}
+                            {!isFinalDone && groupNeedsFinish(g) && (
+                              <div className="flex items-center justify-end border-t border-[#F1F4F7] bg-[#F8FBFF] px-3 py-2.5">
+                                <Button
+                                  onClick={() => confirmFinish([g]) && runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan))}
+                                  disabled={isPending(groupKey)}
+                                  title="Selesaikan Finish Good grup ini -- roll yang masih terbuka otomatis ditutup, selisih target vs FG jadi reject"
+                                  variant="primary"
+                                  size="sm"
+                                >
+                                  {isPending(groupKey) ? "Menyimpan…" : "Selesai Produksi →"}
+                                </Button>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>

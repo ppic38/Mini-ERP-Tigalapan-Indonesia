@@ -11,17 +11,11 @@ import { usePendingActions } from "@/lib/mrp/usePendingActions";
 import { viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
 import {
   availableFgToShip,
-  ekspedisiPrice,
   formatDate,
   formatDecimal,
-  formatRupiah,
-  hargaMaklonRateInfo,
-  koliOngkirShare,
   mrpIdsWithClosedRolls,
   mrpIdsWithUnpackedFg,
-  resiGroupInvoiceLines,
   rollRemainingBySizeForMrp,
-  vendorCumulativeQtyByLengan,
 } from "@/lib/mrp/derive";
 import { countPengirimanPendingForMrp, pendingMarker } from "@/lib/shell/badges";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -64,10 +58,6 @@ function rollSizeKey(warna: string, lengan: Lengan, size: string): string {
 /** Kunci 1 baris invoice (mrpId+warna+lengan+usia) -- dipakai draft rate di dialog "Submit
  *  Invoice", HARUS PERSIS SAMA format-nya dengan `lineKeyLocal` di actions.ts supaya rate yang
  *  diketik di sini nyambung ke baris yang benar saat submit. */
-function invoiceLineKeyLocal(mrpId: string, warna: string, lengan: Lengan, usia?: Usia): string {
-  return mrpId + "|" + warna + "|" + lengan + "|" + (usia ?? "");
-}
-
 /** Ringkasan singkat "Isi" koli untuk tampilan default — daftar lengkap per item (bisa banyak
  *  baris & bikin sel meluber) sekarang cuma muncul kalau baris di-klik untuk expand, lihat
  *  `ItemsDetailPanel` di bawah. */
@@ -177,7 +167,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   const updateDeliveryKoli = useMrpStore((s) => s.updateDeliveryKoli);
   const setKoliEkspedisiResiGroup = useMrpStore((s) => s.setKoliEkspedisiResiGroup);
   const deliverKoliResiGroup = useMrpStore((s) => s.deliverKoliResiGroup);
-  const submitResiGroupInvoice = useMrpStore((s) => s.submitResiGroupInvoice);
 
   // BUG FIX (2026-09-09): union dengan mrpIdsWithClosedRolls -- lihat catatan panjang di
   // definisinya (lib/mrp/derive.ts). Tanpa ini, MRP yang FG-nya semua lewat jalur "Tutup Roll"
@@ -190,6 +179,11 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   // -- opsi dropdown "Set Ekspedisi & Resi" SEKARANG bersumber dari Master Data (ekspedisiRates,
   // dikelola Procurement), diurutkan alfabetis.
   const ekspedisiNames = [...ekspedisiRates].map((r) => r.nama).sort((a, b) => a.localeCompare(b));
+  // Revisi 2026-09-23 (owner: "Makassar tidak perlu ada biaya untuk ongkir karena bisa pakai
+  // pengiriman internal") -- opsi tambahan KHUSUS vendor Konveksi Makassar (vendorId "MKS"), tidak
+  // match nama manapun di Master Data Ekspedisi sehingga ekspedisiPrice()-nya otomatis 0 (lihat
+  // lib/mrp/derive.ts) tanpa perlu baris Master Data baru.
+  const ekspedisiOptions = vendorId === "MKS" ? ["Pengiriman Internal (tanpa ongkir)", ...ekspedisiNames] : ekspedisiNames;
 
   const [mrpId, setMrpId] = useState("");
   const [noKoli, setNoKoli] = useState("");
@@ -510,47 +504,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
     runPendingAction(groupKey, deliverKoliResiGroup(items));
   }
 
-  // Item revisi 2026-09-17 (owner: "kunci Harga Maklon di invoice vendor -- jangan bisa diketik
-  // manual, pakai rate Standar/PKS otomatis dari kapasitas kumulatif"): dulu rate per baris
-  // pre-filled dari vendorMeta.ratePerPc TAPI bisa diedit bebas sebelum submit -- sekarang
-  // read-only, dihitung dari kapasitas kumulatif TRUE vendor ini (semua PO Produksi historisnya,
-  // vendorCumulativeQtyByLengan) + tier Standar/PKS Master Data Harga Maklon (hargaMaklonRateInfo)
-  // -- server (submitResiGroupInvoiceAction) menghitung ULANG rate yang SAMA PERSIS, jadi ini
-  // murni pratinjau, bukan input yang dipercaya.
-  const [invoiceDialogKoliIds, setInvoiceDialogKoliIds] = useState<string[] | null>(null);
-  const [invoiceSubmitting, setInvoiceSubmitting] = useState(false);
-  const [invoiceError, setInvoiceError] = useState<string | null>(null);
-  const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
-  const mrpDetails = useMrpStore((s) => s.mrpDetails);
-  const cumulativeByLengan = vendorCumulativeQtyByLengan(vendorId, mrpDetails);
-
-  function openInvoiceDialog(koliIds: string[]) {
-    setInvoiceDialogKoliIds(koliIds);
-    setInvoiceError(null);
-  }
-  function closeInvoiceDialog() {
-    setInvoiceDialogKoliIds(null);
-    setInvoiceError(null);
-  }
-  const invoiceDialogLines = invoiceDialogKoliIds ? resiGroupInvoiceLines(invoiceDialogKoliIds, deliveryKolis) : [];
-  function rateForLine(l: { lengan: Lengan }): number {
-    return hargaMaklonRateInfo(hargaMaklon, vendorId, l.lengan, cumulativeByLengan[l.lengan] ?? 0).rate;
-  }
-  const invoiceDialogTotal = invoiceDialogLines.reduce((s, l) => s + l.qty * rateForLine(l), 0);
-  async function submitInvoiceConfirm() {
-    if (!invoiceDialogKoliIds || invoiceSubmitting) return;
-    setInvoiceSubmitting(true);
-    setInvoiceError(null);
-    try {
-      await submitResiGroupInvoice(invoiceDialogKoliIds);
-      closeInvoiceDialog();
-    } catch (e) {
-      setInvoiceError(e instanceof Error ? e.message : "Gagal submit invoice.");
-    } finally {
-      setInvoiceSubmitting(false);
-    }
-  }
-
   return (
     <AppShell
       role="vendorMaklon"
@@ -821,8 +774,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
             <div className="mt-2 flex flex-col gap-3">
               {pendingGroups.map(([groupKey, kolis]) => {
                 const first = kolis[0];
-                const totalDraftWeight = kolis.reduce((s, k) => s + weightOf(k), 0);
-                const totalEstOngkir = first.ekspedisi && totalDraftWeight > 0 ? ekspedisiPrice(first.ekspedisi, totalDraftWeight, ekspedisiRates) : null;
                 const allWeighed = kolis.every((k) => weightOf(k) > 0);
                 return (
                   <div key={groupKey} className="overflow-hidden rounded-md border border-border-subtle bg-white">
@@ -836,24 +787,21 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                           Lihat / Download foto
                         </button>
                       )}
-                      <span className="ml-auto text-right font-mono text-text-muted">Estimasi ongkir grup: {totalEstOngkir != null ? formatRupiah(totalEstOngkir) : "—"}</span>
                     </div>
                     {first.ekspedisiNote && <div className="border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-[10.5px] text-text-muted">Catatan: {first.ekspedisiNote}</div>}
-                    <div className="grid grid-cols-6 gap-x-2 border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                    <div className="grid grid-cols-5 gap-x-2 border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                       <span>No MRP</span>
                       <span>No Koli</span>
                       <span>Isi</span>
                       <span className="text-right">Berat (kg)</span>
-                      <span className="text-right">Ongkir (porsi)</span>
                       <span className="text-right">Edit</span>
                     </div>
                     {kolis.map((k) => {
                       const isExpanded = expandedKoli.has(k.id);
                       const myWeight = weightOf(k);
-                      const myOngkirShare = totalEstOngkir != null && totalDraftWeight > 0 ? totalEstOngkir * (myWeight / totalDraftWeight) : null;
                       return (
                         <Fragment key={k.id}>
-                          <div className="grid grid-cols-6 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0">
+                          <div className="grid grid-cols-5 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0">
                             <span className="font-mono">{k.mrpId}</span>
                             <span className="font-mono font-medium">{k.noKoli}</span>
                             <button
@@ -871,7 +819,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                                 <NumberInput value={myWeight} decimals={2} onChange={(v) => setWeightDraft((prev) => ({ ...prev, [k.id]: v }))} className="input w-[90px] text-right" />
                               )}
                             </span>
-                            <span className="text-right font-mono text-[11px] text-text-muted">{myOngkirShare != null ? formatRupiah(myOngkirShare) : "—"}</span>
                             <span className="text-right">
                               <Button onClick={() => editKoli(k)} variant="ghost" size="xs">
                                 Edit
@@ -914,8 +861,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
             {deliveredGroups.map(([groupKey, kolis]) => {
               const first = kolis[0];
               const totalWeight = kolis.reduce((s, k) => s + (k.beratKoli ?? 0), 0);
-              const totalOngkir = kolis.reduce((s, k) => s + koliOngkirShare(k, deliveryKolis, ekspedisiRates), 0);
-              const koliIds = kolis.map((k) => k.id);
               const alreadyInvoiced = kolis.some((k) => k.resiInvoicedAt);
               return (
                 <div key={groupKey} className="overflow-hidden rounded-md border border-border-subtle bg-white">
@@ -927,38 +872,36 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     <span>
                       Total berat: <span className="font-mono">{formatDecimal(totalWeight)} kg</span>
                     </span>
-                    <span>
-                      Total ongkir: <span className="font-mono">{formatRupiah(totalOngkir)}</span>
-                    </span>
                     <span className="font-mono text-[11px] text-text-muted">{formatDate(first.deliveredAt)}</span>
                     {first.ekspedisiNoteAt && (
                       <button onClick={() => viewEkspedisiPhoto(first.id)} className="font-semibold text-action-primary underline">
                         Lihat / Download foto
                       </button>
                     )}
+                    {/* Revisi 2026-09-23 (owner): tombol "Submit Invoice" pindah ke halaman Invoice & Payment
+                        (tab Invoice Vendor) -- di sini cukup status ringkas. */}
                     <span className="ml-auto">
                       {alreadyInvoiced ? (
                         <span className="rounded-full bg-success-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-success-fg">Sudah diinvoice</span>
                       ) : (
-                        <Button onClick={() => openInvoiceDialog(koliIds)} variant="primary" size="xs">
-                          Submit Invoice →
-                        </Button>
+                        <span className="rounded-full bg-warning-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-warning-fg">
+                          Belum diinvoice — ajukan di Invoice &amp; Payment
+                        </span>
                       )}
                     </span>
                   </div>
                   {first.ekspedisiNote && <div className="border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-[10.5px] text-text-muted">Catatan: {first.ekspedisiNote}</div>}
-                  <div className="grid grid-cols-5 gap-x-2 border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                  <div className="grid grid-cols-4 gap-x-2 border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                     <span>No MRP</span>
                     <span>No Koli</span>
                     <span>Isi</span>
                     <span className="text-right">Berat (kg)</span>
-                    <span className="text-right">Ongkir (porsi)</span>
                   </div>
                   {kolis.map((k) => {
                     const isExpanded = expandedKoli.has(k.id);
                     return (
                       <Fragment key={k.id}>
-                        <div className="grid grid-cols-5 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0">
+                        <div className="grid grid-cols-4 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0">
                           <span className="font-mono">{k.mrpId}</span>
                           <span className="font-mono font-medium">{k.noKoli}</span>
                           <button
@@ -970,7 +913,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                             {summarizeItems(k.items)}
                           </button>
                           <span className="text-right font-mono">{formatDecimal(k.beratKoli ?? 0)}</span>
-                          <span className="text-right font-mono text-[11px] text-text-muted">{formatRupiah(koliOngkirShare(k, deliveryKolis, ekspedisiRates))}</span>
                         </div>
                         {isExpanded && (
                           <div className="border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-3 last:border-b-0">
@@ -999,7 +941,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
               <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Ekspedisi</div>
               <select value={ekspedisiDraft} onChange={(e) => setEkspedisiDraft(e.target.value)} className="input mt-1 w-full">
                 <option value="">— pilih ekspedisi —</option>
-                {ekspedisiNames.map((e) => (
+                {ekspedisiOptions.map((e) => (
                   <option key={e} value={e}>
                     {e}
                   </option>
@@ -1036,11 +978,9 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                 })}
                 {(() => {
                   const totalW = ekspedisiDialogKoliIds.reduce((s, id) => s + (dialogWeights[id] ?? 0), 0);
-                  const est = ekspedisiDraft && totalW > 0 ? ekspedisiPrice(ekspedisiDraft, totalW, ekspedisiRates) : null;
                   return (
                     <div className="flex items-center justify-between gap-3 border-t-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[11px] font-semibold text-info-fg">
                       <span>Total berat: {formatDecimal(totalW)} kg</span>
-                      <span>Estimasi ongkir: {est != null ? formatRupiah(est) : "—"}</span>
                     </div>
                   );
                 })()}
@@ -1086,66 +1026,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                 size="sm"
               >
                 {ekspedisiSubmitting ? "Menyimpan…" : "Simpan & kirim"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Item 2026-09-11 (migration 0026), diperbarui 2026-09-17: dialog "Submit Invoice" -- qty
-         DAN rate per baris sekarang SAMA-SAMA read-only (dihitung ULANG server-side juga, lihat
-         submitResiGroupInvoiceAction) -- rate terkunci ke tier Standar/PKS Harga Maklon dari
-         kapasitas kumulatif vendor, tidak bisa lagi diketik manual. */}
-      {invoiceDialogKoliIds && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0B131B]/45 p-4">
-          {/* Item 2026-09-12 (user-reported, "ada element yang saling menutupi satu sama lain"):
-             dulu grid-cols-5 (kolom sama rata) di dialog selebar 560px cuma kebagian ~93px/kolom,
-             padahal input rate (NumberInput currency) fixed 110px -- otomatis meluber ke kolom Qty
-             di sebelahnya. Sekarang dialog dilebarkan + kolom pakai lebar EKSPLISIT (bukan sama
-             rata) supaya kolom Qty & Rate/pc selalu cukup, tidak pernah tumpang tindih. */}
-          <div className="w-full max-w-[640px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]">
-            <div className="border-b border-border-subtle px-5 py-3.5">
-              <span className="font-sans text-[13px] font-semibold text-text-primary">Submit Invoice — {invoiceDialogKoliIds.length} koli</span>
-            </div>
-            <div className="px-5 py-4">
-              <div className="overflow-hidden rounded-md border border-[#E4E9EE]">
-                <div className="grid grid-cols-[1.1fr_1fr_0.9fr_70px_130px] gap-x-2 bg-[#F2F5F8] px-3 py-1.5 font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-                  <span>MRP</span>
-                  <span>Warna</span>
-                  <span>Lengan</span>
-                  <span className="text-right">Qty</span>
-                  <span className="text-right">Rate/pc</span>
-                </div>
-                {invoiceDialogLines.map((l) => {
-                  const key = invoiceLineKeyLocal(l.mrpId, l.warna, l.lengan, l.usia);
-                  return (
-                    <div key={key} className="grid grid-cols-[1.1fr_1fr_0.9fr_70px_130px] items-center gap-x-2 border-t border-[#EEF1F4] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-                      <span className="font-mono">{l.mrpId}</span>
-                      <span>
-                        {l.warna}
-                        {l.usia ? ` (${l.usia})` : ""}
-                      </span>
-                      <span>{l.lengan}</span>
-                      <span className="text-right font-mono">{l.qty} pcs</span>
-                      <span className="text-right font-mono">{formatRupiah(rateForLine(l))}</span>
-                    </div>
-                  );
-                })}
-                <div className="grid grid-cols-[1.1fr_1fr_0.9fr_70px_130px] gap-x-2 border-t border-[#EEF1F4] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[11.5px] font-semibold text-[#31414F]">
-                  <span className="col-span-3">Total invoice</span>
-                  <span className="col-span-2 text-right font-mono">{formatRupiah(invoiceDialogTotal)}</span>
-                </div>
-              </div>
-              {invoiceError && <div className="mt-2 font-sans text-[10.5px] text-danger-fg">{invoiceError}</div>}
-            </div>
-            <div className="flex justify-end gap-2 border-t border-border-subtle px-5 py-3.5">
-              <button onClick={closeInvoiceDialog} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary">
-                Batal
-              </button>
-              {/* submitResiGroupInvoice sudah optimistic penuh -- teks "Mengirim…" dilepas,
-                 `disabled` tetap dipertahankan diam-diam (cegah dobel klik). */}
-              <Button onClick={submitInvoiceConfirm} disabled={invoiceSubmitting} variant="primary" size="sm">
-                Submit Invoice
               </Button>
             </div>
           </div>

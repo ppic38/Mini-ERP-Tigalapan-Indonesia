@@ -251,6 +251,7 @@ export function AppShell({
           onMarkRead={markNotificationRead}
           onMarkAllRead={() => markAllNotificationsRead(myNotifications.map((n) => n.id))}
           onDismiss={dismissNotification}
+          showNotifications={role === "vendorMaklon"}
           onLogout={
             isGated
               ? () => {
