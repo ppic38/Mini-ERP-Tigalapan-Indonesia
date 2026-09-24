@@ -141,3 +141,13 @@ export type VendorProduksiMasterRow = {
   kategori?: string;
   weeklyCapacity: number;
 };
+
+/** Master Data "Alias Warna" (migration 0051, owner 2026-09-24: "nama warna di MRP beda dari
+ *  Master Data SKU -- BENHUR SPECIAL 24S vs BENHUR 24S, FUCHSIA vs FANTA, PUTIH BLUISH vs PUTIH").
+ *  Pemetaan nama warna yang dipakai PPIC saat import MRP/Aduan Pola (`mrpWarna`) ke nama warna
+ *  yang dipakai di Master Data "SKU (Harga Jual per Item)" (`skuWarna`, ItemSellingPriceRow.warna)
+ *  -- dipakai server-side (wms_resi_snapshot) sebagai FALLBACK KEDUA saat pencocokan SKU langsung
+ *  (nama sama persis) gagal, supaya WMS tidak menampilkan label otomatis jelek untuk warna yang
+ *  sebenarnya sama tapi beda penulisan. Tidak mengubah data MRP/SKU yang sudah ada -- murni tabel
+ *  pemetaan tambahan. `mrpWarna` unik (lihat migration), satu nama MRP cuma boleh 1 tujuan alias. */
+export type WarnaAliasRow = { id: string; mrpWarna: string; skuWarna: string; catatan?: string };

@@ -26,7 +26,7 @@ import type {
   WarehouseReceipt,
 } from "./types";
 import type { ParsedMrpImport } from "./parseImport";
-import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, MaterialSupplierRow, SupplierRow, VendorProduksiMasterRow } from "./masterData";
+import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, MaterialSupplierRow, SupplierRow, VendorProduksiMasterRow, WarnaAliasRow } from "./masterData";
 import { localDateString } from "./derive";
 import * as rawActions from "./actions";
 import { unwrapAction } from "./action-result";
@@ -250,6 +250,10 @@ export type FlowState = {
   /** Master Data "Supplier Kain" (migration 0042) -- daftar pilihan dropdown untuk kode/nama
    *  supplier di Harga Kain & Harga Kain PKS (owner 2026-09-16, cegah typo nama supplier). */
   materialSuppliers: MaterialSupplierRow[];
+  /** Master Data "Alias Warna" (migration 0051) -- pemetaan nama warna MRP -> nama warna Master
+   *  Data SKU, dipakai server-side (wms_resi_snapshot) sebagai fallback pencocokan SKU. Lihat
+   *  catatan lengkap di WarnaAliasRow (masterData.ts). */
+  warnaAliases: WarnaAliasRow[];
   /** Kategori & kapasitas produksi PER MINGGU asli tiap vendor produksi (dari spreadsheet
    *  Procurement, lihat migration 0019_vendor_kapasitas_asli.sql) -- sumber utama untuk
    *  `vendorProduksiRows` (derive.ts) & kolom "Qty vs Kapasitas" di portal vendor
@@ -421,6 +425,9 @@ type FlowActions = {
   addItemSellingPriceRow: (data: Omit<ItemSellingPriceRow, "id">) => Promise<void>;
   updateItemSellingPriceRow: (id: string, patch: Partial<ItemSellingPriceRow>) => Promise<void>;
   deleteItemSellingPriceRow: (id: string) => Promise<void>;
+  addWarnaAlias: (data: Omit<WarnaAliasRow, "id">) => Promise<void>;
+  updateWarnaAlias: (id: string, patch: Partial<WarnaAliasRow>) => Promise<void>;
+  deleteWarnaAlias: (id: string) => Promise<void>;
 
   setMaterialPoEntity: (poId: string, entitas: string) => Promise<void>;
   setMaterialPoColorEntity: (poId: string, warna: string, lengan: Lengan, entitas: string) => Promise<void>;
@@ -544,6 +551,7 @@ const emptyState: FlowState = {
   hargaRib: [],
   hargaKerahManset: [],
   materialSuppliers: [],
+  warnaAliases: [],
   vendorProduksiList: [],
   hydrated: false,
   busy: false,
@@ -1629,6 +1637,34 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     } catch (err) {
       set({ itemSellingPrices: previous });
       window.alert("Gagal menghapus SKU -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  addWarnaAlias: async (data) => {
+    await actions.addWarnaAliasAction(data);
+    backgroundRefresh();
+  },
+  updateWarnaAlias: async (id, patch) => {
+    const previous = get().warnaAliases;
+    set({ warnaAliases: previous.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+    try {
+      await actions.updateWarnaAliasAction(id, patch);
+    } catch (err) {
+      set({ warnaAliases: previous });
+      window.alert("Gagal menyimpan alias warna -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  deleteWarnaAlias: async (id) => {
+    const previous = get().warnaAliases;
+    set({ warnaAliases: previous.filter((r) => r.id !== id) });
+    try {
+      await actions.deleteWarnaAliasAction(id);
+    } catch (err) {
+      set({ warnaAliases: previous });
+      window.alert("Gagal menghapus alias warna -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();

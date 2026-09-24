@@ -4753,7 +4753,7 @@ export async function getFlowSnapshotAction(clientMasterVersion?: number | null)
 // dipakai halaman Master Data (add/update/delete satu baris) & tombol "Import dari Google
 // Sheets" (replaceX -- ganti SELURUH tabel, bukan merge, persis perilaku lama).
 // =========================================================================
-import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, SupplierRow } from "./masterData";
+import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, SupplierRow, WarnaAliasRow } from "./masterData";
 
 async function requireMasterDataRole() {
   const session = await requireSession();
@@ -5116,5 +5116,33 @@ export async function updateItemSellingPriceRowAction(id: string, patch: Partial
 export async function deleteItemSellingPriceRowAction(id: string): Promise<void> {
   await requirePpicRole();
   const { error } = await supabaseServer().from("item_selling_prices").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+// Master Data "Alias Warna" (migration 0051) -- lihat catatan lengkap di WarnaAliasRow (masterData.ts).
+// Milik PPIC juga (sumber & tujuan pemetaan sama-sama data PPIC), jadi role guard sama dengan SKU.
+export async function addWarnaAliasAction(data: Omit<WarnaAliasRow, "id">): Promise<void> {
+  await requirePpicRole();
+  const mrpWarna = data.mrpWarna.trim();
+  const skuWarna = data.skuWarna.trim();
+  if (!mrpWarna || !skuWarna) throw new Error("Nama di MRP dan Nama di SKU wajib diisi.");
+  const id = await nextReadableId("WAL");
+  const { error } = await supabaseServer()
+    .from("warna_aliases")
+    .insert({ id, mrp_warna: mrpWarna, sku_warna: skuWarna, catatan: data.catatan?.trim() || null });
+  if (error) throw new Error(error.message.includes("duplicate key") ? `Nama MRP "${mrpWarna}" sudah punya alias -- edit baris yang ada, bukan tambah baru.` : error.message);
+}
+export async function updateWarnaAliasAction(id: string, patch: Partial<WarnaAliasRow>): Promise<void> {
+  await requirePpicRole();
+  const p: Record<string, unknown> = {};
+  if (patch.mrpWarna !== undefined) p.mrp_warna = patch.mrpWarna.trim();
+  if (patch.skuWarna !== undefined) p.sku_warna = patch.skuWarna.trim();
+  if (patch.catatan !== undefined) p.catatan = patch.catatan?.trim() || null;
+  const { error } = await supabaseServer().from("warna_aliases").update(p).eq("id", id);
+  if (error) throw new Error(error.message.includes("duplicate key") ? `Nama MRP "${patch.mrpWarna}" sudah punya alias di baris lain.` : error.message);
+}
+export async function deleteWarnaAliasAction(id: string): Promise<void> {
+  await requirePpicRole();
+  const { error } = await supabaseServer().from("warna_aliases").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
