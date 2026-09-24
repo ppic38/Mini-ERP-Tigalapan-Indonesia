@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/mrp/number-input";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { MasterDataFormModal, ModalField } from "@/components/mrp/master-data-form-modal";
+import { ImportSkuModal } from "@/components/mrp/import-sku-modal";
 import { formatRupiah, MATERIAL_KATEGORI_URUTAN } from "@/lib/mrp/derive";
 import { useMrpStore } from "@/lib/mrp/store";
 import type { ItemSellingPriceRow } from "@/lib/mrp/masterData";
@@ -30,6 +31,10 @@ export function ItemSellingPricePanel() {
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // Revisi 2026-09-24 (owner: "buat popup form ... upload data ... ada cara tambah data per data
+  // ada juga secara masive melalui import excel"): popup terpisah dari MasterDataFormModal biasa
+  // (isinya beda total -- upload file + preview tabel, bukan form field), lihat ImportSkuModal.
+  const [importOpen, setImportOpen] = useState(false);
 
   function openAdd() {
     setDraft(EMPTY_DRAFT);
@@ -106,9 +111,14 @@ export function ItemSellingPricePanel() {
         title="SKU (Harga Jual per Item)"
         subtitle={`${rows.length} SKU. Dipakai untuk kolom "% HPP" di Laporan HPP (Finance) & dicocokkan otomatis ke resi pengiriman WMS lewat SKU.`}
         headerActions={
-          <Button onClick={openAdd} variant="dashed" size="sm">
-            + Tambah SKU
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button onClick={() => setImportOpen(true)} variant="ghost" size="sm">
+              Import Data
+            </Button>
+            <Button onClick={openAdd} variant="dashed" size="sm">
+              + Tambah SKU
+            </Button>
+          </div>
         }
         columns={columns}
         rows={rows}
@@ -157,6 +167,7 @@ export function ItemSellingPricePanel() {
           </ModalField>
         </MasterDataFormModal>
       )}
+      {importOpen && <ImportSkuModal onClose={() => setImportOpen(false)} />}
     </>
   );
 }

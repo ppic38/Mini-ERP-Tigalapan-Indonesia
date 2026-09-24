@@ -10,7 +10,9 @@ import type { WarnaAliasRow } from "@/lib/mrp/masterData";
 type Draft = { mrpWarna: string; skuWarna: string; catatan: string };
 const EMPTY_DRAFT: Draft = { mrpWarna: "", skuWarna: "", catatan: "" };
 
-/** Master Data "Alias Warna" (migration 0051, owner 2026-09-24: "nama warna di MRP beda dari
+/** Master Data "Mapping Warna" (nama tampilan; kode/tipe internal tetap "WarnaAlias", lihat
+ *  migration 0051, owner 2026-09-24: "ganti jadi mapping warna dulu, jangan alias warna" --
+ *  nama warna di MRP beda dari
  *  Master Data SKU -- BENHUR SPECIAL 24S vs BENHUR 24S, FUCHSIA vs FANTA, PUTIH BLUISH vs PUTIH").
  *  Pemetaan nama warna PPIC-di-MRP -> nama warna di Master Data SKU, dipakai server-side
  *  (wms_resi_snapshot) sebagai fallback KEDUA saat pencocokan SKU langsung (nama sama persis)
@@ -91,11 +93,11 @@ export function WarnaAliasPanel() {
   return (
     <>
       <DataTable
-        title="Alias Warna"
-        subtitle={`${rows.length} alias. Pemetaan nama warna di MRP (PPIC) ke nama warna di Master Data SKU -- dipakai otomatis kalau nama warnanya beda tapi warnanya sama (mis. "BENHUR SPECIAL 24S" -> "BENHUR 24S"), supaya SKU di resi WMS tetap kecocok.`}
+        title="Mapping Warna"
+        subtitle={`${rows.length} mapping. Pemetaan nama warna di MRP (PPIC) ke nama warna di Master Data SKU -- dipakai otomatis kalau nama warnanya beda tapi warnanya sama (mis. "BENHUR SPECIAL 24S" -> "BENHUR 24S"), supaya SKU di resi WMS tetap kecocok.`}
         headerActions={
           <Button onClick={openAdd} variant="dashed" size="sm">
-            + Tambah Alias
+            + Tambah Mapping
           </Button>
         }
         columns={columns}
@@ -104,11 +106,11 @@ export function WarnaAliasPanel() {
         firstColumnLabel="No."
         firstColumnRender={(r) => <span className="font-mono text-[11px] text-text-muted">{rows.indexOf(r) + 1}</span>}
         search={{ placeholder: "Cari nama warna…", getText: (r) => `${r.mrpWarna} ${r.skuWarna}` }}
-        emptyText='Belum ada alias warna — klik "+ Tambah Alias".'
+        emptyText='Belum ada mapping warna — klik "+ Tambah Mapping".'
         bodyMaxHeight="60vh"
       />
       {mode && (
-        <MasterDataFormModal title={mode === "add" ? "Tambah Alias Warna" : "Edit Alias Warna"} onCancel={() => setMode(null)} onSave={handleSave} saving={saving} error={error}>
+        <MasterDataFormModal title={mode === "add" ? "Tambah Mapping Warna" : "Edit Mapping Warna"} onCancel={() => setMode(null)} onSave={handleSave} saving={saving} error={error}>
           <ModalField label="Nama di MRP">
             <input
               value={draft.mrpWarna}

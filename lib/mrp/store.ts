@@ -29,6 +29,7 @@ import type { ParsedMrpImport } from "./parseImport";
 import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, MaterialSupplierRow, SupplierRow, VendorProduksiMasterRow, WarnaAliasRow } from "./masterData";
 import { localDateString } from "./derive";
 import * as rawActions from "./actions";
+import type { SkuImportInputRow, SkuImportSummary } from "./actions";
 import { unwrapAction } from "./action-result";
 
 // Setiap Server Action di lib/mrp/actions.ts lempar Error("Unauthorized: ...") / Error("Forbidden:
@@ -425,6 +426,7 @@ type FlowActions = {
   addItemSellingPriceRow: (data: Omit<ItemSellingPriceRow, "id">) => Promise<void>;
   updateItemSellingPriceRow: (id: string, patch: Partial<ItemSellingPriceRow>) => Promise<void>;
   deleteItemSellingPriceRow: (id: string) => Promise<void>;
+  bulkUpsertItemSellingPrices: (rows: SkuImportInputRow[]) => Promise<SkuImportSummary>;
   addWarnaAlias: (data: Omit<WarnaAliasRow, "id">) => Promise<void>;
   updateWarnaAlias: (id: string, patch: Partial<WarnaAliasRow>) => Promise<void>;
   deleteWarnaAlias: (id: string) => Promise<void>;
@@ -1640,6 +1642,13 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       throw err;
     }
     backgroundRefresh();
+  },
+  bulkUpsertItemSellingPrices: async (rows) => {
+    // Import massal (popup "Import Data", owner 2026-09-24) -- BUKAN optimistic (bisa ribuan baris,
+    // hasil pastinya baru jelas setelah server selesai) -- tunggu hasilnya, lalu refresh biasa.
+    const summary = unwrapAction(await actions.bulkUpsertItemSellingPricesAction(rows));
+    backgroundRefresh();
+    return summary;
   },
   addWarnaAlias: async (data) => {
     await actions.addWarnaAliasAction(data);

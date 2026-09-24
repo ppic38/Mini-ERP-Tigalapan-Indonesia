@@ -8,9 +8,11 @@ import { ItemSellingPricePanel } from "@/components/mrp/item-selling-price-panel
 import { WarnaAliasPanel } from "@/components/mrp/warna-alias-panel";
 
 // Revisi 2026-09-24 (owner: nama warna di MRP beda dari Master Data SKU -- "BENHUR SPECIAL 24S"
-// vs "BENHUR 24S" dst., bikin pencocokan SKU di WMS gagal): tab kedua "Alias Warna" ditambahkan
-// di sini (SATU halaman dengan SKU, sama-sama milik PPIC) -- lihat WarnaAliasPanel & catatan
-// lengkap di lib/mrp/masterData.ts (WarnaAliasRow) dan migration 0051_warna_aliases.sql.
+// vs "BENHUR 24S" dst., bikin pencocokan SKU di WMS gagal): tab kedua "Mapping Warna" (owner:
+// "ganti jadi mapping warna dulu, jangan alias warna" -- ini nama TAMPILAN, kode/tipe internal
+// tetap "WarnaAlias") ditambahkan di sini (SATU halaman dengan SKU, sama-sama milik PPIC) --
+// lihat WarnaAliasPanel & catatan lengkap di lib/mrp/masterData.ts (WarnaAliasRow) dan migration
+// 0051_warna_aliases.sql.
 type Tab = "sku" | "warnaAlias";
 
 export default function PpicMasterDataPage() {
@@ -26,7 +28,7 @@ export default function PpicMasterDataPage() {
       <Tabs
         items={[
           { key: "sku", label: "SKU (Harga Jual per Item)" },
-          { key: "warnaAlias", label: "Alias Warna" },
+          { key: "warnaAlias", label: "Mapping Warna" },
         ]}
         active={tab}
         onChange={(k) => setTab(k as Tab)}

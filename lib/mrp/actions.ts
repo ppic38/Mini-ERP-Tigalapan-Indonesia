@@ -5119,6 +5119,62 @@ export async function deleteItemSellingPriceRowAction(id: string): Promise<void>
   if (error) throw new Error(error.message);
 }
 
+export type SkuImportInputRow = { kategori: string; sku: string | null; itemName: string; warna: string; lengan: Lengan; size: string; price: number };
+export type SkuImportSummary = { inserted: number; updated: number; total: number };
+
+/** Import massal Master Data SKU dari popup "Import Data" (owner 2026-09-24) -- UPSERT, BUKAN
+ *  replace-all (beda dari replaceHargaMaklonAction dkk. yang hapus semua baris dulu): baris yang
+ *  sudah pernah disimpan lewat "+ Tambah SKU" satu-satu TIDAK ikut terhapus cuma karena ada import
+ *  massal berikutnya. Kecocokan baris lama vs baru: SKU dulu kalau ada isinya, kalau tidak baru
+ *  kombinasi warna+lengan+size -- ketemu berarti UPDATE baris itu (kategori/nama/harga bisa
+ *  berubah), tidak ketemu berarti INSERT baris baru. Dikelompokkan per BATCH_SIZE supaya request
+ *  ke Postgres tidak sekali kirim ribuan baris (import referensi owner: 2139 baris). */
+export async function bulkUpsertItemSellingPricesAction(rows: SkuImportInputRow[]): Promise<ActionResult<SkuImportSummary>> {
+  return toActionResult(() => bulkUpsertItemSellingPricesImpl(rows));
+}
+async function bulkUpsertItemSellingPricesImpl(rows: SkuImportInputRow[]): Promise<SkuImportSummary> {
+  await requirePpicRole();
+  if (rows.length === 0) return { inserted: 0, updated: 0, total: 0 };
+  const db = supabaseServer();
+  const { data: existing, error: fetchErr } = await db.from("item_selling_prices").select("id,sku,warna,lengan,size");
+  if (fetchErr) throw new Error(fetchErr.message);
+  const bySku = new Map<string, string>();
+  const byWls = new Map<string, string>();
+  for (const r of existing ?? []) {
+    if (r.sku && String(r.sku).trim()) bySku.set(String(r.sku).trim(), r.id);
+    byWls.set(`${r.warna}|${r.lengan}|${r.size}`, r.id);
+  }
+  const resolved = rows.map((r) => {
+    const skuKey = r.sku?.trim();
+    const existingId = (skuKey && bySku.get(skuKey)) || byWls.get(`${r.warna}|${r.lengan}|${r.size}`) || null;
+    return { row: r, id: existingId };
+  });
+  const needNewId = resolved.filter((r) => !r.id);
+  const newIds = await Promise.all(needNewId.map(() => nextReadableId("HJ")));
+  let idx = 0;
+  const nowIso = new Date().toISOString();
+  const payload = resolved.map(({ row, id }) => ({
+    id: id ?? newIds[idx++],
+    kategori: row.kategori,
+    sku: row.sku,
+    item_name: row.itemName,
+    warna: row.warna,
+    lengan: row.lengan,
+    size: row.size,
+    price: row.price,
+    updated_at: nowIso,
+  }));
+  const updated = resolved.filter((r) => r.id).length;
+  const inserted = payload.length - updated;
+  const BATCH_SIZE = 500;
+  for (let i = 0; i < payload.length; i += BATCH_SIZE) {
+    const chunk = payload.slice(i, i + BATCH_SIZE);
+    const { error } = await db.from("item_selling_prices").upsert(chunk, { onConflict: "id" });
+    if (error) throw new Error(`Gagal menyimpan baris ${i + 1}-${i + chunk.length}: ${error.message}`);
+  }
+  return { inserted, updated, total: payload.length };
+}
+
 // Master Data "Alias Warna" (migration 0051) -- lihat catatan lengkap di WarnaAliasRow (masterData.ts).
 // Milik PPIC juga (sumber & tujuan pemetaan sama-sama data PPIC), jadi role guard sama dengan SKU.
 export async function addWarnaAliasAction(data: Omit<WarnaAliasRow, "id">): Promise<void> {
