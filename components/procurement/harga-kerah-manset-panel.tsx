@@ -91,7 +91,6 @@ export function HargaKerahMansetPanel() {
     <>
       <DataTable
         title="Harga Kerah/Manset per Supplier"
-        subtitle={`Harga per kg — ${rows.length} supplier. DIPAKAI LIVE untuk estimasi Rp Kerah/Manset di PO Approval (kg x harga/kg). Supplier yang belum punya baris sendiri memakai harga KNITTO; kalau KNITTO pun tidak ada, memakai harga global di atas.`}
         headerActions={
           <Button onClick={openAdd} variant="dashed" size="sm">
             + Tambah Data

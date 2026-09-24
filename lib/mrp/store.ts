@@ -423,6 +423,8 @@ type FlowActions = {
   deleteHargaKerahMansetRow: (id: string) => Promise<void>;
   addMaterialSupplier: (nama: string) => Promise<void>;
   deleteMaterialSupplier: (id: string) => Promise<void>;
+  updateVendorProduksiMaster: (id: string, patch: { name?: string; kategori?: string; weeklyCapacity?: number }) => Promise<void>;
+  deleteVendorProduksiMaster: (id: string) => Promise<void>;
   addItemSellingPriceRow: (data: Omit<ItemSellingPriceRow, "id">) => Promise<void>;
   updateItemSellingPriceRow: (id: string, patch: Partial<ItemSellingPriceRow>) => Promise<void>;
   deleteItemSellingPriceRow: (id: string) => Promise<void>;
@@ -1613,6 +1615,30 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     } catch (err) {
       set({ materialSuppliers: previous });
       window.alert("Gagal menghapus supplier -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  updateVendorProduksiMaster: async (id, patch) => {
+    const previous = get().vendorProduksiList;
+    set({ vendorProduksiList: previous.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+    try {
+      await actions.updateVendorProduksiMasterAction(id, patch);
+    } catch (err) {
+      set({ vendorProduksiList: previous });
+      window.alert("Gagal menyimpan vendor produksi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  deleteVendorProduksiMaster: async (id) => {
+    const previous = get().vendorProduksiList;
+    set({ vendorProduksiList: previous.filter((r) => r.id !== id) });
+    try {
+      await actions.deleteVendorProduksiMasterAction(id);
+    } catch (err) {
+      set({ vendorProduksiList: previous });
+      window.alert("Gagal menghapus vendor produksi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();

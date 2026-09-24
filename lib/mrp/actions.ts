@@ -4979,6 +4979,33 @@ export async function deleteMaterialSupplierAction(id: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+// Edit/Hapus Vendor Produksi dari Master Data Procurement (owner 2026-09-24: "ada juga action edit
+// atau hapus untuk yang di master data vendor produksi") -- tabel `vendors_produksi` sebelumnya
+// READ-ONLY di panel ini (lihat catatan lama di vendor-supplier-panel.tsx, akun vendor dikelola
+// lewat login vendor sendiri). Dua action baru ini SENGAJA cuma menyentuh 3 kolom non-rahasia
+// (name/kategori/base_capacity) -- TIDAK PERNAH menyentuh password_hash/kredensial login vendor.
+// Hapus dibiarkan mengandalkan FK constraint biasa (references vendors_produksi(id) di banyak
+// tabel transaksi, migration 0001) -- Postgres otomatis menolak hapus vendor yang masih punya
+// data terkait (PO Maklon/pengiriman/invoice/dll), pesannya diperjelas di bawah.
+export async function updateVendorProduksiMasterAction(id: string, patch: { name?: string; kategori?: string; weeklyCapacity?: number }): Promise<void> {
+  await requireMasterDataRole();
+  const p: Record<string, unknown> = {};
+  if (patch.name !== undefined) {
+    const trimmed = patch.name.trim();
+    if (!trimmed) throw new Error("Nama vendor produksi wajib diisi.");
+    p.name = trimmed;
+  }
+  if (patch.kategori !== undefined) p.kategori = patch.kategori.trim() || null;
+  if (patch.weeklyCapacity !== undefined) p.base_capacity = patch.weeklyCapacity;
+  const { error } = await supabaseServer().from("vendors_produksi").update(p).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+export async function deleteVendorProduksiMasterAction(id: string): Promise<void> {
+  await requireMasterDataRole();
+  const { error } = await supabaseServer().from("vendors_produksi").delete().eq("id", id);
+  if (error) throw new Error(error.message.includes("foreign key") ? "Vendor produksi ini masih punya data terkait (PO Maklon/pengiriman/invoice/dll) -- tidak bisa dihapus." : error.message);
+}
+
 export async function addHargaKainPksRowAction(data: Omit<HargaKainPksRow, "id">): Promise<void> {
   await requireMasterDataRole();
   const id = await nextReadableId("HKPKS");
