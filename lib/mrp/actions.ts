@@ -5281,3 +5281,26 @@ async function bulkUpsertWarnaAliasesImpl(rows: WarnaAliasImportInputRow[]): Pro
   }
   return { inserted, updated, total: payload.length };
 }
+
+// Master Data "App Settings" -- tabel generik key/value boolean (migration 0052, owner 2026-09-24:
+// "disable saja juga untuk yang di master data. hide saja (tapi bisa diaktifkan kembali melalui
+// erp untuk master datanya)") -- dipakai PERTAMA untuk toggle visibilitas tab "Harga Kain PKS" di
+// Master Data Procurement (lihat app/procurement/master-data/page.tsx), TANPA perlu deploy kode
+// baru untuk menampilkannya lagi. Key lain di masa depan bisa reuse tabel & action yang sama.
+export async function getAppSettingAction(key: string): Promise<ActionResult<boolean | null>> {
+  return toActionResult(() => getAppSettingImpl(key));
+}
+async function getAppSettingImpl(key: string): Promise<boolean | null> {
+  await requireSession();
+  const { data, error } = await supabaseServer().from("app_settings").select("value").eq("key", key).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data?.value ?? null;
+}
+export async function setAppSettingAction(key: string, value: boolean): Promise<ActionResult<void>> {
+  return toActionResult(() => setAppSettingImpl(key, value));
+}
+async function setAppSettingImpl(key: string, value: boolean): Promise<void> {
+  await requireMasterDataRole();
+  const { error } = await supabaseServer().from("app_settings").upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: "key" });
+  if (error) throw new Error(error.message);
+}

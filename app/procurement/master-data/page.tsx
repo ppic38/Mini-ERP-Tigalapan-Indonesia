@@ -12,6 +12,13 @@ import { EkspedisiRatePanel } from "@/components/procurement/ekspedisi-rate-pane
 import { KerahMansetSettingsPanel } from "@/components/procurement/kerah-manset-settings-panel";
 import { HargaKerahMansetPanel } from "@/components/procurement/harga-kerah-manset-panel";
 import { VendorSupplierPanel } from "@/components/procurement/vendor-supplier-panel";
+import { getAppSettingAction, setAppSettingAction } from "@/lib/mrp/actions";
+
+// Key "app_settings" (migration 0052) yang menyimpan visibilitas tab "Harga Kain PKS" -- owner
+// 2026-09-24: tab ini disembunyikan dulu (harga PKS akan diinput manual sebagai diskon di Paying
+// Voucher, lihat HARGA_KAIN_PKS_ENABLED di lib/mrp/derive.ts), TAPI bisa ditampilkan lagi kapan
+// saja lewat tombol di halaman ini sendiri -- tidak perlu kode/deploy baru.
+const HARGA_KAIN_PKS_TAB_VISIBLE_KEY = "harga_kain_pks_tab_visible";
 
 // Item revisi 2026-09-15 (owner: tab "Supplier" dihapus dari menu Master Data -- datanya memang
 // kosong/tidak pernah dipakai, dicek langsung ke DB sebelum dihapus, lihat catatan di
@@ -36,6 +43,27 @@ export default function ProcurementMasterDataPage() {
   useEffect(() => setMounted(true), []);
 
   const [tab, setTab] = useState<Tab>("maklon");
+  const [kainPksVisible, setKainPksVisible] = useState(false);
+  const [kainPksToggling, setKainPksToggling] = useState(false);
+
+  useEffect(() => {
+    getAppSettingAction(HARGA_KAIN_PKS_TAB_VISIBLE_KEY).then((res) => {
+      if (res.ok && res.data) setKainPksVisible(true);
+    });
+  }, []);
+
+  async function toggleKainPksVisible(next: boolean) {
+    setKainPksToggling(true);
+    try {
+      const res = await setAppSettingAction(HARGA_KAIN_PKS_TAB_VISIBLE_KEY, next);
+      if (res.ok) {
+        setKainPksVisible(next);
+        if (!next && tab === "kainPks") setTab("maklon");
+      }
+    } finally {
+      setKainPksToggling(false);
+    }
+  }
 
   if (!mounted) return null;
 
@@ -45,7 +73,7 @@ export default function ProcurementMasterDataPage() {
         items={[
           { key: "maklon", label: "Harga Maklon" },
           { key: "kain", label: "Harga Kain" },
-          { key: "kainPks", label: "Harga Kain PKS" },
+          ...(kainPksVisible ? [{ key: "kainPks", label: "Harga Kain PKS" }] : []),
           { key: "rib", label: "Harga RIB" },
           { key: "ekspedisi", label: "Ekspedisi" },
           { key: "kerahManset", label: "Kerah/Manset" },
@@ -54,9 +82,26 @@ export default function ProcurementMasterDataPage() {
         active={tab}
         onChange={(k) => setTab(k as Tab)}
       />
+      <div className="mt-1 mb-2 font-sans text-[10.5px] text-text-muted">
+        {kainPksVisible ? (
+          <>
+            Tab &quot;Harga Kain PKS&quot; sedang ditampilkan (harga PKS TIDAK dipakai otomatis di perhitungan, lihat panelnya).{" "}
+            <button onClick={() => toggleKainPksVisible(false)} disabled={kainPksToggling} className="font-semibold text-action-primary underline disabled:opacity-50">
+              Sembunyikan
+            </button>
+          </>
+        ) : (
+          <>
+            Tab &quot;Harga Kain PKS&quot; sedang disembunyikan (fitur nonaktif sementara).{" "}
+            <button onClick={() => toggleKainPksVisible(true)} disabled={kainPksToggling} className="font-semibold text-action-primary underline disabled:opacity-50">
+              Tampilkan
+            </button>
+          </>
+        )}
+      </div>
       <KeepAliveTab active={tab === "maklon"}><HargaMaklonPanel /></KeepAliveTab>
       <KeepAliveTab active={tab === "kain"}><HargaKainPanel /></KeepAliveTab>
-      <KeepAliveTab active={tab === "kainPks"}><HargaKainPksPanel /></KeepAliveTab>
+      {kainPksVisible && <KeepAliveTab active={tab === "kainPks"}><HargaKainPksPanel /></KeepAliveTab>}
       <KeepAliveTab active={tab === "rib"}><HargaRibPanel /></KeepAliveTab>
       <KeepAliveTab active={tab === "ekspedisi"}><EkspedisiRatePanel /></KeepAliveTab>
       <KeepAliveTab active={tab === "kerahManset"}>
