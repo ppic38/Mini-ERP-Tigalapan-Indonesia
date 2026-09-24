@@ -29,7 +29,7 @@ import type { ParsedMrpImport } from "./parseImport";
 import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, MaterialSupplierRow, SupplierRow, VendorProduksiMasterRow, WarnaAliasRow } from "./masterData";
 import { localDateString } from "./derive";
 import * as rawActions from "./actions";
-import type { SkuImportInputRow, SkuImportSummary } from "./actions";
+import type { SkuImportInputRow, SkuImportSummary, WarnaAliasImportInputRow, HargaKainImportInputRow } from "./actions";
 import { unwrapAction } from "./action-result";
 
 // Setiap Server Action di lib/mrp/actions.ts lempar Error("Unauthorized: ...") / Error("Forbidden:
@@ -430,6 +430,8 @@ type FlowActions = {
   addWarnaAlias: (data: Omit<WarnaAliasRow, "id">) => Promise<void>;
   updateWarnaAlias: (id: string, patch: Partial<WarnaAliasRow>) => Promise<void>;
   deleteWarnaAlias: (id: string) => Promise<void>;
+  bulkUpsertWarnaAliases: (rows: WarnaAliasImportInputRow[]) => Promise<SkuImportSummary>;
+  bulkUpsertHargaKain: (rows: HargaKainImportInputRow[]) => Promise<SkuImportSummary>;
 
   setMaterialPoEntity: (poId: string, entitas: string) => Promise<void>;
   setMaterialPoColorEntity: (poId: string, warna: string, lengan: Lengan, entitas: string) => Promise<void>;
@@ -1677,6 +1679,16 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       throw err;
     }
     backgroundRefresh();
+  },
+  bulkUpsertWarnaAliases: async (rows) => {
+    const summary = unwrapAction(await actions.bulkUpsertWarnaAliasesAction(rows));
+    backgroundRefresh();
+    return summary;
+  },
+  bulkUpsertHargaKain: async (rows) => {
+    const summary = unwrapAction(await actions.bulkUpsertHargaKainAction(rows));
+    backgroundRefresh();
+    return summary;
   },
   addHargaKainPksRow: async (data) => {
     await actions.addHargaKainPksRowAction(data);

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { MasterDataFormModal, ModalField } from "@/components/mrp/master-data-form-modal";
+import { ImportWarnaAliasModal } from "@/components/mrp/import-warna-alias-modal";
 import { useMrpStore } from "@/lib/mrp/store";
 import type { WarnaAliasRow } from "@/lib/mrp/masterData";
 
@@ -36,6 +37,8 @@ export function WarnaAliasPanel() {
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // Revisi 2026-09-24 (owner: "buat mapping warna juga bisa ada fitur import spreadsheet").
+  const [importOpen, setImportOpen] = useState(false);
 
   function openAdd() {
     setDraft({ ...EMPTY_DRAFT, skuWarna: skuWarnaOptions[0] ?? "" });
@@ -96,9 +99,14 @@ export function WarnaAliasPanel() {
         title="Mapping Warna"
         subtitle={`${rows.length} mapping. Pemetaan nama warna di MRP (PPIC) ke nama warna di Master Data SKU -- dipakai otomatis kalau nama warnanya beda tapi warnanya sama (mis. "BENHUR SPECIAL 24S" -> "BENHUR 24S"), supaya SKU di resi WMS tetap kecocok.`}
         headerActions={
-          <Button onClick={openAdd} variant="dashed" size="sm">
-            + Tambah Mapping
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button onClick={() => setImportOpen(true)} variant="ghost" size="sm">
+              Import Data
+            </Button>
+            <Button onClick={openAdd} variant="dashed" size="sm">
+              + Tambah Mapping
+            </Button>
+          </div>
         }
         columns={columns}
         rows={rows}
@@ -137,6 +145,7 @@ export function WarnaAliasPanel() {
           </ModalField>
         </MasterDataFormModal>
       )}
+      {importOpen && <ImportWarnaAliasModal onClose={() => setImportOpen(false)} />}
     </>
   );
 }

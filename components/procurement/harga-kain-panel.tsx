@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/mrp/number-input";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { MasterDataFormModal, ModalField } from "@/components/mrp/master-data-form-modal";
+import { ImportHargaKainModal } from "@/components/mrp/import-harga-kain-modal";
 import { formatRupiah, MATERIAL_KATEGORI_URUTAN } from "@/lib/mrp/derive";
 import { useMrpStore } from "@/lib/mrp/store";
 import type { HargaKainRow } from "@/lib/mrp/masterData";
@@ -35,6 +36,11 @@ export function HargaKainPanel() {
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // Revisi 2026-09-24 (owner: "sama yang untuk harga kain") -- popup import Excel/CSV BERDAMPINGAN
+  // dengan jalur "Import dari Google Sheets" otomatis yang sudah ada (lihat components/shell/
+  // app-shell.tsx, replaceHargaKain -- REPLACE TOTAL, jalan sekali otomatis kalau tabel kosong).
+  // Popup ini UPSERT, bisa dipakai berkali-kali kapan saja tanpa menghapus baris lama.
+  const [importOpen, setImportOpen] = useState(false);
 
   function openAdd() {
     setDraft(EMPTY_DRAFT);
@@ -108,9 +114,14 @@ export function HargaKainPanel() {
         title="Harga Kain / Material"
         subtitle={`Harga flat per kg — ${rows.length} baris. DIPAKAI LIVE untuk estimasi harga PO Material di PO Approval/export PDF PO -- kalah prioritas dari Harga Kain PKS kalau berat pesanan cocok salah satu tingkatan tonase di sana.`}
         headerActions={
-          <Button onClick={openAdd} variant="dashed" size="sm">
-            + Tambah Data
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button onClick={() => setImportOpen(true)} variant="ghost" size="sm">
+              Import Data
+            </Button>
+            <Button onClick={openAdd} variant="dashed" size="sm">
+              + Tambah Data
+            </Button>
+          </div>
         }
         columns={columns}
         rows={rows}
@@ -156,6 +167,7 @@ export function HargaKainPanel() {
           </ModalField>
         </MasterDataFormModal>
       )}
+      {importOpen && <ImportHargaKainModal onClose={() => setImportOpen(false)} />}
     </>
   );
 }

@@ -4869,6 +4869,48 @@ export async function replaceHargaKainAction(rows: HargaKainRow[]): Promise<void
   if (error) throw new Error(error.message);
 }
 
+export type HargaKainImportInputRow = { kodeSupplier: string; namaSupplier: string; kategori: string; warna: string; hargaPerKg: number };
+
+/** Import massal Harga Kain dari popup "Import Data" (owner 2026-09-24) -- UPSERT by kombinasi
+ *  kodeSupplier+kategori+warna (tidak ada unique constraint di DB utk kombinasi ini, dicocokkan di
+ *  level aplikasi seperti bulkUpsertItemSellingPricesAction). BEDA dari replaceHargaKainAction di
+ *  atas (jalur "Import dari Google Sheets" lama, REPLACE TOTAL) -- popup ini TIDAK menghapus baris
+ *  lama yang tidak disebut di file, cuma menambah/memperbarui yang disebut. Kedua jalur sengaja
+ *  dipertahankan berdampingan (owner sudah pakai jalur lama di tempat lain). */
+export async function bulkUpsertHargaKainAction(rows: HargaKainImportInputRow[]): Promise<ActionResult<SkuImportSummary>> {
+  return toActionResult(() => bulkUpsertHargaKainImpl(rows));
+}
+async function bulkUpsertHargaKainImpl(rows: HargaKainImportInputRow[]): Promise<SkuImportSummary> {
+  await requireMasterDataRole();
+  if (rows.length === 0) return { inserted: 0, updated: 0, total: 0 };
+  const db = supabaseServer();
+  const { data: existing, error: fetchErr } = await db.from("harga_kain").select("id,kode_supplier,kategori,warna");
+  if (fetchErr) throw new Error(fetchErr.message);
+  const byKey = new Map<string, string>();
+  for (const r of existing ?? []) byKey.set(`${r.kode_supplier}|${r.kategori}|${r.warna}`, r.id);
+  const resolved = rows.map((r) => ({ row: r, id: byKey.get(`${r.kodeSupplier}|${r.kategori}|${r.warna}`) ?? null }));
+  const needNewId = resolved.filter((r) => !r.id);
+  const newIds = await Promise.all(needNewId.map(() => nextReadableId("HKAIN")));
+  let idx = 0;
+  const payload = resolved.map(({ row, id }) => ({
+    id: id ?? newIds[idx++],
+    kode_supplier: row.kodeSupplier,
+    nama_supplier: row.namaSupplier,
+    kategori: row.kategori,
+    warna: row.warna,
+    harga_per_kg: row.hargaPerKg,
+  }));
+  const updated = resolved.filter((r) => r.id).length;
+  const inserted = payload.length - updated;
+  const BATCH_SIZE = 500;
+  for (let i = 0; i < payload.length; i += BATCH_SIZE) {
+    const chunk = payload.slice(i, i + BATCH_SIZE);
+    const { error } = await db.from("harga_kain").upsert(chunk, { onConflict: "id" });
+    if (error) throw new Error(`Gagal menyimpan baris ${i + 1}-${i + chunk.length}: ${error.message}`);
+  }
+  return { inserted, updated, total: payload.length };
+}
+
 // Master Data "Harga RIB" (per supplier + warna, migration 0037) -- pola sama seperti Harga Kain.
 export async function addHargaRibRowAction(data: Omit<HargaRibRow, "id">): Promise<void> {
   await requireMasterDataRole();
@@ -5201,4 +5243,41 @@ export async function deleteWarnaAliasAction(id: string): Promise<void> {
   await requirePpicRole();
   const { error } = await supabaseServer().from("warna_aliases").delete().eq("id", id);
   if (error) throw new Error(error.message);
+}
+
+export type WarnaAliasImportInputRow = { mrpWarna: string; skuWarna: string; catatan?: string };
+
+/** Import massal Mapping Warna dari popup "Import Data" (owner 2026-09-24) -- UPSERT by
+ *  `mrpWarna` (kolom `mrp_warna` UNIQUE di DB, lihat migration 0051), pola sama persis dengan
+ *  bulkUpsertItemSellingPricesAction. */
+export async function bulkUpsertWarnaAliasesAction(rows: WarnaAliasImportInputRow[]): Promise<ActionResult<SkuImportSummary>> {
+  return toActionResult(() => bulkUpsertWarnaAliasesImpl(rows));
+}
+async function bulkUpsertWarnaAliasesImpl(rows: WarnaAliasImportInputRow[]): Promise<SkuImportSummary> {
+  await requirePpicRole();
+  if (rows.length === 0) return { inserted: 0, updated: 0, total: 0 };
+  const db = supabaseServer();
+  const { data: existing, error: fetchErr } = await db.from("warna_aliases").select("id,mrp_warna");
+  if (fetchErr) throw new Error(fetchErr.message);
+  const byMrpWarna = new Map<string, string>();
+  for (const r of existing ?? []) byMrpWarna.set(r.mrp_warna, r.id);
+  const resolved = rows.map((r) => ({ row: r, id: byMrpWarna.get(r.mrpWarna) ?? null }));
+  const needNewId = resolved.filter((r) => !r.id);
+  const newIds = await Promise.all(needNewId.map(() => nextReadableId("WAL")));
+  let idx = 0;
+  const payload = resolved.map(({ row, id }) => ({
+    id: id ?? newIds[idx++],
+    mrp_warna: row.mrpWarna,
+    sku_warna: row.skuWarna,
+    catatan: row.catatan?.trim() || null,
+  }));
+  const updated = resolved.filter((r) => r.id).length;
+  const inserted = payload.length - updated;
+  const BATCH_SIZE = 500;
+  for (let i = 0; i < payload.length; i += BATCH_SIZE) {
+    const chunk = payload.slice(i, i + BATCH_SIZE);
+    const { error } = await db.from("warna_aliases").upsert(chunk, { onConflict: "id" });
+    if (error) throw new Error(`Gagal menyimpan baris ${i + 1}-${i + chunk.length}: ${error.message}`);
+  }
+  return { inserted, updated, total: payload.length };
 }
