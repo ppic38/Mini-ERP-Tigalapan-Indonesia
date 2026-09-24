@@ -9,6 +9,7 @@ import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { useMrpStore } from "@/lib/mrp/store";
 import { usePendingActions } from "@/lib/mrp/usePendingActions";
 import { viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
+import { ItemsDetailPanel, kindLabel, summarizeItems, USIA_LABEL } from "@/components/mrp/koli-items-detail";
 import {
   availableFgToShip,
   formatDate,
@@ -20,24 +21,22 @@ import {
 import { countPengirimanPendingForMrp, pendingMarker } from "@/lib/shell/badges";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { AvailableFgRow } from "@/lib/mrp/derive";
-import type { DeliveryKoli, DeliveryKoliItem, Lengan, ShippableKind, Usia } from "@/lib/mrp/types";
+import type { DeliveryKoli, DeliveryKoliItem, Lengan, ShippableKind } from "@/lib/mrp/types";
 
-const USIA_LABEL: Record<Usia, string> = { KIDS: "Kids", DEWASA: "Dewasa" };
-
+// Revisi 2026-09-24 (owner: "apa bisa detail seperti [Riwayat pengiriman]?"): USIA_LABEL/kindLabel/
+// summarizeItems/ItemsDetailPanel DIPINDAH ke components/mrp/koli-items-detail.tsx supaya bisa
+// dipakai bareng oleh Invoice & Payment ("Siap diajukan invoice") -- tampilan detail koli sekarang
+// SAMA PERSIS di kedua tempat, bukan disalin manual. PRODUCT_KIND_OPTIONS tetap lokal di sini
+// (dipakai rowKey/availableFor untuk logic form, bukan bagian tampilan detail).
+//
 // Item 20 (feedback batch 2026-09-04): Reject bukan lagi barang yang bisa DITAMBAHKAN ke koli baru
-// -- dihapus dari opsi ini supaya tidak ada baris Reject baru yang bisa dibuat. `kindLabel` di
-// bawah TETAP tahu label "Reject" supaya koli LAMA yang sudah terlanjur berisi baris Reject (dari
-// sebelum perubahan ini) masih bisa dirender wajar (lihat `DeliveryItemKind`).
+// -- dihapus dari opsi ini supaya tidak ada baris Reject baru yang bisa dibuat. `kindLabel`
+// (koli-items-detail.tsx) TETAP tahu label "Reject" supaya koli LAMA yang sudah terlanjur berisi
+// baris Reject (dari sebelum perubahan ini) masih bisa dirender wajar (lihat `DeliveryItemKind`).
 const PRODUCT_KIND_OPTIONS: { value: ShippableKind; label: string }[] = [
   { value: "FG", label: "Finish Good" },
   { value: "REWORK", label: "Rework" },
 ];
-
-const LEGACY_KIND_LABELS: Record<string, string> = { REJECT: "Reject" };
-
-function kindLabel(kind: DeliveryKoliItem["kind"]): string {
-  return PRODUCT_KIND_OPTIONS.find((opt) => opt.value === kind)?.label ?? LEGACY_KIND_LABELS[kind] ?? kind;
-}
 
 /** Kunci unik 1 baris "Isi koli" — kombinasi jenis produk + warna + lengan + size + usia. Dulu
  *  tiap baris draft ("+ Tambah item") bisa menunjuk kombinasi APA SAJA lewat dropdown, jadi butuh
@@ -58,41 +57,6 @@ function rollSizeKey(warna: string, lengan: Lengan, size: string): string {
 /** Kunci 1 baris invoice (mrpId+warna+lengan+usia) -- dipakai draft rate di dialog "Submit
  *  Invoice", HARUS PERSIS SAMA format-nya dengan `lineKeyLocal` di actions.ts supaya rate yang
  *  diketik di sini nyambung ke baris yang benar saat submit. */
-/** Ringkasan singkat "Isi" koli untuk tampilan default — daftar lengkap per item (bisa banyak
- *  baris & bikin sel meluber) sekarang cuma muncul kalau baris di-klik untuk expand, lihat
- *  `ItemsDetailPanel` di bawah. */
-function summarizeItems(items: DeliveryKoliItem[]): string {
-  if (items.length === 0) return "—";
-  const totalQty = items.reduce((s, it) => s + it.qty, 0);
-  return `${items.length} varian · ${totalQty} pcs`;
-}
-
-function ItemsDetailPanel({ items }: { items: DeliveryKoliItem[] }) {
-  return (
-    <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
-      <div className="grid grid-cols-5 gap-x-2 border-b border-[#E4E8EE] bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-        <span>Jenis produk</span>
-        <span>Warna</span>
-        <span>Lengan</span>
-        <span>Size / Usia</span>
-        <span className="text-right">Qty</span>
-      </div>
-      {items.map((it, i) => (
-        <div key={i} className="grid grid-cols-5 gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F] last:border-b-0">
-          <span>{kindLabel(it.kind ?? "FG")}</span>
-          <span>{it.warna}</span>
-          <span>{it.lengan}</span>
-          <span>
-            {it.size}
-            {it.usia ? " · " + USIA_LABEL[it.usia] : ""}
-          </span>
-          <span className="text-right font-mono font-semibold">{it.qty} pcs</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 /** Item 2026-09-10 (migration 0024): kompres foto lampiran ekspedisi di BROWSER sebelum dikirim ke
  *  Server Action, pola SAMA PERSIS `compressImageToDataUrl` di production-cutting-tab.tsx (klaim
  *  fisik) -- resize ke sisi terpanjang maks 1280px, JPEG quality 0.7, disimpan sebagai data-URI. */

@@ -1,9 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
 import { useMrpStore } from "@/lib/mrp/store";
+import { viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
+import { ItemsDetailPanel, summarizeItems } from "@/components/mrp/koli-items-detail";
 import {
   formatDate,
   formatDecimal,
@@ -66,6 +69,18 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
   const [expandedInvoiceId, setExpandedInvoiceId] = useState("");
   const [expandedMrpKey, setExpandedMrpKey] = useState("");
   const [expandedWarnaKey, setExpandedWarnaKey] = useState("");
+  // Revisi 2026-09-24 (owner: "apa bisa detail seperti [Riwayat pengiriman]?"): expand/collapse
+  // rincian isi koli per item di kartu "Siap diajukan invoice" -- pola & komponen SAMA PERSIS dengan
+  // "Riwayat pengiriman" di app/vendor-maklon/pengiriman/page.tsx (ItemsDetailPanel, koli-items-detail.tsx).
+  const [expandedKoli, setExpandedKoli] = useState<Set<string>>(new Set());
+  function toggleKoliExpanded(koliId: string) {
+    setExpandedKoli((prev) => {
+      const next = new Set(prev);
+      if (next.has(koliId)) next.delete(koliId);
+      else next.add(koliId);
+      return next;
+    });
+  }
 
   const myInvoices = vendorInvoices.filter((i) => i.vendorProduksi === vendorId);
 
@@ -119,18 +134,57 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
               const totalWeight = kolis.reduce((s, k) => s + (k.beratKoli ?? 0), 0);
               const koliIds = kolis.map((k) => k.id);
               return (
-                <div key={groupKey} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-border-subtle bg-white px-3 py-2 font-sans text-[11.5px] text-[#31414F]">
-                  <span className="font-mono font-semibold">{first.noResi || "—"}</span>
-                  <span>
-                    Ekspedisi: <span className="font-medium">{first.ekspedisi}</span>
-                  </span>
-                  <span>
-                    {kolis.length} koli · <span className="font-mono">{formatDecimal(totalWeight)} kg</span>
-                  </span>
-                  <span className="font-mono text-[11px] text-text-muted">{formatDate(first.deliveredAt)}</span>
-                  <Button onClick={() => openInvoiceDialog(koliIds)} variant="primary" size="xs" className="ml-auto">
-                    Submit Invoice →
-                  </Button>
+                <div key={groupKey} className="overflow-hidden rounded-md border border-border-subtle bg-white">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-2 font-sans text-[11.5px] text-[#31414F]">
+                    <span className="font-mono font-semibold">{first.noResi || "—"}</span>
+                    <span>
+                      Ekspedisi: <span className="font-medium">{first.ekspedisi}</span>
+                    </span>
+                    <span>
+                      Total berat: <span className="font-mono">{formatDecimal(totalWeight)} kg</span>
+                    </span>
+                    <span className="font-mono text-[11px] text-text-muted">{formatDate(first.deliveredAt)}</span>
+                    {first.ekspedisiNoteAt && (
+                      <button onClick={() => viewEkspedisiPhoto(first.id)} className="font-semibold text-action-primary underline">
+                        Lihat / Download foto
+                      </button>
+                    )}
+                    <Button onClick={() => openInvoiceDialog(koliIds)} variant="primary" size="xs" className="ml-auto">
+                      Submit Invoice →
+                    </Button>
+                  </div>
+                  {first.ekspedisiNote && <div className="border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-[10.5px] text-text-muted">Catatan: {first.ekspedisiNote}</div>}
+                  <div className="grid grid-cols-4 gap-x-2 border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                    <span>No MRP</span>
+                    <span>No Koli</span>
+                    <span>Isi</span>
+                    <span className="text-right">Berat (kg)</span>
+                  </div>
+                  {kolis.map((k) => {
+                    const isExpanded = expandedKoli.has(k.id);
+                    return (
+                      <Fragment key={k.id}>
+                        <div className="grid grid-cols-4 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0">
+                          <span className="font-mono">{k.mrpId}</span>
+                          <span className="font-mono font-medium">{k.noKoli}</span>
+                          <button
+                            onClick={() => toggleKoliExpanded(k.id)}
+                            className="flex items-center gap-1 text-left font-sans text-xs text-[#31414F] hover:text-action-primary"
+                            title="Klik untuk lihat rincian isi koli per item"
+                          >
+                            {isExpanded ? <ChevronDown className="h-3.5 w-3.5 flex-none text-text-muted" /> : <ChevronRight className="h-3.5 w-3.5 flex-none text-text-muted" />}
+                            {summarizeItems(k.items)}
+                          </button>
+                          <span className="text-right font-mono">{formatDecimal(k.beratKoli ?? 0)}</span>
+                        </div>
+                        {isExpanded && (
+                          <div className="border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-3 last:border-b-0">
+                            <ItemsDetailPanel items={k.items} />
+                          </div>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </div>
               );
             })}
