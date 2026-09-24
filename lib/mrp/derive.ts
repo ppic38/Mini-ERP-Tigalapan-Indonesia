@@ -242,13 +242,21 @@ export type MaterialRateInfo = { rate: number; source: RateSource; totalKg: numb
  *  per-kg) kalau supplier+warna itu sama sekali tidak ada di Master Data manapun. Kolom
  *  `kategori` SENGAJA diabaikan — ColorBreakdown/MaterialPO tidak punya field kategori, warna
  *  string di data yang ada sudah unik mencakup itu (mis. "ABU MUDA 24S"). */
+// Owner 2026-09-24: nonaktifkan SEMENTARA pemakaian Harga Kain PKS di semua perhitungan --
+// harga PKS rencananya akan diinput manual sebagai diskon di Paying Voucher, masih perlu
+// dikonfirmasi ke internal dulu. SENGAJA cuma di-disable (bukan dihapus): tabel `harga_kain_pks`,
+// panel Master Data "Harga Kain PKS", dan seed Google Sheets-nya TETAP ada apa adanya supaya bisa
+// diaktifkan lagi kapan saja tinggal ganti `false` -> `true` di bawah ini tanpa perlu tulis ulang
+// kode/migration apa pun.
+const HARGA_KAIN_PKS_ENABLED = false;
+
 export function hargaKainRateInfo(hargaKain: HargaKainRow[], hargaKainPks: HargaKainPksRow[], supplierName: string, warna: string, totalKg: number): MaterialRateInfo {
   const flatMatches = hargaKain.filter((r) => normKey(r.namaSupplier) === normKey(supplierName) && normKey(r.warna) === normKey(warna));
   // HargaKainPksRow tidak punya namaSupplier (cuma kodeSupplier) — jembatani lewat tabel flat;
   // kalau tidak ada match sama sekali di situ, coba anggap supplierName sendiri sebagai kode.
   const kodeCandidates = new Set<string>(flatMatches.map((r) => normKey(r.kodeSupplier)));
   if (kodeCandidates.size === 0) kodeCandidates.add(normKey(supplierName));
-  const pks = hargaKainPks.filter((r) => {
+  const pks = !HARGA_KAIN_PKS_ENABLED ? [] : hargaKainPks.filter((r) => {
     if (!kodeCandidates.has(normKey(r.kodeSupplier)) || normKey(r.warna) !== normKey(warna)) return false;
     const compareQty = normKey(r.satuan) === "TON" ? totalKg / 1000 : totalKg;
     return compareQty >= (r.tonaseMin ?? 0) && compareQty < (r.tonaseMax ?? Infinity);
