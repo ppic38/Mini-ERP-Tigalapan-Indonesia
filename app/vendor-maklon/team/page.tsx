@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import {
-  VENDOR_PAGE_OPTIONS,
   addVendorTeamMemberAction,
   deleteVendorTeamMemberAction,
   listVendorActionLogAction,
@@ -16,6 +15,7 @@ import {
   type VendorActionLogRow,
   type VendorTeamMemberRow,
 } from "@/lib/mrp/vendorTeamActions";
+import { VENDOR_PAGE_OPTIONS } from "@/lib/mrp/vendorPages";
 
 function fmtTime(iso: string): string {
   const d = new Date(iso);

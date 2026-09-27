@@ -5,25 +5,16 @@ import { requireSession } from "../auth/session";
 import { supabaseServer } from "../supabase/server";
 import type { ActionResult } from "./action-result";
 import { nextReadableId } from "./repo/ids";
+import { VALID_VENDOR_PAGES } from "./vendorPages";
 
 /** Kelola "Tim Saya" -- akun anggota tim per vendor produksi (migration 0057, owner 2026-09-27:
  *  "tim cutting, tim finish good, packing", dikelola vendor sendiri dari portalnya). HANYA akun
  *  UTAMA vendor (login lewat nama vendor, TIDAK punya `vendorActor` di sesi) yang boleh
  *  memanggil fungsi-fungsi ini -- akun sub-user (anggota tim) tidak bisa membuat/mengelola akun
  *  lain, walau kebetulan diberi akses ke halaman "/vendor-maklon/team" (proxy.ts sudah menutup
- *  path itu untuk sub-user, ini lapis kedua di sisi server action). */
-
-/** Daftar halaman portal vendor yang BISA diberikan sebagai izin -- dipakai checkbox di halaman
- *  "Tim Saya" DAN dicek proxy.ts saat sub-user membuka halaman. */
-export const VENDOR_PAGE_OPTIONS = [
-  { href: "/vendor-maklon/po-produksi", label: "PO Produksi Saya" },
-  { href: "/vendor-maklon/po-material", label: "PO Material Saya" },
-  { href: "/vendor-maklon/receiving", label: "Good Receive" },
-  { href: "/vendor-maklon/production", label: "Produksi (Resting/Cutting/Final)" },
-  { href: "/vendor-maklon/pengiriman", label: "Pengiriman" },
-  { href: "/vendor-maklon/invoice-payment", label: "Invoice & Payment" },
-] as const;
-const VALID_PAGES = new Set<string>(VENDOR_PAGE_OPTIONS.map((p) => p.href));
+ *  path itu untuk sub-user, ini lapis kedua di sisi server action). Daftar halaman yang bisa
+ *  diberikan izin ada di ./vendorPages.ts (BUKAN di sini -- file ini "use server", lihat
+ *  catatan di file itu kenapa keduanya harus terpisah). */
 
 async function toActionResult<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
   try {
@@ -43,7 +34,7 @@ async function requireMainVendorSession(): Promise<string> {
 
 function sanitizePages(pages: string[]): string[] {
   const unique = Array.from(new Set(pages));
-  const invalid = unique.filter((p) => !VALID_PAGES.has(p));
+  const invalid = unique.filter((p) => !VALID_VENDOR_PAGES.has(p));
   if (invalid.length > 0) throw new Error(`Halaman tidak dikenali: ${invalid.join(", ")}`);
   return unique;
 }

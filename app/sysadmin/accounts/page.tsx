@@ -16,7 +16,7 @@ import {
   type VendorAccountRow,
   type VendorTeamMemberOverviewRow,
 } from "@/lib/mrp/sysadminActions";
-import { VENDOR_PAGE_OPTIONS } from "@/lib/mrp/vendorTeamActions";
+import { VENDOR_PAGE_OPTIONS } from "@/lib/mrp/vendorPages";
 
 function fmtTime(iso?: string): string {
   if (!iso) return "—";
