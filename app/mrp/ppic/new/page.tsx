@@ -58,6 +58,7 @@ export default function InputMrpPage() {
           rollEstimate: rollCount,
           vendorDefault: "BAYU",
           catProd: "CMT",
+          kategori: "COMBED 24S",
         },
       ],
       aduanRows: [],

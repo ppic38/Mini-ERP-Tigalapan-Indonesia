@@ -160,6 +160,21 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
   const invoices = useMrpStore((s) => s.invoices);
   const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
   const vendorProduksiList = useMrpStore((s) => s.vendorProduksiList);
+  // Tahap 3 skema FOB (migration 0059) -- cek per-PO apa sudah pernah diajukan invoice FOB-nya.
+  const maklonInvoices = useMrpStore((s) => s.maklonInvoices);
+  const submitFobMaklonInvoice = useMrpStore((s) => s.submitFobMaklonInvoice);
+  const [submittingFobId, setSubmittingFobId] = useState<string | null>(null);
+
+  async function handleAjukanFob(poId: string) {
+    setSubmittingFobId(poId);
+    try {
+      await submitFobMaklonInvoice(poId);
+    } catch (err) {
+      window.alert("Gagal mengajukan invoice FOB. " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setSubmittingFobId(null);
+    }
+  }
 
   const myPOs = maklonPOs.filter((p) => p.vendorProduksi === vendorId && p.approved);
   // Badge sidebar "PO Produksi Saya" hilang begitu halaman ini dibuka (lib/shell/seen-po.ts).
@@ -250,12 +265,33 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
       label: "Aksi",
       default: true,
       render: (p) => {
+        // Tahap 3 skema FOB (migration 0059, owner 2026-09-27: "langsung ke invoice, tanpa
+        // tracking") -- PO FOB TIDAK lewat Cutting/Good Receive sama sekali, jadi punya render
+        // "Aksi" sendiri: ajukan invoice langsung dari sini begitu status DELIVERY (dari lahir)
+        // dan belum pernah diajukan. Dicek per-PO (p.isFob), BUKAN per-MRP lagi -- 1 MRP sekarang
+        // bisa campur PO CMT & FOB (lihat catatan CatProd, migration 0058).
+        if (p.isFob) {
+          const inv = maklonInvoices.find((i) => i.maklonPoId === p.id);
+          if (!inv) {
+            return (
+              <button
+                onClick={() => handleAjukanFob(p.id)}
+                disabled={submittingFobId === p.id}
+                className="rounded-md bg-action-primary px-2.5 py-1 font-sans text-[11px] font-semibold text-white disabled:opacity-50"
+              >
+                {submittingFobId === p.id ? "Mengirim…" : "Ajukan Invoice"}
+              </button>
+            );
+          }
+          if (inv.status === "SUBMITTED") return <span className="font-sans text-[11px] text-text-muted">Menunggu approval Finance</span>;
+          if (inv.status === "APPROVED") return <span className="font-sans text-[11px] text-text-muted">Disetujui — menunggu pembayaran</span>;
+          return <span className="font-sans text-[11px] text-success-fg">Lunas</span>;
+        }
         // Halaman ini murni monitoring status produksi — tidak ada tombol aksi sama sekali.
         // "Mulai Produksi" ada di halaman Good Receive (begitu bahan diterima), "Tandai
         // Selesai & Kirim" otomatis begitu target Finish Good tercapai (halaman Produksi),
         // dan "Ajukan Invoice Maklon" sekarang di halaman Invoice & Payment (tab "Invoice
         // Maklon") — supaya semua urusan tagihan ada di satu tempat, bukan tersebar.
-        if (mrpDetailFor(p.mrpId, mrpDetails)?.mrp.isFob) return "—";
         // qty 0 = seluruh material PO ini sudah dipindahkan Procurement ke vendor lain (lihat
         // catatan di maklonPoBadge) — tidak ada aksi apa pun yang perlu/bisa dilakukan vendor ini
         // lagi untuk PO tsb, jadi jangan tampilkan "Menunggu bahan diterima" yang menyesatkan.

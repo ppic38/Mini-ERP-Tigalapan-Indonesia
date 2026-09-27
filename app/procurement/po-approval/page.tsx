@@ -189,7 +189,13 @@ export default function PoApprovalPage() {
   // (lihat sentToPoAt, sendPoToFinanceAction — MRP TIDAK hilang dari "MRP tanpa PO" sampai semua
   // warna tuntas terkirim).
   const outstandingMaterialRows = detail ? detail.materialRows.filter((m) => m.qtyRoll > 0 && !m.sentToPoAt) : [];
-  const hasSendableMaterial = outstandingMaterialRows.some((m) => m.supplier);
+  // Tahap 3 skema FOB (migration 0058/0059) -- grup catProd "FOB" TIDAK PUNYA MaterialRow sama
+  // sekali (tidak butuh vendor material), jadi "siap dikirim"-nya dicek terpisah lewat lenganGroups
+  // langsung: ada pemesanan (totalQty>0) & belum pernah terkirim (sentToPoAt kosong). Tombol "Kirim
+  // PO ke Finance" harus tetap aktif kalau MRP ini murni/sebagian FOB, walau tidak ada satu pun
+  // warna CMT yang sudah dipilih vendor materialnya.
+  const pendingFobGroups = detail ? detail.lenganGroups.filter((g) => g.catProd === "FOB" && g.totalQty > 0 && !g.sentToPoAt) : [];
+  const hasSendableMaterial = outstandingMaterialRows.some((m) => m.supplier) || pendingFobGroups.length > 0;
 
   // Dulu cuma menampilkan status WAITING_APPROVAL — begitu Finance approve, row (dan tombol
   // Download PO-nya) hilang dari tabel, padahal Procurement justru BUTUH download PDF-nya
@@ -460,10 +466,15 @@ export default function PoApprovalPage() {
                 <StatusPill tone="warning">{outstandingMaterialRows.length} warna outstanding</StatusPill>
               </span>
             )}
+            {pendingFobGroups.length > 0 && (
+              <span title="Grup FOB yang siap dikirim jadi PO Produksi (harga jadi per pcs, tanpa PO Material)">
+                <StatusPill tone="info">{pendingFobGroups.length} grup FOB siap kirim</StatusPill>
+              </span>
+            )}
             <button
               onClick={() => hasSendableMaterial && sendPoToFinance(detail.mrp.id)}
               disabled={!hasSendableMaterial}
-              title={!hasSendableMaterial ? "Pilih vendor material untuk minimal 1 warna dulu" : undefined}
+              title={!hasSendableMaterial ? "Pilih vendor material untuk minimal 1 warna CMT, atau pastikan ada grup FOB yang siap dikirim" : undefined}
               className="rounded-md bg-action-primary px-3.5 py-[9px] font-sans text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
               {outstandingMaterialRows.length > 0 && outstandingMaterialRows.some((m) => !m.supplier) ? "Kirim PO ke Finance (parsial)" : "Kirim PO ke Finance"}

@@ -479,6 +479,9 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
       // Migration 0058 -- kolom belum tentu ada kalau migration belum jalan; fallback "CMT" (sama
       // seperti default kolomnya di DB) supaya tidak pernah undefined di tipe LenganGroup.
       catProd: g.cat_prod === "FOB" ? "FOB" : "CMT",
+      // Migration 0059.
+      kategori: g.kategori ?? "",
+      sentToPoAt: g.sent_to_po_at ?? undefined,
     }));
     const aduanRowsForMrp: AduanPolaRow[] = (aduanByMrp[m.id] ?? []).map((a) => ({
       id: a.id,
@@ -597,6 +600,9 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
       })),
       closedAt: p.closed_at ?? undefined,
       closeReason: p.close_reason ?? undefined,
+      // Migration 0059 (tahap 3 skema FOB).
+      isFob: p.is_fob ?? undefined,
+      kategori: p.kategori ?? undefined,
     };
   });
 

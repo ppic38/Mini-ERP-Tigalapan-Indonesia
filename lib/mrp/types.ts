@@ -26,6 +26,14 @@ export type LenganGroup = {
   vendorDefault: string;
   /** Migration 0058 -- default "CMT" kalau kolom `CAT PROD` di Excel kosong/tidak dikenali. */
   catProd: CatProd;
+  /** Migration 0059 -- kolom `KATEGORI` per BARIS (bisa beda antar grup dalam 1 MRP yang sama,
+   *  lihat catatan CatProd), dipakai untuk cocokkan grup FOB ke Master Data Harga FOB (vendor +
+   *  item). "" kalau tidak ada (data lama sebelum kolom ini ditambahkan). */
+  kategori: string;
+  /** Migration 0059 -- kapan grup ini (KHUSUS catProd "FOB", yang tidak punya MaterialRow) sudah
+   *  dikirim jadi PO Produksi lewat sendPoToFinanceAction. Analog `MaterialRow.sentToPoAt` untuk
+   *  grup CMT -- mencegah grup yang sama terkirim 2x. undefined = belum terkirim. */
+  sentToPoAt?: string;
 };
 
 export type AduanPolaRow = {
@@ -152,6 +160,15 @@ export type MaklonPO = {
    */
   closedAt?: string;
   closeReason?: string;
+  /** Migration 0059 (tahap 3 skema FOB) -- true kalau PO ini hasil grup `catProd === "FOB"`
+   *  (harga jadi per pcs dari Master Data Harga FOB, BUKAN ongkos maklon). PO FOB dibuat LANGSUNG
+   *  berstatus "DELIVERY" (skip WAITING_MATERIAL/PRODUCTION -- owner 2026-09-27: "langsung ke
+   *  invoice, tanpa tracking") dan diinvoice lewat `MaklonInvoice` (maklon_invoices, dihidupkan lagi
+   *  KHUSUS FOB -- jalur lama untuk CMT tetap tertutup, lihat app/finance/invoice-maklon/page.tsx). */
+  isFob?: boolean;
+  /** Migration 0059 -- kategori/item yang dipakai mencocokkan Harga FOB saat PO ini dibuat, murni
+   *  informasional untuk ditampilkan (harga sudah final di `amount`, tidak dihitung ulang dari sini). */
+  kategori?: string;
 };
 
 export type InvoiceStatus = "WAITING_INVOICE" | "INVOICED" | "PAID" | "DELIVERY" | "RECEIVING" | "WAITING_PRODUCTION" | "PRODUCTION_DONE";

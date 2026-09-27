@@ -123,6 +123,8 @@ export async function parseMrpImportFile(
         // untuk key yang sama SEHARUSNYA konsisten secara bisnis -- 1 warna+lengan tidak mungkin
         // sebagian CMT sebagian FOB -- jadi tidak perlu logika "override" seperti totalOverride dkk).
         catProd: catProdFor(row),
+        // Migration 0059 -- sama pola dengan catProd di atas (dari baris pertama grup ini).
+        kategori: String(row["KATEGORI"] ?? "").trim(),
       });
     }
     const group = groupMap.get(key)!;

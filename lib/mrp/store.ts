@@ -459,6 +459,9 @@ type FlowActions = {
   withdrawVendorProduction: (mrpId: string, fromVendor: string, toVendor: string) => Promise<void>;
   advanceMaklonProduction: (id: string) => Promise<void>;
   submitMaklonInvoice: (maklonPoId: string, input: { penalty: number; bonus: number; retentionPct: number; note: string }) => Promise<void>;
+  /** Tahap 3 skema FOB (migration 0059) -- vendor ajukan invoice flat untuk 1 PO Produksi FOB.
+   *  BEDA dari submitMaklonInvoice di atas (yang sudah no-op) -- ini jalur BARU, khusus FOB. */
+  submitFobMaklonInvoice: (maklonPoId: string, note?: string) => Promise<void>;
   approveMaklonInvoice: (invoiceId: string) => Promise<void>;
   payMaklonInvoice: (invoiceId: string) => Promise<void>;
   receiveRawMaterialAddBuy: (invoiceId: string, addBuyId: string) => Promise<void>;
@@ -1986,6 +1989,10 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     backgroundRefresh();
   },
   submitMaklonInvoice: async () => {}, // sudah no-op sejak sebelum migrasi (jalur ditutup, lihat lib/mrp/actions.ts)
+  submitFobMaklonInvoice: async (maklonPoId, note) => {
+    await actions.submitFobMaklonInvoiceAction(maklonPoId, note);
+    backgroundRefresh();
+  },
   approveMaklonInvoice: async (invoiceId) => {
     const previous = get().maklonInvoices;
     set({ maklonInvoices: previous.map((i) => (i.id === invoiceId ? { ...i, status: "APPROVED", approvedAt: localDateString(new Date()) } : i)) });

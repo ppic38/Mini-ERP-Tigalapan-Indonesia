@@ -238,6 +238,7 @@ export async function importMrpAction(parsed: ParsedMrpImport, customId?: string
         roll_estimate: g.rollEstimate,
         vendor_default: g.vendorDefault,
         cat_prod: g.catProd,
+        kategori: g.kategori || null,
       }))
     );
   }
@@ -369,15 +370,22 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
   const db = supabaseServer();
   // Targeted (bukan getFlowSnapshot() penuh): aduanRows/materialRows di-scope ke mrpId ini saja;
   // hargaMaklon/hargaKain/hargaKainPks/entitasList tabel lookup GLOBAL kecil, tetap di-fetch
-  // penuh tapi cuma tabel-tabel itu (bukan 32 tabel seluruh app).
-  const [aduanRows, materialRowsRes, hargaMaklonRes, harga, entitasRes] = await Promise.all([
+  // penuh tapi cuma tabel-tabel itu (bukan 32 tabel seluruh app). lenganGroupsRes/hargaFobRes
+  // (migration 0058/0059, tahap 3 skema FOB) -- lihat blok "PO Produksi FOB" di bawah.
+  const [aduanRows, materialRowsRes, hargaMaklonRes, harga, entitasRes, lenganGroupsRes, hargaFobRes] = await Promise.all([
     fetchAduanRowsForMrp(db, mrpId),
     db.from("material_rows").select("*").eq("mrp_id", mrpId),
     db.from("harga_maklon").select("*"),
     fetchHargaTables(db),
     db.from("entitas").select("*"),
+    db.from("lengan_groups").select("id,warna,lengan,total_qty,vendor_default,cat_prod,kategori,sent_to_po_at").eq("mrp_id", mrpId),
+    db.from("harga_fob").select("*"),
   ]);
-  if (aduanRows.length === 0) throw new Error("MRP tidak ditemukan.");
+  const lenganGroupRows = lenganGroupsRes.data ?? [];
+  // Dulu cek `aduanRows.length === 0` saja (kalau MRP ini murni belum punya baris aduan sama
+  // sekali, dianggap "tidak ditemukan") -- sekarang MRP bisa murni FOB (tidak pernah punya
+  // aduanRows sama sekali, lihat parseImport.ts) jadi cek keberadaannya lewat lengan_groups juga.
+  if (aduanRows.length === 0 && lenganGroupRows.length === 0) throw new Error("MRP tidak ditemukan.");
   const materialRows: MaterialRow[] = (materialRowsRes.data ?? []).map((r) => ({
     id: r.id,
     lenganGroupId: r.lengan_group_id,
@@ -402,6 +410,13 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
     harga: Number(r.harga),
   }));
   const entitasList: EntitasRow[] = (entitasRes.data ?? []).map((r) => ({ id: r.id, nama: r.nama }));
+  const hargaFob: HargaFobRow[] = (hargaFobRes.data ?? []).map((r) => ({ id: r.id, vendorProduksi: r.vendor_produksi, item: r.item, hargaPerPcs: Number(r.harga_per_pcs) }));
+
+  // Tahap 3 skema FOB (migration 0058/0059) -- grup catProd "FOB" yang belum pernah terkirim
+  // (sent_to_po_at kosong) DAN benar-benar ada pemesanan (total_qty > 0). Grup ini TIDAK PERNAH
+  // punya MaterialRow (lihat parseImport.ts), jadi tracking "sudah terkirim?"-nya lewat kolom
+  // sendiri di lengan_groups, bukan lewat materialRows.sentToPoAt seperti CMT.
+  const fobGroups = lenganGroupRows.filter((g) => g.cat_prod === "FOB" && Number(g.total_qty) > 0 && !g.sent_to_po_at);
 
   // Item 2026-09-18 (owner: "tetap bisa ajukan PO meskipun ada beberapa warna yang belum dipilih
   // suppliernya, jangan bocor ke Finance untuk warna yang belum dipilih") -- HANYA aduan pola yang
@@ -414,9 +429,61 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
     const mr = materialRows.find((m) => m.lenganGroupId === a.lenganGroupId);
     return !!mr?.supplier && !mr.sentToPoAt;
   });
-  if (sendableAduanRows.length === 0) {
+  if (sendableAduanRows.length === 0 && fobGroups.length === 0) {
     throw new Error("Belum ada warna dengan vendor material yang siap dikirim -- pilih vendor material dulu untuk minimal 1 warna.");
   }
+
+  // Tahap 3 skema FOB -- 1 PO Produksi per (vendor, kategori), harga = qty x Harga FOB (Master
+  // Data). Beda TOTAL dari alur CMT di atas: tidak ada roll/Aduan Pola sama sekali, harga sudah
+  // fix dari Master Data (bukan hitung tiering seperti Harga Maklon) -- kalau kombinasi vendor+
+  // kategori belum ada di Harga FOB, GAGALKAN seluruh pengajuan (termasuk bagian CMT-nya kalau ada)
+  // dengan pesan jelas, supaya Procurement mengisi Master Data dulu alih-alih PO FOB diam-diam
+  // tidak pernah terbit / terbit dengan harga 0.
+  const fobGroupKey = (g: (typeof fobGroups)[number]) => `${g.vendor_default}|${g.kategori ?? ""}`;
+  const fobBuckets = new Map<string, { vendor: string; kategori: string; qty: number; ids: string[] }>();
+  for (const g of fobGroups) {
+    const key = fobGroupKey(g);
+    const cur = fobBuckets.get(key) ?? { vendor: g.vendor_default, kategori: g.kategori ?? "", qty: 0, ids: [] as string[] };
+    cur.qty += Number(g.total_qty);
+    cur.ids.push(g.id);
+    fobBuckets.set(key, cur);
+  }
+  const fobEntries = Array.from(fobBuckets.values());
+  const fobRateFor = (vendor: string, kategori: string): number => {
+    const row = hargaFob.find((h) => h.vendorProduksi === vendor && h.item.trim().toLowerCase() === kategori.trim().toLowerCase());
+    if (!row) {
+      const vendorName = VENDOR_PRODUKSI[vendor]?.name ?? vendor;
+      const available = hargaFob.filter((h) => h.vendorProduksi === vendor).map((h) => h.item);
+      throw new Error(
+        `Harga FOB untuk vendor ${vendorName} · item "${kategori || "(kosong)"}" belum ada di Master Data.` +
+          (available.length > 0 ? ` Item yang sudah ada untuk vendor ini: ${available.join(", ")}.` : " Vendor ini belum punya baris Harga FOB sama sekali.") +
+          ` Isi dulu di Master Data > Harga FOB.`
+      );
+    }
+    return row.hargaPerPcs;
+  };
+  const fobMaklonPoIds = await Promise.all(fobEntries.map((e) => nextPoDisplayId("maklon_pos", "PO-MKL", [mrpId, e.vendor, e.kategori])));
+  const fobMaklonPOs: MaklonPO[] = fobEntries.map((e, idx) => ({
+    id: fobMaklonPoIds[idx],
+    mrpId,
+    vendorProduksi: e.vendor,
+    qty: e.qty,
+    amount: Math.round(e.qty * fobRateFor(e.vendor, e.kategori)),
+    entity: "Tigalapan Indonesia",
+    // Langsung "DELIVERY" (owner 2026-09-27: "langsung ke invoice, tanpa tracking") -- skip
+    // FULL_WAITING_MATERIAL/PRODUCTION sepenuhnya, tidak ada PO Material/Good Receive/Cutting untuk
+    // PO ini. Status ini TIDAK PERNAH berubah lagi setelah ini (sama seperti CMT sejak jalur lama
+    // di-deprecate, lihat catatan maklonPoDisplayStatus di derive.ts) -- progres invoice-nya
+    // dibaca dari MaklonInvoice yang match maklonPoId, bukan dari status mentah ini.
+    status: "DELIVERY" as const,
+    approved: false,
+    cancelledLines: [],
+    isFob: true,
+    kategori: e.kategori,
+  }));
+  // approvalLevel/approvalLog/approvalSubmittedAt (matriks approval PO, migration 0055) diisi
+  // BARENG cmtMaklonPOs lewat loop bersama di bawah (const submittedAt = ...) -- TIDAK diisi di
+  // sini supaya timestamp-nya konsisten 1 nilai untuk seluruh pengajuan ini (CMT maupun FOB).
 
   const vendorRows = new Map<string, typeof aduanRows>();
   for (const a of sendableAduanRows) vendorRows.set(a.vendor, [...(vendorRows.get(a.vendor) ?? []), a]);
@@ -457,7 +524,7 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
   // Field2 di bawah (cancelledLines/invoicedByColor/availableRolls/invoicedRolls/status/approved/
   // daysSincePO) sengaja LANGSUNG diisi bentuk final MaklonPO/MaterialPO (bukan cuma kolom yang
   // dikirim ke database) -- dipakai bareng untuk payload insert MAUPUN return value ke store.ts.
-  const maklonPOs: MaklonPO[] = vendorEntries.map(([vendor, rows], idx) => ({
+  const cmtMaklonPOs: MaklonPO[] = vendorEntries.map(([vendor, rows], idx) => ({
     id: maklonPoIds[idx],
     mrpId,
     vendorProduksi: vendor,
@@ -468,6 +535,10 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
     approved: false,
     cancelledLines: [],
   }));
+  // Tahap 3 skema FOB -- gabung PO Produksi FOB (fobMaklonPOs, dihitung SEBELUM blok ini) dengan
+  // PO Produksi CMT di atas, supaya insert/finalize/return di bawah menangani KEDUANYA sekaligus
+  // tanpa duplikasi logika.
+  const maklonPOs: MaklonPO[] = [...cmtMaklonPOs, ...fobMaklonPOs];
   const materialPOs: MaterialPO[] = pairEntries.map((p, idx) => {
     const colorBreakdown = Array.from(p.colorMap.values());
     const entitasCounts = new Map<string, number>();
@@ -517,6 +588,8 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
             approval_level: p.approvalLevel ?? null,
             approval_log: p.approvalLog ?? [],
             approval_submitted_at: p.approvalSubmittedAt ?? null,
+            is_fob: p.isFob ?? false,
+            kategori: p.kategori ?? null,
           }))
         )
       : Promise.resolve(),
@@ -574,10 +647,12 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
     : `PO untuk ${mrpId} diajukan — ${materialPOs.length} PO material, ${maklonPOs.length} PO maklon`;
   const notifFull = notifText + (needReview > 0 ? ` — ${needReview} PO menunggu approval bertingkat (mulai Level 2, portal Procurement)` : " — semua PO bernilai kecil (Level 1) langsung disetujui");
 
-  // PERFORMA: tandai material_rows terkirim, update mrp.po_sent (kalau semua sudah tuntas), &
-  // notifikasi -- independen satu sama lain, paralel.
+  // PERFORMA: tandai material_rows terkirim, tandai lengan_groups FOB terkirim (tahap 3), update
+  // mrp.po_sent (kalau semua sudah tuntas), & notifikasi -- independen satu sama lain, paralel.
+  const fobGroupIdsSent = fobEntries.flatMap((e) => e.ids);
   await Promise.all([
     db.from("material_rows").update({ sent_to_po_at: nowIso() }).in("id", Array.from(sentMaterialRowIds)),
+    fobGroupIdsSent.length > 0 ? db.from("lengan_groups").update({ sent_to_po_at: nowIso() }).in("id", fobGroupIdsSent) : Promise.resolve(),
     outstandingAfter ? Promise.resolve() : db.from("mrp").update({ po_sent: true, po_sent_at: today() }).eq("id", mrpId),
     insertNotification(notif(notifFull, ["procurement"])),
   ]);
@@ -3205,6 +3280,51 @@ export async function advanceMaklonProductionAction(id: string): Promise<void> {
   }
   else if (po.status === "PRODUCTION") next = "DELIVERY";
   if (next) await db.from("maklon_pos").update({ status: next }).eq("id", id);
+}
+
+/** Tahap 3 skema FOB -- "hidupkan lagi" tabel maklon_invoices (jalur lama per-PO base-fee, sudah
+ *  ditutup untuk CMT sejak pindah ke Invoice Vendor per-pcs, lihat app/finance/invoice-maklon/
+ *  page.tsx) TAPI KHUSUS PO Produksi FOB (owner 2026-09-27). 1 PO = 1 invoice flat (amount PO itu
+ *  sendiri, sudah fix dari Master Data Harga FOB sejak PO dibuat -- TIDAK ada penalty/bonus/
+ *  retention seperti jalur lama, semuanya 0). Vendor cuma bisa ajukan SEKALI per PO (dicek lewat
+ *  keberadaan baris maklon_invoices untuk maklon_po_id ini, BUKAN lewat maklon_pos.status --
+ *  status mentahnya SENGAJA dibiarkan "DELIVERY" terus sampai nanti dibayar, approveMaklonInvoiceAction
+ *  TIDAK menyentuhnya, payMaklonInvoiceAction yang akhirnya flip ke FULLY_PAID). */
+export async function submitFobMaklonInvoiceAction(maklonPoId: string, note?: string): Promise<void> {
+  const actor = await requireVendorSessionWithActor();
+  const db = supabaseServer();
+  const { data: po, error } = await db
+    .from("maklon_pos")
+    .select("id,mrp_id,vendor_produksi,amount,entity,status,approved,is_fob")
+    .eq("id", maklonPoId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!po) throw new Error("PO Produksi tidak ditemukan.");
+  if (po.vendor_produksi !== actor.vendorId) throw new Error("Forbidden: PO ini bukan milik vendor Anda.");
+  if (!po.is_fob) throw new Error("PO ini bukan PO Produksi FOB -- ajukan invoice lewat Invoice & Payment (per pcs) seperti biasa.");
+  if (!po.approved) throw new Error("PO ini belum disetujui -- tunggu approval selesai dulu.");
+  const { data: existing } = await db.from("maklon_invoices").select("id").eq("maklon_po_id", maklonPoId).maybeSingle();
+  if (existing) throw new Error("Invoice untuk PO ini sudah pernah diajukan.");
+  const id = await nextReadableId("INVMKL");
+  const submittedAt = nowIso();
+  const { error: insErr } = await db.from("maklon_invoices").insert({
+    id,
+    maklon_po_id: po.id,
+    mrp_id: po.mrp_id,
+    vendor_produksi: po.vendor_produksi,
+    base_fee: po.amount,
+    penalty: 0,
+    bonus: 0,
+    retention_pct: 0,
+    net_amount: po.amount,
+    entity: po.entity,
+    status: "SUBMITTED",
+    note: note?.trim() || "",
+    submitted_at: submittedAt,
+  });
+  if (insErr) throw new Error(insErr.message);
+  await logVendorAction(actor, "Ajukan Invoice FOB", "maklon_po", po.id);
+  await insertNotification(notif(`Invoice PO Produksi FOB ${po.id} diajukan vendor — menunggu approval Finance`, ["finance"]));
 }
 
 export async function approveMaklonInvoiceAction(invoiceId: string): Promise<void> {
