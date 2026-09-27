@@ -38,7 +38,7 @@ import {
   countWarehousePendingReceipt,
 } from "@/lib/shell/badges";
 
-const GATED_ROLES: InternalRole[] = ["ppic", "procurement", "finance", "scm", "gm", "produksi", "warehouse"];
+const GATED_ROLES: InternalRole[] = ["ppic", "procurement", "finance", "scm", "gm", "produksi", "warehouse", "sysadmin"];
 
 export function AppShell({
   role,

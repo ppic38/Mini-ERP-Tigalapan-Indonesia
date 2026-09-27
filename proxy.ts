@@ -28,6 +28,7 @@ const INTERNAL_ROLE_PREFIXES: [prefix: string, role: InternalRole][] = [
   ["/finance", "finance"],
   ["/scm", "scm"],
   ["/gm", "gm"],
+  ["/sysadmin", "sysadmin"],
   ["/produksi", "produksi"],
   ["/warehouse", "warehouse"],
 ];

@@ -307,7 +307,7 @@ export type RawMaterialInvoice = {
   addBuyReceipts: Record<string, AddBuyReceipt>;
 };
 
-export type NotificationAudience = "ppic" | "procurement" | "finance" | "scm" | "gm" | "produksi" | "warehouse" | "vendorMaklon" | "vendorSupplier" | "admin";
+export type NotificationAudience = "ppic" | "procurement" | "finance" | "scm" | "gm" | "produksi" | "warehouse" | "sysadmin" | "vendorMaklon" | "vendorSupplier" | "admin";
 
 export type Notification = {
   id: string;

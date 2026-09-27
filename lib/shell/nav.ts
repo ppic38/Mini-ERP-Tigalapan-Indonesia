@@ -1,6 +1,6 @@
 export type NavItem = { label: string; href?: string; badge?: number };
 
-export type RoleKey = "ppic" | "procurement" | "finance" | "scm" | "gm" | "produksi" | "warehouse" | "vendorMaklon" | "vendorSupplier" | "admin";
+export type RoleKey = "ppic" | "procurement" | "finance" | "scm" | "gm" | "produksi" | "sysadmin" | "warehouse" | "vendorMaklon" | "vendorSupplier" | "admin";
 
 export type RoleNav = {
   role: string;
@@ -59,6 +59,15 @@ export const NAV: Record<RoleKey, RoleNav> = {
       { label: "Approval MRP", href: "/scm/approval-mrp" },
       { label: "Approval PO", href: "/scm/approval-po" },
       { label: "Monitoring", href: "/scm/monitoring" },
+    ],
+  },
+  sysadmin: {
+    role: "Sysadmin",
+    entity: "Tigalapan Indonesia",
+    items: [
+      { label: "Akun & Password", href: "/sysadmin/accounts" },
+      { label: "Batalkan PO", href: "/sysadmin/po" },
+      { label: "Log Audit", href: "/sysadmin/audit-log" },
     ],
   },
   gm: {

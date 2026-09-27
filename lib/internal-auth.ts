@@ -2,7 +2,7 @@
 // ke client -- bisa dibaca siapapun lewat DevTools/view-source). Sekarang password
 // dicek server-only dari env var INTERNAL_PASSWORD_<ROLE> (lihat lib/auth/actions.ts),
 // jadi file ini cuma menyimpan info non-sensitif (label/homeHref) yang aman dipakai UI.
-export type InternalRole = "ppic" | "procurement" | "finance" | "scm" | "gm" | "produksi" | "warehouse";
+export type InternalRole = "ppic" | "procurement" | "finance" | "scm" | "gm" | "produksi" | "warehouse" | "sysadmin";
 
 export type InternalAccount = {
   role: InternalRole;
@@ -26,6 +26,9 @@ export const INTERNAL_ACCOUNTS: InternalAccount[] = [
   // "membongkar"-nya jadi item stok gudang (Spec Portal Warehouse) -- satu akun umum, sama pola
   // PPIC/SCM/Finance (Q2), bukan multi-akun/multi-lokasi.
   { role: "warehouse", label: "Warehouse", homeHref: "/warehouse/penerimaan" },
+  // Sysadmin (2026-09-27): super admin -- kelola/reset password semua akun (internal & vendor
+  // produksi) dan batalkan PO/data yang salah input. Lihat lib/mrp/sysadminActions.ts.
+  { role: "sysadmin", label: "Sysadmin", homeHref: "/sysadmin/accounts" },
 ];
 
 export function internalAccountFor(role: InternalRole): InternalAccount | undefined {

@@ -1,5 +1,18 @@
 # Migrasi Project — Status & Riwayat
 
+## Modul Sysadmin -- migration 0056 (2026-09-27)
+`supabase/migrations/0056_sysadmin.sql`: tabel `internal_accounts` (password 7 modul internal PPIC/Procurement/
+Finance/SCM/GM/Produksi/Warehouse, DIPINDAH dari env var ke bcrypt hash di DB -- login FALLBACK ke env var lama
+selama Sysadmin belum set password di DB untuk role itu, lihat loginInternalAction di lib/auth/actions.ts) +
+`sysadmin_audit_log` (riwayat permanen semua aksi Sysadmin: ganti/reset password, batalkan PO -- alasan wajib,
+snapshot before/after, read-only dari UI). Portal baru `/sysadmin/accounts` (kelola & reset password akun internal
++ vendor produksi), `/sysadmin/po` (batalkan PO Material/Produksi, WAJIB alasan + ketik ulang No. PO untuk
+konfirmasi -- TIDAK membongkar roll/invoice yang sudah tercatat), `/sysadmin/audit-log`. Logika: `lib/mrp/
+sysadminActions.ts`. **Owner menjalankan migration manual + tambah env var `INTERNAL_PASSWORD_SYSADMIN`** (password
+login Sysadmin) di `.env.local` + Vercel. Kode aman kalau migration belum jalan (login modul lain tetap pakai env
+var seperti biasa; portal Sysadmin sendiri baru bisa diakses setelah `INTERNAL_PASSWORD_SYSADMIN` diisi & migration
+jalan, karena butuh tabel `internal_accounts`/`sysadmin_audit_log`).
+
 ## Matriks Approval PO + portal General Manager -- migration 0055 (2026-09-26)
 `supabase/migrations/0055_po_approval_matrix.sql`: kolom `approval_level`, `approval_log` (jsonb), `approval_submitted_at` di
 `material_pos` & `maklon_pos`. Level 1-4 dari NILAI PO (<=2jt / <=50jt / <=200jt / >200jt), berlapis berurutan:

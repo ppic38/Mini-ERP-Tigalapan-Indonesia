@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ClipboardList, Package, Wallet, Building2, Lock, X, ShieldCheck, Factory, Eye, EyeOff, Warehouse, Crown } from "lucide-react";
+import { ClipboardList, Package, Wallet, Building2, Lock, X, ShieldCheck, Factory, Eye, EyeOff, Warehouse, Crown, ShieldAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
 import { INTERNAL_ACCOUNTS, type InternalRole } from "@/lib/internal-auth";
@@ -15,6 +15,7 @@ const MODULES: { role: InternalRole; label: string; desc: string; icon: typeof C
   { role: "scm", label: "SCM", desc: "Approval MRP dari PPIC, monitoring lintas modul", icon: ShieldCheck },
   { role: "gm", label: "General Manager", desc: "Approval PO Level 4, dashboard ringkasan", icon: Crown },
   { role: "produksi", label: "Produksi", desc: "Monitoring progres semua vendor produksi", icon: Factory },
+  { role: "sysadmin", label: "Sysadmin", desc: "Kelola akun & password, batalkan PO/data salah input", icon: ShieldAlert },
   { role: "warehouse", label: "Warehouse", desc: "Penerimaan & bongkar koli dari vendor produksi", icon: Warehouse },
 ];
 

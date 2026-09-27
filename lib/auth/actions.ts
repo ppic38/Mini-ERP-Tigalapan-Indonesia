@@ -16,6 +16,7 @@ const INTERNAL_ROLE_ENV_VAR: Record<InternalRole, string> = {
   gm: "INTERNAL_PASSWORD_GM",
   produksi: "INTERNAL_PASSWORD_PRODUKSI",
   warehouse: "INTERNAL_PASSWORD_WAREHOUSE",
+  sysadmin: "INTERNAL_PASSWORD_SYSADMIN",
 };
 
 /** Cek password role internal (PPIC/Procurement/Finance/SCM/Produksi) terhadap env var
@@ -29,9 +30,20 @@ export async function loginInternalAction(role: InternalRole, password: string):
   const account = INTERNAL_ACCOUNTS.find((a) => a.role === role);
   if (!account) return { ok: false, error: "Modul tidak dikenali." };
 
-  const expected = process.env[INTERNAL_ROLE_ENV_VAR[role]];
-  if (!expected || password !== expected) {
-    return { ok: false, error: "Password salah." };
+  // Migrasi password modul internal dari env var ke database (migration 0056, Sysadmin) -- kalau
+  // Sysadmin SUDAH pernah set password lewat portalnya, baris `internal_accounts` untuk role ini
+  // ada & itu yang dipakai (bcrypt hash). Kalau belum pernah (baris tidak ada), FALLBACK ke env var
+  // lama (INTERNAL_PASSWORD_<ROLE>) supaya login tidak mendadak putus untuk role yang belum
+  // di-migrasi manual satu per satu.
+  const { data: dbAccount } = await supabaseServer().from("internal_accounts").select("password_hash").eq("role", role).maybeSingle();
+  if (dbAccount) {
+    const ok = await bcrypt.compare(password, dbAccount.password_hash);
+    if (!ok) return { ok: false, error: "Password salah." };
+  } else {
+    const expected = process.env[INTERNAL_ROLE_ENV_VAR[role]];
+    if (!expected || password !== expected) {
+      return { ok: false, error: "Password salah." };
+    }
   }
 
   const cookieStore = await cookies();
