@@ -83,6 +83,7 @@ export function AppShell({
   const unlockedRoles = useInternalAuthStore((s) => s.unlockedRoles);
   const logoutInternal = useInternalAuthStore((s) => s.logout);
   const logoutVendor = useVendorAuthStore((s) => s.logout);
+  const vendorActor = useVendorAuthStore((s) => s.actor);
 
   const isGated = GATED_ROLES.includes(role as InternalRole);
   const authorized = !isGated || unlockedRoles.includes(role as InternalRole);
@@ -249,12 +250,18 @@ export function AppShell({
 
   if (!mounted || (isGated && !authorized)) return null;
 
+  // Akun anggota tim vendor (migration 0057) -- sidebar disaring ke halaman yang diizinkan saja
+  // (proteksi sesungguhnya tetap di proxy.ts; ini murni supaya menu yang ditutup tidak ditampilkan
+  // sebagai link mati), dan nama topbar menyertakan nama anggota yang login.
+  const sidebarItems = role === "vendorMaklon" && vendorActor ? nav.items.filter((i) => !i.href || vendorActor.allowedPages.includes(i.href)) : nav.items;
+  const topbarRole = role === "vendorMaklon" && vendorActor ? `${roleOverride ?? nav.role} · ${vendorActor.name}` : (roleOverride ?? nav.role);
+
   return (
     <div className="flex min-h-screen bg-surface-page">
-      <Sidebar items={nav.items} activeHref={activeHref} badgeOverrides={badgeOverrides} />
+      <Sidebar items={sidebarItems} activeHref={activeHref} badgeOverrides={badgeOverrides} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar
-          role={roleOverride ?? nav.role}
+          role={topbarRole}
           entity={entityOverride ?? nav.entity}
           notifications={myNotifications}
           onMarkRead={markNotificationRead}

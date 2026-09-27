@@ -115,6 +115,34 @@ async function requireVendorSession(): Promise<string> {
   return session.vendorId;
 }
 
+/** Sama seperti requireVendorSession, TAPI juga mengembalikan identitas anggota tim yang login
+ *  (migration 0057, owner 2026-09-27: "catat juga nama anggota yang login") -- `actorName` = nama
+ *  anggota tim kalau login lewat akun sub-user, atau nama vendor sendiri kalau login lewat akun
+ *  utama (vendors_produksi.name, di-fetch sekali karena sesi utama tidak menyimpan nama). Dipakai
+ *  HANYA di action yang ingin dicatat ke vendor_action_log (lihat logVendorAction) -- action lain
+ *  yang tidak butuh jejak "siapa klik apa" tetap pakai requireVendorSession biasa, tidak berubah. */
+async function requireVendorSessionWithActor(): Promise<{ vendorId: string; vendorUserId: string | null; actorName: string }> {
+  const session = await requireSession();
+  if (!session.vendorId) throw new Error("Forbidden: aksi ini hanya untuk vendor produksi.");
+  if (session.vendorActor) return { vendorId: session.vendorId, vendorUserId: session.vendorActor.vendorUserId, actorName: session.vendorActor.name };
+  const { data } = await supabaseServer().from("vendors_produksi").select("name").eq("id", session.vendorId).maybeSingle();
+  return { vendorId: session.vendorId, vendorUserId: null, actorName: data?.name ?? session.vendorId };
+}
+
+/** Tulis 1 baris ke vendor_action_log (migration 0057) -- best-effort, TIDAK melempar error kalau
+ *  gagal (aksi utamanya sudah tersimpan; kehilangan 1 baris log bukan alasan menggagalkan seluruh
+ *  aksi vendor). */
+async function logVendorAction(actor: { vendorId: string; vendorUserId: string | null; actorName: string }, action: string, targetType?: string, targetId?: string): Promise<void> {
+  try {
+    const id = await nextReadableId("VAL");
+    await supabaseServer()
+      .from("vendor_action_log")
+      .insert({ id, vendor_produksi: actor.vendorId, vendor_user_id: actor.vendorUserId, actor_name: actor.actorName, action, target_type: targetType ?? null, target_id: targetId ?? null });
+  } catch {
+    // diabaikan dengan sengaja -- lihat catatan di atas.
+  }
+}
+
 async function insertNotification(n: Omit<Notification, "id"> & { id?: string }) {
   const id = n.id ?? (await nextReadableId("NTF"));
   const { error } = await supabaseServer()
@@ -1343,7 +1371,7 @@ export async function setInvoicesDeliveryAction(invoiceIds: string[], deliveryDa
  *  receiveRawMaterialRollAction untuk itu, sekarang dipanggil dari halaman Cutting). Ini yang
  *  memindahkan status invoice DELIVERY → RECEIVING (dulu dipicu oleh penimbangan roll pertama). */
 export async function markRollArrivedAction(invoiceId: string, warna: string, lengan: Lengan, rollIndex: number, codeRoll?: string): Promise<void> {
-  const vendorId = await requireVendorSession();
+  const actor = await requireVendorSessionWithActor();
   const db = supabaseServer();
   const colorId = `${invoiceId}-${warna}-${lengan}`;
   // Revisi 2026-09-19: code roll WAJIB terisi (jaring pengaman selain tombol UI yang sudah disabled).
@@ -1363,7 +1391,7 @@ export async function markRollArrivedAction(invoiceId: string, warna: string, le
       .update({ status: inv.status === "DELIVERY" ? "RECEIVING" : inv.status, received_at: inv.received_at ?? today() })
       .eq("id", invoiceId);
   }
-  void vendorId;
+  await logVendorAction(actor, `Good Receive 1 roll ${warna} · ${lengan}`, "raw_material_invoice_rolls", `${invoiceId}|${warna}|${lengan}|${rollIndex}`);
 }
 
 /** "Terima semua" di Good Receive: banyak roll (1 warna·lengan) + item tambahan (add buy) 1 invoice
@@ -1377,7 +1405,7 @@ export async function receiveMaterialBatchAction(
   rolls: { rollIndex: number; codeRoll?: string }[],
   addBuyIds: string[]
 ): Promise<void> {
-  await requireVendorSession();
+  const actor = await requireVendorSessionWithActor();
   const db = supabaseServer();
   const colorId = `${invoiceId}-${warna}-${lengan}`;
   const receivedAt = today();
@@ -1400,6 +1428,7 @@ export async function receiveMaterialBatchAction(
       .update({ status: inv.status === "DELIVERY" ? "RECEIVING" : inv.status, received_at: inv.received_at ?? receivedAt })
       .eq("id", invoiceId);
   }
+  await logVendorAction(actor, `Good Receive ${rolls.length} roll ${warna} · ${lengan}`, "raw_material_invoices", invoiceId);
 }
 
 /** Timbang 1 roll yang SUDAH ditandai diterima — dipanggil dari halaman Cutting (lihat
@@ -3251,7 +3280,7 @@ async function startProductionBatchesImpl(input: {
   restingAt: string;
   lines: { aduanRowId: string; gramasi: number; codeRoll?: string; setting?: string }[];
 }): Promise<ProductionBatch[]> {
-  await requireVendorSession();
+  const actor = await requireVendorSessionWithActor();
   const db = supabaseServer();
   const createdAt = today();
   const created: ProductionBatch[] = [];
@@ -3300,6 +3329,7 @@ async function startProductionBatchesImpl(input: {
       setting: line.setting?.trim() || undefined,
     });
   }
+  if (created.length > 0) await logVendorAction(actor, `Mulai Resting ${created.length} roll (${input.mrpId})`, "production_batches", created.map((c) => c.id).join(","));
   return created;
 }
 
@@ -3396,7 +3426,7 @@ export async function closeProductionBatchAction(batchId: string, fgSizeQty: Rec
 }
 
 async function closeProductionBatchImpl(batchId: string, fgSizeQty: Record<string, number>): Promise<void> {
-  await requireVendorSession();
+  const actor = await requireVendorSessionWithActor();
   const db = supabaseServer();
   const { data: batch } = await db
     .from("production_batches")
@@ -3431,6 +3461,7 @@ async function closeProductionBatchImpl(batchId: string, fgSizeQty: Record<strin
   await logFgProgressDelta(db, batch, fgSizeQty);
 
   await maybeAdvanceMaklonToDelivery(batch.mrp_id, batch.vendor_produksi);
+  await logVendorAction(actor, `Tutup Roll (FG) ${batch.code_roll ?? batchId} — ${batch.warna} · ${batch.lengan}`, "production_batches", batchId);
 }
 
 /** Revisi 2026-09-20 (owner: "Edit FG"): koreksi Finish Good AKTUAL 1 roll per size -- boleh MENAIKKAN maupun
@@ -4189,7 +4220,7 @@ async function clampDeliveryItemsBySourceBatch(items: DeliveryKoliItem[], mrpId:
  *  NYATA ini (pola sama updateBatchToCuttingAction/sendPoToFinanceAction), TANPA menunggu
  *  backgroundRefresh (snapshot 32-tabel) cuma untuk koli baru ini muncul di daftar. */
 export async function createDeliveryKoliAction(input: { mrpId: string; vendorProduksi: string; ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }): Promise<DeliveryKoli> {
-  await requireVendorSession();
+  const actor = await requireVendorSessionWithActor();
   const db = supabaseServer();
   const items = await clampDeliveryItemsBySourceBatch(input.items, input.mrpId, input.vendorProduksi, undefined);
   const id = await nextReadableId("KOLI");
@@ -4210,6 +4241,7 @@ export async function createDeliveryKoliAction(input: { mrpId: string; vendorPro
       .insert(items.map((it) => ({ delivery_koli_id: id, warna: it.warna, lengan: it.lengan, size: it.size, qty: it.qty, kind: it.kind, usia: it.usia ?? null, source_batch_id: it.sourceBatchId ?? null })));
     if (itemsErr) throw new Error(itemsErr.message);
   }
+  await logVendorAction(actor, `Buat koli ${input.noKoli} (${items.length} item)`, "delivery_kolis", id);
   return { id, mrpId: input.mrpId, vendorProduksi: input.vendorProduksi, ekspedisi: input.ekspedisi, noKoli: input.noKoli, items, createdAt };
 }
 
@@ -4238,7 +4270,8 @@ export async function setKoliEkspedisiResiGroupAction(
   // dan disimpan bareng ekspedisi+resi. Wajib > 0 untuk SEMUA koli yang diproses.
   beratByKoli: Record<string, number> = {}
 ): Promise<void> {
-  const vendorId = await requireVendorSession();
+  const actor = await requireVendorSessionWithActor();
+  const vendorId = actor.vendorId;
   if (koliIds.length === 0) return;
   if (!ekspedisi.trim()) throw new Error("Pilih ekspedisi dulu.");
   if (!noResi.trim()) throw new Error("No resi wajib diisi.");
@@ -4278,6 +4311,7 @@ export async function setKoliEkspedisiResiGroupAction(
   }
   const noKoliLabel = validRows.map((r) => r.no_koli ?? r.id).join(", ");
   await insertNotification(notif(`Koli ${noKoliLabel} dari ${VENDOR_PRODUKSI[vendorId]?.name ?? vendorId} sedang dikirim`, ["warehouse"]));
+  await logVendorAction(actor, `Set ekspedisi & resi ${noResi.trim()} untuk koli ${noKoliLabel}`, "delivery_kolis", validIds.join(","));
 }
 
 /** Ambil BYTE foto lampiran ekspedisi 1 koli on-demand -- `delivery_koli_ekspedisi_photos` sengaja

@@ -1,5 +1,18 @@
 # Migrasi Project — Status & Riwayat
 
+## Tim Vendor Produksi (Sub-user) -- migration 0057 (2026-09-27)
+`supabase/migrations/0057_vendor_users.sql`: tabel `vendor_users` (akun anggota tim per vendor produksi --
+cutting/finish good/packing/dst, username unik se-aplikasi, login TIDAK perlu pilih nama vendor dulu, `allowed_pages`
+= daftar halaman portal yang boleh diakses, FLEKSIBEL dipilih sendiri oleh admin vendor, bukan preset peran tetap) +
+`vendor_action_log` (jejak "siapa klik apa": Mulai Resting, Tutup Roll, Good Receive, Buat Koli, Set Ekspedisi & Resi
+-- lihat requireVendorSessionWithActor/logVendorAction di lib/mrp/actions.ts). Dikelola vendor SENDIRI dari menu baru
+"Tim Saya" (`/vendor-maklon/team`, hanya untuk akun utama -- proxy.ts + server action menutup akses sub-user ke
+halaman ini). Login sub-user: toggle "Anggota Tim" di halaman login vendor (username + password, terpisah dari
+"Akun Utama" yang ketik nama vendor). Sidebar & proxy.ts membatasi sub-user ke `allowed_pages` saja. Logika:
+`lib/mrp/vendorTeamActions.ts`. **Owner menjalankan migration manual di SQL Editor.** Kode aman kalau migration
+belum jalan (akun utama vendor tetap login & akses penuh seperti biasa; menu "Tim Saya"/login "Anggota Tim" baru
+bisa dipakai setelah tabelnya ada).
+
 ## Modul Sysadmin -- migration 0056 (2026-09-27)
 `supabase/migrations/0056_sysadmin.sql`: tabel `internal_accounts` (password 7 modul internal PPIC/Procurement/
 Finance/SCM/GM/Produksi/Warehouse, DIPINDAH dari env var ke bcrypt hash di DB -- login FALLBACK ke env var lama

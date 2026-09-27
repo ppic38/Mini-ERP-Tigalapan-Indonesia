@@ -45,8 +45,17 @@ export async function proxy(request: NextRequest) {
   const session = await readSession(request.cookies);
 
   if (pathname.startsWith("/vendor-maklon")) {
-    if (session.vendorId) return NextResponse.next();
-    return NextResponse.redirect(new URL("/vendor-maklon/login", request.url));
+    if (!session.vendorId) return NextResponse.redirect(new URL("/vendor-maklon/login", request.url));
+    // Akun anggota tim (migration 0057, owner 2026-09-27: "tim cutting, tim finish good,
+    // packing") -- dibatasi ke halaman yang diizinkan saja, DAN tidak boleh membuka "Tim Saya"
+    // (kelola akun lain) sama sekali walau kebetulan ada di allowedPages. Akun UTAMA vendor
+    // (vendorActor null) tetap akses penuh, tidak berubah dari sebelumnya.
+    if (session.vendorActor) {
+      if (pathname === "/vendor-maklon/team") return NextResponse.redirect(new URL(session.vendorActor.allowedPages[0] ?? "/vendor-maklon/po-produksi", request.url));
+      const allowed = session.vendorActor.allowedPages.some((p) => pathname === p || pathname.startsWith(p + "/"));
+      if (!allowed) return NextResponse.redirect(new URL(session.vendorActor.allowedPages[0] ?? "/vendor-maklon/login", request.url));
+    }
+    return NextResponse.next();
   }
 
   const match = INTERNAL_ROLE_PREFIXES.find(([prefix]) => pathname.startsWith(prefix));

@@ -93,6 +93,98 @@ export async function resetVendorPasswordAction(vendorId: string, newPassword: s
 }
 
 // =========================================================================
+// Anggota tim vendor produksi (migration 0057) -- monitor & edit lintas SEMUA vendor.
+// Pengelolaan sehari-hari tetap di portal vendor sendiri ("Tim Saya"); ini jalur darurat
+// Sysadmin (mis. vendor tidak bisa masuk akun utamanya sendiri untuk mengurus timnya).
+// =========================================================================
+
+export type VendorTeamMemberOverviewRow = {
+  id: string;
+  vendorId: string;
+  vendorName: string;
+  username: string;
+  name: string;
+  allowedPages: string[];
+  active: boolean;
+  createdAt: string;
+};
+
+export async function listAllVendorTeamMembersAction(): Promise<ActionResult<VendorTeamMemberOverviewRow[]>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    const { data, error } = await supabaseServer()
+      .from("vendor_users")
+      .select("id,vendor_produksi,username,name,allowed_pages,active,created_at,vendors_produksi(name)")
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(error.message);
+    return (data ?? []).map((r) => ({
+      id: r.id,
+      vendorId: r.vendor_produksi,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vendorName: (r.vendors_produksi as any)?.name ?? r.vendor_produksi,
+      username: r.username,
+      name: r.name,
+      allowedPages: r.allowed_pages ?? [],
+      active: r.active,
+      createdAt: r.created_at,
+    }));
+  });
+}
+
+export async function sysadminUpdateVendorTeamMemberAction(
+  id: string,
+  patch: { name?: string; allowedPages?: string[]; active?: boolean },
+  reason: string
+): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: before, error: fetchErr } = await db.from("vendor_users").select("name,allowed_pages,active").eq("id", id).maybeSingle();
+    if (fetchErr) throw new Error(fetchErr.message);
+    if (!before) throw new Error("Anggota tim tidak ditemukan.");
+    const p: Record<string, unknown> = {};
+    if (patch.name !== undefined) {
+      if (!patch.name.trim()) throw new Error("Nama wajib diisi.");
+      p.name = patch.name.trim();
+    }
+    if (patch.allowedPages !== undefined) p.allowed_pages = patch.allowedPages;
+    if (patch.active !== undefined) p.active = patch.active;
+    const { error } = await db.from("vendor_users").update(p).eq("id", id);
+    if (error) throw new Error(error.message);
+    await writeAuditLog("UPDATE_VENDOR_TEAM_MEMBER", "vendor_users", id, reason.trim(), before, patch);
+  });
+}
+
+export async function sysadminResetVendorTeamMemberPasswordAction(id: string, newPassword: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    if (newPassword.length < 6) throw new Error("Password minimal 6 karakter.");
+    const db = supabaseServer();
+    const { data: row } = await db.from("vendor_users").select("id,username").eq("id", id).maybeSingle();
+    if (!row) throw new Error("Anggota tim tidak ditemukan.");
+    const hash = await bcrypt.hash(newPassword, 10);
+    const { error } = await db.from("vendor_users").update({ password_hash: hash }).eq("id", id);
+    if (error) throw new Error(error.message);
+    await writeAuditLog("RESET_VENDOR_TEAM_PASSWORD", "vendor_users", id, reason.trim(), null, { username: row.username });
+  });
+}
+
+export async function sysadminDeleteVendorTeamMemberAction(id: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: before } = await db.from("vendor_users").select("username,name,vendor_produksi").eq("id", id).maybeSingle();
+    if (!before) throw new Error("Anggota tim tidak ditemukan.");
+    const { error } = await db.from("vendor_users").delete().eq("id", id);
+    if (error) throw new Error(error.message);
+    await writeAuditLog("DELETE_VENDOR_TEAM_MEMBER", "vendor_users", id, reason.trim(), before, null);
+  });
+}
+
+// =========================================================================
 // Batalkan PO (Material & Produksi) -- "just in case ada kesalahan data"
 // =========================================================================
 

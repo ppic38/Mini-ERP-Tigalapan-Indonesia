@@ -23,7 +23,13 @@ export const VENDOR_SESSION_COOKIE = "erp_vendor_session";
 // terasa "habis sendiri" lagi selama dipakai wajar.
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 
-export type Session = { internalRoles: InternalRole[]; vendorId: string | null };
+/** Identitas anggota tim vendor (owner 2026-09-27, migration 0057) -- HANYA ada kalau yang login
+ *  adalah akun sub-user (vendor_users), bukan akun utama vendor. `allowedPages` = daftar path yang
+ *  boleh diakses (dicek proxy.ts); array kosong berarti tidak ada halaman kerja yang diizinkan
+ *  (jarang terjadi, tapi tidak dianggap "akses penuh" seperti akun utama). */
+export type VendorActor = { vendorUserId: string; username: string; name: string; allowedPages: string[] };
+
+export type Session = { internalRoles: InternalRole[]; vendorId: string | null; vendorActor: VendorActor | null };
 
 /** Interface minimal yang dipenuhi baik `next/headers` cookies() (Server Action/Component)
  *  MAUPUN `NextRequest.cookies` (proxy.ts) -- supaya readSession() bisa dipakai dari keduanya. */
@@ -43,8 +49,10 @@ export async function createInternalSessionToken(roles: InternalRole[]): Promise
   return signToken({ kind: "internal", roles });
 }
 
-export async function createVendorSessionToken(vendorId: string): Promise<string> {
-  return signToken({ kind: "vendor", vendorId });
+/** `actor` diisi HANYA untuk login sub-user (loginVendorUserAction) -- login akun utama vendor
+ *  (loginVendorAction) tetap memanggil ini tanpa `actor`, sama seperti sebelum migration 0057. */
+export async function createVendorSessionToken(vendorId: string, actor?: VendorActor): Promise<string> {
+  return signToken({ kind: "vendor", vendorId, actor: actor ?? null });
 }
 
 async function verifyInternalToken(token: string | undefined): Promise<InternalRole[]> {
@@ -60,11 +68,18 @@ async function verifyInternalToken(token: string | undefined): Promise<InternalR
   }
 }
 
-async function verifyVendorToken(token: string | undefined): Promise<string | null> {
+function parseVendorActor(raw: unknown): VendorActor | null {
+  if (!raw || typeof raw !== "object") return null;
+  const a = raw as Record<string, unknown>;
+  if (typeof a.vendorUserId !== "string" || typeof a.username !== "string" || typeof a.name !== "string" || !Array.isArray(a.allowedPages)) return null;
+  return { vendorUserId: a.vendorUserId, username: a.username, name: a.name, allowedPages: a.allowedPages.filter((p): p is string => typeof p === "string") };
+}
+
+async function verifyVendorToken(token: string | undefined): Promise<{ vendorId: string; vendorActor: VendorActor | null } | null> {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, secretKey());
-    if (payload.kind === "vendor" && typeof payload.vendorId === "string") return payload.vendorId;
+    if (payload.kind === "vendor" && typeof payload.vendorId === "string") return { vendorId: payload.vendorId, vendorActor: parseVendorActor(payload.actor) };
     return null;
   } catch {
     return null;
@@ -75,11 +90,11 @@ async function verifyVendorToken(token: string | undefined): Promise<string | nu
  *  proxy.ts (lewat NextRequest.cookies) DAN dari requireSession() di bawah (lewat next/headers
  *  cookies()) -- satu sumber kebenaran untuk cara membaca sesi, tidak duplikat logic. */
 export async function readSession(cookieStore: ReadableCookies): Promise<Session> {
-  const [internalRoles, vendorId] = await Promise.all([
+  const [internalRoles, vendor] = await Promise.all([
     verifyInternalToken(cookieStore.get(INTERNAL_SESSION_COOKIE)?.value),
     verifyVendorToken(cookieStore.get(VENDOR_SESSION_COOKIE)?.value),
   ]);
-  return { internalRoles, vendorId };
+  return { internalRoles, vendorId: vendor?.vendorId ?? null, vendorActor: vendor?.vendorActor ?? null };
 }
 
 /** Dipakai dari DALAM setiap Server Action yang memutasi data (lib/mrp/actions.ts, dst.) --

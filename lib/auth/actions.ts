@@ -76,6 +76,40 @@ export async function loginVendorAction(nameOrId: string, password: string): Pro
   return { ok: true, vendorId: match.id };
 }
 
+/** Login akun ANGGOTA TIM vendor (migration 0057, owner 2026-09-27: "tim cutting, tim finish
+ *  good, packing") -- `username` unik se-aplikasi, TIDAK perlu pilih nama vendor dulu (beda dari
+ *  loginVendorAction di atas). Sesi yang terbentuk PERSIS sama (cookie vendor, `vendorId` = vendor
+ *  induknya) supaya seluruh action/halaman vendor yang sudah ada (requireVendorSession dkk) jalan
+ *  tanpa disentuh -- yang membedakan cuma `vendorActor` (dicek proxy.ts untuk batasi halaman, &
+ *  dibaca beberapa action untuk vendor_action_log). Akun nonaktif (`active=false`) ditolak. */
+export async function loginVendorUserAction(
+  username: string,
+  password: string
+): Promise<LoginResult & { vendorId?: string; actor?: { username: string; name: string; allowedPages: string[] } }> {
+  const query = username.trim();
+  if (!query) return { ok: false, error: "Username atau password salah." };
+
+  const { data: match, error } = await supabaseServer()
+    .from("vendor_users")
+    .select("id,vendor_produksi,username,name,password_hash,allowed_pages,active")
+    .ilike("username", query)
+    .maybeSingle();
+  if (error) return { ok: false, error: "Gagal menghubungi server, coba lagi." };
+  if (!match || !match.active) return { ok: false, error: "Username atau password salah." };
+
+  const passwordOk = await bcrypt.compare(password, match.password_hash);
+  if (!passwordOk) return { ok: false, error: "Username atau password salah." };
+
+  const token = await createVendorSessionToken(match.vendor_produksi, {
+    vendorUserId: match.id,
+    username: match.username,
+    name: match.name,
+    allowedPages: match.allowed_pages ?? [],
+  });
+  (await cookies()).set(VENDOR_SESSION_COOKIE, token, sessionCookieOptions);
+  return { ok: true, vendorId: match.vendor_produksi, actor: { username: match.username, name: match.name, allowedPages: match.allowed_pages ?? [] } };
+}
+
 /** Logout SATU role internal saja -- kalau masih ada role lain yang aktif, cookie ditulis ulang
  *  tanpa role ini (bukan dihapus total); kalau ini role terakhir, cookie baru dihapus. */
 export async function logoutInternalAction(role: InternalRole): Promise<void> {

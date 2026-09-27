@@ -106,6 +106,9 @@ export const NAV: Record<RoleKey, RoleNav> = {
       { label: "Produksi", href: "/vendor-maklon/production" },
       { label: "Pengiriman", href: "/vendor-maklon/pengiriman" },
       { label: "Invoice & Payment", href: "/vendor-maklon/invoice-payment" },
+      // Hanya untuk akun UTAMA vendor -- disaring dari sidebar & ditutup proxy.ts untuk akun
+      // anggota tim (migration 0057, lihat components/shell/app-shell.tsx).
+      { label: "Tim Saya", href: "/vendor-maklon/team" },
     ],
   },
   vendorSupplier: {
