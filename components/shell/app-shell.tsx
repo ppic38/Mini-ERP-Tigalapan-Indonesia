@@ -25,6 +25,8 @@ import {
   countMaterialPOsAwaitingInvoice,
   countMrpAwaitingScmApproval,
   countMrpWithoutPO,
+  countPoPendingForRole,
+  countPoRejected,
   countPaymentTotal,
   countPoApprovalTotal,
   countProductionYieldUnresolved,
@@ -36,7 +38,7 @@ import {
   countWarehousePendingReceipt,
 } from "@/lib/shell/badges";
 
-const GATED_ROLES: InternalRole[] = ["ppic", "procurement", "finance", "scm", "produksi", "warehouse"];
+const GATED_ROLES: InternalRole[] = ["ppic", "procurement", "finance", "scm", "gm", "produksi", "warehouse"];
 
 export function AppShell({
   role,
@@ -186,6 +188,8 @@ export function AppShell({
   } else if (role === "procurement") {
     badgeOverrides = {
       "/procurement/po-approval": countMrpWithoutPO(mrpDetails),
+      // Approval PO (Level 2) + PO ditolak yang menunggu diajukan ulang.
+      "/procurement/approval-po": countPoPendingForRole("procurement", materialPOs, maklonPOs) + countPoRejected(materialPOs, maklonPOs),
       // "Invoice Vendor" sekarang tab kedua di halaman ini (bukan halaman terpisah lagi) —
       // badge-nya digabung ke sini juga.
       "/raw-material": countMaterialPOsAwaitingInvoice(materialPOs) + countVendorInvoicesAwaitingReview(vendorInvoices),
@@ -195,6 +199,11 @@ export function AppShell({
   } else if (role === "scm") {
     badgeOverrides = {
       "/scm/approval-mrp": countMrpAwaitingScmApproval(mrpDetails),
+      "/scm/approval-po": countPoPendingForRole("scm", materialPOs, maklonPOs),
+    };
+  } else if (role === "gm") {
+    badgeOverrides = {
+      "/gm/approval-po": countPoPendingForRole("gm", materialPOs, maklonPOs),
     };
   } else if (role === "produksi") {
     badgeOverrides = {

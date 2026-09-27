@@ -1,6 +1,6 @@
 export type NavItem = { label: string; href?: string; badge?: number };
 
-export type RoleKey = "ppic" | "procurement" | "finance" | "scm" | "produksi" | "warehouse" | "vendorMaklon" | "vendorSupplier" | "admin";
+export type RoleKey = "ppic" | "procurement" | "finance" | "scm" | "gm" | "produksi" | "warehouse" | "vendorMaklon" | "vendorSupplier" | "admin";
 
 export type RoleNav = {
   role: string;
@@ -24,6 +24,7 @@ export const NAV: Record<RoleKey, RoleNav> = {
     items: [
       { label: "Dashboard", href: "/dashboard/procurement" },
       { label: "Purchase Order", href: "/procurement/po-approval" },
+      { label: "Approval PO", href: "/procurement/approval-po" },
       { label: "Paying Voucher (Invoice)", href: "/raw-material" },
       { label: "Material Tracking", href: "/procurement/material-tracking" },
       { label: "Klaim Material", href: "/procurement/material-claims" },
@@ -56,7 +57,16 @@ export const NAV: Record<RoleKey, RoleNav> = {
     entity: "Tigalapan Indonesia",
     items: [
       { label: "Approval MRP", href: "/scm/approval-mrp" },
+      { label: "Approval PO", href: "/scm/approval-po" },
       { label: "Monitoring", href: "/scm/monitoring" },
+    ],
+  },
+  gm: {
+    role: "General Manager",
+    entity: "Tigalapan Indonesia",
+    items: [
+      { label: "Dashboard", href: "/gm/dashboard" },
+      { label: "Approval PO", href: "/gm/approval-po" },
     ],
   },
   produksi: {

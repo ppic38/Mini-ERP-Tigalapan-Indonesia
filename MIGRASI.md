@@ -1,5 +1,16 @@
 # Migrasi Project — Status & Riwayat
 
+## Matriks Approval PO + portal General Manager -- migration 0055 (2026-09-26)
+`supabase/migrations/0055_po_approval_matrix.sql`: kolom `approval_level`, `approval_log` (jsonb), `approval_submitted_at` di
+`material_pos` & `maklon_pos`. Level 1-4 dari NILAI PO (<=2jt / <=50jt / <=200jt / >200jt), berlapis berurutan:
+L1 = pengajuan Procurement (otomatis), L2 = portal Procurement (menu "Approval PO"), L3 = Finance (FAT Manager) + SCM
+(keduanya), L4 = portal General Manager BARU (`/gm/dashboard`, `/gm/approval-po`). Ditolak -> kembali ke Procurement,
+diajukan ulang. PO lama (approval_level kosong) tetap alur lama (1 approval Finance). Logika: `lib/mrp/poApproval.ts`.
+**Owner menjalankan migration manual di SQL Editor** DAN menambah env var **`INTERNAL_PASSWORD_GM`** (password login GM) di
+`.env.local` + Vercel (Production). Nomor 0055 (bukan 0053) karena draf migration "stok awal" sempat memakai 0053/0054.
+Selain itu: download PO bisa PDF atau Excel (`lib/mrp/exportPoExcel.ts`), dan alat "Migrasi Data Awal" Konveksi Makassar
+(tab Master Data PPIC > Migrasi Data, `lib/mrp/parseMigrationImport.ts`, template di `public/templates/`).
+
 ## Hemat egress tahap 2 -- migration 0050 (2026-09-21)
 `supabase/migrations/0050_master_data_version.sql`: versi khusus 6 tabel master harga (harga_maklon, harga_kain,
 harga_kain_pks, harga_rib, harga_kerah_manset, item_selling_prices) + RPC `get_flow_snapshot_core()` (snapshot tanpa

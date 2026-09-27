@@ -1,6 +1,7 @@
 import { MATERIAL_RATE_PER_ROLL, ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "./seed";
 import type { MrpDetail, PpicApprovalStatus } from "./store";
 import type { EkspedisiRateRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, SupplierRow, VendorProduksiMasterRow } from "./masterData";
+import { MIGRASI_SUPPLIER } from "./migrationTypes";
 import type { AduanPolaRow, ColorBreakdown, DeliveryItemKind, DeliveryKoli, Lengan, LenganGroup, MaklonInvoice, MaklonPO, MaterialPO, MaterialRow, Mrp, ProductionBatch, ProductionGroupMeta, ProductionResult, ProductionResultKind, ProductionYieldResolution, RawMaterialInvoice, ShippableKind, Usia, VendorDepositEntry, VendorInvoice, VendorInvoiceLine, WarehouseReceipt } from "./types";
 
 export function formatRupiah(n: number) {
@@ -185,6 +186,12 @@ function matchesLengan(tipeLengan: string, lengan: Lengan): boolean {
 // Exact-match (bukan includes) — tipeLengan seperti "Wangky PDK" jadi "WANGKYPDK" setelah
 // dinormalisasi, tidak pernah persis sama dengan "PDK", jadi baris itu otomatis inert (tidak
 // pernah cocok apapun) tanpa perlu ditolak eksplisit — lihat catatan di HargaMaklonRow.
+
+/** PO/invoice bahan hasil Migrasi Data Awal (supplier "MIGRASI", lihat importMigrationAction) bukan
+ *  tagihan supplier -- disaring dari layar & angka Finance dan dari alur klaim ke supplier. */
+export function isSyntheticSupplier(supplier: string | undefined | null): boolean {
+  return supplier === MIGRASI_SUPPLIER;
+}
 
 /** Sumber rate yang kepakai — dipakai untuk label "Standar"/"PKS" di UI (lihat
  *  maklonRateExplanation/materialRateExplanation) supaya user tahu KENAPA suatu PO dapat harga
@@ -1256,6 +1263,8 @@ export function materialClaimStage(
 export function materialClaimsList(invoices: RawMaterialInvoice[]): MaterialClaimRow[] {
   const out: MaterialClaimRow[] = [];
   for (const inv of invoices) {
+    // Bahan hasil migrasi tidak punya supplier yang bisa diklaim -- berat kotornya cuma catatan awal.
+    if (isSyntheticSupplier(inv.supplier)) continue;
     for (const c of inv.colorEntries) {
       const colorKey = c.warna + "|" + c.lengan;
       const receipts = inv.rollReceipts[colorKey] ?? [];
@@ -1481,6 +1490,9 @@ export type RestingCandidateRoll = {
   /** Roll pengganti klaim yang sudah diterima -- perlu ditimbang ulang (klaim lama ditutup saat disimpan). */
   isReplacement: boolean;
   claimKey: string;
+  /** Roll dari Migrasi Data Awal -- selisih berat vs catatan awal BUKAN klaim ke supplier, jadi tidak
+   *  boleh memblokir Resting. */
+  isSynthetic: boolean;
 };
 
 export function restingCandidateRolls(
@@ -1521,6 +1533,7 @@ export function restingCandidateRolls(
           netKg: receipt?.netKg,
           isReplacement: activeClaimKeys.has(claimKey),
           claimKey,
+          isSynthetic: isSyntheticSupplier(inv.supplier),
         });
       });
     }

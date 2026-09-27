@@ -13,6 +13,7 @@ const INTERNAL_ROLE_ENV_VAR: Record<InternalRole, string> = {
   procurement: "INTERNAL_PASSWORD_PROCUREMENT",
   finance: "INTERNAL_PASSWORD_FINANCE",
   scm: "INTERNAL_PASSWORD_SCM",
+  gm: "INTERNAL_PASSWORD_GM",
   produksi: "INTERNAL_PASSWORD_PRODUKSI",
   warehouse: "INTERNAL_PASSWORD_WAREHOUSE",
 };

@@ -29,6 +29,7 @@ import type { ParsedMrpImport } from "./parseImport";
 import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, MaterialSupplierRow, SupplierRow, VendorProduksiMasterRow, WarnaAliasRow } from "./masterData";
 import { localDateString } from "./derive";
 import * as rawActions from "./actions";
+import type { ApprovalRole } from "./poApproval";
 import type { SkuImportInputRow, SkuImportSummary, WarnaAliasImportInputRow, HargaKainImportInputRow } from "./actions";
 import { unwrapAction } from "./action-result";
 
@@ -310,6 +311,10 @@ type FlowActions = {
   roundMaterialPoRollCounts: () => Promise<void>;
   revertMaterialPoRollRounding: () => Promise<void>;
   approveMaklonPo: (id: string) => Promise<void>;
+  /** Matriks Approval PO (migration 0055): setujui / tolak langkah approval sebagai `asRole`, ajukan ulang PO ditolak. */
+  approvePoStep: (type: "MATERIAL" | "MAKLON", id: string, asRole: ApprovalRole, note?: string) => Promise<void>;
+  rejectPoStep: (type: "MATERIAL" | "MAKLON", id: string, asRole: ApprovalRole, note: string) => Promise<void>;
+  resubmitPo: (type: "MATERIAL" | "MAKLON", id: string) => Promise<void>;
   bookInvoice: (
     poId: string,
     input: { colorEntries: ColorEntry[]; addBuys: AddBuyItem[]; diskon: number; kodeTransaksi: string; noInvoiceVendor: string; buktiPvDataUrl?: string; buktiPvFileName?: string }
@@ -600,6 +605,9 @@ const BUSY_TRACKED_ACTIONS = new Set<string>([
   "approveVendorMaterialPos",
   "approveMaterialPos",
   "approveMaklonPo",
+  "approvePoStep",
+  "rejectPoStep",
+  "resubmitPo",
   "bookInvoice",
   "setInvoicesPaid",
   "setInvoicePaymentProof",
@@ -939,16 +947,27 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     await actions.revertMaterialPoRollRoundingAction();
     backgroundRefresh();
   },
+  // Matriks Approval PO (migration 0055): approval Finance BUKAN lagi selalu persetujuan final (bisa baru
+  // langkah ke-3 dari 4), jadi TIDAK ada patch optimistic `approved: true` -- tunggu refresh dari server.
   approveMaklonPo: async (id) => {
-    const previous = get().maklonPOs;
-    set({ maklonPOs: previous.map((p) => (p.id === id ? { ...p, approved: true } : p)) });
     try {
       await actions.approveMaklonPoAction(id);
     } catch (err) {
-      set({ maklonPOs: previous });
-      window.alert("Gagal menyetujui PO Produksi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      window.alert("Gagal menyetujui PO Produksi. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
+    backgroundRefresh();
+  },
+  approvePoStep: async (type, id, asRole, note) => {
+    unwrapAction(await actions.approvePoStepAction(type, id, asRole, note));
+    backgroundRefresh();
+  },
+  rejectPoStep: async (type, id, asRole, note) => {
+    unwrapAction(await actions.rejectPoStepAction(type, id, asRole, note));
+    backgroundRefresh();
+  },
+  resubmitPo: async (type, id) => {
+    unwrapAction(await actions.resubmitPoAction(type, id));
     backgroundRefresh();
   },
   bookInvoice: async (poId, input) => {

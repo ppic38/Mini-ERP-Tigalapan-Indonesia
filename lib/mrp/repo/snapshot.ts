@@ -32,6 +32,7 @@ import type {
 } from "../types";
 import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, MaterialSupplierRow, SupplierRow, VendorProduksiMasterRow, WarnaAliasRow } from "../masterData";
 import type { FlowState, MrpDates, MrpDetail } from "../store";
+import type { PoApprovalEntry } from "../poApproval";
 
 /** Ambil SEMUA data flow dari Supabase dan bentuk ulang jadi `FlowState` -- bentuk persis yang
  *  dipakai lib/mrp/store.ts & lib/mrp/derive.ts (TIDAK diubah), supaya 43 file consumer lama
@@ -552,6 +553,9 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
       status: p.status,
       approved: p.approved,
       daysSincePO: p.days_since_po,
+      approvalLevel: p.approval_level ?? undefined,
+      approvalLog: (p.approval_log ?? []) as PoApprovalEntry[],
+      approvalSubmittedAt: p.approval_submitted_at ?? undefined,
     };
   });
 
@@ -569,6 +573,9 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
       entity: p.entity ?? "",
       status: p.status,
       approved: p.approved,
+      approvalLevel: p.approval_level ?? undefined,
+      approvalLog: (p.approval_log ?? []) as PoApprovalEntry[],
+      approvalSubmittedAt: p.approval_submitted_at ?? undefined,
       cancelledLines: (cancelledByPo[p.id] ?? []).map((c) => ({
         note: c.note,
         rolls: Number(c.rolls),

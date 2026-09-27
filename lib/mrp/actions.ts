@@ -56,8 +56,20 @@ import {
   warehouseReceivableGroups,
   hargaMaklonRateInfo,
   vendorCumulativeQtyByLengan,
+  isSyntheticSupplier,
 } from "./derive";
-import { ENTITAS_LIST, VENDOR_PRODUKSI } from "./seed";
+import { ENTITAS_LIST, RESTING_TARGET_MINUTES, VENDOR_PRODUKSI } from "./seed";
+import {
+  APPROVAL_ROLE_LABEL,
+  APPROVAL_STEP_LABEL,
+  APPROVAL_STEP_SLA_DAYS,
+  approvalLevelForAmount,
+  poApprovalState,
+  type ApprovalRole,
+  type PoApprovalEntry,
+  type PoApprovalState,
+} from "./poApproval";
+import { MIGRASI_SUPPLIER, MIGRASI_VENDOR_ID, type MigrationImportSummary, type MigrationLine, type MigrationMrp, type MigrationRoll } from "./migrationTypes";
 import type { ParsedMrpImport } from "./parseImport";
 import type { MrpDetail } from "./store";
 import type {
@@ -451,6 +463,11 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
     };
   });
 
+  // Matriks Approval PO (migration 0055): level dari NILAI PO; pengajuan ini = langkah 1 (Procurement).
+  const submittedAt = new Date().toISOString();
+  for (const p of maklonPOs) Object.assign(p, initialApprovalFields(p.amount, submittedAt));
+  for (const p of materialPOs) Object.assign(p, initialApprovalFields(p.amount, submittedAt));
+
   // PERFORMA: maklon_pos & material_pos independen satu sama lain (tabel beda, tidak ada FK
   // antar keduanya) -- dulu ditulis berurutan (await, await), sekarang paralel. Insert
   // material_po_color_breakdown TETAP menunggu material_pos selesai lebih dulu (FK
@@ -458,7 +475,19 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
   await Promise.all([
     maklonPOs.length > 0
       ? db.from("maklon_pos").insert(
-          maklonPOs.map((p) => ({ id: p.id, mrp_id: p.mrpId, vendor_produksi: p.vendorProduksi, qty: p.qty, amount: p.amount, entity: p.entity, status: p.status, approved: p.approved }))
+          maklonPOs.map((p) => ({
+            id: p.id,
+            mrp_id: p.mrpId,
+            vendor_produksi: p.vendorProduksi,
+            qty: p.qty,
+            amount: p.amount,
+            entity: p.entity,
+            status: p.status,
+            approved: p.approved,
+            approval_level: p.approvalLevel ?? null,
+            approval_log: p.approvalLog ?? [],
+            approval_submitted_at: p.approvalSubmittedAt ?? null,
+          }))
         )
       : Promise.resolve(),
     (async () => {
@@ -479,6 +508,9 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
           status: "WAITING_INVOICE",
           approved: false,
           days_since_po: 0,
+          approval_level: p.approvalLevel ?? null,
+          approval_log: p.approvalLog ?? [],
+          approval_submitted_at: p.approvalSubmittedAt ?? null,
         }))
       );
       await db.from("material_po_color_breakdown").insert(
@@ -492,17 +524,32 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
   // ada sisa sama sekali -- selama masih ada sisa, MRP ini TETAP muncul di "MRP tanpa PO"
   // Procurement (lihat `selectable` di app/procurement/po-approval/page.tsx, filter `!poSent`)
   // supaya warna yang belum ke-assign bisa diproses lagi nanti, tidak hilang selamanya.
+  // PO Level 1 (nilai kecil, <= Rp 2 juta): pengajuan Procurement = persetujuan final, langsung disetujui.
+  for (const p of materialPOs) {
+    if (p.approvalLevel === 1) {
+      await finalizeMaterialPo(db, p.id);
+      p.approved = true;
+    }
+  }
+  for (const p of maklonPOs) {
+    if (p.approvalLevel === 1) {
+      await finalizeMaklonPo(db, p.id);
+      p.approved = true;
+    }
+  }
+  const needReview = [...materialPOs, ...maklonPOs].filter((p) => (p.approvalLevel ?? 1) >= 2).length;
   const outstandingAfter = materialRows.some((m) => m.qtyRoll > 0 && !m.sentToPoAt && !sentMaterialRowIds.has(m.id));
   const notifText = outstandingAfter
-    ? `PO untuk ${mrpId} dikirim SEBAGIAN ke Finance — ${materialPOs.length} PO material, ${maklonPOs.length} PO maklon (masih ada warna yang belum dipilih vendor material)`
-    : `PO untuk ${mrpId} dikirim ke Finance — ${materialPOs.length} PO material, ${maklonPOs.length} PO maklon`;
+    ? `PO untuk ${mrpId} diajukan SEBAGIAN — ${materialPOs.length} PO material, ${maklonPOs.length} PO maklon (masih ada warna yang belum dipilih vendor material)`
+    : `PO untuk ${mrpId} diajukan — ${materialPOs.length} PO material, ${maklonPOs.length} PO maklon`;
+  const notifFull = notifText + (needReview > 0 ? ` — ${needReview} PO menunggu approval bertingkat (mulai Level 2, portal Procurement)` : " — semua PO bernilai kecil (Level 1) langsung disetujui");
 
   // PERFORMA: tandai material_rows terkirim, update mrp.po_sent (kalau semua sudah tuntas), &
   // notifikasi -- independen satu sama lain, paralel.
   await Promise.all([
     db.from("material_rows").update({ sent_to_po_at: nowIso() }).in("id", Array.from(sentMaterialRowIds)),
     outstandingAfter ? Promise.resolve() : db.from("mrp").update({ po_sent: true, po_sent_at: today() }).eq("id", mrpId),
-    insertNotification(notif(notifText, ["finance"])),
+    insertNotification(notif(notifFull, ["procurement"])),
   ]);
 
   return { materialPOs, maklonPOs, mrpFullySent: !outstandingAfter };
@@ -541,6 +588,9 @@ function mapMaterialPoRow(p: any, colorRows: any[], invoicedRows: any[]): Materi
     status: p.status,
     approved: p.approved,
     daysSincePO: p.days_since_po,
+    approvalLevel: p.approval_level ?? undefined,
+    approvalLog: (p.approval_log ?? []) as PoApprovalEntry[],
+    approvalSubmittedAt: p.approval_submitted_at ?? undefined,
   };
 }
 
@@ -649,15 +699,9 @@ export async function approveMaterialPoAction(id: string): Promise<void> {
   const db = supabaseServer();
   const po = await fetchOneMaterialPo(db, id);
   if (!po) return;
-
-  const entitasOrder = Array.from(new Set(po.colorBreakdown.map((c) => c.entitas ?? po.entity)));
-  const newIds = await Promise.all(
-    entitasOrder.slice(1).map((entitas) => nextPoDisplayId("material_pos", "PO-SUP", [po.mrpId, po.vendorProduksi, po.supplier, entitas]))
-  );
-  const parts = splitMaterialPoByEntitas(po, newIds).map((p) => ({ ...p, approved: true }));
-
-  await writeMaterialPoSplit(db, id, parts);
-  await checkPoApproved(po.mrpId);
+  // Matriks Approval PO (migration 0055): ini = persetujuan langkah Finance (FAT Manager); PO lama
+  // (tanpa level) tetap langsung final. Lihat financeApproveMaterialPo.
+  await financeApproveMaterialPo(db, po);
 }
 
 /** Dipakai approveMaterialPoAction: kalau splitMaterialPoByEntitas menghasilkan >1 PO baru,
@@ -685,6 +729,9 @@ async function writeMaterialPoSplit(db: ReturnType<typeof supabaseServer>, origi
       status: p.status,
       approved: p.approved,
       days_since_po: p.daysSincePO,
+      approval_level: p.approvalLevel ?? null,
+      approval_log: p.approvalLog ?? [],
+      approval_submitted_at: p.approvalSubmittedAt ?? null,
     }))
   );
   await db.from("material_po_color_breakdown").insert(
@@ -697,13 +744,10 @@ async function writeMaterialPoSplit(db: ReturnType<typeof supabaseServer>, origi
 export async function approveMaklonPoAction(id: string): Promise<void> {
   await requireInternalRole(await requireSession(), "finance");
   const db = supabaseServer();
-  const { data: po, error } = await db.from("maklon_pos").select("id,mrp_id,vendor_produksi").eq("id", id).single();
-  if (error || !po) return;
   // Approve HANYA mengubah `approved` -- status FULL/PARTIAL_WAITING_MATERIAL dipertahankan
-  // apa adanya (lihat komentar asli di lib/mrp/store.ts, bug lama pernah overwrite ke PARTIAL).
-  await db.from("maklon_pos").update({ approved: true }).eq("id", id);
-  await insertNotification(notif(`PO Produksi ${po.id} untuk ${po.mrp_id} telah disetujui Finance — cek menu PO Produksi Saya`, ["vendorMaklon"], po.vendor_produksi));
-  await checkPoApproved(po.mrp_id);
+  // apa adanya (lihat finalizeMaklonPo). Matriks Approval PO (migration 0055): ini = persetujuan
+  // langkah Finance; PO lama (tanpa level) tetap langsung final.
+  await financeApproveMaklonPo(db, id);
 }
 
 // =========================================================================
@@ -1396,7 +1440,10 @@ export async function receiveRawMaterialRollAction(
     // dalam toleransi, tapi tetap harus terkunci sampai Procurement atur retur, sama seperti
     // klaim berat.
     const variance = weightVariance(Number(rollRow.gross_kg), Number(rollRow.net_kg));
-    const isActiveClaim = (variance.claimable || !!rollRow.claim_defect_at) && !rollRow.claim_resolved_at;
+    // Bahan hasil Migrasi Data Awal (supplier "MIGRASI"): selisih berat bukan klaim ke supplier.
+    const { data: invSupplierRow } = await db.from("raw_material_invoices").select("supplier").eq("id", invoiceId).maybeSingle();
+    const isSyntheticRoll = isSyntheticSupplier(invSupplierRow?.supplier);
+    const isActiveClaim = ((!isSyntheticRoll && variance.claimable) || !!rollRow.claim_defect_at) && !rollRow.claim_resolved_at;
     if (isActiveClaim && !rollRow.claim_retur_received_at) {
       throw new Error(
         "Roll ini masih diklaim (selisih berat atau cacat fisik) -- menunggu Procurement atur retur & kirim roll pengganti (lihat Klaim Material). Konfirmasi 'diterima' dulu di sini setelah roll penggantinya sampai, baru bisa ditimbang ulang."
@@ -1836,12 +1883,7 @@ export async function approveAllMaterialPosAction(): Promise<void> {
   const toApprove = await fetchUnapprovedMaterialPos(db, undefined);
   const mrpIds = Array.from(new Set(toApprove.map((po) => po.mrpId)));
   for (const po of toApprove) {
-    const entitasOrder = Array.from(new Set(po.colorBreakdown.map((c) => c.entitas ?? po.entity)));
-    const newIds = await Promise.all(
-      entitasOrder.slice(1).map((entitas) => nextPoDisplayId("material_pos", "PO-SUP", [po.mrpId, po.vendorProduksi, po.supplier, entitas]))
-    );
-    const parts = splitMaterialPoByEntitas(po, newIds).map((p) => ({ ...p, approved: true }));
-    await writeMaterialPoSplit(db, po.id, parts);
+    await financeApproveMaterialPo(db, po);
   }
   for (const mrpId of mrpIds) await checkPoApproved(mrpId);
 }
@@ -1851,12 +1893,7 @@ export async function approveVendorMaterialPosAction(mrpId: string, vendor: stri
   const db = supabaseServer();
   const toApprove = await fetchUnapprovedMaterialPos(db, { mrpId, vendorProduksi: vendor });
   for (const po of toApprove) {
-    const entitasOrder = Array.from(new Set(po.colorBreakdown.map((c) => c.entitas ?? po.entity)));
-    const newIds = await Promise.all(
-      entitasOrder.slice(1).map((entitas) => nextPoDisplayId("material_pos", "PO-SUP", [po.mrpId, po.vendorProduksi, po.supplier, entitas]))
-    );
-    const parts = splitMaterialPoByEntitas(po, newIds).map((p) => ({ ...p, approved: true }));
-    await writeMaterialPoSplit(db, po.id, parts);
+    await financeApproveMaterialPo(db, po);
   }
   await checkPoApproved(mrpId);
 }
@@ -1874,12 +1911,7 @@ export async function approveMaterialPosByIdsAction(mrpId: string, poIds: string
   for (const id of poIds) {
     const po = await fetchOneMaterialPo(db, id);
     if (!po || po.mrpId !== mrpId || po.approved || po.status === "CANCELLED") continue;
-    const entitasOrder = Array.from(new Set(po.colorBreakdown.map((c) => c.entitas ?? po.entity)));
-    const newIds = await Promise.all(
-      entitasOrder.slice(1).map((entitas) => nextPoDisplayId("material_pos", "PO-SUP", [po.mrpId, po.vendorProduksi, po.supplier, entitas]))
-    );
-    const parts = splitMaterialPoByEntitas(po, newIds).map((p) => ({ ...p, approved: true }));
-    await writeMaterialPoSplit(db, po.id, parts);
+    await financeApproveMaterialPo(db, po);
   }
   await checkPoApproved(mrpId);
 }
@@ -3080,6 +3112,8 @@ export async function reassignMaterialToSupplierAction(poId: string, warna: stri
     .update({ roll_count: newRollCount, amount: materialAmountForPo(hargaKain, hargaKainPks, po.supplier, newColorBreakdown), status: fullyClosed ? "CANCELLED" : po.status })
     .eq("id", poId);
 
+  // PO pengganti supplier ikut Matriks Approval PO (migration 0055) -- pengajuan ulang oleh Procurement.
+  const newPoApproval = initialApprovalFields(newPoAmount, new Date().toISOString());
   await db.from("material_pos").insert({
     id: newPoId,
     mrp_id: po.mrpId,
@@ -3095,11 +3129,15 @@ export async function reassignMaterialToSupplierAction(poId: string, warna: stri
     status: "WAITING_INVOICE",
     approved: false,
     days_since_po: 0,
+    approval_level: newPoApproval.approvalLevel,
+    approval_log: newPoApproval.approvalLog,
+    approval_submitted_at: newPoApproval.approvalSubmittedAt,
   });
   await db.from("material_po_color_breakdown").insert({ material_po_id: newPoId, warna, lengan, roll_count: qty, entitas: colorEntry.entitas ?? po.entity });
+  if (newPoApproval.approvalLevel === 1) await finalizeMaterialPo(db, newPoId);
 
   await insertNotification(
-    notif(`PO ${poId} (${warna} · ${lengan}, ${qty} roll) dialihkan dari supplier ${po.supplier} ke ${newSupplier} — alasan: ${reason}. PO material baru ${newPoId} menunggu approval Finance.`, ["finance"])
+    notif(`PO ${poId} (${warna} · ${lengan}, ${qty} roll) dialihkan dari supplier ${po.supplier} ke ${newSupplier} — alasan: ${reason}. PO material baru ${newPoId} menunggu approval (Level ${newPoApproval.approvalLevel}).`, ["procurement"])
   );
 }
 
@@ -5330,4 +5368,584 @@ async function setAppSettingImpl(key: string, value: boolean): Promise<void> {
   await requireMasterDataRole();
   const { error } = await supabaseServer().from("app_settings").upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: "key" });
   if (error) throw new Error(error.message);
+}
+
+// =========================================================================
+// Migrasi Data Awal Konveksi Makassar (owner 2026-09-25)
+// =========================================================================
+// Memasukkan pekerjaan yang MASIH BERJALAN dari catatan manual langsung di tahap terakhirnya
+// (A di gudang / B sudah dipotong / C sudah jadi FG / D sudah dikirim belum diinvoice), TANPA
+// mengulang siklus PPIC -> SCM -> Procurement -> Finance. Tiap No MRP di file menjadi 1 MRP yang
+// langkah-langkah awalnya sudah ditandai selesai (approval, PO terkirim & disetujui) supaya tidak ada
+// tugas menggantung; bahan dicatat lewat 1 PO Material + invoice bertanda supplier "MIGRASI"
+// (MIGRASI_SUPPLIER -- disaring dari layar Finance, tidak ada tagihan). Selebihnya memakai tabel &
+// alur yang SAMA dengan siklus normal, jadi Cutting/Final/Pengiriman/HPP/monitoring langsung
+// membacanya. Tanggal langkah awal = tanggal impor (bukan tanggal aslinya).
+
+export type MigrationImportResult = {
+  created: { mrpId: string; rolls: number; batches: number; kolis: number }[];
+  summary: MigrationImportSummary;
+};
+
+export async function importMigrationAction(mrps: MigrationMrp[]): Promise<ActionResult<MigrationImportResult>> {
+  return toActionResult(() => importMigrationImpl(mrps));
+}
+
+async function importMigrationImpl(mrps: MigrationMrp[]): Promise<MigrationImportResult> {
+  requireInternalRole(await requireSession(), "ppic");
+  if (mrps.length === 0) throw new Error("Tidak ada MRP untuk diimpor.");
+  const db = supabaseServer();
+
+  // ---- Validasi global (sebelum menulis apa pun) ----
+  const ids = mrps.map((m) => m.mrpId.trim());
+  if (ids.some((id) => !id)) throw new Error("Ada No MRP yang kosong.");
+  if (new Set(ids).size !== ids.length) throw new Error("Ada No MRP yang dobel di data yang dikirim.");
+  const { data: existingMrp, error: exErr } = await db.from("mrp").select("id").in("id", ids);
+  if (exErr) throw new Error(exErr.message);
+  if ((existingMrp ?? []).length > 0) throw new Error(`No MRP sudah ada di ERP: ${(existingMrp ?? []).map((r) => r.id).join(", ")}. Pakai nomor lain (mis. MRP-MIG-001).`);
+
+  // Tahap G (menunggu Good Receive) belum punya kode roll -- vendor mengisinya saat Good Receive.
+  const allCodes = mrps.flatMap((m) => m.rolls.filter((r) => r.tahap !== "G").map((r) => r.codeRoll.trim()));
+  if (allCodes.some((c) => !c)) throw new Error("Ada roll (selain tahap G) tanpa kode roll.");
+  if (new Set(allCodes).size !== allCodes.length) throw new Error("Ada kode roll yang dobel di data yang dikirim.");
+  const { data: existingRolls, error: codeErr } = await db.from("raw_material_invoice_rolls").select("code_roll").in("code_roll", allCodes);
+  if (codeErr) throw new Error(codeErr.message);
+  if ((existingRolls ?? []).length > 0) throw new Error(`Kode roll sudah dipakai di ERP: ${(existingRolls ?? []).map((r) => r.code_roll).join(", ")}.`);
+
+  const { data: vendorRow } = await db.from("vendors_produksi").select("id").eq("id", MIGRASI_VENDOR_ID).maybeSingle();
+  if (!vendorRow) throw new Error(`Vendor produksi ${MIGRASI_VENDOR_ID} (Konveksi Makassar) tidak ditemukan.`);
+
+  for (const m of mrps) {
+    if (m.lines.length === 0) throw new Error(`${m.mrpId}: tidak punya baris warna.`);
+    for (const l of m.lines) {
+      const count = m.rolls.filter((r) => r.warna === l.warna && r.lengan === l.lengan).length;
+      if (count === 0) throw new Error(`${m.mrpId}: ${l.warna} · ${l.lengan} belum punya roll.`);
+      if (Object.values(l.sizes).reduce((a, b) => a + b, 0) <= 0) throw new Error(`${m.mrpId}: ${l.warna} · ${l.lengan} belum punya rencana pcs.`);
+    }
+    for (const r of m.rolls) {
+      if (!m.lines.some((l) => l.warna === r.warna && l.lengan === r.lengan)) throw new Error(`${m.mrpId}: roll ${r.codeRoll} tidak cocok dengan baris warna/lengan manapun.`);
+      if (!(r.grossKg > 0) || !(r.hargaPerKg > 0)) throw new Error(`${m.mrpId}: roll ${r.codeRoll} wajib punya berat dan harga per kg.`);
+      if (r.tahap !== "A" && r.tahap !== "G" && (!r.cutting || !r.cutting.restingAt || !(r.cutting.netKg > 0))) throw new Error(`${m.mrpId}: roll ${r.codeRoll} (tahap ${r.tahap}) wajib punya data resting & berat bersih.`);
+      if ((r.tahap === "C" || r.tahap === "D") && !r.fg) throw new Error(`${m.mrpId}: roll ${r.codeRoll} (tahap ${r.tahap}) wajib punya data FG.`);
+      if (r.tahap === "D" && !r.ship) throw new Error(`${m.mrpId}: roll ${r.codeRoll} (tahap D) wajib punya data pengiriman.`);
+    }
+  }
+
+  const [hargaMaklonRes, entitasRes] = await Promise.all([db.from("harga_maklon").select("*"), db.from("entitas").select("nama").order("nama").limit(1)]);
+  const hargaMaklon: HargaMaklonRow[] = (hargaMaklonRes.data ?? []).map((r) => ({
+    id: r.id,
+    kodeVendor: r.kode_vendor,
+    namaVendor: r.nama_vendor,
+    tipeLengan: r.tipe_lengan,
+    jenisHarga: r.jenis_harga,
+    kapasitasMin: r.kapasitas_min ?? undefined,
+    kapasitasMax: r.kapasitas_max ?? undefined,
+    harga: Number(r.harga),
+  }));
+  const entity = entitasRes.data?.[0]?.nama ?? ENTITAS_LIST[0];
+
+  const created: MigrationImportResult["created"] = [];
+  for (const m of mrps) {
+    try {
+      created.push(await createMigrationMrp(db, m, hargaMaklon, entity));
+    } catch (err) {
+      // Hapus MRP setengah jadi ini -- semua tabel turunan ikut terhapus lewat ON DELETE CASCADE.
+      await db.from("mrp").delete().eq("id", m.mrpId);
+      const done = created.length > 0 ? ` (MRP yang sudah berhasil tersimpan: ${created.map((c) => c.mrpId).join(", ")})` : "";
+      throw new Error(`${m.mrpId}: ${err instanceof Error ? err.message : String(err)}${done}`);
+    }
+  }
+  return {
+    created,
+    summary: {
+      mrpCount: created.length,
+      lineCount: mrps.reduce((s, m) => s + m.lines.length, 0),
+      rollCount: created.reduce((s, c) => s + c.rolls, 0),
+      batchCount: created.reduce((s, c) => s + c.batches, 0),
+      koliCount: created.reduce((s, c) => s + c.kolis, 0),
+    },
+  };
+}
+
+function must(res: { error: { message: string } | null }, what: string) {
+  if (res.error) throw new Error(`${what}: ${res.error.message}`);
+}
+
+async function createMigrationMrp(db: SupabaseClient, m: MigrationMrp, hargaMaklon: HargaMaklonRow[], entity: string): Promise<MigrationImportResult["created"][number]> {
+  const vendor = MIGRASI_VENDOR_ID;
+  const mrpId = m.mrpId.trim();
+  const todayStr = today();
+  const nowStr = nowIso();
+  const planPcs = (l: MigrationLine) => Object.values(l.sizes).reduce((a, b) => a + b, 0);
+  const totalPcs = m.lines.reduce((s, l) => s + planPcs(l), 0);
+  const totalRolls = m.rolls.length;
+
+  // ---- MRP + rencana (lengan group, aduan pola, material row) ----
+  must(
+    await db.from("mrp").insert({
+      id: mrpId,
+      kategori: m.lines[0].kategori,
+      warna: Array.from(new Set(m.lines.map((l) => l.warna))).join(", "),
+      target_date: "-",
+      live: true,
+      qty: totalPcs,
+      is_fob: false,
+      ppic_approval: "PPIC_APPROVED",
+      po_sent: true,
+      created_at: todayStr,
+      ppic_submitted_at: todayStr,
+      ppic_approved_at: todayStr,
+      po_sent_at: todayStr,
+      po_approved_at: todayStr,
+      first_invoice_at: todayStr,
+    }),
+    "Gagal membuat MRP"
+  );
+
+  // Aduan pola: rincian per kode pairing dari sheet Aduan_Pola kalau ada, kalau tidak 1 baris ringkasan
+  // (kode "MIGRASI") dengan qty roll = jumlah roll di sheet 2 dan pcs = rencana di sheet 1.
+  const sumSizes = (o: Record<string, number>) => Object.values(o).reduce((a, b) => a + b, 0);
+  const lineInfo = m.lines.map((l, i) => {
+    const rolls = m.rolls.filter((r) => r.warna === l.warna && r.lengan === l.lengan);
+    const aduanRows =
+      l.aduan && l.aduan.length > 0
+        ? l.aduan.map((a, ai) => ({ id: `${mrpId}-ad-${i}-${ai}`, kode: a.kode, qtyRoll: a.qtyRoll, sizes: a.sizes, pcs: sumSizes(a.sizes) }))
+        : [{ id: `${mrpId}-ad-${i}`, kode: "MIGRASI", qtyRoll: rolls.length, sizes: l.sizes, pcs: planPcs(l) }];
+    return { line: l, rolls, lgId: `${mrpId}-mg${i}`, aduanRows, mrId: `${mrpId}-mr${i}`, count: rolls.length, pcs: planPcs(l) };
+  });
+  const adIdFor = (info: (typeof lineInfo)[number], roll: MigrationRoll): string => {
+    if (info.aduanRows.length === 1) return info.aduanRows[0].id;
+    const hit = info.aduanRows.find((a) => a.kode === roll.kodePairing);
+    if (!hit) throw new Error(`roll ${roll.codeRoll}: Kode Pairing ${roll.kodePairing ?? "(kosong)"} tidak cocok dengan aduan pola ${info.line.warna} · ${info.line.lengan}`);
+    return hit.id;
+  };
+
+  must(
+    await db.from("lengan_groups").insert(
+      lineInfo.map((x) => ({ id: x.lgId, mrp_id: mrpId, warna: x.line.warna, lengan: x.line.lengan, total_qty: x.pcs, rib_kg: 0, kerah_kg: 0, manset_kg: 0, roll_estimate: x.count, vendor_default: vendor }))
+    ),
+    "Gagal membuat lengan group"
+  );
+  must(
+    await db.from("lengan_group_sizes").insert(lineInfo.flatMap((x) => Object.entries(x.line.sizes).map(([size, qty]) => ({ lengan_group_id: x.lgId, size, qty })))),
+    "Gagal membuat size lengan group"
+  );
+  must(
+    await db.from("aduan_pola_rows").insert(
+      lineInfo.flatMap((x) =>
+        x.aduanRows.map((a) => ({ id: a.id, lengan_group_id: x.lgId, mrp_id: mrpId, warna: x.line.warna, lengan: x.line.lengan, kode: a.kode, qty_roll: a.qtyRoll, qty: a.pcs, vendor, rib_allocated_roll: a.qtyRoll }))
+      )
+    ),
+    "Gagal membuat aduan pola"
+  );
+  must(
+    await db.from("aduan_pola_sizes").insert(lineInfo.flatMap((x) => x.aduanRows.flatMap((a) => Object.entries(a.sizes).map(([size, qty]) => ({ aduan_row_id: a.id, size, qty }))))),
+    "Gagal membuat size aduan pola"
+  );
+  must(
+    await db.from("material_rows").insert(
+      lineInfo.map((x) => ({
+        id: x.mrId,
+        lengan_group_id: x.lgId,
+        mrp_id: mrpId,
+        warna: x.line.warna,
+        lengan: x.line.lengan,
+        qty_roll: x.count,
+        rib_kg: 0,
+        kerah_kg: 0,
+        manset_kg: 0,
+        supplier: MIGRASI_SUPPLIER,
+        entitas: entity,
+        sent_to_po_at: nowStr,
+      }))
+    ),
+    "Gagal membuat baris material"
+  );
+
+  // ---- PO Produksi (maklon) -- sudah disetujui & langsung PRODUCTION (bahan sudah di vendor) ----
+  const aduanForAmount: AduanPolaRow[] = lineInfo.flatMap((x) =>
+    x.aduanRows.map((a) => ({
+      id: a.id,
+      lenganGroupId: x.lgId,
+      warna: x.line.warna,
+      lengan: x.line.lengan,
+      kode: a.kode,
+      qtyRoll: a.qtyRoll,
+      sizes: Object.entries(a.sizes).map(([size, qty]) => ({ size, qty })),
+      qty: a.pcs,
+      vendor,
+      ribAllocatedRoll: a.qtyRoll,
+    }))
+  );
+  let maklonAmount = 0;
+  try {
+    maklonAmount = maklonAmountForVendor(hargaMaklon, vendor, aduanForAmount);
+  } catch {
+    maklonAmount = 0;
+  }
+  const maklonPoId = await nextPoDisplayId("maklon_pos", "PO-MKL", [mrpId, vendor]);
+  // Ada roll yang masih menunggu Good Receive (tahap G): PO belum boleh langsung PRODUCTION -- vendor
+  // memulai produksi sendiri setelah Good Receive (advanceMaklonProductionAction), seperti alur biasa.
+  const waitingRolls = m.rolls.filter((r) => r.tahap === "G").length;
+  const maklonStatus = waitingRolls === 0 ? "PRODUCTION" : waitingRolls === totalRolls ? "FULL_WAITING_MATERIAL" : "PARTIAL_WAITING_MATERIAL";
+  must(
+    await db.from("maklon_pos").insert({ id: maklonPoId, mrp_id: mrpId, vendor_produksi: vendor, qty: totalPcs, amount: maklonAmount, entity: "Tigalapan Indonesia", status: maklonStatus, approved: true }),
+    "Gagal membuat PO Produksi"
+  );
+
+  // ---- PO Material (supplier MIGRASI) + invoice + roll (sudah diterima) ----
+  const materialPoId = await nextPoDisplayId("material_pos", "PO-SUP", [mrpId, vendor, MIGRASI_SUPPLIER]);
+  const totalAmount = m.rolls.reduce((s, r) => s + r.grossKg * r.hargaPerKg, 0);
+  must(
+    await db.from("material_pos").insert({
+      id: materialPoId,
+      mrp_id: mrpId,
+      vendor_produksi: vendor,
+      supplier: MIGRASI_SUPPLIER,
+      warna: Array.from(new Set(m.lines.map((l) => l.warna))).join(", "),
+      lengan: m.lines[0].lengan,
+      roll_count: totalRolls,
+      available_rolls: totalRolls,
+      invoiced_rolls: totalRolls,
+      amount: totalAmount,
+      entity,
+      status: "INVOICE",
+      approved: true,
+      days_since_po: 0,
+    }),
+    "Gagal membuat PO Material"
+  );
+  must(await db.from("material_po_color_breakdown").insert(lineInfo.map((x) => ({ material_po_id: materialPoId, warna: x.line.warna, lengan: x.line.lengan, roll_count: x.count, entitas: entity }))), "Gagal membuat rincian PO Material");
+  must(await db.from("material_po_invoiced_by_color").insert(lineInfo.map((x) => ({ material_po_id: materialPoId, color_key: `${x.line.warna}|${x.line.lengan}`, invoiced_rolls: x.count }))), "Gagal membuat status invoice PO Material");
+
+  // 1 invoice per warna+lengan+harga/kg (id warna invoice menyimpan SATU harga_per_roll = Rp/kg).
+  const groups = new Map<string, MigrationRoll[]>();
+  for (const r of m.rolls) {
+    const k = `${r.warna}|${r.lengan}|${r.hargaPerKg}|${r.tahap === "G" ? "G" : "R"}`;
+    groups.set(k, [...(groups.get(k) ?? []), r]);
+  }
+  for (const rolls of groups.values()) {
+    const first = rolls[0];
+    const waiting = first.tahap === "G";
+    const invoiceId = await nextReadableId("INV");
+    must(
+      await db.from("raw_material_invoices").insert({
+        id: invoiceId,
+        po_id: materialPoId,
+        mrp_id: mrpId,
+        vendor_produksi: vendor,
+        supplier: MIGRASI_SUPPLIER,
+        qty_ready: rolls.length,
+        diskon: 0,
+        total_biaya: rolls.reduce((s, r) => s + r.grossKg * r.hargaPerKg, 0),
+        kode_transaksi: "MIGRASI",
+        no_invoice_vendor: null,
+        entity,
+        // Tahap G: invoice berstatus DELIVERY (sudah dikirim ke vendor, roll belum ditandai diterima) --
+        // muncul di Good Receive vendor; sisanya RECEIVING (roll sudah diterima).
+        status: waiting ? "DELIVERY" : "RECEIVING",
+        destination_vendor: vendor,
+        booked_at: todayStr,
+        ...(waiting ? { paid_at: todayStr, delivered_at: todayStr } : { received_at: todayStr }),
+      }),
+      "Gagal membuat invoice bahan"
+    );
+    const colorId = `${invoiceId}-${first.warna}-${first.lengan}`;
+    must(await db.from("raw_material_invoice_colors").insert({ id: colorId, invoice_id: invoiceId, warna: first.warna, lengan: first.lengan, harga_per_roll: first.hargaPerKg }), "Gagal membuat warna invoice");
+    must(
+      await db.from("raw_material_invoice_rolls").insert(
+        rolls.map((r, idx) => ({
+          invoice_color_id: colorId,
+          roll_index: idx,
+          gross_kg: r.grossKg,
+          net_kg: r.tahap !== "A" && r.tahap !== "G" && r.cutting ? r.cutting.netKg : null,
+          weigh_confirmed_at: r.tahap !== "A" && r.tahap !== "G" ? nowStr : null,
+          code_lot: r.codeLot ?? null,
+          code_roll: waiting ? null : r.codeRoll.trim(),
+          received_at: waiting ? null : todayStr,
+        }))
+      ),
+      "Gagal membuat roll bahan"
+    );
+  }
+
+  // ---- Batch cutting per roll (tahap B/C/D) + FG (C/D) ----
+  const batchIdByCode = new Map<string, string>();
+  let batchCount = 0;
+  for (const r of m.rolls) {
+    if (r.tahap === "A" || r.tahap === "G" || !r.cutting) continue;
+    const info = lineInfo.find((x) => x.line.warna === r.warna && x.line.lengan === r.lengan)!;
+    const batchId = await nextReadableId("BATCH");
+    batchIdByCode.set(r.codeRoll.trim(), batchId);
+    const restingIso = `${r.cutting.restingAt}T08:00:00+07:00`;
+    const cuttingSizes = Object.entries(r.cutting.sizes).filter(([, q]) => q > 0);
+    const cuttingIso = cuttingSizes.length > 0 ? new Date(Date.parse(restingIso) + RESTING_TARGET_MINUTES * 60000).toISOString() : null;
+    const fgSizes = Object.entries(r.fg ?? {}).filter(([, q]) => q > 0);
+    const closed = r.tahap === "C" || r.tahap === "D";
+    must(
+      await db.from("production_batches").insert({
+        id: batchId,
+        mrp_id: mrpId,
+        vendor_produksi: vendor,
+        aduan_row_id: adIdFor(info, r),
+        kode: "MIGRASI",
+        warna: r.warna,
+        lengan: r.lengan,
+        qty_roll: 1,
+        gramasi: r.cutting.gramasi ?? null,
+        resting_at: restingIso,
+        cutting_at: cuttingIso,
+        created_at: todayStr,
+        code_roll: r.codeRoll.trim(),
+        ...(r.cutting.setting ? { setting: r.cutting.setting } : {}),
+        ...(closed ? { closed_at: todayStr, fg_logged_snapshot: Object.fromEntries(fgSizes) } : {}),
+      }),
+      `Gagal membuat batch cutting roll ${r.codeRoll}`
+    );
+    batchCount++;
+    if (cuttingSizes.length > 0) must(await db.from("production_batch_sizes").insert(cuttingSizes.map(([size, qty]) => ({ production_batch_id: batchId, size, qty }))), "Gagal menyimpan hasil potong");
+    if (closed && fgSizes.length > 0) {
+      must(await db.from("production_batch_fg_sizes").insert(fgSizes.map(([size, qty]) => ({ production_batch_id: batchId, size, qty }))), "Gagal menyimpan hasil FG");
+      const resultId = await nextReadableId("PR");
+      must(
+        await db.from("production_results").insert({
+          id: resultId,
+          group_key: `${mrpId}|${r.warna}|${r.lengan}`,
+          mrp_id: mrpId,
+          vendor_produksi: vendor,
+          po_id: maklonPoId,
+          warna: r.warna,
+          lengan: r.lengan,
+          kind: "FG",
+          recorded_at: nowStr,
+          note: `Roll ${r.codeRoll.trim()}`,
+        }),
+        "Gagal menyimpan riwayat FG"
+      );
+      must(await db.from("production_result_sizes").insert(fgSizes.map(([size, qty]) => ({ production_result_id: resultId, size, qty }))), "Gagal menyimpan size riwayat FG");
+    }
+  }
+
+  // ---- Pengiriman (tahap D) -- dikelompokkan per resi + koli ----
+  let koliCount = 0;
+  const shipped = m.rolls.filter((r) => r.tahap === "D" && r.ship);
+  const koliGroups = new Map<string, MigrationRoll[]>();
+  for (const r of shipped) {
+    const k = `${r.ship!.noResi}||${r.ship!.noKoli}`;
+    koliGroups.set(k, [...(koliGroups.get(k) ?? []), r]);
+  }
+  const resiGroupByResi = new Map<string, string>();
+  for (const rolls of koliGroups.values()) {
+    const s = rolls[0].ship!;
+    let resiGroupId = resiGroupByResi.get(s.noResi);
+    if (!resiGroupId) {
+      resiGroupId = await nextReadableId("RESI");
+      resiGroupByResi.set(s.noResi, resiGroupId);
+    }
+    const koliId = await nextReadableId("KOLI");
+    const berat = Math.max(0, ...rolls.map((r) => r.ship?.beratKoli ?? 0));
+    must(
+      await db.from("delivery_kolis").insert({
+        id: koliId,
+        mrp_id: mrpId,
+        vendor_produksi: vendor,
+        ekspedisi: s.ekspedisi,
+        no_koli: s.noKoli,
+        berat_koli: berat > 0 ? berat : null,
+        delivered_at: s.tanggalKirim,
+        created_at: s.tanggalKirim,
+        no_resi: s.noResi,
+        resi_group_id: resiGroupId,
+      }),
+      "Gagal membuat koli"
+    );
+    const items = rolls.flatMap((r) =>
+      Object.entries(r.fg ?? {})
+        .filter(([, q]) => q > 0)
+        .map(([size, qty]) => ({ delivery_koli_id: koliId, warna: r.warna, lengan: r.lengan, size, qty, kind: "FG", usia: null, source_batch_id: batchIdByCode.get(r.codeRoll.trim()) ?? null }))
+    );
+    if (items.length > 0) must(await db.from("delivery_koli_items").insert(items), "Gagal menyimpan isi koli");
+    koliCount++;
+  }
+
+  return { mrpId, rolls: totalRolls, batches: batchCount, kolis: koliCount };
+}
+
+// =========================================================================
+// Matriks Approval PO (migration 0055, owner 2026-09-26 -- lihat lib/mrp/poApproval.ts)
+// =========================================================================
+// Level 1-4 dari NILAI PO (sebelum dipecah per entitas), berlapis berurutan, MENGGANTIKAN approval
+// Finance tunggal untuk PO Material & PO Produksi. PO lama (approval_level kosong) tetap alur lama.
+// "Kirim PO ke Finance" (sendPoToFinanceAction) = langkah 1; Level 1 langsung disetujui final.
+
+type PoType = "MATERIAL" | "MAKLON";
+const PO_TABLE = { MATERIAL: "material_pos", MAKLON: "maklon_pos" } as const;
+
+function initialApprovalFields(amount: number, at: string) {
+  return {
+    approvalLevel: approvalLevelForAmount(amount) as number,
+    approvalLog: [{ step: 1, role: "procurement", action: "APPROVED", at, note: "Diajukan" }] as PoApprovalEntry[],
+    approvalSubmittedAt: at,
+  };
+}
+
+/** Persetujuan FINAL PO Material: dipecah per entitas + approved=true (logika lama approve Finance). */
+async function finalizeMaterialPo(db: SupabaseClient, id: string): Promise<void> {
+  const po = await fetchOneMaterialPo(db, id);
+  if (!po) return;
+  const entitasOrder = Array.from(new Set(po.colorBreakdown.map((c) => c.entitas ?? po.entity)));
+  const newIds = await Promise.all(entitasOrder.slice(1).map((entitas) => nextPoDisplayId("material_pos", "PO-SUP", [po.mrpId, po.vendorProduksi, po.supplier, entitas])));
+  const parts = splitMaterialPoByEntitas(po, newIds).map((p) => ({ ...p, approved: true }));
+  await writeMaterialPoSplit(db, id, parts);
+  await checkPoApproved(po.mrpId);
+}
+
+/** Persetujuan FINAL PO Produksi: cuma flip `approved` (status produksi dipertahankan) + kabari vendor. */
+async function finalizeMaklonPo(db: SupabaseClient, id: string): Promise<void> {
+  const { data: po, error } = await db.from("maklon_pos").select("id,mrp_id,vendor_produksi").eq("id", id).single();
+  if (error || !po) return;
+  await db.from("maklon_pos").update({ approved: true }).eq("id", id);
+  await insertNotification(notif(`PO Produksi ${po.id} untuk ${po.mrp_id} telah disetujui — cek menu PO Produksi Saya`, ["vendorMaklon"], po.vendor_produksi));
+  await checkPoApproved(po.mrp_id);
+}
+
+type ApprovalSubject = {
+  id: string;
+  mrpId: string;
+  amount: number;
+  approved: boolean;
+  status?: string;
+  approvalLevel?: number;
+  approvalLog?: PoApprovalEntry[];
+  approvalSubmittedAt?: string;
+};
+
+async function loadApprovalSubject(db: SupabaseClient, type: PoType, id: string): Promise<ApprovalSubject | null> {
+  const { data, error } = await db.from(PO_TABLE[type]).select("id,mrp_id,amount,approved,status,approval_level,approval_log,approval_submitted_at").eq("id", id).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+  return {
+    id: data.id,
+    mrpId: data.mrp_id,
+    amount: Number(data.amount),
+    approved: data.approved,
+    status: data.status,
+    approvalLevel: data.approval_level ?? undefined,
+    approvalLog: (data.approval_log ?? []) as PoApprovalEntry[],
+    approvalSubmittedAt: data.approval_submitted_at ?? undefined,
+  };
+}
+
+async function notifyNextApprovers(subject: ApprovalSubject, state: PoApprovalState): Promise<void> {
+  if (state.currentStep == null || state.pendingRoles.length === 0) return;
+  const label = APPROVAL_STEP_LABEL[state.currentStep] ?? `Level ${state.currentStep}`;
+  await insertNotification(notif(`PO ${subject.id} (${subject.mrpId}) menunggu approval ${label} — SLA ${APPROVAL_STEP_SLA_DAYS[state.currentStep] ?? 1} hari`, state.pendingRoles));
+}
+
+/** Catat 1 langkah (setuju/tolak) ke approval_log, lalu finalisasi kalau semua langkah selesai. */
+async function recordApprovalStep(db: SupabaseClient, type: PoType, subject: ApprovalSubject, role: ApprovalRole, action: "APPROVED" | "REJECTED", note?: string): Promise<void> {
+  const state = poApprovalState(subject);
+  if (state.currentStep == null) throw new Error("PO ini tidak sedang menunggu approval.");
+  const entry: PoApprovalEntry = { step: state.currentStep, role, action, at: new Date().toISOString(), ...(note?.trim() ? { note: note.trim() } : {}) };
+  const log = [...(subject.approvalLog ?? []), entry];
+  const { error } = await db.from(PO_TABLE[type]).update({ approval_log: log }).eq("id", subject.id);
+  if (error) throw new Error(error.message);
+  const next = poApprovalState({ ...subject, approvalLog: log });
+  if (action === "REJECTED") {
+    await insertNotification(notif(`PO ${subject.id} (${subject.mrpId}) DITOLAK ${APPROVAL_ROLE_LABEL[role]} — alasan: ${note?.trim()}. Perbaiki lalu ajukan ulang dari menu Approval PO.`, ["procurement"]));
+    return;
+  }
+  if (next.approved) {
+    if (type === "MATERIAL") await finalizeMaterialPo(db, subject.id);
+    else await finalizeMaklonPo(db, subject.id);
+    await insertNotification(notif(`PO ${subject.id} (${subject.mrpId}) DISETUJUI penuh (Level ${next.level})`, ["procurement"]));
+  } else {
+    await notifyNextApprovers(subject, next);
+  }
+}
+
+/** Approval Finance (FAT Manager) untuk PO Material -- dipakai tombol "Approve" lama Finance (tunggal & massal). */
+async function financeApproveMaterialPo(db: SupabaseClient, po: MaterialPO): Promise<void> {
+  if (po.approved || po.status === "CANCELLED") return;
+  const state = poApprovalState(po);
+  if (state.legacy) {
+    await finalizeMaterialPo(db, po.id);
+    return;
+  }
+  if (state.rejected || !state.pendingRoles.includes("finance")) return; // bukan giliran Finance
+  await recordApprovalStep(
+    db,
+    "MATERIAL",
+    { id: po.id, mrpId: po.mrpId, amount: po.amount, approved: po.approved, approvalLevel: po.approvalLevel, approvalLog: po.approvalLog, approvalSubmittedAt: po.approvalSubmittedAt },
+    "finance",
+    "APPROVED"
+  );
+}
+
+async function financeApproveMaklonPo(db: SupabaseClient, id: string): Promise<void> {
+  const subject = await loadApprovalSubject(db, "MAKLON", id);
+  if (!subject || subject.approved) return;
+  const state = poApprovalState(subject);
+  if (state.legacy) {
+    await finalizeMaklonPo(db, id);
+    return;
+  }
+  if (state.rejected || !state.pendingRoles.includes("finance")) return;
+  await recordApprovalStep(db, "MAKLON", subject, "finance", "APPROVED");
+}
+
+async function poStepImpl(type: PoType, id: string, asRole: ApprovalRole, action: "APPROVED" | "REJECTED", note?: string): Promise<void> {
+  requireInternalRole(await requireSession(), asRole);
+  const db = supabaseServer();
+  const subject = await loadApprovalSubject(db, type, id);
+  if (!subject) throw new Error("PO tidak ditemukan.");
+  if (subject.approved) throw new Error("PO ini sudah disetujui penuh.");
+  if (subject.status === "CANCELLED") throw new Error("PO ini sudah dibatalkan.");
+  const state = poApprovalState(subject);
+  if (state.legacy) {
+    if (asRole !== "finance" || action !== "APPROVED") throw new Error("PO ini dibuat sebelum matriks approval berlaku -- hanya bisa disetujui Finance.");
+    if (type === "MATERIAL") await finalizeMaterialPo(db, id);
+    else await finalizeMaklonPo(db, id);
+    return;
+  }
+  if (state.rejected) throw new Error("PO ini sedang ditolak -- menunggu diajukan ulang oleh Procurement.");
+  if (!state.pendingRoles.includes(asRole)) {
+    throw new Error(`Bukan giliran ${APPROVAL_ROLE_LABEL[asRole]} -- PO menunggu ${APPROVAL_STEP_LABEL[state.currentStep ?? 0] ?? "langkah lain"}.`);
+  }
+  if (action === "REJECTED" && !note?.trim()) throw new Error("Alasan penolakan wajib diisi.");
+  await recordApprovalStep(db, type, subject, asRole, action, note);
+}
+
+/** Setujui langkah approval PO sebagai `asRole` (harus giliran role itu). */
+export async function approvePoStepAction(type: PoType, id: string, asRole: ApprovalRole, note?: string): Promise<ActionResult<void>> {
+  return toActionResult(() => poStepImpl(type, id, asRole, "APPROVED", note));
+}
+
+/** Tolak PO di langkah yang sedang menunggu `asRole` -- alasan wajib; PO kembali ke Procurement. */
+export async function rejectPoStepAction(type: PoType, id: string, asRole: ApprovalRole, note: string): Promise<ActionResult<void>> {
+  return toActionResult(() => poStepImpl(type, id, asRole, "REJECTED", note));
+}
+
+/** Procurement mengajukan ulang PO yang ditolak: level dihitung ulang dari nilai PO sekarang, approval mulai lagi. */
+export async function resubmitPoAction(type: PoType, id: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    requireInternalRole(await requireSession(), "procurement");
+    const db = supabaseServer();
+    const subject = await loadApprovalSubject(db, type, id);
+    if (!subject) throw new Error("PO tidak ditemukan.");
+    const state = poApprovalState(subject);
+    if (!state.rejected) throw new Error("Hanya PO yang ditolak yang bisa diajukan ulang.");
+    const at = new Date().toISOString();
+    const f = initialApprovalFields(subject.amount, at);
+    const log = [...(subject.approvalLog ?? []), { ...f.approvalLog[0], note: "Diajukan ulang" }];
+    const { error } = await db.from(PO_TABLE[type]).update({ approval_level: f.approvalLevel, approval_log: log, approval_submitted_at: at }).eq("id", id);
+    if (error) throw new Error(error.message);
+    const next = poApprovalState({ ...subject, approvalLevel: f.approvalLevel, approvalLog: log, approvalSubmittedAt: at });
+    if (next.approved || f.approvalLevel === 1) {
+      if (type === "MATERIAL") await finalizeMaterialPo(db, id);
+      else await finalizeMaklonPo(db, id);
+    } else {
+      await notifyNextApprovers(subject, next);
+    }
+  });
 }

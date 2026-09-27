@@ -92,6 +92,14 @@ type AduanGroup = { kode: string; lengan: Lengan; rows: (AduanPolaRow & { availa
 /** 1 baris di "List roll" (sebelum Resting): roll yang sudah dipilih lewat popup + isian per roll. */
 type RollLine = { id: string; roll: RestingCandidateRoll; netKg: number; gramasi: number; setting: string; codeRoll: string };
 
+/** Selisih berat vs berat kotor -- untuk roll hasil Migrasi Data Awal (isSynthetic) TIDAK pernah
+ *  `claimable`: berat kotornya cuma catatan awal, bukan invoice supplier, jadi tidak ada klaim yang
+ *  bisa diajukan & selisih tidak boleh memblokir Resting. */
+function rollVariance(roll: RestingCandidateRoll, netKg: number) {
+  const v = weightVariance(roll.grossKg, netKg);
+  return roll.isSynthetic ? { ...v, claimable: false } : v;
+}
+
 // Kolom baris GRUP "Material dalam produksi" -- MRP | Kode·lengan | Part | Warna | Roll | Resting |
 // Cutting | Durasi Resting | Status Resting | Hasil Aduan/Yield | expander. Item 5 (feedback
 // batch 2026-09-05): 1 baris = 1 SESI RESTING ("Part", lihat restingSessionGroups di
@@ -392,7 +400,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
     setLines((prev) => prev.map((l) => ({ ...l, gramasi: fillGramasi > 0 ? fillGramasi : l.gramasi, setting: fillSetting.trim() ? fillSetting : l.setting })));
   }
 
-  const claimableLines = visibleLines.filter((l) => weightVariance(l.roll.grossKg, l.netKg).claimable);
+  const claimableLines = visibleLines.filter((l) => rollVariance(l.roll, l.netKg).claimable);
   const canRest = visibleLines.length > 0 && claimableLines.length === 0 && visibleLines.every((l) => l.netKg > 0);
 
   async function submitResting() {
@@ -427,10 +435,10 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
 
   // ---- Dialog claim (per roll di List roll) ----
   const claimLine = claimLineId ? (visibleLines.find((l) => l.id === claimLineId) ?? null) : null;
-  const claimVariance = claimLine ? weightVariance(claimLine.roll.grossKg, claimLine.netKg) : null;
+  const claimVariance = claimLine ? rollVariance(claimLine.roll, claimLine.netKg) : null;
   function openClaim(line: RollLine) {
     setClaimLineId(line.id);
-    setClaimKind(weightVariance(line.roll.grossKg, line.netKg).claimable ? "BERAT" : "FISIK");
+    setClaimKind(rollVariance(line.roll, line.netKg).claimable ? "BERAT" : "FISIK");
     setClaimNote("");
     setClaimError(null);
     resetClaimPhoto();
@@ -611,7 +619,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   <div className="px-3 py-4 text-center font-sans text-[11px] text-text-muted">Belum ada roll di list — klik &quot;+ Tambah roll&quot; untuk memilih warna dan jumlah roll.</div>
                 )}
                 {visibleLines.map((l) => {
-                  const variance = weightVariance(l.roll.grossKg, l.netKg);
+                  const variance = rollVariance(l.roll, l.netKg);
                   return (
                     <div key={l.id} className="grid min-w-[1080px] items-center gap-x-3 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F]" style={{ gridTemplateColumns: LIST_GRID }}>
                       <span className="font-medium">
@@ -641,9 +649,11 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                       </span>
                       <input value={l.setting} onChange={(e) => updateLine(l.id, { setting: e.target.value })} placeholder="Setting" className="rounded-md border border-[#DDE4EB] px-1.5 py-1 text-[11.5px]" />
                       <span className="flex justify-end gap-1.5">
-                        <Button onClick={() => openClaim(l)} variant="danger" size="xs" title={variance.claimable ? "Selisih berat di luar toleransi -- ajukan claim" : "Ajukan claim (selisih berat / cacat fisik)"}>
-                          {variance.claimable ? "Claim ⚠" : "Claim"}
-                        </Button>
+                        {!l.roll.isSynthetic && (
+                          <Button onClick={() => openClaim(l)} variant="danger" size="xs" title={variance.claimable ? "Selisih berat di luar toleransi -- ajukan claim" : "Ajukan claim (selisih berat / cacat fisik)"}>
+                            {variance.claimable ? "Claim ⚠" : "Claim"}
+                          </Button>
+                        )}
                         <Button onClick={() => removeLine(l.id)} variant="muted" size="xs">
                           Hapus
                         </Button>

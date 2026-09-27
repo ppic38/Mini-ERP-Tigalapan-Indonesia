@@ -4,6 +4,7 @@ import { formatDate, formatDecimal, formatPcs, localDateString, materialKgPerRol
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "./seed";
 import type { MrpDetail } from "./store";
 import type { MaklonPO, MaterialPO } from "./types";
+import { poApprovalPrintInfo } from "./poApproval";
 
 // Format PDF ini meniru tata letak PO dari ERP lama user (logo + nama perusahaan di kiri atas,
 // judul dokumen di tengah, info wajib dalam kotak 2 kolom, tabel rincian ber-header hijau dengan
@@ -256,7 +257,7 @@ function drawApprovalBox(
   doc.setLineWidth(0.2);
 }
 
-function drawApprovalBoxes(doc: jsPDF, y: number, o: { submittedDate?: string; approved: boolean; approvedDate?: string }) {
+function drawApprovalBoxes(doc: jsPDF, y: number, o: { submittedDate?: string; approved: boolean; approvedDate?: string; approver?: { role: string; name: string; pendingText: string } }) {
   const gap = 16;
   const w = (CONTENT_W - gap) / 2;
   drawApprovalBox(doc, MARGIN, y, w, {
@@ -269,11 +270,11 @@ function drawApprovalBoxes(doc: jsPDF, y: number, o: { submittedDate?: string; a
   });
   drawApprovalBox(doc, MARGIN + w + gap, y, w, {
     heading: "DISETUJUI OLEH",
-    role: "Finance",
+    role: o.approver?.role ?? "Finance",
     status: o.approved ? "DISETUJUI" : "MENUNGGU PERSETUJUAN",
     statusColor: o.approved ? GREEN : AMBER,
-    name: "Finance",
-    meta: o.approved ? (o.approvedDate ? `Tanggal persetujuan: ${formatDate(o.approvedDate)}` : "Sudah disetujui") : "Belum disetujui Finance",
+    name: o.approver?.name ?? "Finance",
+    meta: o.approved ? (o.approvedDate ? `Tanggal persetujuan: ${formatDate(o.approvedDate)}` : "Sudah disetujui") : (o.approver?.pendingText ?? "Belum disetujui Finance"),
   });
 }
 
@@ -386,7 +387,7 @@ function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[
   const manset = materialRowsForKind("manset");
   if (manset.totalKg > 0) drawMaterialSection("MANSET", manset.rows, manset.totalKg);
 
-  drawApprovalBoxesSafe(doc, y, { submittedDate: mrpDetail?.dates.poSent, approved: po.approved, approvedDate: mrpDetail?.dates.poApproved });
+  drawApprovalBoxesSafe(doc, y, { submittedDate: mrpDetail?.dates.poSent, approved: po.approved, approvedDate: mrpDetail?.dates.poApproved, approver: poApprovalPrintInfo(po) });
 }
 
 /** Generate & download PDF Proposal Purchase Order Material Bahan untuk SATU PO. */
@@ -475,7 +476,7 @@ function renderMaklonPoPage(doc: jsPDF, po: MaklonPO, mrpDetails: MrpDetail[]) {
     y += 36;
   }
 
-  drawApprovalBoxesSafe(doc, y, { submittedDate: detail?.dates.poSent, approved: po.approved, approvedDate: detail?.dates.poApproved });
+  drawApprovalBoxesSafe(doc, y, { submittedDate: detail?.dates.poSent, approved: po.approved, approvedDate: detail?.dates.poApproved, approver: poApprovalPrintInfo(po) });
 }
 
 export function exportMaklonPoPdf(po: MaklonPO, mrpDetails: MrpDetail[]) {

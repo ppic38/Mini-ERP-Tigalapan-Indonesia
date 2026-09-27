@@ -36,7 +36,7 @@ import {
   vendorProduksiRows,
 } from "@/lib/mrp/derive";
 import { countMaterialRowsWithoutSupplierForMrp, pendingMarker } from "@/lib/shell/badges";
-import { exportMaklonPoPdf, exportMaklonPoPdfBatch, exportMaterialPoPdf, exportMaterialPoPdfBatch } from "@/lib/mrp/exportPoPdf";
+import { PoDownloadModal, type PoDownloadRequest } from "@/components/procurement/po-download-modal";
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { MaklonPO, MaterialPO } from "@/lib/mrp/types";
 
@@ -87,6 +87,8 @@ export default function PoApprovalPage() {
   const kerahMansetSettings = useMrpStore((s) => s.kerahMansetSettings);
 
   const [selectedId, setSelectedId] = useState<string>("");
+  // Popup pilihan format download PO (PDF / Excel) -- lihat PoDownloadModal.
+  const [downloadReq, setDownloadReq] = useState<PoDownloadRequest | null>(null);
   const [drillVendor, setDrillVendor] = useState<string | null>(null);
   // Revisi 2026-09-17 (owner: "buatkan tab halaman terpisah seperti di Paying Voucher") -- Material
   // (assign supplier kain + histori PO Material) dan Produksi (assign vendor produksi maklon +
@@ -410,7 +412,7 @@ export default function PoApprovalPage() {
       label: "Aksi",
       default: true,
       render: (p) => (
-        <Button onClick={() => exportMaklonPoPdf(p, mrpDetails)} variant="ghost" size="xs">
+        <Button onClick={() => setDownloadReq({ kind: "maklon", pos: [p], baseName: `PO-${p.id}` })} variant="ghost" size="xs">
           Download PO
         </Button>
       ),
@@ -882,7 +884,7 @@ export default function PoApprovalPage() {
                     <Button
                       onClick={(e) => {
                         e.stopPropagation();
-                        exportMaterialPoPdfBatch(m.pos, mrpDetails, `PO-Material-${m.mrpId}.pdf`);
+                        setDownloadReq({ kind: "material", pos: m.pos, baseName: `PO-Material-${m.mrpId}` });
                       }}
                       disabled={m.pos.every((p) => !p.supplier)}
                       title={m.pos.every((p) => !p.supplier) ? "Belum ada PO di MRP ini yang punya vendor material" : `Download semua ${m.pos.length} PO material MRP ini jadi 1 file`}
@@ -926,7 +928,7 @@ export default function PoApprovalPage() {
                             <Button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                exportMaterialPoPdfBatch(s.pos, mrpDetails, `PO-Material-${m.mrpId}-${s.supplier}.pdf`);
+                                setDownloadReq({ kind: "material", pos: s.pos, baseName: `PO-Material-${m.mrpId}-${s.supplier}` });
                               }}
                               disabled={s.pos.every((p) => !p.supplier)}
                               title={s.pos.every((p) => !p.supplier) ? "Belum ada vendor material untuk grup ini" : `Download semua ${s.pos.length} PO material supplier ini jadi 1 file`}
@@ -973,7 +975,7 @@ export default function PoApprovalPage() {
                                     <Button
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        exportMaterialPoPdf(p, mrpDetails);
+                                        setDownloadReq({ kind: "material", pos: [p], baseName: `PO-${p.id}` });
                                       }}
                                       disabled={!p.supplier}
                                       title={!p.supplier ? "Tetapkan vendor material dulu" : undefined}
@@ -1080,7 +1082,7 @@ export default function PoApprovalPage() {
                         <Button
                           onClick={(e) => {
                             e.stopPropagation();
-                            exportMaklonPoPdfBatch(m.pos, mrpDetails, `PO-Produksi-${m.mrpId}.pdf`);
+                            setDownloadReq({ kind: "maklon", pos: m.pos, baseName: `PO-Produksi-${m.mrpId}` });
                           }}
                           title={`Download semua ${m.pos.length} PO produksi MRP ini jadi 1 file`}
                           variant="ghost"
@@ -1119,7 +1121,7 @@ export default function PoApprovalPage() {
                                   <Button
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      exportMaklonPoPdf(p, mrpDetails);
+                                      setDownloadReq({ kind: "maklon", pos: [p], baseName: `PO-${p.id}` });
                                     }}
                                     variant="ghost"
                                     size="xs"
@@ -1165,6 +1167,8 @@ export default function PoApprovalPage() {
         )}
       </div>
       )}
+
+      {downloadReq && <PoDownloadModal request={downloadReq} mrpDetails={mrpDetails} onClose={() => setDownloadReq(null)} />}
 
       {detail && drillVendor && (
         <VendorSwitchModal

@@ -6,6 +6,7 @@ import { Tabs } from "@/components/ui/tabs";
 import { KeepAliveTab } from "@/components/ui/keep-alive-tab";
 import { ItemSellingPricePanel } from "@/components/mrp/item-selling-price-panel";
 import { WarnaAliasPanel } from "@/components/mrp/warna-alias-panel";
+import { MigrationImportPanel } from "@/components/mrp/migration-import-panel";
 
 // Revisi 2026-09-24 (owner: nama warna di MRP beda dari Master Data SKU -- "BENHUR SPECIAL 24S"
 // vs "BENHUR 24S" dst., bikin pencocokan SKU di WMS gagal): tab kedua "Mapping Warna" (owner:
@@ -13,7 +14,9 @@ import { WarnaAliasPanel } from "@/components/mrp/warna-alias-panel";
 // tetap "WarnaAlias") ditambahkan di sini (SATU halaman dengan SKU, sama-sama milik PPIC) --
 // lihat WarnaAliasPanel & catatan lengkap di lib/mrp/masterData.ts (WarnaAliasRow) dan migration
 // 0051_warna_aliases.sql.
-type Tab = "sku" | "warnaAlias";
+// Revisi 2026-09-25 (owner: migrasi data berjalan Konveksi Makassar dari catatan manual, tanpa mengulang
+// siklus MRP -> PO -> invoice): tab ketiga "Migrasi Data" (MigrationImportPanel, template Excel 5 sheet).
+type Tab = "sku" | "warnaAlias" | "migrasi";
 
 export default function PpicMasterDataPage() {
   const [mounted, setMounted] = useState(false);
@@ -29,12 +32,14 @@ export default function PpicMasterDataPage() {
         items={[
           { key: "sku", label: "SKU (Harga Jual per Item)" },
           { key: "warnaAlias", label: "Mapping Warna" },
+          { key: "migrasi", label: "Migrasi Data" },
         ]}
         active={tab}
         onChange={(k) => setTab(k as Tab)}
       />
       <KeepAliveTab active={tab === "sku"}><ItemSellingPricePanel /></KeepAliveTab>
       <KeepAliveTab active={tab === "warnaAlias"}><WarnaAliasPanel /></KeepAliveTab>
+      <KeepAliveTab active={tab === "migrasi"}><MigrationImportPanel /></KeepAliveTab>
     </AppShell>
   );
 }

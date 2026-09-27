@@ -5,8 +5,9 @@ import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { StatusPill } from "@/components/ui/status-pill";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatRupiah, localDateString, vendorInvoiceFinalAmount } from "@/lib/mrp/derive";
+import { formatRupiah, isSyntheticSupplier, localDateString, vendorInvoiceFinalAmount } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import { poApprovalState } from "@/lib/mrp/poApproval";
 
 function vendorName(id: string) {
   return VENDOR_PRODUKSI[id]?.name ?? id;
@@ -21,17 +22,20 @@ export default function FinanceDashboardPage() {
   const stats = useMemo(() => {
     const today = localDateString(new Date());
 
-    const materialAwaitingPayment = invoices.filter((i) => i.status === "INVOICED");
+    // Invoice/PO bahan hasil Migrasi Data Awal bukan tagihan supplier -- tidak ikut angka Finance.
+    const financeInvoices = invoices.filter((i) => !isSyntheticSupplier(i.supplier));
+    const materialAwaitingPayment = financeInvoices.filter((i) => i.status === "INVOICED");
     const materialAwaitingAmount = materialAwaitingPayment.reduce((s, i) => s + i.totalBiaya, 0);
 
     const vendorAwaitingPayment = vendorInvoices.filter((i) => i.status === "APPROVED");
     const vendorAwaitingAmount = vendorAwaitingPayment.reduce((s, i) => s + vendorInvoiceFinalAmount(i), 0);
 
-    const materialPendingApproval = materialPOs.filter((p) => p.status !== "CANCELLED" && !p.approved);
-    const maklonPendingApproval = maklonPOs.filter((p) => !p.approved);
+    // Matriks Approval PO (migration 0055): hanya PO yang sedang GILIRAN Finance (Level 3 FAT Manager).
+    const materialPendingApproval = materialPOs.filter((p) => !isSyntheticSupplier(p.supplier) && p.status !== "CANCELLED" && !p.approved && poApprovalState(p).pendingRoles.includes("finance"));
+    const maklonPendingApproval = maklonPOs.filter((p) => !p.approved && poApprovalState(p).pendingRoles.includes("finance"));
 
     const totalPaid =
-      invoices.filter((i) => i.status === "PAID" || i.status === "DELIVERY" || i.status === "RECEIVING" || i.status === "PRODUCTION_DONE" || i.status === "WAITING_PRODUCTION").reduce((s, i) => s + i.totalBiaya, 0) +
+      financeInvoices.filter((i) => i.status === "PAID" || i.status === "DELIVERY" || i.status === "RECEIVING" || i.status === "PRODUCTION_DONE" || i.status === "WAITING_PRODUCTION").reduce((s, i) => s + i.totalBiaya, 0) +
       vendorInvoices.filter((i) => i.status === "PAID").reduce((s, i) => s + vendorInvoiceFinalAmount(i), 0);
 
     let overdue = 0;

@@ -1,3 +1,4 @@
+import type { PoApprovalEntry } from "./poApproval";
 export type Lengan = "PENDEK" | "PANJANG";
 
 export type SizeQty = { size: string; qty: number };
@@ -96,6 +97,10 @@ export type MaterialPO = {
   status: MaterialPoStatus;
   approved: boolean;
   daysSincePO: number;
+  /** Matriks Approval PO (migration 0055, lib/mrp/poApproval.ts). Kosong = PO lama (alur 1 approval Finance). */
+  approvalLevel?: number;
+  approvalLog?: PoApprovalEntry[];
+  approvalSubmittedAt?: string;
 };
 
 export type MaklonPoStatus =
@@ -117,6 +122,10 @@ export type MaklonPO = {
   entity: string;
   status: MaklonPoStatus;
   approved: boolean;
+  /** Matriks Approval PO (migration 0055, lib/mrp/poApproval.ts). Kosong = PO lama (alur 1 approval Finance). */
+  approvalLevel?: number;
+  approvalLog?: PoApprovalEntry[];
+  approvalSubmittedAt?: string;
   cancelledLines: { note: string; rolls: number; warna?: string; lengan?: Lengan; pcs?: number; from?: string; time: string }[];
   /** Item 21 (migration 0016) — "Close PO" untuk siklus produksi parsial: begitu terisi, SEMUA
    *  warna/lengan PO Produksi ini terkunci (tidak ada FG/reject/rework baru) DAN semua Finish Good
@@ -298,7 +307,7 @@ export type RawMaterialInvoice = {
   addBuyReceipts: Record<string, AddBuyReceipt>;
 };
 
-export type NotificationAudience = "ppic" | "procurement" | "finance" | "scm" | "produksi" | "warehouse" | "vendorMaklon" | "vendorSupplier" | "admin";
+export type NotificationAudience = "ppic" | "procurement" | "finance" | "scm" | "gm" | "produksi" | "warehouse" | "vendorMaklon" | "vendorSupplier" | "admin";
 
 export type Notification = {
   id: string;

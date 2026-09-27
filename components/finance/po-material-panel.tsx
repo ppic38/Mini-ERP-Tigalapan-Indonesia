@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
 import { StatusPill } from "@/components/ui/status-pill";
+import { poApprovalState } from "@/lib/mrp/poApproval";
 import { useMrpStore } from "@/lib/mrp/store";
 import {
   formatPcs,
@@ -12,6 +13,7 @@ import {
   materialPoFullStatus,
   materialPoFullStatusBadge,
   mrpDetailFor,
+  isSyntheticSupplier,
 } from "@/lib/mrp/derive";
 import { countPendingMaterialPoForMrp, pendingMarker } from "@/lib/shell/badges";
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -158,8 +160,10 @@ export function PoMaterialPanel() {
     return only || "";
   }
 
-  const openPOs = materialPOs.filter((po) => po.status !== "CANCELLED");
-  const pending = openPOs.filter((po) => !po.approved);
+  const openPOs = materialPOs.filter((po) => po.status !== "CANCELLED" && !isSyntheticSupplier(po.supplier));
+  // Matriks Approval PO (migration 0055): Finance (FAT Manager) hanya menyetujui PO yang SEDANG GILIRAN-nya
+  // (langkah Level 3) -- PO yang masih menunggu Procurement/SCM/GM belum muncul di sini.
+  const pending = openPOs.filter((po) => !po.approved && poApprovalState(po).pendingRoles.includes("finance"));
   const approved = openPOs.filter((po) => po.approved);
 
   const pendingMrpIds = Array.from(new Set(pending.map((p) => p.mrpId)));

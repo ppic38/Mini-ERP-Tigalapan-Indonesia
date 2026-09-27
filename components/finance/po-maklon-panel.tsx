@@ -4,6 +4,7 @@ import { Fragment, useEffect, useState } from "react";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Button } from "@/components/ui/button";
 import { MaklonPoWarnaLenganTable } from "@/components/mrp/maklon-po-warna-lengan-table";
+import { poApprovalState } from "@/lib/mrp/poApproval";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatPcs, formatRupiah, maklonPoBadgeWithApproval } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -53,7 +54,8 @@ export function PoMaklonPanel() {
 
   if (!mounted) return null;
 
-  const pending = maklonPOs.filter((po) => !po.approved);
+  // Matriks Approval PO (migration 0055): hanya PO yang SEDANG GILIRAN Finance (FAT Manager, Level 3).
+  const pending = maklonPOs.filter((po) => !po.approved && poApprovalState(po).pendingRoles.includes("finance"));
   const pendingMrpIds = Array.from(new Set(pending.map((p) => p.mrpId)));
   const selectable = mrpDetails.filter((d) => pendingMrpIds.includes(d.mrp.id));
   // Dihitung langsung saat render (BUKAN lewat useEffect) supaya tidak menambah pelanggaran

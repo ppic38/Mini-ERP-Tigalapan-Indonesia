@@ -17,6 +17,7 @@ import {
   warehouseReceivableGroups,
   warnaLenganGroupsWithFg,
 } from "@/lib/mrp/derive";
+import { poApprovalState, type ApprovalRole } from "@/lib/mrp/poApproval";
 import type { MrpDetail } from "@/lib/mrp/store";
 import type { EkspedisiRateRow, ItemSellingPriceRow } from "@/lib/mrp/masterData";
 import type { DeliveryKoli, MaklonInvoice, MaklonPO, MaterialPO, Mrp, ProductionBatch, ProductionGroupMeta, ProductionResult, ProductionYieldResolution, RawMaterialInvoice, ShippableKind, VendorInvoice, WarehouseReceipt } from "@/lib/mrp/types";
@@ -37,18 +38,32 @@ export function pendingMarker(n: number, noun = "belum selesai"): string {
   return n > 0 ? ` — ⚠ ${n} ${noun}` : "";
 }
 
+// Matriks Approval PO (migration 0055): badge Finance hanya menghitung PO yang SEDANG GILIRAN Finance
+// (langkah FAT Manager) -- PO yang masih menunggu Procurement/SCM/GM tidak dihitung; PO lama (tanpa
+// level) tetap dihitung seperti dulu.
 export function countPendingMaterialPO(materialPOs: MaterialPO[]): number {
-  return materialPOs.filter((p) => p.status !== "CANCELLED" && !p.approved).length;
+  return materialPOs.filter((p) => p.status !== "CANCELLED" && !p.approved && poApprovalState(p).pendingRoles.includes("finance")).length;
+}
+
+/** Jumlah PO (Material + Produksi) yang sedang menunggu approval `role` -- badge menu "Approval PO". */
+export function countPoPendingForRole(role: ApprovalRole, materialPOs: MaterialPO[], maklonPOs: MaklonPO[]): number {
+  const waiting = (p: MaterialPO | MaklonPO) => poApprovalState(p).pendingRoles.includes(role);
+  return materialPOs.filter((p) => p.status !== "CANCELLED" && !p.approved && waiting(p)).length + maklonPOs.filter((p) => !p.approved && waiting(p)).length;
+}
+
+/** PO yang DITOLAK dan menunggu diajukan ulang Procurement. */
+export function countPoRejected(materialPOs: MaterialPO[], maklonPOs: MaklonPO[]): number {
+  return materialPOs.filter((p) => p.status !== "CANCELLED" && !p.approved && poApprovalState(p).rejected).length + maklonPOs.filter((p) => !p.approved && poApprovalState(p).rejected).length;
 }
 
 /** Item 3.2 — scoping 1 MRP dari countPendingMaterialPO di atas, dipakai marker dropdown "pilih
  *  MRP" di components/finance/po-material-panel.tsx. */
 export function countPendingMaterialPoForMrp(mrpId: string, materialPOs: MaterialPO[]): number {
-  return materialPOs.filter((p) => p.mrpId === mrpId && p.status !== "CANCELLED" && !p.approved).length;
+  return materialPOs.filter((p) => p.mrpId === mrpId && p.status !== "CANCELLED" && !p.approved && poApprovalState(p).pendingRoles.includes("finance")).length;
 }
 
 export function countPendingMaklonPO(maklonPOs: MaklonPO[]): number {
-  return maklonPOs.filter((p) => !p.approved).length;
+  return maklonPOs.filter((p) => !p.approved && poApprovalState(p).pendingRoles.includes("finance")).length;
 }
 
 export function countPoApprovalTotal(materialPOs: MaterialPO[], maklonPOs: MaklonPO[]): number {

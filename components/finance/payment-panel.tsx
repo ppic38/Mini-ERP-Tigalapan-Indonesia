@@ -16,6 +16,7 @@ import {
   vendorDepositBalance,
   vendorDepositCreditForClaim,
   vendorDepositEntriesFor,
+  isSyntheticSupplier,
 } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { RawMaterialInvoice } from "@/lib/mrp/types";
@@ -121,7 +122,7 @@ export function PaymentPanel() {
 
   if (!mounted) return null;
 
-  const readyInvoices = invoices.filter((i) => i.status === "INVOICED");
+  const readyInvoices = invoices.filter((i) => i.status === "INVOICED" && !isSyntheticSupplier(i.supplier));
   const readyMrpIds = Array.from(new Set(readyInvoices.map((i) => i.mrpId))).sort((a, b) => b.localeCompare(a, "id-ID"));
   // Dihitung langsung saat render (bukan lewat useEffect, sama pola dengan po-maklon-panel.tsx) --
   // begitu MRP terpilih sudah tidak ada lagi invoice siap-bayarnya (semua sudah dibayar), otomatis
@@ -131,7 +132,7 @@ export function PaymentPanel() {
 
   // Riwayat (bagian bawah) -- SEMUA invoice yang statusnya sudah lewat INVOICED (siap-bayar sudah
   // ditangani di bagian atas), dikelompokkan MRP -> Supplier untuk tabel pohon status/histori.
-  const historyInvoices = invoices.filter((i) => i.status !== "INVOICED");
+  const historyInvoices = invoices.filter((i) => i.status !== "INVOICED" && !isSyntheticSupplier(i.supplier));
   const historyHierarchy = (() => {
     const byMrp = new Map<string, Map<string, RawMaterialInvoice[]>>();
     for (const i of historyInvoices) {

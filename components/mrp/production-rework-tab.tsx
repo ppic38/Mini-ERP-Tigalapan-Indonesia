@@ -116,6 +116,17 @@ export function ProductionReworkTab({ vendorId }: { vendorId: string }) {
 
   const reworkHistory = productionResults.filter((r) => r.vendorProduksi === vendorId && r.kind === "FG" && (r.note ?? "").startsWith("Rework")).sort((a, b) => (a.recordedAt < b.recordedAt ? 1 : -1));
 
+  // Owner 2026-09-24 (screenshot "Riwayat rework" -- "tambahkan informasi mengenai rework dari
+  // size apa ke size apa"): fromSize TIDAK pernah disimpan sebagai kolom terstruktur -- cuma ikut
+  // dalam teks bebas `note` baris FG ("Rework dari {lengan} size {fromSize} ({usia})", lihat
+  // reworkRejectSizeAction di lib/mrp/actions.ts) -- jadi di-parse balik dari situ dengan regex.
+  // toSize SUDAH terstruktur -- key satu-satunya di `sizeQty` baris FG hasil rework (isinya selalu
+  // persis 1 entri: {toSize: qty}, lihat insert production_result_sizes di action yang sama).
+  function parseFromSize(note: string): string | null {
+    const m = note.match(/size\s+(\S+)/i);
+    return m ? m[1] : null;
+  }
+
   return (
     <>
       <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
@@ -274,29 +285,37 @@ export function ProductionReworkTab({ vendorId }: { vendorId: string }) {
 
       <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
         <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Riwayat rework</div>
-        <div className="grid grid-cols-7 gap-x-2 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+        <div className="grid grid-cols-8 gap-x-2 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
           <span>MRP</span>
           <span>Kategori</span>
           <span>Warna / lengan</span>
           <span>Usia</span>
+          <span>Size (asal → baru)</span>
           <span className="text-right">Qty</span>
           <span>Catatan</span>
           <span>Tanggal</span>
         </div>
         {reworkHistory.length === 0 && <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada rework.</div>}
-        {reworkHistory.map((r) => (
-          <div key={r.id} className="grid grid-cols-7 items-center gap-x-2 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0">
-            <span className="font-mono">{r.mrpId}</span>
-            <span>{mrpDetailFor(r.mrpId, mrpDetails)?.mrp.kategori ?? "—"}</span>
-            <span>
-              {r.warna} · {r.lengan}
-            </span>
-            <span>{r.usia ?? "—"}</span>
-            <span className="text-right font-mono font-medium">{Object.values(r.sizeQty).reduce((a, b) => a + b, 0)}</span>
-            <span>{r.note}</span>
-            <span className="font-mono text-[11px] text-text-muted">{formatDateTimeShort(r.recordedAt)}</span>
-          </div>
-        ))}
+        {reworkHistory.map((r) => {
+          const fromSize = parseFromSize(r.note ?? "");
+          const toSize = Object.keys(r.sizeQty)[0] ?? "—";
+          return (
+            <div key={r.id} className="grid grid-cols-8 items-center gap-x-2 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0">
+              <span className="font-mono">{r.mrpId}</span>
+              <span>{mrpDetailFor(r.mrpId, mrpDetails)?.mrp.kategori ?? "—"}</span>
+              <span>
+                {r.warna} · {r.lengan}
+              </span>
+              <span>{r.usia ?? "—"}</span>
+              <span className="font-mono font-medium">
+                {fromSize ?? "—"} <span className="text-text-muted">→</span> {toSize}
+              </span>
+              <span className="text-right font-mono font-medium">{Object.values(r.sizeQty).reduce((a, b) => a + b, 0)}</span>
+              <span>{r.note}</span>
+              <span className="font-mono text-[11px] text-text-muted">{formatDateTimeShort(r.recordedAt)}</span>
+            </div>
+          );
+        })}
       </div>
     </>
   );
