@@ -270,17 +270,48 @@ export async function parseMrpImportFile(
     }
   }
 
-  const materialRows: MaterialRow[] = lenganGroups.map((g) => ({
-    id: "mat-" + g.id,
-    lenganGroupId: g.id,
-    warna: g.warna,
-    lengan: g.lengan,
-    qtyRoll: g.rollEstimate,
-    ribKg: g.ribKg,
-    kerahKg: g.kerahKg,
-    mansetKg: g.mansetKg,
-    supplier: null,
-  }));
+  // Tahap 2 (migration 0058, owner 2026-09-27: brand MAMU, CMT "langsung nembak berapa roll &
+  // berapa size dari roll itu" -- TANPA sheet Aduan Pola sama sekali) -- grup CMT yang tidak
+  // punya satu pun baris Aduan Pola di-generate OTOMATIS 1 baris aduan "LANGSUNG" dari data grup
+  // itu sendiri (sizes/rollEstimate/vendorDefault SUDAH lengkap dari kolom sheet MRP utama, lihat
+  // loop lenganGroups di atas). Ini SENGAJA disamakan bentuknya persis dengan AduanPolaRow biasa
+  // (bukan jalur terpisah) -- supaya SELURUH pipeline existing yang sudah teruji (PO Material, PO
+  // Maklon/sendPoToFinanceAction, Cutting, roll tracking, invoicing) otomatis berfungsi TANPA
+  // perlu disentuh sama sekali, cukup "pura-pura" 1 kode pairing mewakili semua size grup itu.
+  // Grup FOB SENGAJA TIDAK dapat baris ini -- FOB tidak lewat tracking roll/cutting sama sekali
+  // (lihat catatan materialRows di bawah + keputusan owner 2026-09-27: PO Produksi FOB langsung
+  // invoice-eligible, bukan lewat Cutting/FG -- pembuatan PO-nya menyusul di tahap terpisah).
+  for (const g of lenganGroups) {
+    if (g.catProd !== "CMT" || g.totalQty <= 0) continue;
+    if (aduanRows.some((a) => a.lenganGroupId === g.id)) continue;
+    aduanRows.push({
+      id: "ad-auto-" + g.id,
+      lenganGroupId: g.id,
+      warna: g.warna,
+      lengan: g.lengan,
+      kode: "LANGSUNG",
+      qtyRoll: g.rollEstimate,
+      sizes: g.sizes,
+      qty: g.totalQty,
+      vendor: g.vendorDefault || "-",
+    });
+  }
+
+  // Migration 0058 -- grup FOB TIDAK punya MaterialRow sama sekali (vendor sedia bahan sendiri,
+  // tidak ada PO Material/pemilihan supplier material untuk grup ini -- lihat CatProd di types.ts).
+  const materialRows: MaterialRow[] = lenganGroups
+    .filter((g) => g.catProd === "CMT")
+    .map((g) => ({
+      id: "mat-" + g.id,
+      lenganGroupId: g.id,
+      warna: g.warna,
+      lengan: g.lengan,
+      qtyRoll: g.rollEstimate,
+      ribKg: g.ribKg,
+      kerahKg: g.kerahKg,
+      mansetKg: g.mansetKg,
+      supplier: null,
+    }));
 
   const kategori = String(mrpRows[0]["KATEGORI"] ?? "-").trim();
   const warna = lenganGroups[0]?.warna ?? "-";
