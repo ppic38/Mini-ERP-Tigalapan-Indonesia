@@ -8,15 +8,17 @@ import { useInternalAuthStore } from "@/lib/internal-auth-store";
 import { INTERNAL_ACCOUNTS, type InternalRole } from "@/lib/internal-auth";
 import { useVendorAuthStore } from "@/lib/mrp/vendor-auth-store";
 
+// Urutan kartu (owner 2026-09-27): ppic, procurement, finance, produksi, warehouse, scm, general
+// manager, sysadmin, lalu Vendor Produksi (kartu terpisah, selalu paling akhir -- lihat di bawah).
 const MODULES: { role: InternalRole; label: string; desc: string; icon: typeof ClipboardList }[] = [
   { role: "ppic", label: "PPIC", desc: "Planning, MRP, monitoring produksi", icon: ClipboardList },
   { role: "procurement", label: "Procurement", desc: "Purchase order, material, invoice vendor", icon: Package },
   { role: "finance", label: "Finance", desc: "Approval PO, payment, ledger", icon: Wallet },
+  { role: "produksi", label: "Produksi", desc: "Monitoring progres semua vendor produksi", icon: Factory },
+  { role: "warehouse", label: "Warehouse", desc: "Penerimaan & bongkar koli dari vendor produksi", icon: Warehouse },
   { role: "scm", label: "SCM", desc: "Approval MRP dari PPIC, monitoring lintas modul", icon: ShieldCheck },
   { role: "gm", label: "General Manager", desc: "Approval PO Level 4, dashboard ringkasan", icon: Crown },
-  { role: "produksi", label: "Produksi", desc: "Monitoring progres semua vendor produksi", icon: Factory },
   { role: "sysadmin", label: "Sysadmin", desc: "Kelola akun & password, batalkan PO/data salah input", icon: ShieldAlert },
-  { role: "warehouse", label: "Warehouse", desc: "Penerimaan & bongkar koli dari vendor produksi", icon: Warehouse },
 ];
 
 export default function ModuleSelectPage() {
@@ -83,6 +85,11 @@ export default function ModuleSelectPage() {
         {MODULES.map((m) => {
           const Icon = m.icon;
           const active = selectedRole === m.role;
+          // Sysadmin ditandai khusus (ungu, bukan biru seperti modul lain) -- pola sama dengan
+          // kartu Vendor Produksi (ikon di kotak warna solid saat hover/aktif) supaya keduanya
+          // sama-sama "menonjol beda" dari modul kerja biasa, tapi tidak memakai warna yang sama
+          // (oranye = Vendor Produksi, ungu = Sysadmin).
+          const isSysadmin = m.role === "sysadmin";
           return (
             <button
               key={m.role}
@@ -90,17 +97,26 @@ export default function ModuleSelectPage() {
               className={cn(
                 "group flex flex-col rounded-xl border bg-surface-card p-4 text-left font-sans shadow-[0_10px_30px_rgba(0,0,0,.25)] transition-all duration-200",
                 active
-                  ? "border-accent-blue shadow-[0_16px_36px_rgba(37,99,235,.32)]"
+                  ? isSysadmin
+                    ? "border-accent-purple shadow-[0_16px_36px_rgba(124,58,237,.32)]"
+                    : "border-accent-blue shadow-[0_16px_36px_rgba(37,99,235,.32)]"
                   : "border-white/10 hover:-translate-y-0.5 hover:border-white/25 hover:shadow-[0_16px_36px_rgba(0,0,0,.32)]"
               )}
             >
               <span
                 className={cn(
                   "flex h-[92px] items-center justify-center rounded-lg transition-colors duration-200",
-                  active ? "bg-accent-blue" : "bg-info-bg group-hover:bg-accent-blue"
+                  isSysadmin ? (active ? "bg-accent-purple" : "bg-accent-purple-bg group-hover:bg-accent-purple") : active ? "bg-accent-blue" : "bg-info-bg group-hover:bg-accent-blue"
                 )}
               >
-                <Icon size={30} strokeWidth={1.75} className={cn("transition-colors duration-200", active ? "text-white" : "text-action-primary group-hover:text-white")} />
+                <Icon
+                  size={30}
+                  strokeWidth={1.75}
+                  className={cn(
+                    "transition-colors duration-200",
+                    isSysadmin ? (active ? "text-white" : "text-accent-purple group-hover:text-white") : active ? "text-white" : "text-action-primary group-hover:text-white"
+                  )}
+                />
               </span>
               <div className="mt-3.5 text-[13.5px] font-semibold text-text-primary">{m.label}</div>
               <div className="mt-1 min-h-[31px] text-[11px] leading-[1.4] text-text-muted">{m.desc}</div>
@@ -136,7 +152,7 @@ export default function ModuleSelectPage() {
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex items-center gap-2.5 border-b border-border-subtle px-4 py-3.5">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-blue">
+                  <span className={cn("flex h-8 w-8 items-center justify-center rounded-lg", m.role === "sysadmin" ? "bg-accent-purple" : "bg-accent-blue")}>
                     <Icon size={16} strokeWidth={1.75} className="text-white" />
                   </span>
                   <span className="font-sans text-[13px] font-semibold text-text-primary">{m.label}</span>
