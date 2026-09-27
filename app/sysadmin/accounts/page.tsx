@@ -16,7 +16,8 @@ import {
   type VendorAccountRow,
   type VendorTeamMemberOverviewRow,
 } from "@/lib/mrp/sysadminActions";
-import { VENDOR_PAGE_OPTIONS } from "@/lib/mrp/vendorPages";
+import { describeVendorPermissions } from "@/lib/mrp/vendorPages";
+import { VendorPermissionPicker } from "@/components/mrp/vendor-permission-picker";
 
 function fmtTime(iso?: string): string {
   if (!iso) return "—";
@@ -71,27 +72,6 @@ function PasswordModal({ title, onSave, onClose }: { title: string; onSave: (pas
   );
 }
 
-function TeamPageCheckboxes({ value, onChange }: { value: string[]; onChange: (next: string[]) => void }) {
-  return (
-    <div className="grid grid-cols-2 gap-1.5">
-      {VENDOR_PAGE_OPTIONS.map((p) => {
-        const checked = value.includes(p.href);
-        return (
-          <label key={p.href} className="flex items-center gap-1.5 rounded-md border border-[#E4E9EE] px-2 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-            <input
-              type="checkbox"
-              checked={checked}
-              onChange={(e) => onChange(e.target.checked ? [...value, p.href] : value.filter((v) => v !== p.href))}
-              className="h-3.5 w-3.5"
-            />
-            {p.label}
-          </label>
-        );
-      })}
-    </div>
-  );
-}
-
 /** Edit izin halaman + nama anggota tim vendor -- jalur darurat Sysadmin (owner 2026-09-27: "apa
  *  bisa terpantau di sysadmin? bisa diedit juga?"), terpisah dari reset password (PasswordModal). */
 function EditTeamMemberModal({ member, onSave, onClose }: { member: VendorTeamMemberOverviewRow; onSave: (patch: { name: string; allowedPages: string[] }, reason: string) => Promise<{ ok: boolean; error?: string }>; onClose: () => void }) {
@@ -113,7 +93,7 @@ function EditTeamMemberModal({ member, onSave, onClose }: { member: VendorTeamMe
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={onClose}>
-      <div className="w-full max-w-[440px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-[620px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
         <div className="border-b border-border-subtle px-5 py-3.5 font-sans text-[13px] font-semibold text-text-primary">
           Edit — <span className="font-mono">{member.username}</span> ({member.vendorName})
         </div>
@@ -124,7 +104,7 @@ function EditTeamMemberModal({ member, onSave, onClose }: { member: VendorTeamMe
           </div>
           <div>
             <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Halaman yang boleh diakses</div>
-            <TeamPageCheckboxes value={pages} onChange={setPages} />
+            <VendorPermissionPicker value={pages} onChange={setPages} />
           </div>
           <div>
             <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Alasan (wajib, tercatat ke log audit)</div>
@@ -305,7 +285,7 @@ export default function SysadminAccountsPage() {
                   <span className="font-mono">{m.username}</span>
                   <span>{m.name}</span>
                   <span>{m.vendorName}</span>
-                  <span className="text-[10.5px] text-text-muted">{m.allowedPages.map((p) => VENDOR_PAGE_OPTIONS.find((o) => o.href === p)?.label ?? p).join(", ") || "—"}</span>
+                  <span className="text-[10.5px] text-text-muted">{describeVendorPermissions(m.allowedPages)}</span>
                   <span className={m.active ? "font-semibold text-success-fg" : "text-text-muted"}>{m.active ? "Aktif" : "Nonaktif"}</span>
                   <span className="flex items-center justify-end gap-1.5">
                     <Button onClick={() => setEditingMember(m)} variant="ghost" size="xs">

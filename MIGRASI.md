@@ -1,5 +1,16 @@
 # Migrasi Project — Status & Riwayat
 
+## Sub-izin Produksi + picker izin baru (2026-09-28, tanpa migration baru)
+Izin akun tim vendor (migration 0057) sekarang bisa dipecah SAMPAI KE TAB dalam modul "Produksi"
+(Cutting, Finish Good, Reject, Rework, Final Produksi) -- bukan cuma "boleh/tidak" 1 halaman utuh.
+Format key: modul biasa tetap `/vendor-maklon/xxx`; modul Produksi punya sub-key
+`/vendor-maklon/production:CUTTING` dst (lihat lib/mrp/vendorPages.ts -- VENDOR_MODULE_TREE,
+vendorHasPageAccess, vendorAllowedSubTabs). Akun lama yang masih tersimpan sebagai key bare
+`/vendor-maklon/production` (dibuat SEBELUM revisi ini) tetap valid & dianggap akses PENUH ke
+semua tab -- tidak perlu migrasi data. Tampilan pilih izin di "Tim Saya" & Sysadmin diganti total
+(components/mrp/vendor-permission-picker.tsx): modul di kiri + badge "x/y", panel sub-izin di
+kanan dengan Select All/Deselect All, pencarian, "N dari M dipilih".
+
 ## Tim Vendor Produksi (Sub-user) -- migration 0057 (2026-09-27)
 `supabase/migrations/0057_vendor_users.sql`: tabel `vendor_users` (akun anggota tim per vendor produksi --
 cutting/finish good/packing/dst, username unik se-aplikasi, login TIDAK perlu pilih nama vendor dulu, `allowed_pages`

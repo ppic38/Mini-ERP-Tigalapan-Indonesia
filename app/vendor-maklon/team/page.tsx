@@ -15,32 +15,12 @@ import {
   type VendorActionLogRow,
   type VendorTeamMemberRow,
 } from "@/lib/mrp/vendorTeamActions";
-import { VENDOR_PAGE_OPTIONS } from "@/lib/mrp/vendorPages";
+import { describeVendorPermissions } from "@/lib/mrp/vendorPages";
+import { VendorPermissionPicker } from "@/components/mrp/vendor-permission-picker";
 
 function fmtTime(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
-}
-
-function PageCheckboxes({ value, onChange }: { value: string[]; onChange: (next: string[]) => void }) {
-  return (
-    <div className="grid grid-cols-2 gap-1.5">
-      {VENDOR_PAGE_OPTIONS.map((p) => {
-        const checked = value.includes(p.href);
-        return (
-          <label key={p.href} className="flex items-center gap-1.5 rounded-md border border-[#E4E9EE] px-2 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-            <input
-              type="checkbox"
-              checked={checked}
-              onChange={(e) => onChange(e.target.checked ? [...value, p.href] : value.filter((v) => v !== p.href))}
-              className="h-3.5 w-3.5"
-            />
-            {p.label}
-          </label>
-        );
-      })}
-    </div>
-  );
 }
 
 function AddMemberModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
@@ -63,7 +43,7 @@ function AddMemberModal({ onClose, onDone }: { onClose: () => void; onDone: () =
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={onClose}>
-      <div className="w-full max-w-[440px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-[620px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
         <div className="border-b border-border-subtle px-5 py-3.5 font-sans text-[13px] font-semibold text-text-primary">Tambah Anggota Tim</div>
         <div className="flex max-h-[70vh] flex-col gap-3 overflow-y-auto px-5 py-4">
           <div>
@@ -80,7 +60,7 @@ function AddMemberModal({ onClose, onDone }: { onClose: () => void; onDone: () =
           </div>
           <div>
             <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Halaman yang boleh diakses</div>
-            <PageCheckboxes value={pages} onChange={setPages} />
+            <VendorPermissionPicker value={pages} onChange={setPages} />
           </div>
           {error && <div className="rounded-md border border-danger bg-danger-bg px-3 py-2 font-sans text-[11.5px] text-danger-fg">{error}</div>}
         </div>
@@ -123,7 +103,7 @@ function EditMemberModal({ member, onClose, onDone }: { member: VendorTeamMember
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={onClose}>
-      <div className="w-full max-w-[440px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-[620px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
         <div className="border-b border-border-subtle px-5 py-3.5 font-sans text-[13px] font-semibold text-text-primary">
           Edit — <span className="font-mono">{member.username}</span>
         </div>
@@ -134,7 +114,7 @@ function EditMemberModal({ member, onClose, onDone }: { member: VendorTeamMember
           </div>
           <div>
             <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Halaman yang boleh diakses</div>
-            <PageCheckboxes value={pages} onChange={setPages} />
+            <VendorPermissionPicker value={pages} onChange={setPages} />
           </div>
           <div>
             <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Reset password (kosongkan kalau tidak diganti)</div>
@@ -234,7 +214,7 @@ function TeamContent({ vendorId }: { vendorId: string }) {
               <span className="font-mono">{m.username}</span>
               <span>{m.name}</span>
               <span className="text-[10.5px] text-text-muted">
-                {m.allowedPages.map((p) => VENDOR_PAGE_OPTIONS.find((o) => o.href === p)?.label ?? p).join(", ") || "—"}
+                {describeVendorPermissions(m.allowedPages)}
               </span>
               <span className={m.active ? "font-semibold text-success-fg" : "text-text-muted"}>{m.active ? "Aktif" : "Nonaktif"}</span>
               <span className="flex items-center justify-end gap-1.5">

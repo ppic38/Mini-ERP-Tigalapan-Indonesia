@@ -8,6 +8,7 @@ import { NAV } from "@/lib/shell/nav";
 import { useMrpStore } from "@/lib/mrp/store";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
 import { useVendorAuthStore } from "@/lib/mrp/vendor-auth-store";
+import { vendorHasPageAccess } from "@/lib/mrp/vendorPages";
 import { seenPoKey, useSeenPoIds } from "@/lib/shell/seen-po";
 import type { InternalRole } from "@/lib/internal-auth";
 import {
@@ -253,7 +254,7 @@ export function AppShell({
   // Akun anggota tim vendor (migration 0057) -- sidebar disaring ke halaman yang diizinkan saja
   // (proteksi sesungguhnya tetap di proxy.ts; ini murni supaya menu yang ditutup tidak ditampilkan
   // sebagai link mati), dan nama topbar menyertakan nama anggota yang login.
-  const sidebarItems = role === "vendorMaklon" && vendorActor ? nav.items.filter((i) => !i.href || vendorActor.allowedPages.includes(i.href)) : nav.items;
+  const sidebarItems = role === "vendorMaklon" && vendorActor ? nav.items.filter((i) => !i.href || vendorHasPageAccess(vendorActor.allowedPages, i.href)) : nav.items;
   const topbarRole = role === "vendorMaklon" && vendorActor ? `${roleOverride ?? nav.role} · ${vendorActor.name}` : (roleOverride ?? nav.role);
 
   return (

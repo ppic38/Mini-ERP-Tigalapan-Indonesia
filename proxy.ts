@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { readSession } from "@/lib/auth/session";
 import type { InternalRole } from "@/lib/internal-auth";
+import { firstAllowedVendorUrl, vendorHasPageAccess } from "@/lib/mrp/vendorPages";
 
 /**
  * Proteksi rute DENY-BY-DEFAULT (menggantikan AppShell.GATED_ROLES yang tadinya cuma
@@ -51,9 +52,8 @@ export async function proxy(request: NextRequest) {
     // (kelola akun lain) sama sekali walau kebetulan ada di allowedPages. Akun UTAMA vendor
     // (vendorActor null) tetap akses penuh, tidak berubah dari sebelumnya.
     if (session.vendorActor) {
-      if (pathname === "/vendor-maklon/team") return NextResponse.redirect(new URL(session.vendorActor.allowedPages[0] ?? "/vendor-maklon/po-produksi", request.url));
-      const allowed = session.vendorActor.allowedPages.some((p) => pathname === p || pathname.startsWith(p + "/"));
-      if (!allowed) return NextResponse.redirect(new URL(session.vendorActor.allowedPages[0] ?? "/vendor-maklon/login", request.url));
+      if (pathname === "/vendor-maklon/team") return NextResponse.redirect(new URL(firstAllowedVendorUrl(session.vendorActor.allowedPages), request.url));
+      if (!vendorHasPageAccess(session.vendorActor.allowedPages, pathname)) return NextResponse.redirect(new URL(firstAllowedVendorUrl(session.vendorActor.allowedPages), request.url));
     }
     return NextResponse.next();
   }
