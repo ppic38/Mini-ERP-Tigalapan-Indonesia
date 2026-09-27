@@ -151,3 +151,13 @@ export type VendorProduksiMasterRow = {
  *  sebenarnya sama tapi beda penulisan. Tidak mengubah data MRP/SKU yang sudah ada -- murni tabel
  *  pemetaan tambahan. `mrpWarna` unik (lihat migration), satu nama MRP cuma boleh 1 tujuan alias. */
 export type WarnaAliasRow = { id: string; mrpWarna: string; skuWarna: string; catatan?: string };
+
+/** Master Data "Harga FOB" (migration 0058, owner 2026-09-27: "dari master data, dummy dulu") --
+ *  harga jadi per pcs (bahan+jahit+margin vendor, BUKAN ongkos jahit saja) untuk PO Produksi grup
+ *  `LenganGroup.catProd === "FOB"`. Key-nya vendor+item (BUKAN vendor+lengan+kapasitas seperti
+ *  Harga Maklon) karena harga FOB hasil nego per item/batch, bukan tabel bertingkat kapasitas.
+ *  `vendorProduksi` = id vendor (foreign key ke vendors_produksi, BUKAN nama bebas seperti
+ *  kodeSupplier di tabel harga_* lain -- vendor produksi sudah punya master id resmi sendiri).
+ *  `item` string bebas (nama item/kategori, mis. "CARGO MAMU") -- dicocokkan manual oleh
+ *  Procurement saat bikin PO Produksi FOB, tidak ada validasi terhadap Master Data SKU. */
+export type HargaFobRow = { id: string; vendorProduksi: string; item: string; hargaPerPcs: number };

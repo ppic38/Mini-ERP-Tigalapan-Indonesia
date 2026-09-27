@@ -57,6 +57,7 @@ export default function InputMrpPage() {
           mansetKg: 0,
           rollEstimate: rollCount,
           vendorDefault: "BAYU",
+          catProd: "CMT",
         },
       ],
       aduanRows: [],

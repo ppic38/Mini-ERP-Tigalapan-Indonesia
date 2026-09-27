@@ -30,7 +30,7 @@ import type {
   WarehouseReceipt,
   WarehouseReceiptItem,
 } from "../types";
-import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, MaterialSupplierRow, SupplierRow, VendorProduksiMasterRow, WarnaAliasRow } from "../masterData";
+import type { EkspedisiRateRow, EntitasRow, HargaFobRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, MaterialSupplierRow, SupplierRow, VendorProduksiMasterRow, WarnaAliasRow } from "../masterData";
 import type { FlowState, MrpDates, MrpDetail } from "../store";
 import type { PoApprovalEntry } from "../poApproval";
 
@@ -96,7 +96,8 @@ type RawTables = Record<
   | "hargaRibRows"
   | "hargaKerahMansetRows"
   | "materialSupplierRows"
-  | "warnaAliasRows",
+  | "warnaAliasRows"
+  | "hargaFobRows",
   TableResult
 >;
 
@@ -154,6 +155,7 @@ async function fetchFlowRowsLegacy(db: SupabaseClient): Promise<RawTables> {
     hargaKerahMansetRows,
     materialSupplierRows,
     warnaAliasRows,
+    hargaFobRows,
   ] = await Promise.all([
     // Fix "list melompat" (lihat migration 0021_stable_snapshot_order.sql untuk penjelasan akar
     // masalahnya) -- `select *` TANPA `.order()` tidak dijamin urutannya oleh Postgres, dan bisa
@@ -214,6 +216,7 @@ async function fetchFlowRowsLegacy(db: SupabaseClient): Promise<RawTables> {
     db.from("harga_kerah_manset").select("*").order("id"),
     db.from("material_suppliers").select("*").order("id"),
     db.from("warna_aliases").select("*").order("mrp_warna"),
+    db.from("harga_fob").select("*").order("id"),
   ]);
   return {
     mrpRows,
@@ -264,6 +267,7 @@ async function fetchFlowRowsLegacy(db: SupabaseClient): Promise<RawTables> {
     hargaKerahMansetRows,
     materialSupplierRows,
     warnaAliasRows,
+    hargaFobRows,
   };
 }
 
@@ -341,6 +345,7 @@ async function fetchFlowRowsFast(db: SupabaseClient, skipMaster: boolean): Promi
     hargaKerahMansetRows: wrap("harga_kerah_manset"),
     materialSupplierRows: wrap("material_suppliers"),
     warnaAliasRows: wrap("warna_aliases"),
+    hargaFobRows: wrap("harga_fob"),
   };
   return { tables, masterIncluded };
 }
@@ -417,6 +422,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     hargaKerahMansetRows,
     materialSupplierRows,
     warnaAliasRows,
+    hargaFobRows,
   } = fetched.tables;
 
   for (const [name, res] of Object.entries({
@@ -445,6 +451,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     hargaKerahMansetRows,
     materialSupplierRows,
     warnaAliasRows,
+    hargaFobRows,
   })) {
     if (res.error) throw new Error(`getFlowSnapshot: gagal fetch ${name}: ${res.error.message}`);
   }
@@ -457,7 +464,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
   const materialRowsByMrp = groupBy(materialRowRows.data ?? [], (r) => r.mrp_id);
 
   const mrpDetails: MrpDetail[] = (mrpRows.data ?? []).map((m) => {
-    const mrp: Mrp = { id: m.id, kategori: m.kategori, warna: m.warna, targetDate: m.target_date, live: m.live, qty: m.qty, isFob: m.is_fob ?? undefined };
+    const mrp: Mrp = { id: m.id, kategori: m.kategori, warna: m.warna, targetDate: m.target_date, live: m.live, qty: m.qty, isFob: m.is_fob ?? undefined, brand: m.brand ?? undefined };
     const lenganGroups: LenganGroup[] = (lenganGroupsByMrp[m.id] ?? []).map((g) => ({
       id: g.id,
       warna: g.warna,
@@ -469,6 +476,9 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
       mansetKg: Number(g.manset_kg),
       rollEstimate: Number(g.roll_estimate),
       vendorDefault: g.vendor_default ?? "",
+      // Migration 0058 -- kolom belum tentu ada kalau migration belum jalan; fallback "CMT" (sama
+      // seperti default kolomnya di DB) supaya tidak pernah undefined di tipe LenganGroup.
+      catProd: g.cat_prod === "FOB" ? "FOB" : "CMT",
     }));
     const aduanRowsForMrp: AduanPolaRow[] = (aduanByMrp[m.id] ?? []).map((a) => ({
       id: a.id,
@@ -1007,6 +1017,13 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     id: r.id,
     nama: r.nama,
   }));
+  // Master Data "Harga FOB" (migration 0058) -- `harga_per_pcs` numeric Postgres, `Number(...)` wajib.
+  const hargaFob: HargaFobRow[] = (hargaFobRows.data ?? []).map((r) => ({
+    id: r.id,
+    vendorProduksi: r.vendor_produksi,
+    item: r.item,
+    hargaPerPcs: Number(r.harga_per_pcs),
+  }));
   // Master Data "Alias Warna" (migration 0051) -- lihat catatan lengkap di WarnaAliasRow (masterData.ts).
   const warnaAliases: WarnaAliasRow[] = (warnaAliasRows.data ?? []).map((r) => ({
     id: r.id,
@@ -1066,6 +1083,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     hargaKerahManset,
     materialSuppliers,
     warnaAliases,
+    hargaFob,
     hydrated: true,
     // `busy` bukan bagian data Supabase -- ini murni flag client-side (lihat withBusyTracking di
     // lib/mrp/store.ts). Nilainya di sini tidak penting: hydrate()/refresh() selalu men-spread

@@ -26,7 +26,7 @@ import type {
   WarehouseReceipt,
 } from "./types";
 import type { ParsedMrpImport } from "./parseImport";
-import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, MaterialSupplierRow, SupplierRow, VendorProduksiMasterRow, WarnaAliasRow } from "./masterData";
+import type { EkspedisiRateRow, EntitasRow, HargaFobRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, MaterialSupplierRow, SupplierRow, VendorProduksiMasterRow, WarnaAliasRow } from "./masterData";
 import { localDateString } from "./derive";
 import * as rawActions from "./actions";
 import type { ApprovalRole } from "./poApproval";
@@ -256,6 +256,10 @@ export type FlowState = {
    *  Data SKU, dipakai server-side (wms_resi_snapshot) sebagai fallback pencocokan SKU. Lihat
    *  catatan lengkap di WarnaAliasRow (masterData.ts). */
   warnaAliases: WarnaAliasRow[];
+  /** Master Data "Harga FOB" (harga jadi per pcs per vendor produksi + item, migration 0058) --
+   *  dipakai PO Produksi untuk grup `LenganGroup.catProd === "FOB"`. Lihat catatan lengkap di
+   *  HargaFobRow (masterData.ts). */
+  hargaFob: HargaFobRow[];
   /** Kategori & kapasitas produksi PER MINGGU asli tiap vendor produksi (dari spreadsheet
    *  Procurement, lihat migration 0019_vendor_kapasitas_asli.sql) -- sumber utama untuk
    *  `vendorProduksiRows` (derive.ts) & kolom "Qty vs Kapasitas" di portal vendor
@@ -426,6 +430,9 @@ type FlowActions = {
   addHargaKerahMansetRow: (data: Omit<HargaKerahMansetRow, "id">) => Promise<void>;
   updateHargaKerahMansetRow: (id: string, patch: Partial<HargaKerahMansetRow>) => Promise<void>;
   deleteHargaKerahMansetRow: (id: string) => Promise<void>;
+  addHargaFobRow: (data: Omit<HargaFobRow, "id">) => Promise<void>;
+  updateHargaFobRow: (id: string, patch: Partial<HargaFobRow>) => Promise<void>;
+  deleteHargaFobRow: (id: string) => Promise<void>;
   addMaterialSupplier: (nama: string) => Promise<void>;
   deleteMaterialSupplier: (id: string) => Promise<void>;
   updateVendorProduksiMaster: (id: string, patch: { name?: string; kategori?: string; weeklyCapacity?: number }) => Promise<void>;
@@ -563,6 +570,7 @@ const emptyState: FlowState = {
   hargaKerahManset: [],
   materialSuppliers: [],
   warnaAliases: [],
+  hargaFob: [],
   vendorProduksiList: [],
   hydrated: false,
   busy: false,
@@ -1618,6 +1626,34 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     } catch (err) {
       set({ hargaKerahManset: previous });
       window.alert("Gagal menghapus baris harga Kerah/Manset -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  addHargaFobRow: async (data) => {
+    await actions.addHargaFobRowAction(data);
+    backgroundRefresh();
+  },
+  updateHargaFobRow: async (id, patch) => {
+    const previous = get().hargaFob;
+    set({ hargaFob: previous.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+    try {
+      await actions.updateHargaFobRowAction(id, patch);
+    } catch (err) {
+      set({ hargaFob: previous });
+      window.alert("Gagal menyimpan harga FOB -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  deleteHargaFobRow: async (id) => {
+    const previous = get().hargaFob;
+    set({ hargaFob: previous.filter((r) => r.id !== id) });
+    try {
+      await actions.deleteHargaFobRowAction(id);
+    } catch (err) {
+      set({ hargaFob: previous });
+      window.alert("Gagal menghapus baris harga FOB -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();

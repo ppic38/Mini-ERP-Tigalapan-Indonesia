@@ -3,6 +3,13 @@ export type Lengan = "PENDEK" | "PANJANG";
 
 export type SizeQty = { size: string; qty: number };
 
+/** CMT ("Cut, Make, Trim") = bahan baku disediakan Tigalapan, vendor cuma jasa jahit (ongkos maklon
+ *  saja). FOB ("Free on Board") = vendor sedia bahan SENDIRI + jahit, ditagih 1 harga jadi per pcs
+ *  -- tidak ada PO Material untuk grup ini sama sekali (lihat lib/mrp/parseImport.ts, migration
+ *  0058). Level GRUP (per warna+lengan), BUKAN per MRP -- 1 file Excel bisa campur (owner 2026-09-
+ *  27: brand MAMU, kategori COMBED = CMT, kategori CARGO = FOB dalam 1 file yang sama). */
+export type CatProd = "CMT" | "FOB";
+
 export type LenganGroup = {
   id: string;
   warna: string;
@@ -17,6 +24,8 @@ export type LenganGroup = {
   mansetKg: number;
   rollEstimate: number;
   vendorDefault: string;
+  /** Migration 0058 -- default "CMT" kalau kolom `CAT PROD` di Excel kosong/tidak dikenali. */
+  catProd: CatProd;
 };
 
 export type AduanPolaRow = {
@@ -63,7 +72,15 @@ export type Mrp = {
   targetDate: string;
   live: boolean;
   qty: number;
+  /** LAMA (sebelum migration 0058) -- 1 nilai untuk SELURUH MRP, dibaca posisional kolom J.
+   *  DIPERTAHANKAN untuk kompatibilitas kode yang belum dipindah ke `LenganGroup.catProd` (per
+   *  grup) -- lihat parseImport.ts: true hanya kalau SEMUA grup di file ini FOB (file campuran
+   *  CMT+FOB otomatis jadi false di sini, supaya tidak ada kode lama yang salah asumsi "semua
+   *  grup-nya FOB" padahal cuma sebagian). */
   isFob?: boolean;
+  /** Migration 0058 -- informasional saja (kolom `BRAND` di Excel, mis. "TIGALAPAN"/"MAMU"), tidak
+   *  mengubah alur apa pun. */
+  brand?: string;
 };
 
 export type MaterialPoStatus = "WAITING_INVOICE" | "INVOICE" | "PAYMENT" | "DELIVERY_MATERIAL" | "PROSES_PRODUKSI" | "CANCELLED";

@@ -214,6 +214,7 @@ export async function importMrpAction(parsed: ParsedMrpImport, customId?: string
     live: true,
     qty: parsed.qty,
     is_fob: parsed.isFob ?? false,
+    brand: parsed.brand ?? null,
     ppic_approval: "WAITING_PPIC_APPROVAL",
     po_sent: false,
     created_at: today(),
@@ -236,6 +237,7 @@ export async function importMrpAction(parsed: ParsedMrpImport, customId?: string
         manset_kg: g.mansetKg,
         roll_estimate: g.rollEstimate,
         vendor_default: g.vendorDefault,
+        cat_prod: g.catProd,
       }))
     );
   }
@@ -4810,11 +4812,11 @@ export async function getFlowSnapshotAction(clientMasterVersion?: number | null)
   if (vendorOnly) {
     // Sesi vendor MURNI tidak pernah butuh tabel harga (dulu dibuang di sini setelah ditarik; sekarang
     // tidak ditarik sama sekali kalau migration 0050 sudah jalan).
-    return { ...state, hargaMaklon: [], hargaKain: [], hargaKainPks: [], hargaRib: [], hargaKerahManset: [], itemSellingPrices: [], dataVersion, masterVersion: null as number | null };
+    return { ...state, hargaMaklon: [], hargaKain: [], hargaKainPks: [], hargaRib: [], hargaKerahManset: [], itemSellingPrices: [], hargaFob: [], dataVersion, masterVersion: null as number | null };
   }
   if (!masterIncluded) {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { hargaMaklon, hargaKain, hargaKainPks, hargaRib, hargaKerahManset, itemSellingPrices, ...rest } = state;
+    const { hargaMaklon, hargaKain, hargaKainPks, hargaRib, hargaKerahManset, itemSellingPrices, hargaFob, ...rest } = state;
     return { ...rest, dataVersion, masterVersion: masterVersion as number | null };
   }
   return { ...state, dataVersion, masterVersion };
@@ -4825,7 +4827,7 @@ export async function getFlowSnapshotAction(clientMasterVersion?: number | null)
 // dipakai halaman Master Data (add/update/delete satu baris) & tombol "Import dari Google
 // Sheets" (replaceX -- ganti SELURUH tabel, bukan merge, persis perilaku lama).
 // =========================================================================
-import type { EkspedisiRateRow, EntitasRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, SupplierRow, WarnaAliasRow } from "./masterData";
+import type { EkspedisiRateRow, EntitasRow, HargaFobRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, SupplierRow, WarnaAliasRow } from "./masterData";
 
 async function requireMasterDataRole() {
   const session = await requireSession();
@@ -5005,6 +5007,30 @@ export async function updateHargaRibRowAction(id: string, patch: Partial<HargaRi
 export async function deleteHargaRibRowAction(id: string): Promise<void> {
   await requireMasterDataRole();
   const { error } = await supabaseServer().from("harga_rib").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+// Master Data "Harga FOB" (per vendor produksi + item, migration 0058) -- pola sama seperti Harga RIB.
+export async function addHargaFobRowAction(data: Omit<HargaFobRow, "id">): Promise<void> {
+  await requireMasterDataRole();
+  const id = await nextReadableId("HFOB");
+  const { error } = await supabaseServer()
+    .from("harga_fob")
+    .insert({ id, vendor_produksi: data.vendorProduksi, item: data.item, harga_per_pcs: data.hargaPerPcs });
+  if (error) throw new Error(error.message);
+}
+export async function updateHargaFobRowAction(id: string, patch: Partial<HargaFobRow>): Promise<void> {
+  await requireMasterDataRole();
+  const p: Record<string, unknown> = {};
+  if (patch.vendorProduksi !== undefined) p.vendor_produksi = patch.vendorProduksi;
+  if (patch.item !== undefined) p.item = patch.item;
+  if (patch.hargaPerPcs !== undefined) p.harga_per_pcs = patch.hargaPerPcs;
+  const { error } = await supabaseServer().from("harga_fob").update(p).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+export async function deleteHargaFobRowAction(id: string): Promise<void> {
+  await requireMasterDataRole();
+  const { error } = await supabaseServer().from("harga_fob").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
 

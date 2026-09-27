@@ -8,6 +8,7 @@ import { HargaMaklonPanel } from "@/components/procurement/harga-maklon-panel";
 import { HargaKainPanel } from "@/components/procurement/harga-kain-panel";
 import { HargaKainPksPanel } from "@/components/procurement/harga-kain-pks-panel";
 import { HargaRibPanel } from "@/components/procurement/harga-rib-panel";
+import { HargaFobPanel } from "@/components/procurement/harga-fob-panel";
 import { EkspedisiRatePanel } from "@/components/procurement/ekspedisi-rate-panel";
 import { KerahMansetSettingsPanel } from "@/components/procurement/kerah-manset-settings-panel";
 import { HargaKerahMansetPanel } from "@/components/procurement/harga-kerah-manset-panel";
@@ -36,7 +37,7 @@ const HARGA_KAIN_PKS_TAB_VISIBLE_KEY = "harga_kain_pks_tab_visible";
 // gampang ditemukan sebelum isi form Harga Maklon/Kain/Kain PKS/RIB/Kerah-Manset (dropdown di
 // form-form itu sekarang bersumber dari daftar di sini, bukan lagi ketik bebas -- lihat masing-
 // masing panel).
-type Tab = "maklon" | "kain" | "kainPks" | "rib" | "ekspedisi" | "kerahManset" | "vendorSupplier";
+type Tab = "maklon" | "kain" | "kainPks" | "rib" | "fob" | "ekspedisi" | "kerahManset" | "vendorSupplier";
 
 export default function ProcurementMasterDataPage() {
   const [mounted, setMounted] = useState(false);
@@ -75,6 +76,7 @@ export default function ProcurementMasterDataPage() {
           { key: "kain", label: "Harga Kain" },
           ...(kainPksVisible ? [{ key: "kainPks", label: "Harga Kain PKS" }] : []),
           { key: "rib", label: "Harga RIB" },
+          { key: "fob", label: "Harga FOB" },
           { key: "ekspedisi", label: "Ekspedisi" },
           { key: "kerahManset", label: "Kerah/Manset" },
           { key: "vendorSupplier", label: "Vendor & Supplier", accent: true },
@@ -103,6 +105,7 @@ export default function ProcurementMasterDataPage() {
       <KeepAliveTab active={tab === "kain"}><HargaKainPanel /></KeepAliveTab>
       {kainPksVisible && <KeepAliveTab active={tab === "kainPks"}><HargaKainPksPanel /></KeepAliveTab>}
       <KeepAliveTab active={tab === "rib"}><HargaRibPanel /></KeepAliveTab>
+      <KeepAliveTab active={tab === "fob"}><HargaFobPanel /></KeepAliveTab>
       <KeepAliveTab active={tab === "ekspedisi"}><EkspedisiRatePanel /></KeepAliveTab>
       <KeepAliveTab active={tab === "kerahManset"}>
         <div className="flex flex-col gap-4">

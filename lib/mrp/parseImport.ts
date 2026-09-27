@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import type { AduanPolaRow, Lengan, LenganGroup, MaterialRow, SizeQty } from "./types";
+import type { AduanPolaRow, CatProd, Lengan, LenganGroup, MaterialRow, SizeQty } from "./types";
 import { VENDOR_PRODUKSI } from "./seed";
 
 /** Alias kode vendor lama/spreadsheet -> id resmi di sistem ini. "BY" adalah kode Bayu di
@@ -35,7 +35,12 @@ export type ParsedMrpImport = {
   kategori: string;
   warna: string;
   qty: number;
+  /** LAMA -- lihat catatan di Mrp.isFob (types.ts). Dihitung dari catProd per grup di bawah, BUKAN
+   *  lagi dibaca posisional kolom J. */
   isFob: boolean;
+  /** Migration 0058 -- kolom `BRAND` (by nama header), informasional. undefined kalau sheet tidak
+   *  punya kolom itu sama sekali (template lama). */
+  brand?: string;
   lenganGroups: LenganGroup[];
   aduanRows: AduanPolaRow[];
   materialRows: MaterialRow[];
@@ -72,12 +77,12 @@ export async function parseMrpImportFile(
     throw new Error(`Sheet "${mrpSheetName}" tidak sesuai template — kolom hilang: ${missing.join(", ")}`);
   }
 
-  // Kategori FOB dibaca secara posisional dari kolom J (index ke-9) baris data pertama,
-  // terlepas dari nama header — sesuai kolom J pada sheet "MRP Template".
-  const mrpRowsPositional: unknown[][] = XLSX.utils.sheet_to_json(wb.Sheets[mrpSheetName], { header: 1, defval: null });
-  const firstDataRow = mrpRowsPositional[1] ?? [];
-  const colJValue = firstDataRow[9];
-  const isFob = String(colJValue ?? "").trim().toUpperCase() === "FOB";
+  // Migration 0058 (owner 2026-09-27: template baru bisa campur CMT & FOB dalam 1 file, kolom
+  // "CAT PROD" per BARIS -- lihat catatan panjang di CatProd/LenganGroup.catProd, types.ts) --
+  // dibaca BY NAMA HEADER (bukan posisional lagi, supaya tidak salah kolom kalau susunan template
+  // berubah). Kolom "BRAND" juga by nama header, murni informasional (Mrp.brand).
+  const catProdFor = (row: Record<string, unknown>): CatProd => (String(row["CAT PROD"] ?? "").trim().toUpperCase() === "FOB" ? "FOB" : "CMT");
+  const brand = cols.includes("BRAND") ? String(mrpRows[0]["BRAND"] ?? "").trim() || undefined : undefined;
 
   const groupMap = new Map<string, LenganGroup>();
   for (const row of mrpRows) {
@@ -114,6 +119,10 @@ export async function parseMrpImportFile(
         // kalau grup ini memang tidak punya baris ber-vendor sama sekali (ditolak nanti kalau
         // ternyata totalQty > 0, lihat setelah loop).
         vendorDefault: "",
+        // Migration 0058 -- diisi dari baris PERTAMA kombinasi warna+lengan ini (baris berikutnya
+        // untuk key yang sama SEHARUSNYA konsisten secara bisnis -- 1 warna+lengan tidak mungkin
+        // sebagian CMT sebagian FOB -- jadi tidak perlu logika "override" seperti totalOverride dkk).
+        catProd: catProdFor(row),
       });
     }
     const group = groupMap.get(key)!;
@@ -276,6 +285,9 @@ export async function parseMrpImportFile(
   const kategori = String(mrpRows[0]["KATEGORI"] ?? "-").trim();
   const warna = lenganGroups[0]?.warna ?? "-";
   const qty = lenganGroups.reduce((a, g) => a + g.totalQty, 0);
+  // Legacy Mrp.isFob -- lihat catatan di types.ts: true HANYA kalau SEMUA grup FOB, supaya kode
+  // lama yang masih baca field ini tidak salah asumsi utuh saat filenya sebenarnya campuran.
+  const isFob = lenganGroups.length > 0 && lenganGroups.every((g) => g.catProd === "FOB");
 
-  return { kategori, warna, qty, isFob, lenganGroups, aduanRows, materialRows };
+  return { kategori, warna, qty, isFob, brand, lenganGroups, aduanRows, materialRows };
 }
