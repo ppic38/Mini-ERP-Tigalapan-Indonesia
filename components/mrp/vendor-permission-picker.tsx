@@ -14,7 +14,9 @@ import { VENDOR_MODULE_TREE } from "@/lib/mrp/vendorPages";
  *  lib/mrp/vendorPages.ts untuk makna tiap bentuk key & kompatibilitas akun lama. */
 export function VendorPermissionPicker({ value, onChange }: { value: string[]; onChange: (next: string[]) => void }) {
   const [search, setSearch] = useState("");
-  const [activeModule, setActiveModule] = useState<string>(() => VENDOR_MODULE_TREE.find((m) => m.permissions)?.key ?? VENDOR_MODULE_TREE[0].key);
+  // Panel kanan HANYA muncul setelah modul yang punya sub-izin diklik (owner 2026-09-28: "tunggu
+  // diklik baru tampil apa isinya") -- tidak ada modul terpilih otomatis saat picker dibuka.
+  const [activeModule, setActiveModule] = useState<string | null>(null);
 
   const q = search.trim().toLowerCase();
   const filteredModules = useMemo(() => {
