@@ -36,15 +36,6 @@ export const useInternalAuthStore = create<InternalAuthState>()(
         set({ unlockedRoles: get().unlockedRoles.filter((r) => r !== role) });
       },
     }),
-    {
-      name: "internal-auth-v1",
-      // Status "localStorage sudah selesai dibaca" TIDAK disimpan di state store ini -- dibaca
-      // lewat `useInternalAuthStore.persist.hasHydrated()`/`onFinishHydration` (API bawaan zustand)
-      // di AppShell. Versi sebelumnya (flag `hasHydrated` + onRehydrateStorage yang memanggil
-      // `useInternalAuthStore.setState` di dalam callback) TIDAK PERNAH jadi true: localStorage
-      // dibaca SINKRON saat create(), jadi callback itu jalan SEBELUM `useInternalAuthStore`
-      // selesai di-assign (error diam-diam ditelan zustand) -- akibatnya AppShell menahan render
-      // (return null) selamanya di semua halaman modul = halaman kosong setelah login.
-    }
+    { name: "internal-auth-v1" }
   )
 );

@@ -61,12 +61,7 @@ export async function proxy(request: NextRequest) {
   const match = INTERNAL_ROLE_PREFIXES.find(([prefix]) => pathname.startsWith(prefix));
   if (match) {
     const [, requiredRole] = match;
-    // Revisi 2026-09-28 (owner: "sysadmin aksesnya bisa ke semua modul") -- sesi Sysadmin boleh
-    // BUKA halaman modul mana pun (Procurement, Finance, dst.) lewat URL-nya langsung, sama seperti
-    // requireInternalRole/requireAnyInternalRole di lib/auth/session.ts (Server Action). Sidebar-nya
-    // sendiri (components/shell/app-shell.tsx) menampilkan navigator lintas-modul supaya tidak perlu
-    // hafal/ketik URL tiap halaman.
-    if (session.internalRoles.includes(requiredRole) || session.internalRoles.includes("sysadmin")) return NextResponse.next();
+    if (session.internalRoles.includes(requiredRole)) return NextResponse.next();
     return NextResponse.redirect(new URL("/", request.url));
   }
 

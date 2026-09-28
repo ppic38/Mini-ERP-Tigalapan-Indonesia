@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/shell/sidebar";
 import { Topbar } from "@/components/shell/topbar";
-import { NAV, sysadminCombinedNavItems } from "@/lib/shell/nav";
+import { NAV } from "@/lib/shell/nav";
 import { useMrpStore } from "@/lib/mrp/store";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
 import { useVendorAuthStore } from "@/lib/mrp/vendor-auth-store";
@@ -82,43 +82,16 @@ export function AppShell({
 
   const router = useRouter();
   const unlockedRoles = useInternalAuthStore((s) => s.unlockedRoles);
-  // Revisi 2026-09-28 (owner-reported: begitu baru login Sysadmin lalu langsung klik modul lain,
-  // sekilas kelihatan seperti "user modul biasa" -- baru benar setelah klik/navigasi berikutnya)
-  // -- race condition, BUKAN lambat loading: `unlockedRoles` dibaca ASYNC dari localStorage
-  // (lihat catatan lengkap di lib/internal-auth-store.ts), jadi render PERTAMA sebelum baca itu
-  // selesai masih memakai `[]` (state awal). `authHydrated` menandai baca itu benar-benar sudah
-  // selesai -- ikut digabung ke gate `mounted` di bawah supaya sidebar/topbar tidak pernah "kedip"
-  // ke tampilan salah dulu.
-  // Dibaca lewat API `persist` bawaan zustand (BUKAN flag di state store) -- lihat catatan di
-  // lib/internal-auth-store.ts soal kenapa flag `hasHydrated` sebelumnya tidak pernah jadi true.
-  // Snapshot server = false (tidak ada localStorage di SSR), snapshot client = true begitu
-  // localStorage selesai dibaca (sinkron, jadi praktis langsung true di render client pertama).
-  // `persist?.` -- kalau localStorage diblokir browser (mode privat ketat), zustand tidak memasang
-  // API persist sama sekali; tidak ada yang perlu ditunggu, jadi dianggap sudah "hydrated".
-  const authHydrated = useSyncExternalStore(
-    (onChange) => useInternalAuthStore.persist?.onFinishHydration(onChange) ?? (() => {}),
-    () => useInternalAuthStore.persist?.hasHydrated() ?? true,
-    () => false
-  );
   const logoutInternal = useInternalAuthStore((s) => s.logout);
   const logoutVendor = useVendorAuthStore((s) => s.logout);
   const vendorActor = useVendorAuthStore((s) => s.actor);
 
   const isGated = GATED_ROLES.includes(role as InternalRole);
-  // Revisi 2026-09-28 (owner-reported: Sysadmin selalu dilempar balik ke "/" begitu buka halaman
-  // modul lain, walau requireInternalRole+proxy.ts SUDAH mengizinkan) -- ternyata ada gerbang
-  // KETIGA yang kelupaan: ini, cek client-side (localStorage unlockedRoles, TERPISAH dari cookie
-  // sesi server yang dibaca proxy.ts/requireInternalRole). Server sudah OK, tapi React di browser
-  // ini sendiri langsung redirect begitu `role` halaman (mis. "procurement") tidak ada di
-  // unlockedRoles milik SESI SYSADMIN (yang isinya cuma "sysadmin", bukan "procurement") --
-  // sebelum sempat lihat data apa pun. Sekarang Sysadmin juga jadi wildcard di sini.
-  const authorized = !isGated || unlockedRoles.includes(role as InternalRole) || unlockedRoles.includes("sysadmin");
+  const authorized = !isGated || unlockedRoles.includes(role as InternalRole);
 
   useEffect(() => {
-    // authHydrated dulu -- jangan redirect berdasarkan `authorized` yang masih dihitung dari
-    // unlockedRoles KOSONG (localStorage belum sempat dibaca), itu selalu false sesaat.
-    if (mounted && authHydrated && isGated && !authorized) router.replace("/");
-  }, [mounted, authHydrated, isGated, authorized, router]);
+    if (mounted && isGated && !authorized) router.replace("/");
+  }, [mounted, isGated, authorized, router]);
 
   const nav = NAV[role];
   const allNotifications = useMrpStore((s) => s.notifications);
@@ -276,39 +249,13 @@ export function AppShell({
     };
   }
 
-  // isGated && !authHydrated ikut ditahan di sini juga -- HALAMAN gated tidak boleh sempat
-  // render sidebar/topbar apa pun (termasuk yang authorized=true secara "kebetulan" dari nilai
-  // default) sebelum localStorage benar-benar selesai dibaca.
-  if (!mounted || (isGated && (!authHydrated || !authorized))) return null;
+  if (!mounted || (isGated && !authorized)) return null;
 
   // Akun anggota tim vendor (migration 0057) -- sidebar disaring ke halaman yang diizinkan saja
   // (proteksi sesungguhnya tetap di proxy.ts; ini murni supaya menu yang ditutup tidak ditampilkan
   // sebagai link mati), dan nama topbar menyertakan nama anggota yang login.
-  //
-  // Revisi 2026-09-28 (owner: "sysadmin ini saya fungsikan sebagai tower monitoring dan super
-  // admin ... harusnya sysadmin ke procurement, bukan tiba2 jadi user procurement") -- SEMPAT
-  // dipersempit ke `role === "sysadmin"` doang (biar tidak "bocor" ke modul lain), tapi itu salah
-  // paham arah keluhan sebelumnya: yang dimaksud owner BUKAN "sidebar gabungan harus hilang saat
-  // buka modul lain", melainkan IDENTITAS & KEMAMPUAN Sysadmin (navigator lintas-modul + tombol
-  // override) MEMANG DIMAKSUDKAN menempel terus ke mana pun Sysadmin berkeliling, PERSIS seperti
-  // tower monitoring -- bukan berubah jadi "user Procurement biasa" begitu masuk halaman
-  // Procurement. Jadi: sidebar gabungan ini nempel selama browser MEMANG sedang login Sysadmin
-  // (unlockedRoles), di halaman modul mana pun.
-  const isSysadminSession = unlockedRoles.includes("sysadmin");
-  const sidebarItems = isSysadminSession
-    ? sysadminCombinedNavItems()
-    : role === "vendorMaklon" && vendorActor
-      ? nav.items.filter((i) => !i.href || vendorHasPageAccess(vendorActor.allowedPages, i.href))
-      : nav.items;
-  // Topbar juga TETAP bilang "Sysadmin" (bukan ikut nama modul yang lagi dilihat) -- ditambah
-  // "· memantau <Modul>" begitu lagi tidak di halaman Sysadmin sendiri, supaya tetap jelas data
-  // siapa yang sedang ditampilkan tanpa kehilangan identitas Sysadmin-nya.
-  const topbarRole =
-    isSysadminSession && role !== "sysadmin"
-      ? `Sysadmin · memantau ${nav.role}`
-      : role === "vendorMaklon" && vendorActor
-        ? `${roleOverride ?? nav.role} · ${vendorActor.name}`
-        : (roleOverride ?? nav.role);
+  const sidebarItems = role === "vendorMaklon" && vendorActor ? nav.items.filter((i) => !i.href || vendorHasPageAccess(vendorActor.allowedPages, i.href)) : nav.items;
+  const topbarRole = role === "vendorMaklon" && vendorActor ? `${roleOverride ?? nav.role} · ${vendorActor.name}` : (roleOverride ?? nav.role);
 
   return (
     <div className="flex min-h-screen bg-surface-page">
