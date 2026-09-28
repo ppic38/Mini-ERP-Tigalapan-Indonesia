@@ -68,6 +68,10 @@ export const NAV: Record<RoleKey, RoleNav> = {
     items: [
       { label: "Akun & Password", href: "/sysadmin/accounts" },
       { label: "Batalkan PO", href: "/sysadmin/po" },
+      // Revisi 2026-09-28 (owner: "case2 seperti ini bisa diatur di sysadmin ... dari tingkat besar
+      // hingga tingkat detail ... hanya beberapa yang ingin disetting") -- kembalikan status batch
+      // PV yang salah ke-set (mis. "Set Delivery" salah klik), granular per batch bukan per PO.
+      { label: "Perbaiki Status Invoice", href: "/sysadmin/invoice-status" },
       { label: "Log Audit", href: "/sysadmin/audit-log" },
     ],
   },

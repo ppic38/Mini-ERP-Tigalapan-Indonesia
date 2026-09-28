@@ -269,3 +269,81 @@ export async function findMaklonPoAction(poId: string): Promise<ActionResult<{ i
     return { id: data.id, mrpId: data.mrp_id, vendorProduksi: data.vendor_produksi, amount: Number(data.amount), status: data.status, approved: data.approved, closedAt: data.closed_at ?? undefined };
   });
 }
+
+// =========================================================================
+// Perbaiki status invoice material -- "kembalikan ke semula" untuk salah klik
+// aksi status (owner 2026-09-28, kasus nyata: "Set Delivery" ke-klik di batch
+// PV yang salah gara-gara bug status ikut-ikutan antar batch, lihat fix di
+// app/procurement/material-tracking/page.tsx). Granular per BATCH (raw_material_invoice),
+// bukan per PO -- 1 PO bisa punya banyak batch PV, dan owner cuma mau kembalikan
+// SEBAGIAN yang salah, bukan semuanya. Baru dukung 1 langkah: DELIVERY -> PAID
+// (batal "Set Delivery") -- ini kasus paling umum & paling aman (1 kolom timestamp,
+// tanpa efek samping ke data lain). Langkah lain (RECEIVING -> DELIVERY dkk)
+// menyentuh raw_material_invoice_rolls per-roll & progres vendor, BELUM dibuatkan
+// jalur revert-nya (lebih berisiko, menyusul kalau memang dibutuhkan).
+// =========================================================================
+
+export type SysadminInvoiceBatchRow = {
+  id: string;
+  poId: string;
+  mrpId: string;
+  kodeTransaksi: string;
+  status: string;
+  qtyReady: number;
+  totalBiaya: number;
+  deliveredAt: string | null;
+  /** true = batch ini status DELIVERY, bisa dikembalikan ke PAID lewat aksi di bawah. */
+  revertible: boolean;
+};
+
+/** Cari semua batch PV (raw_material_invoices) untuk 1 No PO Material -- dipakai halaman
+ *  "Perbaiki Status Invoice" supaya Sysadmin bisa pilih SEBAGIAN batch (bukan 1 PO utuh). */
+export async function findMaterialInvoicesForPoAction(poId: string): Promise<ActionResult<SysadminInvoiceBatchRow[]>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    const { data, error } = await supabaseServer()
+      .from("raw_material_invoices")
+      .select("id,po_id,mrp_id,kode_transaksi,status,qty_ready,total_biaya,delivered_at")
+      .eq("po_id", poId.trim())
+      .order("booked_at");
+    if (error) throw new Error(error.message);
+    return (data ?? []).map((r) => ({
+      id: r.id,
+      poId: r.po_id,
+      mrpId: r.mrp_id,
+      kodeTransaksi: r.kode_transaksi,
+      status: r.status,
+      qtyReady: r.qty_ready,
+      totalBiaya: Number(r.total_biaya ?? 0),
+      deliveredAt: r.delivered_at,
+      revertible: r.status === "DELIVERY",
+    }));
+  });
+}
+
+/** Kembalikan batch (status DELIVERY) ke PAID -- batal "Set Delivery". Batch yang statusnya
+ *  bukan DELIVERY dilewati diam-diam (bukan error) -- pemanggil (UI) sudah menyaring lewat
+ *  `revertible`, ini jaring pengaman kedua kalau data berubah di antara load & submit. */
+export async function sysadminRevertInvoiceDeliveryAction(invoiceIds: string[], reason: string): Promise<ActionResult<{ reverted: number; skipped: number }>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    if (invoiceIds.length === 0) throw new Error("Pilih minimal 1 batch.");
+    const db = supabaseServer();
+    const { data: rows, error } = await db.from("raw_material_invoices").select("id,status,delivered_at,po_id").in("id", invoiceIds);
+    if (error) throw new Error(error.message);
+    let reverted = 0;
+    let skipped = 0;
+    for (const r of rows ?? []) {
+      if (r.status !== "DELIVERY") {
+        skipped++;
+        continue;
+      }
+      const { error: updErr } = await db.from("raw_material_invoices").update({ status: "PAID", delivered_at: null }).eq("id", r.id);
+      if (updErr) throw new Error(`Gagal mengembalikan ${r.id}: ${updErr.message}`);
+      await writeAuditLog("REVERT_INVOICE_DELIVERY", "raw_material_invoices", r.id, reason.trim(), { status: r.status, deliveredAt: r.delivered_at }, { status: "PAID", deliveredAt: null });
+      reverted++;
+    }
+    return { reverted, skipped };
+  });
+}

@@ -985,7 +985,13 @@ export function materialPoFullStatusBadge(status: MaterialPoFullStatus) {
     INVOICE: { label: "INVOICE", tone: "info" },
     PAID: { label: "PAID", tone: "success" },
     CANCEL: { label: "CANCEL", tone: "danger" },
-    DELIVERY: { label: "DELIVERY", tone: "active" },
+    // Revisi 2026-09-28 (owner: "bedakan warna status delivery dan paid") -- tone "active" (teal)
+    // dan "success" (hijau) di TONE_CLASSES (components/ui/status-pill.tsx) sama-sama pastel &
+    // kelewat mirip di badge kecil. DELIVERY dipindah ke "info" (biru) supaya kontras jelas
+    // terhadap PAID (hijau) sekilas pandang, tanpa perlu ubah tone lain yang juga pakai "active"
+    // (DELIVERED_FROM_VENDOR di bawah -- disengaja dibiarkan, itu tahap SETELAH RECEIVING/PRODUCTION,
+    // tidak pernah muncul berdampingan langsung dengan PAID di 1 tabel yang sama seperti DELIVERY).
+    DELIVERY: { label: "DELIVERY", tone: "info" },
     RECEIVING: { label: "RECEIVING", tone: "rework" },
     PRODUCTION: { label: "PRODUCTION", tone: "locked" },
     FINISH_GOOD: { label: "FINISH GOOD", tone: "success" },
