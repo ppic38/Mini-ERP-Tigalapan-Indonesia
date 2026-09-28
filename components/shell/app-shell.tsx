@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/shell/sidebar";
 import { Topbar } from "@/components/shell/topbar";
@@ -89,7 +89,17 @@ export function AppShell({
   // selesai masih memakai `[]` (state awal). `authHydrated` menandai baca itu benar-benar sudah
   // selesai -- ikut digabung ke gate `mounted` di bawah supaya sidebar/topbar tidak pernah "kedip"
   // ke tampilan salah dulu.
-  const authHydrated = useInternalAuthStore((s) => s.hasHydrated);
+  // Dibaca lewat API `persist` bawaan zustand (BUKAN flag di state store) -- lihat catatan di
+  // lib/internal-auth-store.ts soal kenapa flag `hasHydrated` sebelumnya tidak pernah jadi true.
+  // Snapshot server = false (tidak ada localStorage di SSR), snapshot client = true begitu
+  // localStorage selesai dibaca (sinkron, jadi praktis langsung true di render client pertama).
+  // `persist?.` -- kalau localStorage diblokir browser (mode privat ketat), zustand tidak memasang
+  // API persist sama sekali; tidak ada yang perlu ditunggu, jadi dianggap sudah "hydrated".
+  const authHydrated = useSyncExternalStore(
+    (onChange) => useInternalAuthStore.persist?.onFinishHydration(onChange) ?? (() => {}),
+    () => useInternalAuthStore.persist?.hasHydrated() ?? true,
+    () => false
+  );
   const logoutInternal = useInternalAuthStore((s) => s.logout);
   const logoutVendor = useVendorAuthStore((s) => s.logout);
   const vendorActor = useVendorAuthStore((s) => s.actor);
