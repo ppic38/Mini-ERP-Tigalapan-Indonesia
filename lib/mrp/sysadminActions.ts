@@ -347,3 +347,165 @@ export async function sysadminRevertInvoiceDeliveryAction(invoiceIds: string[], 
     return { reverted, skipped };
   });
 }
+
+// =========================================================================
+// Tarik kembali PO Material -- "kirim ke Finance" yang salah (owner 2026-09-28,
+// tahap Procurement/Finance dari permintaan "akses tingkat tinggi ... diterapkan
+// ke setiap modul"). BEDA dari sysadminCancelMaterialPoAction (yang MEMANG sengaja
+// TIDAK membongkar apa pun, dipakai untuk PO yang sudah lanjut diinvoice) -- ini
+// KHUSUS PO yang BELUM PERNAH diinvoice sama sekali (invoicedRolls 0): selain
+// dibatalkan, baris material_rows terkait juga di-"lepas" lagi (sent_to_po_at
+// dikosongkan) supaya warna itu muncul lagi di "MRP tanpa PO" dan bisa dikirim
+// ULANG dengan vendor/supplier yang benar -- Batalkan PO biasa TIDAK melakukan ini
+// (baris tetap "sent", tidak akan pernah bisa dikirim lagi).
+//
+// TIDAK ada versi Maklon PO (Produksi) -- maklon_pos TIDAK menyimpan rincian
+// warna/lengan per PO (beda dari material_pos yang punya material_po_color_
+// breakdown), jadi tidak ada cara aman mencocokkan material_rows mana yang harus
+// dilepas tanpa risiko salah (bisa ke-lepas baris dari PO Maklon LAIN yang masih
+// valid, kalau vendor yang sama pernah dikirim PO bertahap). Untuk PO Maklon yang
+// salah kirim, pakai "Batalkan PO" biasa dulu -- kirim ulang manual kalau memang
+// perlu (belum ada jalur otomatisnya).
+// =========================================================================
+
+export type SysadminMaterialPoSummary = {
+  id: string;
+  mrpId: string;
+  supplier: string;
+  vendorProduksi: string;
+  status: string;
+  approved: boolean;
+  invoicedRolls: number;
+  amount: number;
+  approvalLevel: number | null;
+  approvalLog: { step: number; role: string; action: string; at: string; note?: string }[];
+};
+
+export async function findMaterialPoSummaryAction(poId: string): Promise<ActionResult<SysadminMaterialPoSummary | null>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    const { data, error } = await supabaseServer()
+      .from("material_pos")
+      .select("id,mrp_id,supplier,vendor_produksi,status,approved,invoiced_rolls,amount,approval_level,approval_log")
+      .eq("id", poId.trim())
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) return null;
+    return {
+      id: data.id,
+      mrpId: data.mrp_id,
+      supplier: data.supplier,
+      vendorProduksi: data.vendor_produksi,
+      status: data.status,
+      approved: data.approved,
+      invoicedRolls: Number(data.invoiced_rolls ?? 0),
+      amount: Number(data.amount ?? 0),
+      approvalLevel: data.approval_level ?? null,
+      approvalLog: (data.approval_log ?? []) as SysadminMaterialPoSummary["approvalLog"],
+    };
+  });
+}
+
+export async function sysadminRecallMaterialPoAction(poId: string, reason: string): Promise<ActionResult<{ rowsReleased: number }>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: po, error: poErr } = await db.from("material_pos").select("id,mrp_id,status,invoiced_rolls").eq("id", poId.trim()).maybeSingle();
+    if (poErr) throw new Error(poErr.message);
+    if (!po) throw new Error("PO Material tidak ditemukan.");
+    if (po.status === "CANCELLED") throw new Error("PO ini sudah dibatalkan sebelumnya.");
+    if (Number(po.invoiced_rolls ?? 0) > 0) {
+      throw new Error("PO ini sudah pernah diinvoice sebagian (Paying Voucher) -- tidak aman ditarik kembali dari sini. Pakai \"Batalkan PO\" biasa kalau memang perlu dibatalkan (invoice yang sudah ada tetap tidak dibongkar).");
+    }
+    const { data: colors, error: colorErr } = await db.from("material_po_color_breakdown").select("warna,lengan").eq("material_po_id", po.id);
+    if (colorErr) throw new Error(colorErr.message);
+    let rowsReleased = 0;
+    for (const c of colors ?? []) {
+      const { data: rows, error: rowErr } = await db.from("material_rows").select("id,sent_to_po_at").eq("mrp_id", po.mrp_id).eq("warna", c.warna).eq("lengan", c.lengan);
+      if (rowErr) throw new Error(rowErr.message);
+      const ids = (rows ?? []).filter((r) => r.sent_to_po_at).map((r) => r.id);
+      if (ids.length === 0) continue;
+      const { error: updErr } = await db.from("material_rows").update({ sent_to_po_at: null }).in("id", ids);
+      if (updErr) throw new Error(updErr.message);
+      rowsReleased += ids.length;
+    }
+    const { error: cancelErr } = await db.from("material_pos").update({ status: "CANCELLED" }).eq("id", po.id);
+    if (cancelErr) throw new Error(cancelErr.message);
+    // MRP ini pasti masih punya baris outstanding sekarang (baru saja dilepas di atas) -- kembalikan
+    // ke "MRP tanpa PO" supaya bisa dikirim ulang. Aman di-set false tanpa syarat: kalau ternyata
+    // semua baris LAIN sudah lengkap terkirim juga, panggilan sendPoToFinanceAction berikutnya untuk
+    // MRP ini otomatis men-set po_sent=true lagi begitu tidak ada sisa (logika yang sudah ada).
+    await db.from("mrp").update({ po_sent: false }).eq("id", po.mrp_id);
+    await writeAuditLog("RECALL_MATERIAL_PO", "material_pos", po.id, reason.trim(), { status: po.status, invoicedRolls: po.invoiced_rolls }, { status: "CANCELLED", rowsReleased });
+    return { rowsReleased };
+  });
+}
+
+// =========================================================================
+// Kembalikan 1 langkah approval PO (Material/Produksi) -- "salah approve/reject,
+// balikin ke menunggu approval lagi". HANYA boleh selama PO belum final (`approved`
+// masih false) -- begitu approved=true, PO Material sudah kena split per entitas
+// (splitMaterialPoByEntitas) & PO Produksi sudah kirim notifikasi ke vendor;
+// membongkar itu jauh lebih rumit/berisiko, jadi SENGAJA tidak didukung di sini.
+// =========================================================================
+
+export type SysadminApprovalPoType = "MATERIAL" | "MAKLON";
+
+const APPROVAL_PO_TABLE: Record<SysadminApprovalPoType, string> = { MATERIAL: "material_pos", MAKLON: "maklon_pos" };
+
+export type SysadminMaklonPoSummary = {
+  id: string;
+  mrpId: string;
+  vendorProduksi: string;
+  status: string;
+  approved: boolean;
+  amount: number;
+  approvalLevel: number | null;
+  approvalLog: { step: number; role: string; action: string; at: string; note?: string }[];
+};
+
+export async function findMaklonPoSummaryAction(poId: string): Promise<ActionResult<SysadminMaklonPoSummary | null>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    const { data, error } = await supabaseServer()
+      .from("maklon_pos")
+      .select("id,mrp_id,vendor_produksi,status,approved,amount,approval_level,approval_log")
+      .eq("id", poId.trim())
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) return null;
+    return {
+      id: data.id,
+      mrpId: data.mrp_id,
+      vendorProduksi: data.vendor_produksi,
+      status: data.status,
+      approved: data.approved,
+      amount: Number(data.amount ?? 0),
+      approvalLevel: data.approval_level ?? null,
+      approvalLog: (data.approval_log ?? []) as SysadminMaklonPoSummary["approvalLog"],
+    };
+  });
+}
+
+export async function sysadminRevertPoApprovalStepAction(type: SysadminApprovalPoType, poId: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const table = APPROVAL_PO_TABLE[type];
+    const { data: po, error } = await db.from(table).select("id,approved,approval_level,approval_log").eq("id", poId.trim()).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!po) throw new Error("PO tidak ditemukan.");
+    if (po.approved) throw new Error("PO ini sudah FINAL disetujui (approved) -- tidak bisa di-revert dari sini (bisa sudah memicu efek lain, mis. split entitas / notifikasi vendor).");
+    if (po.approval_level == null) throw new Error("PO ini tidak pakai matriks approval (PO lama) -- tidak ada langkah untuk dikembalikan.");
+    const log = (po.approval_log ?? []) as { step: number; role: string; action: string; at: string; note?: string }[];
+    if (log.length === 0) throw new Error("Belum ada riwayat approval untuk PO ini.");
+    const last = log[log.length - 1];
+    if (last.action !== "APPROVED") throw new Error("Langkah terakhir bukan persetujuan (kemungkinan penolakan) -- pakai \"Ajukan ulang\" di portal Procurement untuk kasus itu.");
+    const nextLog = log.slice(0, -1);
+    const { error: updErr } = await db.from(table).update({ approval_log: nextLog }).eq("id", po.id);
+    if (updErr) throw new Error(updErr.message);
+    await writeAuditLog(`REVERT_${type}_PO_APPROVAL_STEP`, table, po.id, reason.trim(), { approvalLog: log }, { approvalLog: nextLog, removedStep: last });
+  });
+}
