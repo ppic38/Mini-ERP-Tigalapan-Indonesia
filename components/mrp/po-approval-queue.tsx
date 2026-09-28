@@ -157,23 +157,35 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
   const [rejecting, setRejecting] = useState<Item | null>(null);
   const [rejectNote, setRejectNote] = useState("");
   const [download, setDownload] = useState<PoDownloadRequest | null>(null);
+  // Section "Sudah selesai" (revisi 2026-09-28) default TERTUTUP -- bisa berisi banyak PO seiring
+  // waktu, tidak perlu selalu terbuka penuh seperti 3 section lain yang memang perlu aksi/perhatian.
+  const [doneOpen, setDoneOpen] = useState(false);
 
+  // Revisi 2026-09-28 (owner: "kita bisa tau juga siapa2 sudah approve, karena berlapis") -- DULU
+  // PO yang sudah `approved` (semua level tuntas) SAMA SEKALI tidak masuk `items` (dianggap sudah
+  // "keluar" dari antrean). Sekarang tetap diikutkan supaya bisa ditampilkan di section "Sudah
+  // selesai" di bawah (siapa approve di level mana, lewat ApprovalChain) -- TIDAK mengubah `mine`/
+  // `rejected`/`others` sama sekali (ketiganya masih tetap exclude PO yang sudah approved, lihat
+  // filter `!po.approved` yang ditambah di `others`).
   const items = useMemo<Item[]>(() => {
     const out: Item[] = [];
     for (const p of materialPOs) {
-      if (p.status === "CANCELLED" || p.approved) continue;
+      if (p.status === "CANCELLED") continue;
       out.push({ type: "MATERIAL", id: p.id, mrpId: p.mrpId, vendor: VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi, supplier: p.supplier, amount: p.amount, po: p, state: poApprovalState(p) });
     }
     for (const p of maklonPOs) {
-      if (p.approved) continue;
       out.push({ type: "MAKLON", id: p.id, mrpId: p.mrpId, vendor: VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi, amount: p.amount, po: p, state: poApprovalState(p) });
     }
     return out;
   }, [materialPOs, maklonPOs]);
 
-  const mine = items.filter((i) => !i.state.legacy && !i.state.rejected && i.state.pendingRoles.includes(role));
-  const rejected = role === "procurement" ? items.filter((i) => i.state.rejected) : [];
-  const others = items.filter((i) => !i.state.legacy && !i.state.rejected && !i.state.pendingRoles.includes(role));
+  const mine = items.filter((i) => !i.po.approved && !i.state.legacy && !i.state.rejected && i.state.pendingRoles.includes(role));
+  const rejected = role === "procurement" ? items.filter((i) => !i.po.approved && i.state.rejected) : [];
+  const others = items.filter((i) => !i.po.approved && !i.state.legacy && !i.state.rejected && !i.state.pendingRoles.includes(role));
+  // Sudah tuntas SEMUA level (approved=true) -- terlepas level berapa yang menyudahinya (1/2/3/4),
+  // supaya kelihatan juga PO Level 1-2 yang selesai di Procurement TANPA pernah mampir ke FAT/SCM/GM.
+  // Legacy (PO sebelum matriks ini ada) TIDAK ikut -- tidak ada chain-nya untuk ditampilkan.
+  const done = items.filter((i) => i.po.approved && !i.state.legacy);
   const totalMine = mine.reduce((s, i) => s + i.amount, 0);
 
   async function run(item: Item, fn: () => Promise<void>) {
@@ -352,6 +364,28 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
         "hanya informasi",
         others.length === 0 ? <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Tidak ada.</div> : others.map((it) => renderRow(it, null))
       )}
+
+      {/* Revisi 2026-09-28 (owner: "kita bisa tau juga siapa2 sudah approve, karena berlapis") --
+         PO yang sudah TUNTAS semua level (termasuk Level 1-2 yang selesai di Procurement tanpa
+         pernah mampir ke FAT/SCM/GM) tetap kelihatan di sini, lengkap dengan ApprovalChain-nya --
+         bukan cuma menghilang begitu approved=true. Default tertutup (collapsible, pola sama
+         seperti MatrixReference) supaya tidak bikin halaman penuh begitu datanya sudah banyak. */}
+      <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
+        <button onClick={() => setDoneOpen((v) => !v)} className="flex w-full items-center gap-2 px-4 py-3 text-left">
+          <span className="font-sans text-[13px] font-semibold text-text-primary">Sudah selesai (semua level)</span>
+          <span className="rounded-full bg-[#EEF1F4] px-2 py-0.5 font-mono text-[10px] font-semibold text-text-muted">{done.length}</span>
+          <span className="ml-auto text-text-muted">{doneOpen ? "▾" : "▸"}</span>
+        </button>
+        {doneOpen && (
+          <div className="border-t border-border-subtle">
+            {done.length === 0 ? (
+              <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Belum ada PO yang selesai lewat matriks approval ini.</div>
+            ) : (
+              done.map((it) => renderRow(it, null))
+            )}
+          </div>
+        )}
+      </div>
 
       {rejecting && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={() => setRejecting(null)}>

@@ -5,6 +5,7 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { Button } from "@/components/ui/button";
 import { MaklonPoWarnaLenganTable } from "@/components/mrp/maklon-po-warna-lengan-table";
 import { poApprovalState } from "@/lib/mrp/poApproval";
+import { ApprovalChain } from "@/components/mrp/po-approval-queue";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatPcs, formatRupiah, maklonPoBadgeWithApproval } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -363,7 +364,13 @@ export function PoMaklonPanel() {
                                         <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatPcs(p.qty)} pcs</td>
                                         <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(p.amount)}</td>
                                         <td className="px-3 py-[10px]">
-                                          <StatusPill tone={badge.tone}>{badge.label}</StatusPill>
+                                          <div className="flex flex-col gap-1">
+                                            <StatusPill tone={badge.tone}>{badge.label}</StatusPill>
+                                            {/* Revisi 2026-09-28 -- lihat catatan sama di po-material-panel.tsx:
+                                               PO Level 1-2 tetap kelihatan di sini, sekarang jelas sampai level
+                                               mana & siapa yang approve. */}
+                                            <ApprovalChain state={poApprovalState(p)} />
+                                          </div>
                                         </td>
                                       </tr>
                                       {poActive && (

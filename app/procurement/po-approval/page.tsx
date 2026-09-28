@@ -35,7 +35,8 @@ import {
   summarizeRateSources,
   vendorProduksiRows,
 } from "@/lib/mrp/derive";
-import { countMaterialRowsWithoutSupplierForMrp, pendingMarker } from "@/lib/shell/badges";
+import { countMaterialRowsWithoutSupplierForMrp, countPoPendingForRole, countPoRejected, pendingMarker } from "@/lib/shell/badges";
+import { PoApprovalQueue } from "@/components/mrp/po-approval-queue";
 import { PoDownloadModal, type PoDownloadRequest } from "@/components/procurement/po-download-modal";
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { MaklonPO, MaterialPO } from "@/lib/mrp/types";
@@ -95,7 +96,12 @@ export default function PoApprovalPage() {
   // histori PO Vendor Produksi) dipisah jadi sub-tab, pola sama seperti Tabs di /raw-material.
   // Selector "— pilih MRP —" & tombol "Kirim PO ke Finance" tetap di luar tab (dipakai bareng oleh
   // keduanya -- 1x kirim PO mencakup material & vendor produksi sekaligus, bukan 2 aksi terpisah).
-  type PoApprovalTab = "material" | "produksi";
+  // Revisi 2026-09-28 (owner: "hilangkan menu Approval PO terpisah, approve langsung di sini, tapi
+  // tetap kelihatan siapa2 sudah approve") -- tab "Approval PO Saya" (Level 2) DIGABUNG ke halaman
+  // "Purchase Order" ini (dulu halaman/menu terpisah `/procurement/approval-po`, sudah dihapus) --
+  // reuse PoApprovalQueue APA ADANYA (approve/reject/resubmit/ApprovalChain, semua logic-nya tidak
+  // berubah), cuma dipindah jadi tab ketiga di sini supaya Procurement tidak perlu pindah menu.
+  type PoApprovalTab = "material" | "produksi" | "approval";
   const [tab, setTab] = useState<PoApprovalTab>("material");
   // Revisi 2026-09-17 (owner: "jangan card grouping, mau row tabel memanjang, dikelompokkan per
   // No MRP dulu, baru klik untuk lihat supplier, baru klik supplier untuk lihat vendor produksi")
@@ -510,10 +516,14 @@ export default function PoApprovalPage() {
         items={[
           { key: "material", label: "PO Material" },
           { key: "produksi", label: "PO Produksi" },
+          { key: "approval", label: "Approval PO Saya (Level 2)", badge: countPoPendingForRole("procurement", materialPOs, maklonPOs) + countPoRejected(materialPOs, maklonPOs) },
         ]}
         active={tab}
         onChange={(k) => setTab(k as PoApprovalTab)}
       />
+
+      {/* TIDAK butuh `detail`/MRP terpilih -- beda dari 2 tab lain, ini antrean LINTAS MRP. */}
+      {tab === "approval" && <PoApprovalQueue role="procurement" />}
 
       {tab === "produksi" && detail && (
           <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">

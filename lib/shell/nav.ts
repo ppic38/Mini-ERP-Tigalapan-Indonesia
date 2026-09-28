@@ -23,8 +23,9 @@ export const NAV: Record<RoleKey, RoleNav> = {
     entity: "Tigalapan Indonesia",
     items: [
       { label: "Dashboard", href: "/dashboard/procurement" },
+      // Revisi 2026-09-28: "Approval PO" (Level 2) tidak lagi menu terpisah -- sekarang tab
+      // "Approval PO Saya" di dalam halaman "Purchase Order" (lihat app/procurement/po-approval/page.tsx).
       { label: "Purchase Order", href: "/procurement/po-approval" },
-      { label: "Approval PO", href: "/procurement/approval-po" },
       { label: "Paying Voucher (Invoice)", href: "/raw-material" },
       { label: "Material Tracking", href: "/procurement/material-tracking" },
       { label: "Klaim Material", href: "/procurement/material-claims" },

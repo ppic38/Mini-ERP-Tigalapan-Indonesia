@@ -4,6 +4,7 @@ import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
 import { StatusPill } from "@/components/ui/status-pill";
 import { poApprovalState } from "@/lib/mrp/poApproval";
+import { ApprovalChain } from "@/components/mrp/po-approval-queue";
 import { useMrpStore } from "@/lib/mrp/store";
 import {
   formatPcs,
@@ -656,7 +657,14 @@ export function PoMaterialPanel() {
                                         <td className="px-3 py-[10px] text-right font-mono tabular-nums">{p.rollCount} roll</td>
                                         <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(p.amount)}</td>
                                         <td className="px-3 py-[10px]">
-                                          <StatusPill tone={badge.tone}>{badge.label}</StatusPill>
+                                          <div className="flex flex-col gap-1">
+                                            <StatusPill tone={badge.tone}>{badge.label}</StatusPill>
+                                            {/* Revisi 2026-09-28 (owner: "kita bisa tau juga siapa2 sudah approve") --
+                                               PO Level 1-2 (selesai di Procurement) TETAP tampil di sini (tidak
+                                               disaring), sekarang jelas kelihatan sampai level mana & siapa yang
+                                               approve, bukan cuma label "disetujui" polos. */}
+                                            <ApprovalChain state={poApprovalState(p)} />
+                                          </div>
                                         </td>
                                       </tr>
                                       {poActive && (

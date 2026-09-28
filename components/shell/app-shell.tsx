@@ -189,9 +189,9 @@ export function AppShell({
     };
   } else if (role === "procurement") {
     badgeOverrides = {
-      "/procurement/po-approval": countMrpWithoutPO(mrpDetails),
-      // Approval PO (Level 2) + PO ditolak yang menunggu diajukan ulang.
-      "/procurement/approval-po": countPoPendingForRole("procurement", materialPOs, maklonPOs) + countPoRejected(materialPOs, maklonPOs),
+      // Revisi 2026-09-28: tab "Approval PO Saya" (Level 2) + PO ditolak sekarang di DALAM halaman
+      // ini juga (bukan menu terpisah lagi) -- badge sidebar digabung jadi 1 angka.
+      "/procurement/po-approval": countMrpWithoutPO(mrpDetails) + countPoPendingForRole("procurement", materialPOs, maklonPOs) + countPoRejected(materialPOs, maklonPOs),
       // "Invoice Vendor" sekarang tab kedua di halaman ini (bukan halaman terpisah lagi) —
       // badge-nya digabung ke sini juga.
       "/raw-material": countMaterialPOsAwaitingInvoice(materialPOs) + countVendorInvoicesAwaitingReview(vendorInvoices),
