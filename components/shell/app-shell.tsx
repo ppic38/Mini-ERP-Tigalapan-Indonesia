@@ -256,16 +256,19 @@ export function AppShell({
   // sebagai link mati), dan nama topbar menyertakan nama anggota yang login.
   //
   // Revisi 2026-09-28 (owner: "sysadmin aksesnya bisa ke semua modul, sidebarnya itu dari beberapa
-  // modul") -- sesi Sysadmin (unlockedRoles, BUKAN prop `role` halaman yang lagi dibuka -- supaya
-  // navigator lintas-modul ini tetap tampil walau lagi membuka halaman Procurement/Finance dkk
-  // lewat bypass requireInternalRole+proxy.ts) dapat sidebar KHUSUS: semua modul dikelompokkan,
-  // bukan cuma 4 menu Sysadmin sendiri. Vendor tidak terpengaruh (unlockedRoles selalu kosong untuk
-  // sesi vendor, field terpisah dari session.vendorId).
-  const sidebarItems = unlockedRoles.includes("sysadmin")
-    ? sysadminCombinedNavItems()
-    : role === "vendorMaklon" && vendorActor
-      ? nav.items.filter((i) => !i.href || vendorHasPageAccess(vendorActor.allowedPages, i.href))
-      : nav.items;
+  // modul"), DIPERBAIKI SEGERA (owner-reported, screenshot: buka Finance sendiri malah nampilin
+  // sidebar gabungan Sysadmin -- "harusnya cuman di sysadmin") -- navigator lintas-modul HANYA
+  // muncul di halaman Sysadmin SENDIRI (`role === "sysadmin"`), BUKAN di mana pun asal browser
+  // pernah login Sysadmin (unlockedRoles doang, versi awal yang salah). Begitu Sysadmin klik masuk
+  // ke halaman modul lain (Procurement/Finance dkk lewat bypass requireInternalRole+proxy.ts),
+  // sidebar-nya balik jadi sidebar NORMAL modul itu -- konsisten dengan apa yang orang lain lihat
+  // di modul yang sama, tidak membingungkan.
+  const sidebarItems =
+    role === "sysadmin" && unlockedRoles.includes("sysadmin")
+      ? sysadminCombinedNavItems()
+      : role === "vendorMaklon" && vendorActor
+        ? nav.items.filter((i) => !i.href || vendorHasPageAccess(vendorActor.allowedPages, i.href))
+        : nav.items;
   const topbarRole = role === "vendorMaklon" && vendorActor ? `${roleOverride ?? nav.role} · ${vendorActor.name}` : (roleOverride ?? nav.role);
 
   return (
