@@ -87,7 +87,14 @@ export function AppShell({
   const vendorActor = useVendorAuthStore((s) => s.actor);
 
   const isGated = GATED_ROLES.includes(role as InternalRole);
-  const authorized = !isGated || unlockedRoles.includes(role as InternalRole);
+  // Revisi 2026-09-28 (owner-reported: Sysadmin selalu dilempar balik ke "/" begitu buka halaman
+  // modul lain, walau requireInternalRole+proxy.ts SUDAH mengizinkan) -- ternyata ada gerbang
+  // KETIGA yang kelupaan: ini, cek client-side (localStorage unlockedRoles, TERPISAH dari cookie
+  // sesi server yang dibaca proxy.ts/requireInternalRole). Server sudah OK, tapi React di browser
+  // ini sendiri langsung redirect begitu `role` halaman (mis. "procurement") tidak ada di
+  // unlockedRoles milik SESI SYSADMIN (yang isinya cuma "sysadmin", bukan "procurement") --
+  // sebelum sempat lihat data apa pun. Sekarang Sysadmin juga jadi wildcard di sini.
+  const authorized = !isGated || unlockedRoles.includes(role as InternalRole) || unlockedRoles.includes("sysadmin");
 
   useEffect(() => {
     if (mounted && isGated && !authorized) router.replace("/");
