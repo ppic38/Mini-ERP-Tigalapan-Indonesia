@@ -54,12 +54,24 @@ export function Sidebar({
   badgeOverrides?: Record<string, number>;
 }) {
   return (
-    <div className="flex w-[212px] flex-none flex-col bg-surface-nav">
-      <div className="flex h-[52px] items-center gap-[9px] border-b border-white/8 px-4">
+    <div className="sticky top-0 flex h-screen w-[212px] flex-none flex-col bg-surface-nav">
+      <div className="flex h-[52px] flex-none items-center gap-[9px] border-b border-white/8 px-4">
         <span className="font-heading text-[13px] font-bold leading-tight tracking-tight text-white">Tigalapan Indonesia</span>
       </div>
-      <div className="flex flex-col gap-0.5 p-2.5">
+      {/* min-h-0 WAJIB di sini -- tanpanya flex item ini tidak pernah menyusut lebih kecil dari
+         konten-nya sendiri (default min-height:auto flexbox), jadi overflow-y-auto tidak pernah
+         kepakai (item.isSection navigator lintas-modul Sysadmin bisa 30+ baris, lihat nav.ts). */}
+      <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-2.5">
         {items.map((item) => {
+          // Header seksi (sysadminCombinedNavItems) -- label modul, bukan link, tampilan beda dari
+          // item biasa (kapital kecil, tanpa ikon/gembok) supaya jelas ini pemisah bukan halaman.
+          if (item.isSection) {
+            return (
+              <div key={"section-" + item.label} className="mt-2.5 select-none px-3 pb-1 pt-2 font-sans text-[10px] font-bold uppercase tracking-wider text-[#5E7288] first:mt-0">
+                {item.label}
+              </div>
+            );
+          }
           const active = !!item.href && item.href === activeHref;
           const Icon = iconForLabel(item.label);
           const badge = (item.href && badgeOverrides?.[item.href]) ?? item.badge;
@@ -92,7 +104,7 @@ export function Sidebar({
           );
         })}
       </div>
-      <div className="mt-auto border-t border-white/8 px-4 py-3.5 font-mono text-[10.5px] text-[#5E7288]">
+      <div className="mt-auto flex-none border-t border-white/8 px-4 py-3.5 font-mono text-[10.5px] text-[#5E7288]">
         v1.0 · Tigalapan Indonesia
       </div>
     </div>

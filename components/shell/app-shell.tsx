@@ -4,7 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/shell/sidebar";
 import { Topbar } from "@/components/shell/topbar";
-import { NAV } from "@/lib/shell/nav";
+import { NAV, sysadminCombinedNavItems } from "@/lib/shell/nav";
 import { useMrpStore } from "@/lib/mrp/store";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
 import { useVendorAuthStore } from "@/lib/mrp/vendor-auth-store";
@@ -254,7 +254,18 @@ export function AppShell({
   // Akun anggota tim vendor (migration 0057) -- sidebar disaring ke halaman yang diizinkan saja
   // (proteksi sesungguhnya tetap di proxy.ts; ini murni supaya menu yang ditutup tidak ditampilkan
   // sebagai link mati), dan nama topbar menyertakan nama anggota yang login.
-  const sidebarItems = role === "vendorMaklon" && vendorActor ? nav.items.filter((i) => !i.href || vendorHasPageAccess(vendorActor.allowedPages, i.href)) : nav.items;
+  //
+  // Revisi 2026-09-28 (owner: "sysadmin aksesnya bisa ke semua modul, sidebarnya itu dari beberapa
+  // modul") -- sesi Sysadmin (unlockedRoles, BUKAN prop `role` halaman yang lagi dibuka -- supaya
+  // navigator lintas-modul ini tetap tampil walau lagi membuka halaman Procurement/Finance dkk
+  // lewat bypass requireInternalRole+proxy.ts) dapat sidebar KHUSUS: semua modul dikelompokkan,
+  // bukan cuma 4 menu Sysadmin sendiri. Vendor tidak terpengaruh (unlockedRoles selalu kosong untuk
+  // sesi vendor, field terpisah dari session.vendorId).
+  const sidebarItems = unlockedRoles.includes("sysadmin")
+    ? sysadminCombinedNavItems()
+    : role === "vendorMaklon" && vendorActor
+      ? nav.items.filter((i) => !i.href || vendorHasPageAccess(vendorActor.allowedPages, i.href))
+      : nav.items;
   const topbarRole = role === "vendorMaklon" && vendorActor ? `${roleOverride ?? nav.role} · ${vendorActor.name}` : (roleOverride ?? nav.role);
 
   return (

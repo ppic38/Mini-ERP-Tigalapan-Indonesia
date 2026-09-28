@@ -110,19 +110,28 @@ export async function requireSession(): Promise<Session> {
   return session;
 }
 
+/** Revisi 2026-09-28 (owner: "sysadmin aksesnya bisa ke semua modul ... akses penuh, bisa create,
+ *  update, delete, edit, cancel ... akses datanya juga yang sudah ada di ERP sekarang") -- Sysadmin
+ *  jadi wildcard di SATU titik ini: SEMUA Server Action di seluruh app yang sudah (dan akan) lewat
+ *  requireInternalRole/requireAnyInternalRole otomatis kebuka untuk sesi Sysadmin, TANPA menulis
+ *  ulang satu pun action -- reuse 100% logika modul asli yang sudah teruji (bukan reimplementasi
+ *  terpisah, yang jauh lebih berisiko tidak sinkron). Sengaja HANYA di sini (bukan di readSession
+ *  dkk) supaya `session.internalRoles` sendiri TETAP APA ADANYA (cuma berisi role yang benar-benar
+ *  login) -- kode lain yang membaca internalRoles langsung (bukan lewat 2 fungsi ini) TIDAK ikut
+ *  berubah perilakunya. CATATAN: aksi yang dilakukan lewat jalur "pinjam" modul lain ini TIDAK
+ *  tercatat ke sysadmin_audit_log (itu cuma logging aksi Sysadmin sendiri) -- histori tetap ada di
+ *  jejak normal modul terkait apa adanya (mis. notifikasi, approval_log). */
 export function requireInternalRole(session: Session, role: InternalRole): void {
-  if (!session.internalRoles.includes(role)) {
-    throw new Error(`Forbidden: aksi ini hanya untuk modul ${role}.`);
-  }
+  if (session.internalRoles.includes(role) || session.internalRoles.includes("sysadmin")) return;
+  throw new Error(`Forbidden: aksi ini hanya untuk modul ${role}.`);
 }
 
 /** Sama seperti requireInternalRole tapi mengizinkan LEBIH DARI SATU role -- dipakai untuk data
  *  yang diupload satu modul tapi wajar dibaca modul lain juga (mis. bukti pembayaran invoice:
  *  diupload Finance, tapi dibaca juga oleh Procurement untuk diserahkan ke vendor material). */
 export function requireAnyInternalRole(session: Session, roles: InternalRole[]): void {
-  if (!roles.some((role) => session.internalRoles.includes(role))) {
-    throw new Error(`Forbidden: aksi ini hanya untuk modul ${roles.join("/")}.`);
-  }
+  if (roles.some((role) => session.internalRoles.includes(role)) || session.internalRoles.includes("sysadmin")) return;
+  throw new Error(`Forbidden: aksi ini hanya untuk modul ${roles.join("/")}.`);
 }
 
 export const sessionCookieOptions = {

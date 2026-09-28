@@ -1,4 +1,11 @@
-export type NavItem = { label: string; href?: string; badge?: number };
+export type NavItem = {
+  label: string;
+  href?: string;
+  badge?: number;
+  /** Header seksi non-klik (dipakai sysadminCombinedNavItems di bawah) -- tampil beda dari item
+   *  biasa (bukan link, bukan "terkunci" seperti item tanpa href lain). */
+  isSection?: boolean;
+};
 
 export type RoleKey = "ppic" | "procurement" | "finance" | "scm" | "gm" | "produksi" | "sysadmin" | "warehouse" | "vendorMaklon" | "vendorSupplier" | "admin";
 
@@ -139,3 +146,24 @@ export const NAV: Record<RoleKey, RoleNav> = {
     ],
   },
 };
+
+/** Sidebar navigator lintas-modul KHUSUS sesi Sysadmin (owner 2026-09-28: "aksesnya bisa ke semua
+ *  modul, sidebarnya itu dari beberapa modul kemudian isi dari tiap modul ... kecuali dashboard") --
+ *  dipakai components/shell/app-shell.tsx menggantikan `NAV[role].items` biasa, TERLEPAS dari
+ *  `role` prop halaman yang lagi dibuka (jadi tetap muncul penuh walau Sysadmin sedang membuka
+ *  halaman Procurement/Finance dkk lewat requireInternalRole bypass di lib/auth/session.ts +
+ *  proxy.ts). Modul Sysadmin sendiri ditaruh PALING ATAS; vendor/admin (stub, belum ada login-nya
+ *  sama sekali) TIDAK diikutkan -- tidak relevan (sesi internal tidak pernah punya akses vendor). */
+const SYSADMIN_COMBINED_MODULE_ORDER: RoleKey[] = ["sysadmin", "ppic", "procurement", "finance", "scm", "gm", "produksi", "warehouse"];
+
+export function sysadminCombinedNavItems(): NavItem[] {
+  const out: NavItem[] = [];
+  for (const key of SYSADMIN_COMBINED_MODULE_ORDER) {
+    const roleNav = NAV[key];
+    const items = roleNav.items.filter((i) => i.label !== "Dashboard");
+    if (items.length === 0) continue;
+    out.push({ label: roleNav.role, isSection: true });
+    out.push(...items);
+  }
+  return out;
+}
