@@ -9,10 +9,7 @@ import { FilterBar } from "@/components/mrp/filter-bar";
 import { TransferMaterialModal, type TransferCandidate } from "@/components/mrp/transfer-material-modal";
 import { SetDeliveryModal } from "@/components/mrp/set-delivery-modal";
 import { WithdrawVendorModal } from "@/components/mrp/withdraw-vendor-modal";
-import { SysadminRevertDeliveryModal } from "@/components/mrp/sysadmin-revert-delivery-modal";
 import { useMrpStore } from "@/lib/mrp/store";
-import { useInternalAuthStore } from "@/lib/internal-auth-store";
-import { sysadminRevertInvoiceDeliveryAction } from "@/lib/mrp/sysadminActions";
 import {
   formatPcs,
   formatRupiah,
@@ -71,16 +68,6 @@ export default function MaterialTrackingPage() {
   const setInvoicesDelivery = useMrpStore((s) => s.setInvoicesDelivery);
   const transferMaterial = useMrpStore((s) => s.transferMaterial);
   const withdrawVendorProduction = useMrpStore((s) => s.withdrawVendorProduction);
-  // Revisi 2026-09-28 (owner: "belum bisa disetting ke semula? ke status paid" -- minta akses
-  // Sysadmin balikin DELIVERY -> PAID LANGSUNG dari sini, bukan pindah ke halaman terpisah
-  // "Kembalikan Data" & cari No. PO manual). Tombol HANYA muncul kalau browser ini juga sedang
-  // login sebagai Sysadmin (unlockedRoles, lihat lib/internal-auth-store.ts) -- proteksi
-  // sesungguhnya tetap di sysadminRevertInvoiceDeliveryAction sendiri (requireSysadmin + alasan
-  // wajib + Log Audit), ini murni supaya tombolnya tidak nongol buat Procurement biasa.
-  const isSysadmin = useInternalAuthStore((s) => s.unlockedRoles.includes("sysadmin"));
-  const [sysadminRevertOpen, setSysadminRevertOpen] = useState(false);
-  const [sysadminRevertBusy, setSysadminRevertBusy] = useState(false);
-  const [sysadminRevertError, setSysadminRevertError] = useState<string | null>(null);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [transferOpen, setTransferOpen] = useState(false);
@@ -204,8 +191,6 @@ export default function MaterialTrackingPage() {
   const selectedRows = rows.filter((r) => selected.has(r.id));
   const selectedInvoiceOnly = selectedRows.filter((r) => r.kind === "invoice" && r.invoice).map((r) => r.invoice!);
   const selectedPaidList = selectedInvoiceOnly.filter((i) => i.status === "PAID");
-  // Sysadmin-only: batch DELIVERY yang dipilih, bisa dikembalikan ke PAID (batal "Set Delivery").
-  const selectedDeliveryList = selectedInvoiceOnly.filter((i) => i.status === "DELIVERY");
   // Item 1 (feedback batch 2026-09-04): pindah ke vendor lain sekarang dibolehkan SAMPAI tahap
   // PRODUCTION (roll individual yang sudah dipotong tetap dilindungi lewat cap "roll belum
   // dipotong" di TransferMaterialModal, lihat movableRollCountForInvoice) -- begitu status sudah
@@ -522,17 +507,6 @@ export default function MaterialTrackingPage() {
                 Pindahkan {transferEligibleInvoices.length} ke vendor lain
               </button>
             )}
-            {isSysadmin && selectedDeliveryList.length > 0 && (
-              <button
-                onClick={() => {
-                  setSysadminRevertError(null);
-                  setSysadminRevertOpen(true);
-                }}
-                className="rounded-md border border-[#EFC9C4] bg-white px-2.5 py-[5px] font-sans text-[11.5px] font-semibold text-danger-fg"
-              >
-                Kembalikan {selectedDeliveryList.length} ke PAID (Sysadmin)
-              </button>
-            )}
           </div>
           {transferBlockedCount > 0 && (
             <span className="font-sans text-[11px] text-danger-fg">
@@ -769,35 +743,6 @@ export default function MaterialTrackingPage() {
             setDeliveryOpen(false);
           }}
         />
-      )}
-
-      {sysadminRevertOpen && (
-        <SysadminRevertDeliveryModal
-          count={selectedDeliveryList.length}
-          busy={sysadminRevertBusy}
-          onCancel={() => setSysadminRevertOpen(false)}
-          onConfirm={async (reason) => {
-            setSysadminRevertBusy(true);
-            setSysadminRevertError(null);
-            const res = await sysadminRevertInvoiceDeliveryAction(selectedDeliveryList.map((i) => i.id), reason);
-            setSysadminRevertBusy(false);
-            if (!res.ok) {
-              setSysadminRevertError(res.error);
-              return;
-            }
-            setSysadminRevertOpen(false);
-            setSelected(new Set());
-            void useMrpStore.getState().refresh();
-          }}
-        />
-      )}
-      {sysadminRevertError && !sysadminRevertOpen && (
-        <div className="fixed bottom-4 right-4 z-50 max-w-[360px] rounded-md border border-danger bg-danger-bg px-4 py-3 font-sans text-[11.5px] text-danger-fg shadow-[0_8px_24px_rgba(11,19,27,.2)]">
-          {sysadminRevertError}
-          <button onClick={() => setSysadminRevertError(null)} className="ml-2 font-semibold underline">
-            Tutup
-          </button>
-        </div>
       )}
 
       {transferOpen && (
