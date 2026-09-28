@@ -262,21 +262,30 @@ export function AppShell({
   // (proteksi sesungguhnya tetap di proxy.ts; ini murni supaya menu yang ditutup tidak ditampilkan
   // sebagai link mati), dan nama topbar menyertakan nama anggota yang login.
   //
-  // Revisi 2026-09-28 (owner: "sysadmin aksesnya bisa ke semua modul, sidebarnya itu dari beberapa
-  // modul"), DIPERBAIKI SEGERA (owner-reported, screenshot: buka Finance sendiri malah nampilin
-  // sidebar gabungan Sysadmin -- "harusnya cuman di sysadmin") -- navigator lintas-modul HANYA
-  // muncul di halaman Sysadmin SENDIRI (`role === "sysadmin"`), BUKAN di mana pun asal browser
-  // pernah login Sysadmin (unlockedRoles doang, versi awal yang salah). Begitu Sysadmin klik masuk
-  // ke halaman modul lain (Procurement/Finance dkk lewat bypass requireInternalRole+proxy.ts),
-  // sidebar-nya balik jadi sidebar NORMAL modul itu -- konsisten dengan apa yang orang lain lihat
-  // di modul yang sama, tidak membingungkan.
-  const sidebarItems =
-    role === "sysadmin" && unlockedRoles.includes("sysadmin")
-      ? sysadminCombinedNavItems()
+  // Revisi 2026-09-28 (owner: "sysadmin ini saya fungsikan sebagai tower monitoring dan super
+  // admin ... harusnya sysadmin ke procurement, bukan tiba2 jadi user procurement") -- SEMPAT
+  // dipersempit ke `role === "sysadmin"` doang (biar tidak "bocor" ke modul lain), tapi itu salah
+  // paham arah keluhan sebelumnya: yang dimaksud owner BUKAN "sidebar gabungan harus hilang saat
+  // buka modul lain", melainkan IDENTITAS & KEMAMPUAN Sysadmin (navigator lintas-modul + tombol
+  // override) MEMANG DIMAKSUDKAN menempel terus ke mana pun Sysadmin berkeliling, PERSIS seperti
+  // tower monitoring -- bukan berubah jadi "user Procurement biasa" begitu masuk halaman
+  // Procurement. Jadi: sidebar gabungan ini nempel selama browser MEMANG sedang login Sysadmin
+  // (unlockedRoles), di halaman modul mana pun.
+  const isSysadminSession = unlockedRoles.includes("sysadmin");
+  const sidebarItems = isSysadminSession
+    ? sysadminCombinedNavItems()
+    : role === "vendorMaklon" && vendorActor
+      ? nav.items.filter((i) => !i.href || vendorHasPageAccess(vendorActor.allowedPages, i.href))
+      : nav.items;
+  // Topbar juga TETAP bilang "Sysadmin" (bukan ikut nama modul yang lagi dilihat) -- ditambah
+  // "· memantau <Modul>" begitu lagi tidak di halaman Sysadmin sendiri, supaya tetap jelas data
+  // siapa yang sedang ditampilkan tanpa kehilangan identitas Sysadmin-nya.
+  const topbarRole =
+    isSysadminSession && role !== "sysadmin"
+      ? `Sysadmin · memantau ${nav.role}`
       : role === "vendorMaklon" && vendorActor
-        ? nav.items.filter((i) => !i.href || vendorHasPageAccess(vendorActor.allowedPages, i.href))
-        : nav.items;
-  const topbarRole = role === "vendorMaklon" && vendorActor ? `${roleOverride ?? nav.role} · ${vendorActor.name}` : (roleOverride ?? nav.role);
+        ? `${roleOverride ?? nav.role} · ${vendorActor.name}`
+        : (roleOverride ?? nav.role);
 
   return (
     <div className="flex min-h-screen bg-surface-page">
