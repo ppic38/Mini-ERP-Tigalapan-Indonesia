@@ -6,6 +6,14 @@ import type { MrpDetail } from "./store";
 import type { MaklonPO, MaterialPO } from "./types";
 import { poApprovalPrintInfo } from "./poApproval";
 
+// Revisi 2026-09-28 (owner: "versi internal pake sekarang dan versi eksternal (untuk ke supplier
+// dan vendor produksi) itu bedanya tidak ada dibagi yang pendek dan panjang, langsung totalan") --
+// "internal" = layout LAMA apa adanya (rincian per warna+lengan terpisah). "external" = baris
+// PENDEK/PANJANG yang warnanya sama DIGABUNG jadi 1 baris per warna (roll/kg/qty dijumlah) --
+// dipakai saat PO dikirim ke supplier/vendor produksi, supaya mereka tidak perlu tahu rincian
+// internal per-lengan kita. Sama sekali TIDAK mengubah data PO itu sendiri, murni tampilan export.
+export type PoExportVariant = "internal" | "external";
+
 // Format PDF ini meniru tata letak PO dari ERP lama user (logo + nama perusahaan di kiri atas,
 // judul dokumen di tengah, info wajib dalam kotak 2 kolom, tabel rincian ber-header hijau dengan
 // garis tabel, lalu blok "Diajukan oleh / Disetujui oleh" di bagian bawah).
@@ -298,12 +306,25 @@ function drawApprovalBoxesSafe(doc: jsPDF, y: number, o: Parameters<typeof drawA
 /** Badan 1 halaman PO Material (header, info, rincian, RIB/Kerah/Manset, tanda tangan). TIDAK
  *  memanggil `new jsPDF()`/`doc.save()` -- itu tanggung jawab pemanggil (1 PO = exportMaterialPoPdf,
  *  banyak PO sekaligus = exportMaterialPoPdfBatch). Tidak ada nominal harga di dokumen ini. */
-function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[]) {
+function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[], variant: PoExportVariant = "internal") {
   const vendorName = VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi;
   const mrpDetail = mrpDetailFor(po.mrpId, mrpDetails);
   const kategori = mrpDetail?.mrp.kategori ?? "—";
   const totalRoll = po.colorBreakdown.reduce((s, c) => s + c.rollCount, 0);
   const totalKg = totalRoll * ROLL_KG_ESTIMATE;
+  // "external" -- gabung baris warna yang sama (PENDEK+PANJANG jadi 1), roll dijumlah. Urutan
+  // kemunculan warna dipertahankan (Map, bukan di-sort ulang) supaya konsisten dengan versi internal.
+  const colorBreakdown =
+    variant === "internal"
+      ? po.colorBreakdown
+      : Array.from(
+          po.colorBreakdown.reduce((map, c) => {
+            const cur = map.get(c.warna);
+            if (cur) cur.rollCount += c.rollCount;
+            else map.set(c.warna, { warna: c.warna, lengan: c.lengan, rollCount: c.rollCount, entitas: c.entitas });
+            return map;
+          }, new Map<string, (typeof po.colorBreakdown)[number]>()).values()
+        );
 
   let y = drawHeader(doc, "PROPOSAL PURCHASE ORDER MATERIAL BAHAN");
 
@@ -328,7 +349,13 @@ function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[
 
   y = drawSectionHeading(doc, y, `1. Rincian Bahan — ${po.supplier}`);
 
-  const rows = po.colorBreakdown.map((c, i) => [String(i + 1), kategori, c.lengan ? `${c.warna} · ${c.lengan}` : c.warna, formatDecimal(c.rollCount, 1), formatDecimal(c.rollCount * ROLL_KG_ESTIMATE, 1)]);
+  const rows = colorBreakdown.map((c, i) => [
+    String(i + 1),
+    kategori,
+    variant === "internal" && c.lengan ? `${c.warna} · ${c.lengan}` : c.warna,
+    formatDecimal(c.rollCount, 1),
+    formatDecimal(c.rollCount * ROLL_KG_ESTIMATE, 1),
+  ]);
 
   autoTable(doc, {
     ...TABLE_BASE,
@@ -355,25 +382,44 @@ function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[
       const kgPerRoll = group ? materialKgPerRollForGroup(group, kind) : 0;
       return { warna: c.warna, lengan: c.lengan, rollCount: c.rollCount, kgPerRoll, kgForLine: kgPerRoll * c.rollCount };
     });
-    return { rows: list, totalKg: list.reduce((s, r) => s + r.kgForLine, 0) };
+    if (variant === "internal") return { rows: list, totalKg: list.reduce((s, r) => s + r.kgForLine, 0) };
+    // external -- gabung PENDEK+PANJANG warna yang sama; kolom "kg/roll" TIDAK ikut (rate-nya beda
+    // per lengan, digabung jadi tidak bermakna) -- cukup Total Kg per warna.
+    const merged = list.reduce((map, r) => {
+      const cur = map.get(r.warna);
+      if (cur) {
+        cur.rollCount += r.rollCount;
+        cur.kgForLine += r.kgForLine;
+      } else map.set(r.warna, { ...r });
+      return map;
+    }, new Map<string, (typeof list)[number]>());
+    const rows = Array.from(merged.values());
+    return { rows, totalKg: rows.reduce((s, r) => s + r.kgForLine, 0) };
   }
 
   function drawMaterialSection(label: string, list: ReturnType<typeof materialRowsForKind>["rows"], totalKgForKind: number) {
     sectionCounter += 1;
     y = drawSectionHeading(doc, y, `${sectionCounter}. Permintaan ${label}`);
+    const head = variant === "internal" ? ["No", "Warna", "Lengan", "Roll", `${label}/roll (kg)`, `Total ${label} (kg)`] : ["No", "Warna", "Roll", `Total ${label} (kg)`];
+    const body =
+      variant === "internal"
+        ? list.map((r, i) => [String(i + 1), r.warna, r.lengan, formatDecimal(r.rollCount, 1), formatDecimal(r.kgPerRoll, 2), formatDecimal(r.kgForLine, 2)])
+        : list.map((r, i) => [String(i + 1), r.warna, formatDecimal(r.rollCount, 1), formatDecimal(r.kgForLine, 2)]);
+    const foot =
+      variant === "internal"
+        ? ["", "", "TOTAL", formatDecimal(list.reduce((s, r) => s + r.rollCount, 0), 1), "", formatDecimal(totalKgForKind, 2)]
+        : ["", "TOTAL", formatDecimal(list.reduce((s, r) => s + r.rollCount, 0), 1), formatDecimal(totalKgForKind, 2)];
     autoTable(doc, {
       ...TABLE_BASE,
       startY: y,
-      head: [["No", "Warna", "Lengan", "Roll", `${label}/roll (kg)`, `Total ${label} (kg)`]],
-      body: list.map((r, i) => [String(i + 1), r.warna, r.lengan, formatDecimal(r.rollCount, 1), formatDecimal(r.kgPerRoll, 2), formatDecimal(r.kgForLine, 2)]),
-      foot: [["", "", "TOTAL", formatDecimal(list.reduce((s, r) => s + r.rollCount, 0), 1), "", formatDecimal(totalKgForKind, 2)]],
+      head: [head],
+      body,
+      foot: [foot],
       showFoot: "lastPage",
-      columnStyles: {
-        0: { cellWidth: 28, halign: "center" },
-        3: { halign: "right", cellWidth: 50 },
-        4: { halign: "right", cellWidth: 85 },
-        5: { halign: "right", cellWidth: 90 },
-      },
+      columnStyles:
+        variant === "internal"
+          ? { 0: { cellWidth: 28, halign: "center" }, 3: { halign: "right", cellWidth: 50 }, 4: { halign: "right", cellWidth: 85 }, 5: { halign: "right", cellWidth: 90 } }
+          : { 0: { cellWidth: 28, halign: "center" }, 2: { halign: "right", cellWidth: 70 }, 3: { halign: "right", cellWidth: 100 } },
     });
     y = lastAutoTableY(doc) + 22;
   }
@@ -391,20 +437,20 @@ function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[
 }
 
 /** Generate & download PDF Proposal Purchase Order Material Bahan untuk SATU PO. */
-export function exportMaterialPoPdf(po: MaterialPO, mrpDetails: MrpDetail[]) {
+export function exportMaterialPoPdf(po: MaterialPO, mrpDetails: MrpDetail[], variant: PoExportVariant = "internal") {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
-  renderMaterialPoPage(doc, po, mrpDetails);
-  doc.save(`PO-${po.id}.pdf`);
+  renderMaterialPoPage(doc, po, mrpDetails, variant);
+  doc.save(`PO-${po.id}${variant === "external" ? "-eksternal" : ""}.pdf`);
 }
 
 /** Semua `pos` digambar ke SATU dokumen jsPDF, 1 halaman per PO -- dipakai tombol "Download PO" di
  *  baris MRP (semua supplier) & baris Supplier (semua PO supplier itu). No-op kalau `pos` kosong. */
-export function exportMaterialPoPdfBatch(pos: MaterialPO[], mrpDetails: MrpDetail[], fileName: string) {
+export function exportMaterialPoPdfBatch(pos: MaterialPO[], mrpDetails: MrpDetail[], fileName: string, variant: PoExportVariant = "internal") {
   if (pos.length === 0) return;
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   pos.forEach((po, i) => {
     if (i > 0) doc.addPage();
-    renderMaterialPoPage(doc, po, mrpDetails);
+    renderMaterialPoPage(doc, po, mrpDetails, variant);
   });
   doc.save(fileName);
 }
@@ -412,7 +458,7 @@ export function exportMaterialPoPdfBatch(pos: MaterialPO[], mrpDetails: MrpDetai
 /** Generate & download PDF Proposal Purchase Order Produksi (maklon vendor), rincian per warna
  *  menampilkan Qty PDK/PJG -- dihitung dari aduanRows MRP terkait untuk vendor ini, bukan langsung dari
  *  MaklonPO. Tidak ada nominal harga/biaya maklon di dokumen ini. */
-function renderMaklonPoPage(doc: jsPDF, po: MaklonPO, mrpDetails: MrpDetail[]) {
+function renderMaklonPoPage(doc: jsPDF, po: MaklonPO, mrpDetails: MrpDetail[], variant: PoExportVariant = "internal") {
   const vendorName = VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi;
   const detail = mrpDetailFor(po.mrpId, mrpDetails);
   const kategori = detail?.mrp.kategori ?? "—";
@@ -452,19 +498,23 @@ function renderMaklonPoPage(doc: jsPDF, po: MaklonPO, mrpDetails: MrpDetail[]) {
   y = drawSectionHeading(doc, y, `1. ${vendorName}`);
 
   if (warnaRows.length > 0) {
+    const head = variant === "internal" ? ["No", "Kategori", "Warna", "Qty PDK", "Qty PJG", "No. MRP"] : ["No", "Kategori", "Warna", "Qty", "No. MRP"];
+    const body =
+      variant === "internal"
+        ? warnaRows.map((r, i) => [String(i + 1), kategori, r.warna, r.pdk ? formatPcs(r.pdk) : "—", r.pjg ? formatPcs(r.pjg) : "—", po.mrpId])
+        : warnaRows.map((r, i) => [String(i + 1), kategori, r.warna, formatPcs(r.pdk + r.pjg), po.mrpId]);
+    const foot = variant === "internal" ? ["", "", "TOTAL", formatPcs(totalPdk), formatPcs(totalPjg), ""] : ["", "", "TOTAL", formatPcs(totalPdk + totalPjg), ""];
     autoTable(doc, {
       ...TABLE_BASE,
       startY: y,
-      head: [["No", "Kategori", "Warna", "Qty PDK", "Qty PJG", "No. MRP"]],
-      body: warnaRows.map((r, i) => [String(i + 1), kategori, r.warna, r.pdk ? formatPcs(r.pdk) : "—", r.pjg ? formatPcs(r.pjg) : "—", po.mrpId]),
-      foot: [["", "", "TOTAL", formatPcs(totalPdk), formatPcs(totalPjg), ""]],
+      head: [head],
+      body,
+      foot: [foot],
       showFoot: "lastPage",
-      columnStyles: {
-        0: { cellWidth: 28, halign: "center" },
-        3: { halign: "right", cellWidth: 65 },
-        4: { halign: "right", cellWidth: 65 },
-        5: { cellWidth: 80 },
-      },
+      columnStyles:
+        variant === "internal"
+          ? { 0: { cellWidth: 28, halign: "center" }, 3: { halign: "right", cellWidth: 65 }, 4: { halign: "right", cellWidth: 65 }, 5: { cellWidth: 80 } }
+          : { 0: { cellWidth: 28, halign: "center" }, 3: { halign: "right", cellWidth: 70 }, 4: { cellWidth: 90 } },
     });
     y = lastAutoTableY(doc) + 22;
   } else {
@@ -479,20 +529,20 @@ function renderMaklonPoPage(doc: jsPDF, po: MaklonPO, mrpDetails: MrpDetail[]) {
   drawApprovalBoxesSafe(doc, y, { submittedDate: detail?.dates.poSent, approved: po.approved, approvedDate: detail?.dates.poApproved, approver: poApprovalPrintInfo(po) });
 }
 
-export function exportMaklonPoPdf(po: MaklonPO, mrpDetails: MrpDetail[]) {
+export function exportMaklonPoPdf(po: MaklonPO, mrpDetails: MrpDetail[], variant: PoExportVariant = "internal") {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
-  renderMaklonPoPage(doc, po, mrpDetails);
-  doc.save(`PO-${po.id}.pdf`);
+  renderMaklonPoPage(doc, po, mrpDetails, variant);
+  doc.save(`PO-${po.id}${variant === "external" ? "-eksternal" : ""}.pdf`);
 }
 
 /** Semua `pos` (PO produksi satu MRP) digambar ke SATU dokumen, 1 halaman per PO -- pasangan
  *  exportMaterialPoPdfBatch untuk tombol "Download PO" di baris MRP tabel PO Produksi. */
-export function exportMaklonPoPdfBatch(pos: MaklonPO[], mrpDetails: MrpDetail[], fileName: string) {
+export function exportMaklonPoPdfBatch(pos: MaklonPO[], mrpDetails: MrpDetail[], fileName: string, variant: PoExportVariant = "internal") {
   if (pos.length === 0) return;
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   pos.forEach((po, i) => {
     if (i > 0) doc.addPage();
-    renderMaklonPoPage(doc, po, mrpDetails);
+    renderMaklonPoPage(doc, po, mrpDetails, variant);
   });
   doc.save(fileName);
 }

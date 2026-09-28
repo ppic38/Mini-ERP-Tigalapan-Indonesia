@@ -4,6 +4,7 @@ import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "./seed";
 import type { MrpDetail } from "./store";
 import type { MaklonPO, MaterialPO } from "./types";
 import { poApprovalPrintInfo } from "./poApproval";
+import type { PoExportVariant } from "./exportPoPdf";
 
 // Export PO ke Excel (owner 2026-09-26: "download PO dalam bentuk excel atau pdf ... excelnya ada template
 // cantiknya, warna header, tidak tercrop, minimalis tapi memuat informasi PO, logo Tigalapan, kop tabel").
@@ -234,13 +235,26 @@ function drawApproval(ws: Worksheet, row: number, o: { submittedDate?: string; a
   return row + 5;
 }
 
-function materialSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: MaterialPO, mrpDetails: MrpDetail[]) {
+function materialSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: MaterialPO, mrpDetails: MrpDetail[], variant: PoExportVariant = "internal") {
   setupSheet(ws);
   const vendorName = VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi;
   const mrpDetail = mrpDetailFor(po.mrpId, mrpDetails);
   const kategori = mrpDetail?.mrp.kategori ?? "—";
   const totalRoll = po.colorBreakdown.reduce((s, c) => s + c.rollCount, 0);
   const totalKg = totalRoll * ROLL_KG_ESTIMATE;
+  // "external" -- lihat catatan lengkap di exportPoPdf.ts (PoExportVariant): gabung PENDEK+PANJANG
+  // warna yang sama jadi 1 baris.
+  const colorBreakdown =
+    variant === "internal"
+      ? po.colorBreakdown
+      : Array.from(
+          po.colorBreakdown.reduce((map, c) => {
+            const cur = map.get(c.warna);
+            if (cur) cur.rollCount += c.rollCount;
+            else map.set(c.warna, { warna: c.warna, lengan: c.lengan, rollCount: c.rollCount, entitas: c.entitas });
+            return map;
+          }, new Map<string, (typeof po.colorBreakdown)[number]>()).values()
+        );
 
   let r = drawHeader(wb, ws, logo, "PROPOSAL PURCHASE ORDER MATERIAL BAHAN");
   r = drawInfo(
@@ -265,7 +279,7 @@ function materialSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: Mater
   r = drawSection(ws, r, `1. Rincian Bahan — ${po.supplier}`);
   r = drawTable(ws, r, {
     head: ["No", "Kategori", "Warna", "Roll", "Kg"],
-    body: po.colorBreakdown.map((c, i) => [i + 1, kategori, c.lengan ? `${c.warna} · ${c.lengan}` : c.warna, c.rollCount, c.rollCount * ROLL_KG_ESTIMATE]),
+    body: colorBreakdown.map((c, i) => [i + 1, kategori, variant === "internal" && c.lengan ? `${c.warna} · ${c.lengan}` : c.warna, c.rollCount, c.rollCount * ROLL_KG_ESTIMATE]),
     foot: ["", "", "TOTAL", totalRoll, totalKg],
     numFmt: [undefined, undefined, undefined, "#,##0.0", "#,##0.0"],
     align: ["center", "left", "left", "right", "right"],
@@ -278,27 +292,49 @@ function materialSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: Mater
     ["manset", "MANSET"],
   ];
   for (const [kind, label] of kinds) {
-    const list = po.colorBreakdown.map((c) => {
+    const rawList = po.colorBreakdown.map((c) => {
       const group = mrpDetail?.lenganGroups.find((g) => g.warna === c.warna && g.lengan === c.lengan);
       const kgPerRoll = group ? materialKgPerRollForGroup(group, kind) : 0;
       return { warna: c.warna, lengan: c.lengan, roll: c.rollCount, kgPerRoll, kg: kgPerRoll * c.rollCount };
     });
+    const list =
+      variant === "internal"
+        ? rawList
+        : Array.from(
+            rawList.reduce((map, x) => {
+              const cur = map.get(x.warna);
+              if (cur) {
+                cur.roll += x.roll;
+                cur.kg += x.kg;
+              } else map.set(x.warna, { ...x });
+              return map;
+            }, new Map<string, (typeof rawList)[number]>()).values()
+          );
     const totalKgKind = list.reduce((s, x) => s + x.kg, 0);
     if (totalKgKind <= 0) continue;
     section++;
     r = drawSection(ws, r, `${section}. Permintaan ${label}`);
-    r = drawTable(ws, r, {
-      head: ["No", "Warna", "Lengan", "Roll", `${label}/roll (kg)`, `Total ${label} (kg)`],
-      body: list.map((x, i) => [i + 1, x.warna, x.lengan, x.roll, x.kgPerRoll, x.kg]),
-      foot: ["", "", "TOTAL", list.reduce((s, x) => s + x.roll, 0), "", totalKgKind],
-      numFmt: [undefined, undefined, undefined, "#,##0.0", "#,##0.00", "#,##0.00"],
-      align: ["center", "left", "left", "right", "right", "right"],
-    });
+    r =
+      variant === "internal"
+        ? drawTable(ws, r, {
+            head: ["No", "Warna", "Lengan", "Roll", `${label}/roll (kg)`, `Total ${label} (kg)`],
+            body: list.map((x, i) => [i + 1, x.warna, x.lengan, x.roll, x.kgPerRoll, x.kg]),
+            foot: ["", "", "TOTAL", list.reduce((s, x) => s + x.roll, 0), "", totalKgKind],
+            numFmt: [undefined, undefined, undefined, "#,##0.0", "#,##0.00", "#,##0.00"],
+            align: ["center", "left", "left", "right", "right", "right"],
+          })
+        : drawTable(ws, r, {
+            head: ["No", "Warna", "Roll", `Total ${label} (kg)`],
+            body: list.map((x, i) => [i + 1, x.warna, x.roll, x.kg]),
+            foot: ["", "TOTAL", list.reduce((s, x) => s + x.roll, 0), totalKgKind],
+            numFmt: [undefined, undefined, "#,##0.0", "#,##0.00"],
+            align: ["center", "left", "right", "right"],
+          });
   }
   drawApproval(ws, r + 1, { submittedDate: mrpDetail?.dates.poSent, approved: po.approved, approvedDate: mrpDetail?.dates.poApproved, approver: poApprovalPrintInfo(po) });
 }
 
-function maklonSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: MaklonPO, mrpDetails: MrpDetail[]) {
+function maklonSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: MaklonPO, mrpDetails: MrpDetail[], variant: PoExportVariant = "internal") {
   setupSheet(ws);
   const vendorName = VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi;
   const detail = mrpDetailFor(po.mrpId, mrpDetails);
@@ -333,13 +369,22 @@ function maklonSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: MaklonP
   );
   r = drawSection(ws, r, `1. ${vendorName}`);
   if (warnaRows.length > 0) {
-    r = drawTable(ws, r, {
-      head: ["No", "Kategori", "Warna", "Qty PDK", "Qty PJG", "No. MRP"],
-      body: warnaRows.map((x, i) => [i + 1, kategori, x.warna, x.pdk || "—", x.pjg || "—", po.mrpId]),
-      foot: ["", "", "TOTAL", warnaRows.reduce((s, x) => s + x.pdk, 0), warnaRows.reduce((s, x) => s + x.pjg, 0), ""],
-      numFmt: [undefined, undefined, undefined, "#,##0", "#,##0", undefined],
-      align: ["center", "left", "left", "right", "right", "left"],
-    });
+    r =
+      variant === "internal"
+        ? drawTable(ws, r, {
+            head: ["No", "Kategori", "Warna", "Qty PDK", "Qty PJG", "No. MRP"],
+            body: warnaRows.map((x, i) => [i + 1, kategori, x.warna, x.pdk || "—", x.pjg || "—", po.mrpId]),
+            foot: ["", "", "TOTAL", warnaRows.reduce((s, x) => s + x.pdk, 0), warnaRows.reduce((s, x) => s + x.pjg, 0), ""],
+            numFmt: [undefined, undefined, undefined, "#,##0", "#,##0", undefined],
+            align: ["center", "left", "left", "right", "right", "left"],
+          })
+        : drawTable(ws, r, {
+            head: ["No", "Kategori", "Warna", "Qty", "No. MRP"],
+            body: warnaRows.map((x, i) => [i + 1, kategori, x.warna, x.pdk + x.pjg, po.mrpId]),
+            foot: ["", "", "TOTAL", warnaRows.reduce((s, x) => s + x.pdk + x.pjg, 0), ""],
+            numFmt: [undefined, undefined, undefined, "#,##0", undefined],
+            align: ["center", "left", "left", "right", "left"],
+          });
   } else {
     const c = ws.getCell(r, 1);
     c.value = "Tidak ada rincian aduan pola untuk vendor ini.";
@@ -371,18 +416,18 @@ async function newWorkbook(): Promise<{ wb: Workbook; logo: Logo | null }> {
 }
 
 /** 1 PO Material = 1 sheet; banyak PO = banyak sheet dalam 1 file. No-op kalau `pos` kosong. */
-export async function exportMaterialPoExcel(pos: MaterialPO[], mrpDetails: MrpDetail[], fileName: string) {
+export async function exportMaterialPoExcel(pos: MaterialPO[], mrpDetails: MrpDetail[], fileName: string, variant: PoExportVariant = "internal") {
   if (pos.length === 0) return;
   const { wb, logo } = await newWorkbook();
-  for (const po of pos) materialSheet(wb, wb.addWorksheet(sheetName(wb, `PO ${po.id.replace(/^PO-(SUP-)?/, "")}`)), logo, po, mrpDetails);
+  for (const po of pos) materialSheet(wb, wb.addWorksheet(sheetName(wb, `PO ${po.id.replace(/^PO-(SUP-)?/, "")}`)), logo, po, mrpDetails, variant);
   await download(wb, fileName);
 }
 
 /** 1 PO Produksi (maklon) = 1 sheet; banyak PO = banyak sheet dalam 1 file. No-op kalau `pos` kosong. */
-export async function exportMaklonPoExcel(pos: MaklonPO[], mrpDetails: MrpDetail[], fileName: string) {
+export async function exportMaklonPoExcel(pos: MaklonPO[], mrpDetails: MrpDetail[], fileName: string, variant: PoExportVariant = "internal") {
   if (pos.length === 0) return;
   const { wb, logo } = await newWorkbook();
-  for (const po of pos) maklonSheet(wb, wb.addWorksheet(sheetName(wb, `PO ${po.id.replace(/^PO-(MKL-)?/, "")}`)), logo, po, mrpDetails);
+  for (const po of pos) maklonSheet(wb, wb.addWorksheet(sheetName(wb, `PO ${po.id.replace(/^PO-(MKL-)?/, "")}`)), logo, po, mrpDetails, variant);
   await download(wb, fileName);
 }
 

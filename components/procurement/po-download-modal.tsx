@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { exportMaklonPoExcel } from "@/lib/mrp/exportPoExcel";
 import { exportMaterialPoExcel } from "@/lib/mrp/exportPoExcel";
-import { exportMaklonPoPdf, exportMaklonPoPdfBatch, exportMaterialPoPdf, exportMaterialPoPdfBatch } from "@/lib/mrp/exportPoPdf";
+import { exportMaklonPoPdf, exportMaklonPoPdfBatch, exportMaterialPoPdf, exportMaterialPoPdfBatch, type PoExportVariant } from "@/lib/mrp/exportPoPdf";
 import type { MrpDetail } from "@/lib/mrp/store";
 import type { MaklonPO, MaterialPO } from "@/lib/mrp/types";
 
@@ -11,13 +11,20 @@ export type PoDownloadRequest =
   | { kind: "material"; pos: MaterialPO[]; baseName: string }
   | { kind: "maklon"; pos: MaklonPO[]; baseName: string };
 
-/** Popup pilihan format download PO (owner 2026-09-26): PDF (layout lama, tidak diubah) atau Excel
- *  (.xlsx ber-kop logo, header berwarna, lebar kolom pas -- lihat lib/mrp/exportPoExcel.ts). Kedua
- *  format memuat informasi yang sama & tanpa nominal harga. */
+/** Popup pilihan download PO (owner 2026-09-26): PDF (layout lama, tidak diubah) atau Excel (.xlsx
+ *  ber-kop logo, header berwarna, lebar kolom pas -- lihat lib/mrp/exportPoExcel.ts). Kedua format
+ *  memuat informasi yang sama & tanpa nominal harga.
+ *
+ *  Revisi 2026-09-28 (owner: "versi internal pake sekarang dan versi eksternal untuk ke supplier
+ *  dan vendor produksi, bedanya tidak dibagi pendek/panjang, langsung totalan") -- tambah pilihan
+ *  "Versi" (Internal/Eksternal) DI ATAS pilihan format, berlaku untuk PDF maupun Excel. Lihat
+ *  PoExportVariant (lib/mrp/exportPoPdf.ts) untuk penjelasan lengkap bedanya. */
 export function PoDownloadModal({ request, mrpDetails, onClose }: { request: PoDownloadRequest; mrpDetails: MrpDetail[]; onClose: () => void }) {
+  const [variant, setVariant] = useState<PoExportVariant>("internal");
   const [busy, setBusy] = useState<"pdf" | "excel" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const count = request.pos.length;
+  const suffix = variant === "external" ? "-eksternal" : "";
 
   async function run(format: "pdf" | "excel") {
     setBusy(format);
@@ -25,12 +32,12 @@ export function PoDownloadModal({ request, mrpDetails, onClose }: { request: PoD
     try {
       if (format === "pdf") {
         if (request.kind === "material") {
-          if (count === 1) exportMaterialPoPdf(request.pos[0], mrpDetails);
-          else exportMaterialPoPdfBatch(request.pos, mrpDetails, `${request.baseName}.pdf`);
-        } else if (count === 1) exportMaklonPoPdf(request.pos[0], mrpDetails);
-        else exportMaklonPoPdfBatch(request.pos, mrpDetails, `${request.baseName}.pdf`);
-      } else if (request.kind === "material") await exportMaterialPoExcel(request.pos, mrpDetails, `${request.baseName}.xlsx`);
-      else await exportMaklonPoExcel(request.pos, mrpDetails, `${request.baseName}.xlsx`);
+          if (count === 1) exportMaterialPoPdf(request.pos[0], mrpDetails, variant);
+          else exportMaterialPoPdfBatch(request.pos, mrpDetails, `${request.baseName}${suffix}.pdf`, variant);
+        } else if (count === 1) exportMaklonPoPdf(request.pos[0], mrpDetails, variant);
+        else exportMaklonPoPdfBatch(request.pos, mrpDetails, `${request.baseName}${suffix}.pdf`, variant);
+      } else if (request.kind === "material") await exportMaterialPoExcel(request.pos, mrpDetails, `${request.baseName}${suffix}.xlsx`, variant);
+      else await exportMaklonPoExcel(request.pos, mrpDetails, `${request.baseName}${suffix}.xlsx`, variant);
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Gagal membuat file.");
@@ -50,9 +57,37 @@ export function PoDownloadModal({ request, mrpDetails, onClose }: { request: PoD
         </div>
         <div className="px-5 py-4">
           <div className="font-sans text-[11.5px] text-text-muted">
-            {count === 1 ? `1 PO ${request.kind === "material" ? "material" : "produksi"}` : `${count} PO ${request.kind === "material" ? "material" : "produksi"} (jadi 1 file)`} — pilih format:
+            {count === 1 ? `1 PO ${request.kind === "material" ? "material" : "produksi"}` : `${count} PO ${request.kind === "material" ? "material" : "produksi"} (jadi 1 file)`}
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-3">
+
+          <div className="mt-3 font-sans text-[11px] font-semibold uppercase tracking-wider text-text-muted">Versi</div>
+          <div className="mt-1.5 grid grid-cols-2 gap-2">
+            <button
+              onClick={() => setVariant("internal")}
+              disabled={busy != null}
+              className={
+                "rounded-md border px-3 py-2 text-left font-sans disabled:opacity-50 " +
+                (variant === "internal" ? "border-accent-blue bg-info-bg" : "border-[#DDE4EB] hover:border-accent-blue")
+              }
+            >
+              <div className="text-[12px] font-semibold text-text-primary">Internal</div>
+              <div className="text-[10px] text-text-muted">Rincian per warna + lengan (pendek/panjang terpisah)</div>
+            </button>
+            <button
+              onClick={() => setVariant("external")}
+              disabled={busy != null}
+              className={
+                "rounded-md border px-3 py-2 text-left font-sans disabled:opacity-50 " +
+                (variant === "external" ? "border-accent-blue bg-info-bg" : "border-[#DDE4EB] hover:border-accent-blue")
+              }
+            >
+              <div className="text-[12px] font-semibold text-text-primary">Eksternal</div>
+              <div className="text-[10px] text-text-muted">Untuk supplier/vendor produksi — per warna, langsung totalan</div>
+            </button>
+          </div>
+
+          <div className="mt-4 font-sans text-[11px] font-semibold uppercase tracking-wider text-text-muted">Format</div>
+          <div className="mt-1.5 grid grid-cols-2 gap-3">
             <button
               onClick={() => run("pdf")}
               disabled={busy != null}
