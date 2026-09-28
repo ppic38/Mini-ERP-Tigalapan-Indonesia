@@ -82,6 +82,14 @@ export function AppShell({
 
   const router = useRouter();
   const unlockedRoles = useInternalAuthStore((s) => s.unlockedRoles);
+  // Revisi 2026-09-28 (owner-reported: begitu baru login Sysadmin lalu langsung klik modul lain,
+  // sekilas kelihatan seperti "user modul biasa" -- baru benar setelah klik/navigasi berikutnya)
+  // -- race condition, BUKAN lambat loading: `unlockedRoles` dibaca ASYNC dari localStorage
+  // (lihat catatan lengkap di lib/internal-auth-store.ts), jadi render PERTAMA sebelum baca itu
+  // selesai masih memakai `[]` (state awal). `authHydrated` menandai baca itu benar-benar sudah
+  // selesai -- ikut digabung ke gate `mounted` di bawah supaya sidebar/topbar tidak pernah "kedip"
+  // ke tampilan salah dulu.
+  const authHydrated = useInternalAuthStore((s) => s.hasHydrated);
   const logoutInternal = useInternalAuthStore((s) => s.logout);
   const logoutVendor = useVendorAuthStore((s) => s.logout);
   const vendorActor = useVendorAuthStore((s) => s.actor);
@@ -97,8 +105,10 @@ export function AppShell({
   const authorized = !isGated || unlockedRoles.includes(role as InternalRole) || unlockedRoles.includes("sysadmin");
 
   useEffect(() => {
-    if (mounted && isGated && !authorized) router.replace("/");
-  }, [mounted, isGated, authorized, router]);
+    // authHydrated dulu -- jangan redirect berdasarkan `authorized` yang masih dihitung dari
+    // unlockedRoles KOSONG (localStorage belum sempat dibaca), itu selalu false sesaat.
+    if (mounted && authHydrated && isGated && !authorized) router.replace("/");
+  }, [mounted, authHydrated, isGated, authorized, router]);
 
   const nav = NAV[role];
   const allNotifications = useMrpStore((s) => s.notifications);
@@ -256,7 +266,10 @@ export function AppShell({
     };
   }
 
-  if (!mounted || (isGated && !authorized)) return null;
+  // isGated && !authHydrated ikut ditahan di sini juga -- HALAMAN gated tidak boleh sempat
+  // render sidebar/topbar apa pun (termasuk yang authorized=true secara "kebetulan" dari nilai
+  // default) sebelum localStorage benar-benar selesai dibaca.
+  if (!mounted || (isGated && (!authHydrated || !authorized))) return null;
 
   // Akun anggota tim vendor (migration 0057) -- sidebar disaring ke halaman yang diizinkan saja
   // (proteksi sesungguhnya tetap di proxy.ts; ini murni supaya menu yang ditutup tidak ditampilkan
