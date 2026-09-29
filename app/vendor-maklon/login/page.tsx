@@ -3,15 +3,14 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Building2, Eye, EyeOff, Users } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { ArrowLeft, Building2, Eye, EyeOff } from "lucide-react";
 import { useVendorAuthStore } from "@/lib/mrp/vendor-auth-store";
 
-/** Revisi 2026-09-27 (migration 0057, owner: "tim cutting, tim finish good, packing") -- 2 mode
- *  login: "Akun Utama" (ketik nama vendor, seperti sebelumnya, akses penuh) dan "Anggota Tim"
- *  (username unik per anggota, dibuatkan akun utama vendor dari menu "Tim Saya" -- akses dibatasi
- *  ke halaman yang diizinkan saja). Keduanya berbagi 1 form password sama, cuma beda label & aksi
- *  login yang dipanggil (login vs loginUser di lib/mrp/vendor-auth-store.ts). */
+/** Revisi 2026-09-29 (owner tolak model "Akun Utama"/"Anggota Tim" berjenjang, sama kayak
+ *  revisi login modul internal di app/page.tsx) -- SATU form rata: "Nama Vendor / Username" +
+ *  Password. Server yang menentukan itu akun utama (login lewat nama vendor) atau akun anggota
+ *  tim (login lewat username unik) -- dicoba login() dulu (akun utama), kalau gagal baru dicoba
+ *  loginUser() (akun anggota tim), TANPA toggle/tab yang bikin kesan berjenjang. */
 export default function VendorLoginPage() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -21,8 +20,7 @@ export default function VendorLoginPage() {
   const loggedInVendorId = useVendorAuthStore((s) => s.loggedInVendorId);
   const router = useRouter();
 
-  const [mode, setMode] = useState<"main" | "team">("main");
-  const [username, setUsername] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -34,23 +32,16 @@ export default function VendorLoginPage() {
 
   if (!mounted) return null;
 
-  function switchMode(next: "main" | "team") {
-    setMode(next);
-    setUsername("");
-    setPassword("");
-    setError("");
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     setSubmitting(true);
-    const ok = mode === "main" ? await login(username, password) : await loginUser(username, password);
+    const ok = (await login(identifier, password)) || (await loginUser(identifier, password));
     setSubmitting(false);
     if (ok) {
       router.push("/vendor-maklon/po-produksi");
     } else {
-      setError(mode === "main" ? "Nama vendor atau password salah." : "Username atau password salah.");
+      setError("Nama vendor / username atau password salah.");
     }
   }
 
@@ -72,38 +63,20 @@ export default function VendorLoginPage() {
           <div className="mt-3.5 font-sans text-[13px] font-semibold text-text-muted">Tigalapan Indonesia</div>
           <div className="mt-1 font-heading text-xl font-bold text-text-primary">Login Vendor Produksi</div>
 
-          <div className="mt-4 flex rounded-lg border border-[#DDE4EB] p-1">
-            <button
-              type="button"
-              onClick={() => switchMode("main")}
-              className={cn("flex-1 rounded-md py-1.5 font-sans text-[11.5px] font-semibold transition-colors", mode === "main" ? "bg-accent-orange text-white" : "text-text-muted")}
-            >
-              Akun Utama
-            </button>
-            <button
-              type="button"
-              onClick={() => switchMode("team")}
-              className={cn("flex-1 rounded-md py-1.5 font-sans text-[11.5px] font-semibold transition-colors", mode === "team" ? "bg-accent-orange text-white" : "text-text-muted")}
-            >
-              Anggota Tim
-            </button>
-          </div>
-          <div className="mt-2 font-sans text-xs text-text-muted">
-            {mode === "main" ? "Ketik nama vendor Anda lalu masukkan password." : "Masukkan username anggota tim (dibuatkan admin vendor) lalu password."}
-          </div>
+          <div className="mt-2 font-sans text-xs text-text-muted">Ketik nama vendor Anda (akun utama) atau username Anda (anggota tim), lalu masukkan password.</div>
 
           <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-3">
             <div>
-              <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">{mode === "main" ? "Nama vendor" : "Username"}</div>
+              <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Nama Vendor / Username</div>
               <input
-                value={username}
+                value={identifier}
                 onChange={(e) => {
-                  setUsername(e.target.value);
+                  setIdentifier(e.target.value);
                   setError("");
                 }}
                 className="input mt-1"
                 autoFocus
-                placeholder={mode === "main" ? "contoh: Cecep" : "contoh: budi.cutting"}
+                placeholder="contoh: Cecep"
               />
             </div>
             <div>
@@ -133,7 +106,6 @@ export default function VendorLoginPage() {
               disabled={submitting}
               className="mt-1 flex items-center justify-center gap-1.5 rounded-md bg-accent-orange px-3.5 py-2 font-sans text-xs font-semibold text-white disabled:opacity-60"
             >
-              {mode === "team" && <Users size={13} />}
               {submitting ? "Memeriksa..." : "Masuk"}
             </button>
           </form>
