@@ -22,6 +22,15 @@ melihat dan mengoreksi ... jangan ada conflict sidebar jadi procurement saja saa
   koreksi). Mode Sysadmin tidak menampilkan lonceng (tidak ada notifikasi yang ditujukan ke Sysadmin).
 - Catatan: satu browser yang membuka Sysadmin DAN modul lain sekaligus akan selalu tampil sebagai
   Sysadmin di halaman modul internal (cookie sesi dipakai bersama).
+- **Tahap 3 -- koreksi langsung di halaman Procurement** (mode Sysadmin saja; tombol dari
+  `components/sysadmin/`): halaman Purchase Order (tab PO Material: Tarik kembali / Mundurkan approval /
+  Batalkan; tab PO Produksi: Mundurkan approval / Batalkan) dan Material Tracking (detail batch:
+  Kembalikan Delivery + tabel koreksi code lot/code roll per roll, aksi baru
+  `sysadminSetRollCodeAction`). Semua lewat `CorrectionDialog`: tampil dampak, alasan wajib, aksi
+  permanen wajib ketik ulang No. PO; setelah sukses masuk Log Audit + notifikasi ke modul terdampak.
+  Aturan boleh/tidak di UI hanya cermin -- server (`sysadminActions.ts`) yang memutuskan. Code roll
+  hanya bisa diubah kalau roll sudah diterima & belum ditimbang; code lot bebas (label saja).
+  Belum dikerjakan: Paying Voucher, Klaim Material, Master Data, dan modul selain Procurement.
 
 ## Multi-user per modul internal + atribusi approval -- migration 0060 (2026-09-29)
 `supabase/migrations/0060_internal_role_users.sql`: tabel `internal_role_users` (akun anggota tim

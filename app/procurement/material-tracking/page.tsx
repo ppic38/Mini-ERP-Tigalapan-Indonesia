@@ -9,6 +9,9 @@ import { FilterBar } from "@/components/mrp/filter-bar";
 import { TransferMaterialModal, type TransferCandidate } from "@/components/mrp/transfer-material-modal";
 import { SetDeliveryModal } from "@/components/mrp/set-delivery-modal";
 import { WithdrawVendorModal } from "@/components/mrp/withdraw-vendor-modal";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { invoiceDeliveryCorrections } from "@/components/sysadmin/procurement-corrections";
+import { RollCodeEditor } from "@/components/sysadmin/roll-code-editor";
 import { useMrpStore } from "@/lib/mrp/store";
 import {
   formatPcs,
@@ -711,6 +714,8 @@ export default function MaterialTrackingPage() {
                                           </div>
                                         ))}
                                       </div>
+                                      <SysadminActionsBar actions={invoiceDeliveryCorrections(r.invoice)} />
+                                      <RollCodeEditor invoice={r.invoice} />
                                     </td>
                                   </tr>
                                 )}

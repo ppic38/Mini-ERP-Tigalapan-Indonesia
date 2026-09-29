@@ -469,6 +469,79 @@ export async function sysadminRevertInvoiceDeliveryAction(invoiceIds: string[], 
 }
 
 // =========================================================================
+// Koreksi code lot / code roll 1 roll -- salah ketik saat Paying Voucher (Procurement) atau saat
+// Good Receive (vendor produksi), owner 2026-09-29 (Sysadmin "melihat dan mengoreksi", mulai dari
+// modul Procurement). Aturan pengaman:
+//   - code_lot cuma LABEL (tidak jadi kunci/relasi di tabel lain) -> boleh diubah kapan saja, boleh
+//     dikosongkan. Salinan teks lot di riwayat klaim yang SUDAH terbentuk (material_claim_history)
+//     tidak ikut berubah -- itu snapshot historis.
+//   - code_roll dipakai sebagai identitas fisik roll di Cutting -> HANYA boleh diubah kalau roll
+//     sudah ditandai diterima DAN belum ditimbang (net_kg masih kosong); setelah ditimbang, roll
+//     sudah masuk alur Cutting/klaim dan mengubah kodenya bisa merusak jejak.
+// =========================================================================
+
+export type SysadminRollCodePatch = { codeLot?: string; codeRoll?: string };
+
+export async function sysadminSetRollCodeAction(
+  input: { invoiceId: string; warna: string; lengan: "PENDEK" | "PANJANG"; rollIndex: number; patch: SysadminRollCodePatch },
+  reason: string
+): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const { invoiceId, warna, lengan, rollIndex, patch } = input;
+    const db = supabaseServer();
+    const colorId = `${invoiceId}-${warna}-${lengan}`;
+    const { data: roll, error } = await db
+      .from("raw_material_invoice_rolls")
+      .select("code_lot,code_roll,net_kg,received_at")
+      .eq("invoice_color_id", colorId)
+      .eq("roll_index", rollIndex)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!roll) throw new Error("Roll tidak ditemukan.");
+
+    const update: Record<string, string | null> = {};
+    if (patch.codeLot !== undefined) {
+      const lot = patch.codeLot.trim() || null;
+      if (lot !== (roll.code_lot ?? null)) update.code_lot = lot;
+    }
+    if (patch.codeRoll !== undefined) {
+      const code = patch.codeRoll.trim();
+      if (!code) throw new Error("Code roll tidak boleh dikosongkan.");
+      if (code !== (roll.code_roll ?? "")) {
+        if (!roll.received_at) throw new Error("Roll ini belum diterima vendor -- code roll baru ada saat Good Receive.");
+        if (roll.net_kg != null) throw new Error("Roll ini sudah ditimbang di Cutting -- code roll tidak bisa diubah lagi dari sini.");
+        update.code_roll = code;
+      }
+    }
+    if (Object.keys(update).length === 0) throw new Error("Tidak ada perubahan -- nilainya sama dengan yang tersimpan.");
+
+    const { error: updErr } = await db.from("raw_material_invoice_rolls").update(update).eq("invoice_color_id", colorId).eq("roll_index", rollIndex);
+    if (updErr) throw new Error(updErr.message);
+    await writeAuditLog(
+      "EDIT_ROLL_CODE",
+      "raw_material_invoice_rolls",
+      `${invoiceId}|${warna}|${lengan}|${rollIndex}`,
+      reason.trim(),
+      { codeLot: roll.code_lot, codeRoll: roll.code_roll },
+      { codeLot: "code_lot" in update ? update.code_lot : roll.code_lot, codeRoll: "code_roll" in update ? update.code_roll : roll.code_roll }
+    );
+
+    const { data: inv } = await db.from("raw_material_invoices").select("po_id,destination_vendor").eq("id", invoiceId).maybeSingle();
+    const changes = [
+      "code_lot" in update ? `code lot ${roll.code_lot ?? "—"} → ${update.code_lot ?? "—"}` : null,
+      "code_roll" in update ? `code roll ${roll.code_roll ?? "—"} → ${update.code_roll}` : null,
+    ]
+      .filter(Boolean)
+      .join(", ");
+    const text = `Roll ${rollIndex + 1} ${warna} · ${lengan} (PO ${inv?.po_id ?? invoiceId}) dikoreksi Sysadmin: ${changes} — alasan: ${reason.trim()}.`;
+    await notifyAffected(text, ["procurement"]);
+    if (inv?.destination_vendor) await notifyAffected(text, ["vendorMaklon"], inv.destination_vendor);
+  });
+}
+
+// =========================================================================
 // Tarik kembali PO Material -- "kirim ke Finance" yang salah (owner 2026-09-28,
 // tahap Procurement/Finance dari permintaan "akses tingkat tinggi ... diterapkan
 // ke setiap modul"). BEDA dari sysadminCancelMaterialPoAction (yang MEMANG sengaja
@@ -531,7 +604,7 @@ export async function sysadminRecallMaterialPoAction(poId: string, reason: strin
     await requireSysadmin();
     if (!reason.trim()) throw new Error("Alasan wajib diisi.");
     const db = supabaseServer();
-    const { data: po, error: poErr } = await db.from("material_pos").select("id,mrp_id,status,invoiced_rolls").eq("id", poId.trim()).maybeSingle();
+    const { data: po, error: poErr } = await db.from("material_pos").select("id,mrp_id,status,invoiced_rolls,approved,vendor_produksi").eq("id", poId.trim()).maybeSingle();
     if (poErr) throw new Error(poErr.message);
     if (!po) throw new Error("PO Material tidak ditemukan.");
     if (po.status === "CANCELLED") throw new Error("PO ini sudah dibatalkan sebelumnya.");
@@ -562,6 +635,10 @@ export async function sysadminRecallMaterialPoAction(poId: string, reason: strin
       `PO Material ${po.id} (${po.mrp_id}) ditarik kembali oleh Sysadmin — alasan: ${reason.trim()}. ${rowsReleased} baris material dilepas dan muncul lagi di "MRP tanpa PO"; silakan kirim ulang.`,
       ["procurement", "finance"]
     );
+    // PO yang sudah final disetujui sudah tampil di "PO Material Saya" vendor -- beri tahu vendornya juga.
+    if (po.approved && po.vendor_produksi) {
+      await notifyAffected(`PO Material ${po.id} (${po.mrp_id}) ditarik kembali oleh Sysadmin — alasan: ${reason.trim()}. PO ini tidak berlaku lagi; PO pengganti akan dikirim bila diperlukan.`, ["vendorMaklon"], po.vendor_produksi);
+    }
     return { rowsReleased };
   });
 }

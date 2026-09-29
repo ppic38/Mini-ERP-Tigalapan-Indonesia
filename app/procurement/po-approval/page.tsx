@@ -37,6 +37,8 @@ import {
 } from "@/lib/mrp/derive";
 import { countMaterialRowsWithoutSupplierForMrp, countPoPendingForRole, countPoRejected, pendingMarker } from "@/lib/shell/badges";
 import { PoApprovalQueue } from "@/components/mrp/po-approval-queue";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { maklonPoCorrections, materialPoCorrections } from "@/components/sysadmin/procurement-corrections";
 import { PoDownloadModal, type PoDownloadRequest } from "@/components/procurement/po-download-modal";
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { MaklonPO, MaterialPO } from "@/lib/mrp/types";
@@ -424,9 +426,12 @@ export default function PoApprovalPage() {
       label: "Aksi",
       default: true,
       render: (p) => (
-        <Button onClick={() => setDownloadReq({ kind: "maklon", pos: [p], baseName: `PO-${p.id}` })} variant="ghost" size="xs">
-          Download PO
-        </Button>
+        <div>
+          <Button onClick={() => setDownloadReq({ kind: "maklon", pos: [p], baseName: `PO-${p.id}` })} variant="ghost" size="xs">
+            Download PO
+          </Button>
+          <SysadminActionsBar actions={maklonPoCorrections(p)} />
+        </div>
       ),
     },
   ];
@@ -1005,6 +1010,7 @@ export default function PoApprovalPage() {
                                     >
                                       Download PO
                                     </Button>
+                                    <SysadminActionsBar actions={materialPoCorrections(p)} />
                                   </td>
                                 )}
                               </tr>
