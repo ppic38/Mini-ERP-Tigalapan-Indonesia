@@ -333,10 +333,12 @@ type FlowActions = {
   // komponen (lihat payment-panel.tsx / paying-voucher-material-panel.tsx).
   setInvoicePaymentProof: (invoiceIds: string[], dataUrl: string, fileName?: string) => Promise<void>;
   setInvoicesDelivery: (invoiceIds: string[], deliveryDate: string) => Promise<void>;
-  markRollArrived: (invoiceId: string, warna: string, lengan: Lengan, rollIndex: number, codeRoll?: string) => Promise<void>;
+  markRollArrived: (invoiceId: string, warna: string, lengan: Lengan, rollIndex: number, codeRoll?: string, codeLot?: string) => Promise<void>;
   /** "Terima semua": roll (1 warna·lengan) + item tambahan (add buy) 1 invoice sekaligus, optimistic
    *  penuh, 1 tulisan server (lihat receiveMaterialBatchAction). */
-  receiveMaterialBatch: (invoiceId: string, warna: string, lengan: Lengan, rolls: { rollIndex: number; codeRoll?: string }[], addBuyIds: string[]) => Promise<void>;
+  receiveMaterialBatch: (invoiceId: string, warna: string, lengan: Lengan, rolls: { rollIndex: number; codeRoll?: string; codeLot?: string }[], addBuyIds: string[]) => Promise<void>;
+  /** Isi code lot roll yang SUDAH diterima tapi lot-nya masih kosong (lihat setRollCodeLotAction). */
+  setRollCodeLot: (invoiceId: string, warna: string, lengan: Lengan, rollIndex: number, codeLot: string) => Promise<void>;
   receiveRawMaterialRoll: (
     invoiceId: string,
     warna: string,
@@ -1033,7 +1035,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // invoice dihitung persis logika server-nya (markRollArrivedAction: DELIVERY -> RECEIVING,
   // receivedAt cuma diisi kalau belum ada) supaya tidak menyimpang dari yang bakal ditulis.
   // Rollback + alert kalau tulisnya gagal.
-  markRollArrived: async (invoiceId, warna, lengan, rollIndex, codeRoll) => {
+  markRollArrived: async (invoiceId, warna, lengan, rollIndex, codeRoll, codeLot) => {
     const colorKey = `${warna}|${lengan}`;
     const arrivedAt = localDateString(new Date());
     const previous = get().invoices;
@@ -1041,11 +1043,12 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       invoices: previous.map((inv) => {
         if (inv.id !== invoiceId) return inv;
         const arr = [...(inv.rollArrivals[colorKey] ?? [])];
-        // codeLot TIDAK diisi di sini lagi (item revisi 2026-09-08) -- sudah diinput Procurement
-        // saat Paying Voucher (lihat ColorEntry.lots, ditampilkan langsung dari sana di halaman
-        // Good Receive), bukan lagi bagian dari aksi "tandai diterima" ini. backgroundRefresh()
-        // di bawah akan mewariskan nilai code_lot yang sudah ada dari snapshot server berikutnya.
-        arr[rollIndex] = { arrivedAt, codeRoll };
+        // Revisi 2026-09-29 (owner: "buat untuk vendor produksi bisa input code lot") --
+        // codeLot SEKARANG opsional diisi vendor di sini KALAU rollnya belum punya code_lot dari
+        // Procurement (lihat gating di receiving/page.tsx: input cuma muncul kalau r.codeLot masih
+        // kosong) -- vendor TIDAK BISA menimpa code_lot yang sudah diinput Procurement saat Paying
+        // Voucher (ColorEntry.lots), cuma mengisi yang masih kosong.
+        arr[rollIndex] = { arrivedAt, codeRoll, codeLot: codeLot?.trim() || undefined };
         return {
           ...inv,
           rollArrivals: { ...inv.rollArrivals, [colorKey]: arr },
@@ -1055,7 +1058,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       }),
     });
     try {
-      await actions.markRollArrivedAction(invoiceId, warna, lengan, rollIndex, codeRoll);
+      await actions.markRollArrivedAction(invoiceId, warna, lengan, rollIndex, codeRoll, codeLot);
     } catch (err) {
       set({ invoices: previous });
       window.alert("Gagal menandai roll diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
@@ -1072,7 +1075,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       invoices: previous.map((inv) => {
         if (inv.id !== invoiceId) return inv;
         const arr = [...(inv.rollArrivals[colorKey] ?? [])];
-        for (const r of rolls) arr[r.rollIndex] = { arrivedAt, codeRoll: r.codeRoll };
+        for (const r of rolls) arr[r.rollIndex] = { arrivedAt, codeRoll: r.codeRoll, codeLot: r.codeLot?.trim() || undefined };
         const receipts = { ...inv.addBuyReceipts };
         for (const id of addBuyIds) receipts[id] = { receivedAt: arrivedAt };
         return {
@@ -1089,6 +1092,36 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     } catch (err) {
       set({ invoices: previous });
       window.alert("Gagal menandai material diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  // Optimistic sama seperti markRollArrived -- lot langsung tampil di baris roll, rollback + alert
+  // kalau server menolak (mis. ternyata lot sudah diisi Procurement di sesi lain).
+  setRollCodeLot: async (invoiceId, warna, lengan, rollIndex, codeLot) => {
+    const colorKey = `${warna}|${lengan}`;
+    const lot = codeLot.trim();
+    if (!lot) return;
+    const previous = get().invoices;
+    set({
+      invoices: previous.map((inv) => {
+        if (inv.id !== invoiceId) return inv;
+        const arrivals = [...(inv.rollArrivals[colorKey] ?? [])];
+        if (arrivals[rollIndex]) arrivals[rollIndex] = { ...arrivals[rollIndex]!, codeLot: lot };
+        const receipts = [...(inv.rollReceipts[colorKey] ?? [])];
+        if (receipts[rollIndex]) receipts[rollIndex] = { ...receipts[rollIndex]!, codeLot: lot };
+        return {
+          ...inv,
+          rollArrivals: { ...inv.rollArrivals, [colorKey]: arrivals },
+          rollReceipts: { ...inv.rollReceipts, [colorKey]: receipts },
+        };
+      }),
+    });
+    try {
+      await actions.setRollCodeLotAction(invoiceId, warna, lengan, rollIndex, lot);
+    } catch (err) {
+      set({ invoices: previous });
+      window.alert("Gagal menyimpan code lot -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();

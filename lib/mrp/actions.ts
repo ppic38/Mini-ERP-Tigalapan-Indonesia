@@ -1476,19 +1476,28 @@ export async function setInvoicesDeliveryAction(invoiceIds: string[], deliveryDa
 /** Tandai 1 roll FISIK DITERIMA di Good Receive — TIDAK menimbang (lihat
  *  receiveRawMaterialRollAction untuk itu, sekarang dipanggil dari halaman Cutting). Ini yang
  *  memindahkan status invoice DELIVERY → RECEIVING (dulu dipicu oleh penimbangan roll pertama). */
-export async function markRollArrivedAction(invoiceId: string, warna: string, lengan: Lengan, rollIndex: number, codeRoll?: string): Promise<void> {
+export async function markRollArrivedAction(invoiceId: string, warna: string, lengan: Lengan, rollIndex: number, codeRoll?: string, codeLot?: string): Promise<void> {
   const actor = await requireVendorSessionWithActor();
   const db = supabaseServer();
   const colorId = `${invoiceId}-${warna}-${lengan}`;
   // Revisi 2026-09-19: code roll WAJIB terisi (jaring pengaman selain tombol UI yang sudah disabled).
   if (!codeRoll?.trim()) throw new Error("Code roll wajib diisi sebelum roll diterima.");
-  // Item revisi 2026-09-08: TIDAK LAGI menyentuh code_lot di sini -- sejak kode lot diinput
-  // Procurement saat Paying Voucher (bookInvoiceAction), bukan lagi di-generate random vendor di
-  // Good Receive, roll ini SUDAH punya code_lot dari awal (atau memang kosong untuk invoice lama
-  // dari sebelum field ini ada) -- menyentuhnya di sini cuma berisiko MENIMPA nilai yang benar
-  // dengan `null` kalau vendor tidak kirim apa pun.
-  const { error } = await db.from("raw_material_invoice_rolls").update({ received_at: today(), code_roll: codeRoll ?? null }).eq("invoice_color_id", colorId).eq("roll_index", rollIndex);
+  // Item revisi 2026-09-08: code_lot awalnya CUMA diinput Procurement saat Paying Voucher
+  // (bookInvoiceAction) -- di sini SENGAJA TIDAK menyentuhnya kalau vendor tidak kirim apa pun,
+  // supaya tidak MENIMPA nilai yang sudah benar dengan `null`.
+  // Revisi 2026-09-29 (owner: "buat untuk vendor produksi bisa input code lot") -- vendor SEKARANG
+  // boleh mengisi code_lot di sini KALAU rollnya belum punya (UI di receiving/page.tsx cuma
+  // menampilkan input kalau kosong, jadi ini jaring pengaman kedua): key `code_lot` cuma dimasukkan
+  // ke update kalau `codeLot` terisi -- kalau tidak, kolom itu TETAP TIDAK TERSENTUH sama sekali
+  // (bukan di-set ke null), sama seperti perilaku lama. Penulisannya lewat fillEmptyCodeLot (filter
+  // `code_lot is null` di DB) -- lot Procurement yang sudah ada TIDAK BISA tertimpa dari jalur ini.
+  const { error } = await db
+    .from("raw_material_invoice_rolls")
+    .update({ received_at: today(), code_roll: codeRoll ?? null })
+    .eq("invoice_color_id", colorId)
+    .eq("roll_index", rollIndex);
   if (error) throw new Error(error.message);
+  await fillEmptyCodeLot(db, colorId, rollIndex, codeLot);
 
   const { data: inv } = await db.from("raw_material_invoices").select("id,status,received_at").eq("id", invoiceId).single();
   if (inv) {
@@ -1503,12 +1512,12 @@ export async function markRollArrivedAction(invoiceId: string, warna: string, le
 /** "Terima semua" di Good Receive: banyak roll (1 warna·lengan) + item tambahan (add buy) 1 invoice
  *  sekaligus dalam 1 round-trip -- pengganti N kali markRollArrivedAction/receiveRawMaterialAddBuyAction
  *  berurutan (N tulisan + N refresh = sumber flicker & lambat). Semantik per roll/add buy SAMA persis
- *  dengan kedua action tunggal itu (code_lot tidak disentuh). */
+ *  dengan kedua action tunggal itu (code_lot cuma diisi kalau masih kosong, lihat fillEmptyCodeLot). */
 export async function receiveMaterialBatchAction(
   invoiceId: string,
   warna: string,
   lengan: Lengan,
-  rolls: { rollIndex: number; codeRoll?: string }[],
+  rolls: { rollIndex: number; codeRoll?: string; codeLot?: string }[],
   addBuyIds: string[]
 ): Promise<void> {
   const actor = await requireVendorSessionWithActor();
@@ -1516,6 +1525,8 @@ export async function receiveMaterialBatchAction(
   const colorId = `${invoiceId}-${warna}-${lengan}`;
   const receivedAt = today();
   if (rolls.some((r) => !r.codeRoll?.trim())) throw new Error("Code roll wajib diisi untuk semua roll yang diterima.");
+  // codeLot: sama aturan dengan markRollArrivedAction -- cuma disentuh kalau vendor mengisinya
+  // (rollnya belum punya code_lot dari Procurement), TIDAK PERNAH ditimpa jadi null.
   const results = await Promise.all(
     rolls.map((r) =>
       db.from("raw_material_invoice_rolls").update({ received_at: receivedAt, code_roll: r.codeRoll ?? null }).eq("invoice_color_id", colorId).eq("roll_index", r.rollIndex)
@@ -1523,6 +1534,7 @@ export async function receiveMaterialBatchAction(
   );
   const failed = results.find((r) => r.error);
   if (failed?.error) throw new Error(failed.error.message);
+  await Promise.all(rolls.map((r) => fillEmptyCodeLot(db, colorId, r.rollIndex, r.codeLot)));
   if (addBuyIds.length > 0) {
     const { error } = await db.from("raw_material_invoice_addbuys").update({ received_at: receivedAt }).in("id", addBuyIds).eq("invoice_id", invoiceId);
     if (error) throw new Error(error.message);
@@ -1535,6 +1547,37 @@ export async function receiveMaterialBatchAction(
       .eq("id", invoiceId);
   }
   await logVendorAction(actor, `Good Receive ${rolls.length} roll ${warna} · ${lengan}`, "raw_material_invoices", invoiceId);
+}
+
+/** Isi code_lot 1 roll HANYA kalau masih kosong (null) -- filter `is null` di level DB, jadi lot yang
+ *  sudah diinput Procurement saat Paying Voucher tidak pernah tertimpa vendor. Mengembalikan true
+ *  kalau baris benar-benar terisi, false kalau lot-nya ternyata sudah ada (atau codeLot kosong). */
+async function fillEmptyCodeLot(db: ReturnType<typeof supabaseServer>, colorId: string, rollIndex: number, codeLot?: string): Promise<boolean> {
+  const lot = codeLot?.trim();
+  if (!lot) return false;
+  const { data, error } = await db
+    .from("raw_material_invoice_rolls")
+    .update({ code_lot: lot })
+    .eq("invoice_color_id", colorId)
+    .eq("roll_index", rollIndex)
+    .is("code_lot", null)
+    .select("roll_index");
+  if (error) throw new Error(error.message);
+  return (data?.length ?? 0) > 0;
+}
+
+/** Revisi 2026-09-29 (owner: "vendor produksi bisa input code lot jika code lot tidak diinput sama
+ *  sekali oleh procurement (jika statusnya -)"): isi code lot roll yang SUDAH ditandai diterima tapi
+ *  lot-nya masih "—" (Procurement tidak mengisinya saat Paying Voucher, dan vendor juga belum mengisi
+ *  saat Terima). Lot yang sudah terisi DITOLAK, tidak ditimpa. */
+export async function setRollCodeLotAction(invoiceId: string, warna: string, lengan: Lengan, rollIndex: number, codeLot: string): Promise<void> {
+  const actor = await requireVendorSessionWithActor();
+  const db = supabaseServer();
+  if (!codeLot.trim()) throw new Error("Code lot tidak boleh kosong.");
+  const colorId = `${invoiceId}-${warna}-${lengan}`;
+  const filled = await fillEmptyCodeLot(db, colorId, rollIndex, codeLot);
+  if (!filled) throw new Error("Code lot roll ini sudah terisi -- tidak bisa diubah dari Good Receive.");
+  await logVendorAction(actor, `Isi code lot roll ${rollIndex + 1} ${warna} · ${lengan}`, "raw_material_invoice_rolls", `${invoiceId}|${warna}|${lengan}|${rollIndex}`);
 }
 
 /** Timbang 1 roll yang SUDAH ditandai diterima — dipanggil dari halaman Cutting (lihat
