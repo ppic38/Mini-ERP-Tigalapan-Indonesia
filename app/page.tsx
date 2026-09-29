@@ -183,7 +183,7 @@ export default function ModuleSelectPage() {
                       onChange={(e) => setUsername(e.target.value)}
                       className="input mt-1 !py-1.5 !text-[11.5px]"
                       autoFocus
-                      placeholder="mis. procurement1 -- kosongkan jika belum punya akun sendiri"
+                      placeholder="Kosongkan jika belum punya akun sendiri"
                     />
                   </div>
                   <div>
