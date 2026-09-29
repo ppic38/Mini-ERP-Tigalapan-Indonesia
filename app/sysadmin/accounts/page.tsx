@@ -199,7 +199,7 @@ function AddInternalRoleUserModal({ onClose, onDone }: { onClose: () => void; on
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={onClose}>
       <div className="w-full max-w-[480px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
-        <div className="border-b border-border-subtle px-5 py-3.5 font-sans text-[13px] font-semibold text-text-primary">Tambah Anggota Tim Modul Internal</div>
+        <div className="border-b border-border-subtle px-5 py-3.5 font-sans text-[13px] font-semibold text-text-primary">Tambah Akun Login Modul Internal</div>
         <div className="flex flex-col gap-3 px-5 py-4">
           <div>
             <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Modul</div>
@@ -449,9 +449,9 @@ export default function SysadminAccountsPage() {
         <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
           <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
             <div>
-              <span className="font-sans text-[13px] font-semibold text-text-primary">Anggota Tim Modul Internal</span>
+              <span className="font-sans text-[13px] font-semibold text-text-primary">Akun Login Modul Internal (Multi-User)</span>
               <div className="font-sans text-[10.5px] text-text-muted">
-                PPIC/Procurement/Finance/dst bisa punya beberapa orang login sendiri-sendiri (bukan cuma 1 password bersama) — supaya PO/PV yang di-approve tercatat siapa PIC-nya.
+                PPIC/Procurement/Finance/dst bisa punya beberapa akun login sekaligus, misal "procurement1" dan "procurement2" — akses sama persis, cuma beda username, supaya PO/PV yang di-approve tercatat siapa PIC-nya.
               </div>
             </div>
             <input
@@ -476,7 +476,7 @@ export default function SysadminAccountsPage() {
             (() => {
               const q = internalTeamSearch.trim().toLowerCase();
               const filtered = q ? internalRoleUsers.filter((m) => `${m.username} ${m.name} ${m.role}`.toLowerCase().includes(q)) : internalRoleUsers;
-              if (filtered.length === 0) return <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada anggota tim modul internal.</div>;
+              if (filtered.length === 0) return <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada akun login modul internal.</div>;
               return filtered.map((m) => (
                 <div key={m.id} className="grid grid-cols-[1fr_1fr_1fr_80px_170px] items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0">
                   <span className="font-mono">{m.username}</span>

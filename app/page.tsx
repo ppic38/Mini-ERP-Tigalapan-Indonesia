@@ -32,10 +32,13 @@ export default function ModuleSelectPage() {
 
   const [selectedRole, setSelectedRole] = useState<InternalRole | null>(null);
   // Revisi 2026-09-29 (migration 0060, owner: "procurement ternyata ada dua orang, fulan dan
-  // fulin ... biar tau siapa PIC-nya") -- toggle "Akun Utama" (password bersama, seperti
-  // sebelumnya) vs "Anggota Tim" (username per orang, dibuatkan Sysadmin dari "Akun & Password") --
-  // pola PERSIS toggle yang sama di halaman login vendor produksi (app/vendor-maklon/login).
-  const [mode, setMode] = useState<"main" | "team">("main");
+  // fulin ... biar tau siapa PIC-nya") -- awalnya dibuat toggle "Akun Utama" vs "Anggota Tim",
+  // TAPI owner tolak modelnya: "saya ingin itu tidak berdiri dari akun utama jadi anggota...
+  // dengan level akses dan akun yang sama" -- jadi TIDAK ada tingkatan/hierarki lagi. Sekarang
+  // satu form login rata: Username (opsional) + Password. Kalau Username diisi -> dicocokkan ke
+  // akun bernama yang dibuat Sysadmin (mis. "procurement1", "procurement2", akses sama persis,
+  // cuma beda nama biar ketauan siapa yang approve). Kalau Username dikosongkan -> pakai password
+  // modul lama (untuk modul yang belum dibuatkan akun bernama sama sekali, tetap bisa login).
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -46,17 +49,9 @@ export default function ModuleSelectPage() {
 
   function pickRole(role: InternalRole) {
     setSelectedRole(role);
-    setMode("main");
     setUsername("");
     setPassword("");
     setShowPassword(false);
-    setError("");
-  }
-
-  function switchMode(next: "main" | "team") {
-    setMode(next);
-    setUsername("");
-    setPassword("");
     setError("");
   }
 
@@ -71,14 +66,15 @@ export default function ModuleSelectPage() {
     e.preventDefault();
     if (!selectedRole) return;
     const account = INTERNAL_ACCOUNTS.find((a) => a.role === selectedRole)!;
+    const trimmedUsername = username.trim();
     setError("");
     setSubmitting(true);
-    const ok = mode === "main" ? await login(selectedRole, password) : await loginUser(selectedRole, username, password);
+    const ok = trimmedUsername ? await loginUser(selectedRole, trimmedUsername, password) : await login(selectedRole, password);
     setSubmitting(false);
     if (ok) {
       router.push(account.homeHref);
     } else {
-      setError(mode === "main" ? "Password salah." : "Username atau password salah.");
+      setError(trimmedUsername ? "Username atau password salah." : "Password salah.");
     }
   }
 
@@ -176,35 +172,20 @@ export default function ModuleSelectPage() {
                     <X size={16} />
                   </button>
                 </div>
-                <div className="flex gap-1 border-b border-border-subtle px-4 pb-3 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => switchMode("main")}
-                    className={cn("flex-1 rounded-md py-1.5 font-sans text-[10.5px] font-semibold transition-colors", mode === "main" ? "bg-action-primary text-white" : "text-text-muted")}
-                  >
-                    Akun Utama
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => switchMode("team")}
-                    className={cn("flex-1 rounded-md py-1.5 font-sans text-[10.5px] font-semibold transition-colors", mode === "team" ? "bg-action-primary text-white" : "text-text-muted")}
-                  >
-                    Anggota Tim
-                  </button>
-                </div>
                 <form onSubmit={handleSubmit} className="flex flex-col gap-2.5 px-4 py-3.5">
-                  {mode === "team" && (
-                    <div>
-                      <div className="font-sans text-[9.5px] font-medium uppercase tracking-wider text-text-muted">Username</div>
-                      <input
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        className="input mt-1 !py-1.5 !text-[11.5px]"
-                        autoFocus
-                        placeholder="mis. budi.procurement"
-                      />
+                  <div>
+                    <div className="flex items-center gap-1 font-sans text-[9.5px] font-medium uppercase tracking-wider text-text-muted">
+                      <Users size={10} />
+                      Username <span className="normal-case tracking-normal text-text-muted/70">(opsional)</span>
                     </div>
-                  )}
+                    <input
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      className="input mt-1 !py-1.5 !text-[11.5px]"
+                      autoFocus
+                      placeholder="mis. procurement1 -- kosongkan jika belum punya akun sendiri"
+                    />
+                  </div>
                   <div>
                     <div className="flex items-center gap-1 font-sans text-[9.5px] font-medium uppercase tracking-wider text-text-muted">
                       <Lock size={10} />
@@ -216,7 +197,6 @@ export default function ModuleSelectPage() {
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         className="input !py-1.5 !pr-8 !text-[11.5px]"
-                        autoFocus={mode === "main"}
                         placeholder="••••••••"
                       />
                       <button
@@ -236,7 +216,6 @@ export default function ModuleSelectPage() {
                     disabled={submitting}
                     className="flex items-center justify-center gap-1.5 rounded-md bg-action-primary px-3 py-[7px] font-sans text-[11.5px] font-semibold text-white disabled:opacity-60"
                   >
-                    {mode === "team" && <Users size={12} />}
                     {submitting ? "Memeriksa..." : "Masuk"}
                   </button>
                 </form>
