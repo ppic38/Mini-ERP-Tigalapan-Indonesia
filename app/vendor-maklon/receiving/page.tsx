@@ -35,7 +35,7 @@ const warnaLabel = (w: string) => (w === NO_WARNA ? "Tanpa warna (umum)" : w);
 // Kolom kartu "Terima Material": Roll/Item | Code roll/Warna | Code lot | Berat | Status/Aksi (lebar tetap, rata kanan).
 // Revisi 2026-09-29: kolom Code lot dilebarkan (80px -> 140px) karena sekarang bisa jadi input teks
 // juga (owner: "buat untuk vendor produksi bisa input code lot"), bukan cuma teks read-only pendek.
-const RECEIVE_GRID = "minmax(80px,0.5fr) minmax(200px,1.6fr) minmax(140px,1fr) minmax(90px,0.5fr) minmax(120px,0.8fr) 190px";
+const RECEIVE_GRID = "minmax(80px,0.5fr) minmax(200px,1.6fr) minmax(140px,1fr) minmax(120px,0.8fr) 190px";
 const ROLL_PAGE_SIZE = 5;
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -607,8 +607,9 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
             //
             // Revisi 2026-09-23 (owner: "tidak usah dibagi jadi sub tab tipe lengan ... karena ini
             // masih penerimaan bahan ... buat halaman-halaman tabel"): tab Pendek/Panjang DIHAPUS --
-            // roll kedua lengan digabung jadi 1 list (kolom "Lengan" ditambah supaya tetap jelas
-            // asalnya), dipaginasi ROLL_PAGE_SIZE baris/halaman.
+            // roll kedua lengan digabung jadi 1 list, dipaginasi ROLL_PAGE_SIZE baris/halaman.
+            // Revisi 2026-09-29 (owner: "hapus saja yang kolom lengan di menu good receive"): kolom
+            // "Lengan" dihapus dari tabel roll (lengan tetap dipakai internal untuk key/aksi per roll).
             <div className="w-full overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
               <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">
                 Terima Material
@@ -646,7 +647,6 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                         <span>Roll</span>
                         <span>Code roll</span>
                         <span>Code lot</span>
-                        <span>Lengan</span>
                         <span className="text-right">Berat kotor (kg)</span>
                         <span className="text-right">Status</span>
                       </div>
@@ -708,7 +708,6 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                                 placeholder="Code lot"
                               />
                             )}
-                            <span className="text-[11px] text-text-muted">{r.lengan === "PENDEK" ? "Pendek" : "Panjang"}</span>
                             <span className="text-right font-mono">{formatDecimal(r.grossKg)}</span>
                             <span className="flex items-center justify-end gap-2">
                               {arrival ? (
