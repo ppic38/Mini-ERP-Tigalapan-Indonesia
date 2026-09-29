@@ -135,6 +135,11 @@ export async function requireSession(): Promise<Session> {
 
 export function requireInternalRole(session: Session, role: InternalRole): void {
   if (!session.internalRoles.includes(role)) {
+    // Sysadmin bisa MELIHAT semua halaman modul (proxy.ts) tapi bukan menjalankan transaksi modul --
+    // pesannya dibuat jelas supaya tidak dikira error sistem.
+    if (session.internalRoles.includes("sysadmin")) {
+      throw new Error(`Mode Sysadmin hanya untuk melihat & mengoreksi -- aksi ini milik modul ${role}. Untuk koreksi data pakai menu Sysadmin.`);
+    }
     throw new Error(`Forbidden: aksi ini hanya untuk modul ${role}.`);
   }
 }

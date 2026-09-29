@@ -4,7 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/shell/sidebar";
 import { Topbar } from "@/components/shell/topbar";
-import { NAV, PROFILE_HREF } from "@/lib/shell/nav";
+import { NAV, PROFILE_HREF, SYSADMIN_GROUP_ORDER, sysadminNavGroups } from "@/lib/shell/nav";
 import { useMrpStore } from "@/lib/mrp/store";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
 import { useVendorAuthStore } from "@/lib/mrp/vendor-auth-store";
@@ -88,13 +88,22 @@ export function AppShell({
   const vendorActor = useVendorAuthStore((s) => s.actor);
 
   const isGated = GATED_ROLES.includes(role as InternalRole);
-  const authorized = !isGated || unlockedRoles.includes(role as InternalRole);
+  // Revisi 2026-09-29 (owner: Sysadmin "akses ke semua modul ... sidebar bertumpuk ... tidak ingin
+  // ada conflict, login sysadmin lalu masuk procurement jangan jadi sidebar procurement saja"):
+  // MODE SYSADMIN = sesi ini punya Sysadmin terbuka DAN halaman yang dibuka adalah halaman modul
+  // internal (isGated). Di mode ini identitas shell (sidebar bertumpuk, topbar, logout, profil)
+  // SELALU milik Sysadmin, tidak peduli `role` halaman -- `role` cuma menentukan ISI halaman.
+  // Portal vendor (vendorMaklon, bukan isGated) sengaja TIDAK ikut: shell-nya tetap shell vendor.
+  const sysadminMode = isGated && unlockedRoles.includes("sysadmin");
+  const authorized = !isGated || sysadminMode || unlockedRoles.includes(role as InternalRole);
 
   useEffect(() => {
     if (mounted && isGated && !authorized) router.replace("/");
   }, [mounted, isGated, authorized, router]);
 
-  const nav = NAV[role];
+  // Identitas shell: di mode Sysadmin selalu Sysadmin (lihat komentar sysadminMode di atas).
+  const shellRole: keyof typeof NAV = sysadminMode ? "sysadmin" : role;
+  const nav = NAV[shellRole];
   const allNotifications = useMrpStore((s) => s.notifications);
   const markNotificationRead = useMrpStore((s) => s.markNotificationRead);
   const markAllNotificationsRead = useMrpStore((s) => s.markAllNotificationsRead);
@@ -141,6 +150,9 @@ export function AppShell({
   const replaceEntitas = useMrpStore((s) => s.replaceEntitas);
   useEffect(() => {
     if (role !== "procurement" && role !== "finance") return;
+    // Sysadmin hanya melihat & mengoreksi -- jangan ikut memicu import/tulis Master Data otomatis
+    // (itu tugas user Procurement/Finance sendiri saat membuka halamannya).
+    if (sysadminMode) return;
     // BUG FIX 2026-09-12 (user-reported: edit Master Data "balik lagi" ke nilai lama setelah hard
     // refresh): state awal store SEBELUM StoreHydrator selesai fetch snapshot dari Supabase
     // memang `[]` untuk hargaKain/hargaMaklon/dst (lihat lib/mrp/store.ts initialState) -- effect
@@ -173,7 +185,7 @@ export function AppShell({
         .catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role, hydrated, hargaMaklon.length, hargaKain.length, hargaKainPks.length, entitasList.length]);
+  }, [role, sysadminMode, hydrated, hargaMaklon.length, hargaKain.length, hargaKainPks.length, entitasList.length]);
 
   // Badge "PO Produksi Saya" / "PO Material Saya" = PO tujuan vendor ini yang belum pernah dilihat
   // (lib/shell/seen-po.ts). Hook dipanggil tanpa syarat (aturan hooks); nilainya cuma dipakai di
@@ -182,6 +194,9 @@ export function AppShell({
   const seenPoMaterial = useSeenPoIds(seenPoKey(vendorId, "po-material"));
   const seenInvoicePayment = useSeenPoIds(seenPoKey(vendorId, "invoice-payment"));
 
+  // Dihitung PER modul (parameter `role` di sini sengaja menimpa prop `role` di luar) supaya mode
+  // Sysadmin bisa menggabungkan badge SEMUA modul untuk sidebar bertumpuknya.
+  function computeBadges(role: keyof typeof NAV): Record<string, number> | undefined {
   let badgeOverrides: Record<string, number> | undefined;
   if (role === "finance") {
     badgeOverrides = {
@@ -249,6 +264,11 @@ export function AppShell({
       "/vendor-maklon/invoice-payment": countVendorInvoicePaymentUpdates(vendorId, vendorInvoices, seenInvoicePayment),
     };
   }
+  return badgeOverrides;
+  }
+  const badgeOverrides: Record<string, number> | undefined = sysadminMode
+    ? Object.assign({}, ...SYSADMIN_GROUP_ORDER.map((r) => computeBadges(r) ?? {}))
+    : computeBadges(role);
 
   if (!mounted || (isGated && !authorized)) return null;
 
@@ -259,7 +279,8 @@ export function AppShell({
   // Akun anggota tim modul internal (migration 0060) -- tidak ada penyaringan sidebar (akses tetap
   // seutuhnya sama dengan akun utama modul itu, cuma soal atribusi "siapa PIC-nya"), topbar cukup
   // menambahkan nama orangnya.
-  const internalActor = internalActors[role as InternalRole];
+  // shellRole (bukan role halaman): di mode Sysadmin nama/profil/logout selalu milik akun Sysadmin.
+  const internalActor = internalActors[shellRole as InternalRole];
   const topbarRole =
     role === "vendorMaklon" && vendorActor
       ? `${roleOverride ?? nav.role} · ${vendorActor.name}`
@@ -269,7 +290,13 @@ export function AppShell({
 
   return (
     <div className="flex min-h-screen bg-surface-page">
-      <Sidebar items={sidebarItems} activeHref={activeHref} badgeOverrides={badgeOverrides} />
+      <Sidebar
+        items={sidebarItems}
+        groups={sysadminMode ? sysadminNavGroups() : undefined}
+        activeGroupKey={role}
+        activeHref={activeHref}
+        badgeOverrides={badgeOverrides}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar
           role={topbarRole}
@@ -278,15 +305,19 @@ export function AppShell({
           onMarkRead={markNotificationRead}
           onMarkAllRead={() => markAllNotificationsRead(myNotifications.map((n) => n.id))}
           onDismiss={dismissNotification}
-          showNotifications={role === "vendorMaklon"}
+          // Revisi 2026-09-29 (owner: "tambahkan menu notifikasi di navbar erp untuk lihat status
+          // disitu"): lonceng sekarang tampil di SEMUA modul internal (bukan cuma vendor produksi),
+          // termasuk pemberitahuan koreksi dari Sysadmin. Mode Sysadmin sendiri tidak menampilkan
+          // lonceng -- tidak ada notifikasi yang ditujukan ke Sysadmin (jejaknya ada di Log Audit).
+          showNotifications={role === "vendorMaklon" || (isGated && !sysadminMode)}
           // Revisi 2026-09-29 (owner: "profil saya jangan begini. tapi buat halaman penuh ...
           // bukan pop up") -- navigasi ke halaman penuh per modul (PROFILE_HREF, lib/shell/nav.ts),
           // BUKAN modal lagi. Hanya ditampilkan kalau login lewat akun bernama (internalActor ada).
-          onOpenProfile={isGated && internalActor && PROFILE_HREF[role as InternalRole] ? () => router.push(PROFILE_HREF[role as InternalRole]!) : undefined}
+          onOpenProfile={isGated && internalActor && PROFILE_HREF[shellRole as InternalRole] ? () => router.push(PROFILE_HREF[shellRole as InternalRole]!) : undefined}
           onLogout={
             isGated
               ? () => {
-                  logoutInternal(role as InternalRole);
+                  logoutInternal(shellRole as InternalRole);
                   router.push("/");
                 }
               : role === "vendorMaklon"
@@ -297,6 +328,11 @@ export function AppShell({
                 : undefined
           }
         />
+        {sysadminMode && role !== "sysadmin" && (
+          <div className="border-b border-border-subtle bg-warning-bg px-[22px] py-2 font-sans text-[11.5px] text-warning-fg">
+            <span className="font-semibold">Mode Sysadmin</span> — Anda sedang melihat halaman {NAV[role].role}. Hanya melihat &amp; mengoreksi; aksi transaksi normal modul ini tidak tersedia.
+          </div>
+        )}
         <div className="flex items-center gap-2 px-[22px] pt-3.5 font-sans text-xs text-[#94A3B0]">
           {breadcrumb.map((crumb, i) => (
             <span key={i} className={i === breadcrumb.length - 1 ? "font-medium text-[#31414F]" : undefined}>

@@ -62,6 +62,12 @@ export async function proxy(request: NextRequest) {
   if (match) {
     const [, requiredRole] = match;
     if (session.internalRoles.includes(requiredRole)) return NextResponse.next();
+    // Revisi 2026-09-29 (owner: sysadmin "bisa melihat dan mengoreksi" di semua modul): Sysadmin
+    // boleh MEMBUKA halaman modul internal mana pun (sidebar bertumpuk, lihat AppShell). Ini HANYA
+    // akses lihat -- Server Action transaksi tiap modul tetap memakai requireInternalRole(role) yang
+    // TIDAK meloloskan Sysadmin, jadi tombol transaksi normal (approve, kirim PO, dst) ditolak server.
+    // Koreksi dilakukan lewat action khusus di lib/mrp/sysadminActions.ts (wajib alasan + audit log).
+    if (session.internalRoles.includes("sysadmin")) return NextResponse.next();
     return NextResponse.redirect(new URL("/", request.url));
   }
 

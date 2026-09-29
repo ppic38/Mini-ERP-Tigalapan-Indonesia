@@ -143,6 +143,18 @@ export const NAV: Record<RoleKey, RoleNav> = {
   },
 };
 
+/** Revisi 2026-09-29 (owner: Sysadmin "punya akses ke semua modul ... sidebar seperti modul-modul
+ *  lain tapi di-stack, ada PPIC dan isi menunya, Procurement, dst"): urutan grup sidebar Sysadmin.
+ *  Isi tiap grup DIAMBIL dari NAV[role].items di atas (bukan salinan), jadi menu baru/berubah di
+ *  sebuah modul otomatis ikut. Sysadmin sengaja terakhir (sesuai mockup yang disetujui owner). */
+export const SYSADMIN_GROUP_ORDER: RoleKey[] = ["ppic", "procurement", "finance", "scm", "gm", "produksi", "warehouse", "sysadmin"];
+
+export type NavGroup = { key: RoleKey; label: string; items: NavItem[] };
+
+export function sysadminNavGroups(): NavGroup[] {
+  return SYSADMIN_GROUP_ORDER.map((key) => ({ key, label: NAV[key].role, items: NAV[key].items }));
+}
+
 /** Revisi 2026-09-29 (owner: "profil saya jangan begini. tapi buat halaman penuh seperti halaman
  *  menu kalau dibuka. bukan pop up") -- "Profil Saya" (components/shell/profil-saya-page.tsx)
  *  BUKAN modal lagi, tapi halaman penuh per modul (sama seperti halaman lain lewat AppShell), jadi

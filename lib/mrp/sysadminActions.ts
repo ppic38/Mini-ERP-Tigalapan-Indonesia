@@ -6,6 +6,7 @@ import { supabaseServer } from "../supabase/server";
 import type { ActionResult } from "./action-result";
 import { INTERNAL_ACCOUNTS, type InternalRole } from "../internal-auth";
 import { nextReadableId } from "./repo/ids";
+import type { NotificationAudience } from "./types";
 
 /** Bungkus aksi supaya alasan gagalnya sampai ke user di production (sama pola dengan lib/mrp/actions.ts). */
 async function toActionResult<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
@@ -32,6 +33,22 @@ async function writeAuditLog(action: string, targetType: string, targetId: strin
   const id = await nextReadableId("AUD");
   const { error } = await db.from("sysadmin_audit_log").insert({ id, action, target_type: targetType, target_id: targetId, reason, before: before ?? null, after: after ?? null });
   if (error) throw new Error(`Aksi berhasil tapi gagal menulis log audit: ${error.message}`);
+}
+
+/** Revisi 2026-09-29 (owner: "modul yang diubah atau dimodif oleh sysadmin pemberitahuannya
+ *  dimasukkan ke menu notifikasi navbar"): beri tahu modul/vendor yang datanya baru saja dikoreksi
+ *  Sysadmin -- muncul di lonceng Notifikasi navbar (tabel `notifications`, sama seperti notifikasi
+ *  alur biasa). BEST-EFFORT: koreksinya sudah tersimpan dan tercatat di log audit, jadi gagal
+ *  menulis notifikasi TIDAK boleh menggagalkan/menutupi aksi yang sudah terjadi. */
+async function notifyAffected(text: string, audience: NotificationAudience[], vendorId?: string): Promise<void> {
+  try {
+    const id = await nextReadableId("NTF");
+    const d = new Date();
+    const time = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    await supabaseServer().from("notifications").insert({ id, text, time, audience, vendor_id: vendorId ?? null, read: false });
+  } catch {
+    // diabaikan dengan sengaja -- lihat catatan di atas.
+  }
 }
 
 // =========================================================================
@@ -297,6 +314,11 @@ export async function sysadminCancelMaterialPoAction(poId: string, reason: strin
       { status: po.status, approved: po.approved, invoicedRolls: po.invoiced_rolls },
       { status: "CANCELLED" }
     );
+    await notifyAffected(`PO Material ${poId} (${po.mrp_id}) dibatalkan Sysadmin — alasan: ${reason.trim()}.`, ["procurement", "finance"]);
+    // Vendor produksi tujuan baru relevan kalau PO-nya sudah approved (sebelumnya belum tampil di "PO Material Saya").
+    if (po.approved && po.vendor_produksi) {
+      await notifyAffected(`PO Material ${poId} (${po.mrp_id}) dibatalkan Sysadmin — alasan: ${reason.trim()}.`, ["vendorMaklon"], po.vendor_produksi);
+    }
     // Catatan penting (didokumentasikan ke user, bukan cuma komentar): aksi ini HANYA menandai PO
     // sebagai dibatalkan (dikeluarkan dari daftar aktif/approval/Finance) -- roll/invoice bahan yang
     // SUDAH tercatat (raw_material_invoices dkk, kalau po.invoiced_rolls > 0) TIDAK ikut dibatalkan/
@@ -321,6 +343,10 @@ export async function sysadminCancelMaklonPoAction(poId: string, reason: string)
     const { error } = await db.from("maklon_pos").update({ closed_at: new Date().toISOString().slice(0, 10), close_reason: `[SYSADMIN] ${reason.trim()}` }).eq("id", poId);
     if (error) throw new Error(error.message);
     await writeAuditLog("CANCEL_MAKLON_PO", "maklon_pos", poId, reason.trim(), { status: po.status, approved: po.approved, closedAt: po.closed_at }, { closedAt: "now" });
+    await notifyAffected(`PO Produksi ${poId} (${po.mrp_id}) dibatalkan Sysadmin — alasan: ${reason.trim()}.`, ["procurement", "finance"]);
+    if (po.approved && po.vendor_produksi) {
+      await notifyAffected(`PO Produksi ${poId} (${po.mrp_id}) dibatalkan Sysadmin — alasan: ${reason.trim()}. Tidak ada lagi produksi/pengiriman baru untuk PO ini.`, ["vendorMaklon"], po.vendor_produksi);
+    }
   });
 }
 
@@ -420,7 +446,7 @@ export async function sysadminRevertInvoiceDeliveryAction(invoiceIds: string[], 
     if (!reason.trim()) throw new Error("Alasan wajib diisi.");
     if (invoiceIds.length === 0) throw new Error("Pilih minimal 1 batch.");
     const db = supabaseServer();
-    const { data: rows, error } = await db.from("raw_material_invoices").select("id,status,delivered_at,po_id").in("id", invoiceIds);
+    const { data: rows, error } = await db.from("raw_material_invoices").select("id,status,delivered_at,po_id,mrp_id,destination_vendor").in("id", invoiceIds);
     if (error) throw new Error(error.message);
     let reverted = 0;
     let skipped = 0;
@@ -432,6 +458,10 @@ export async function sysadminRevertInvoiceDeliveryAction(invoiceIds: string[], 
       const { error: updErr } = await db.from("raw_material_invoices").update({ status: "PAID", delivered_at: null }).eq("id", r.id);
       if (updErr) throw new Error(`Gagal mengembalikan ${r.id}: ${updErr.message}`);
       await writeAuditLog("REVERT_INVOICE_DELIVERY", "raw_material_invoices", r.id, reason.trim(), { status: r.status, deliveredAt: r.delivered_at }, { status: "PAID", deliveredAt: null });
+      await notifyAffected(`Status Delivery batch ${r.id} (PO ${r.po_id}, ${r.mrp_id}) dikembalikan ke Paid oleh Sysadmin — alasan: ${reason.trim()}. Silakan set Delivery ulang bila sudah benar.`, ["procurement"]);
+      if (r.destination_vendor) {
+        await notifyAffected(`Batch material ${r.id} (PO ${r.po_id}) belum jadi dikirim — status Delivery dibatalkan Sysadmin (alasan: ${reason.trim()}). Batch hilang dari Good Receive sampai dikirim ulang.`, ["vendorMaklon"], r.destination_vendor);
+      }
       reverted++;
     }
     return { reverted, skipped };
@@ -528,6 +558,10 @@ export async function sysadminRecallMaterialPoAction(poId: string, reason: strin
     // MRP ini otomatis men-set po_sent=true lagi begitu tidak ada sisa (logika yang sudah ada).
     await db.from("mrp").update({ po_sent: false }).eq("id", po.mrp_id);
     await writeAuditLog("RECALL_MATERIAL_PO", "material_pos", po.id, reason.trim(), { status: po.status, invoicedRolls: po.invoiced_rolls }, { status: "CANCELLED", rowsReleased });
+    await notifyAffected(
+      `PO Material ${po.id} (${po.mrp_id}) ditarik kembali oleh Sysadmin — alasan: ${reason.trim()}. ${rowsReleased} baris material dilepas dan muncul lagi di "MRP tanpa PO"; silakan kirim ulang.`,
+      ["procurement", "finance"]
+    );
     return { rowsReleased };
   });
 }
@@ -584,7 +618,7 @@ export async function sysadminRevertPoApprovalStepAction(type: SysadminApprovalP
     if (!reason.trim()) throw new Error("Alasan wajib diisi.");
     const db = supabaseServer();
     const table = APPROVAL_PO_TABLE[type];
-    const { data: po, error } = await db.from(table).select("id,approved,approval_level,approval_log").eq("id", poId.trim()).maybeSingle();
+    const { data: po, error } = await db.from(table).select("id,mrp_id,approved,approval_level,approval_log").eq("id", poId.trim()).maybeSingle();
     if (error) throw new Error(error.message);
     if (!po) throw new Error("PO tidak ditemukan.");
     if (po.approved) throw new Error("PO ini sudah FINAL disetujui (approved) -- tidak bisa di-revert dari sini (bisa sudah memicu efek lain, mis. split entitas / notifikasi vendor).");
@@ -597,5 +631,13 @@ export async function sysadminRevertPoApprovalStepAction(type: SysadminApprovalP
     const { error: updErr } = await db.from(table).update({ approval_log: nextLog }).eq("id", po.id);
     if (updErr) throw new Error(updErr.message);
     await writeAuditLog(`REVERT_${type}_PO_APPROVAL_STEP`, table, po.id, reason.trim(), { approvalLog: log }, { approvalLog: nextLog, removedStep: last });
+    // Penerima: modul yang persetujuannya dibatalkan + Procurement (pemilik PO). Peran di approval_log
+    // hanya procurement/finance/scm/gm (ApprovalRole) -- di luar itu dilewati.
+    const affected = new Set<NotificationAudience>(["procurement"]);
+    if (last.role === "procurement" || last.role === "finance" || last.role === "scm" || last.role === "gm") affected.add(last.role);
+    await notifyAffected(
+      `Approval PO ${po.id} (${po.mrp_id}) dikembalikan satu langkah oleh Sysadmin (persetujuan ${last.role} dibatalkan) — alasan: ${reason.trim()}. PO kembali menunggu approval.`,
+      Array.from(affected)
+    );
   });
 }

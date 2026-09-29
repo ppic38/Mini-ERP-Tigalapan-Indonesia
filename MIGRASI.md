@@ -1,5 +1,28 @@
 # Migrasi Project — Status & Riwayat
 
+## Sysadmin: sidebar bertumpuk + lihat semua modul + notifikasi koreksi (2026-09-29, tanpa migration baru)
+Owner: Sysadmin "punya akses ke semua modul ... sidebar seperti modul lain tapi di-stack ... hanya bisa
+melihat dan mengoreksi ... jangan ada conflict sidebar jadi procurement saja saat masuk modul".
+- **Mode Sysadmin** (`components/shell/app-shell.tsx`, `sysadminMode`): aktif kalau sesi punya Sysadmin
+  terbuka DAN halaman yang dibuka halaman modul internal. Identitas shell (sidebar bertumpuk, topbar,
+  Profil Saya, Logout) SELALU Sysadmin, apa pun `role` halaman -- `role` hanya menentukan ISI halaman.
+  Logout di mode ini hanya mengeluarkan Sysadmin. Portal vendor produksi TIDAK ikut (shell-nya tetap
+  shell vendor); melihat portal vendor dari Sysadmin butuh pemilih vendor -- belum dikerjakan.
+- **Akses lihat saja**: `proxy.ts` meloloskan Sysadmin ke semua route modul internal, TAPI Server Action
+  transaksi tetap `requireInternalRole(role)` -> ditolak (pesan jelas di `lib/auth/session.ts`). Tiga
+  getter foto/bukti (bukti bayar, foto ekspedisi, foto klaim) ikut mengizinkan Sysadmin (baca saja).
+  Auto-import Master Data di AppShell dilewati di mode Sysadmin (tidak menulis apa pun).
+- **Sidebar bertumpuk**: `sysadminNavGroups()` (`lib/shell/nav.ts`) mengambil menu dari `NAV[role]` tiap
+  modul (bukan salinan) -- menu baru otomatis ikut. Grup yang memuat halaman aktif selalu terbuka; grup
+  lain ingat pilihan user (localStorage `sidebar-open-groups-v1`). Badge = gabungan semua modul.
+- **Notifikasi**: lonceng navbar sekarang tampil di semua modul internal (dulu hanya vendor produksi).
+  Aksi koreksi Sysadmin yang sudah ada (batalkan PO Material/Produksi, tarik PO Material, mundurkan
+  approval, batalkan Delivery invoice) menulis notifikasi ke modul/vendor terdampak
+  (`notifyAffected`, `lib/mrp/sysadminActions.ts`, best-effort -- gagal notifikasi tidak menggagalkan
+  koreksi). Mode Sysadmin tidak menampilkan lonceng (tidak ada notifikasi yang ditujukan ke Sysadmin).
+- Catatan: satu browser yang membuka Sysadmin DAN modul lain sekaligus akan selalu tampil sebagai
+  Sysadmin di halaman modul internal (cookie sesi dipakai bersama).
+
 ## Multi-user per modul internal + atribusi approval -- migration 0060 (2026-09-29)
 `supabase/migrations/0060_internal_role_users.sql`: tabel `internal_role_users` (akun anggota tim
 per modul internal -- PPIC/Procurement/Finance/SCM/GM/Produksi/Warehouse/Sysadmin, username unik

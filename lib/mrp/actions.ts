@@ -1456,7 +1456,8 @@ export async function getInvoicePaymentProofAction(invoiceId: string): Promise<{
     const { data: inv } = await supabaseServer().from("raw_material_invoices").select("destination_vendor").eq("id", invoiceId).maybeSingle();
     if (inv?.destination_vendor !== session.vendorId) throw new Error("Forbidden: invoice ini bukan milik vendor Anda.");
   } else {
-    requireAnyInternalRole(session, ["finance", "procurement"]);
+    // "sysadmin" ikut (baca-saja, sidebar bertumpuk Sysadmin melihat halaman Finance/Procurement).
+    requireAnyInternalRole(session, ["finance", "procurement", "sysadmin"]);
   }
   const db = supabaseServer();
   const { data } = await db.from("invoice_payment_proofs").select("data_url,file_name").eq("invoice_id", invoiceId).maybeSingle();
@@ -2034,7 +2035,8 @@ export async function confirmRollWeighAction(
  *  re-download di setiap refresh snapshot. Dipanggil LANGSUNG dari halaman Klaim Material
  *  (bukan lewat store/snapshot) cuma saat user klik "Lihat / Download". */
 export async function getMaterialClaimPhotoAction(claimKey: string): Promise<{ dataUrl: string; fileName?: string } | null> {
-  await requireInternalRole(await requireSession(), "procurement");
+  // Baca-saja: Sysadmin ikut boleh (lihat halaman Klaim Material lewat sidebar bertumpuk).
+  requireAnyInternalRole(await requireSession(), ["procurement", "sysadmin"]);
   const db = supabaseServer();
   const { data } = await db.from("material_claim_photos").select("data_url,file_name").eq("claim_key", claimKey).maybeSingle();
   if (!data) return null;
@@ -4523,7 +4525,7 @@ export async function getDeliveryKoliEkspedisiPhotoAction(koliId: string): Promi
     const { data: koli } = await supabaseServer().from("delivery_kolis").select("vendor_produksi").eq("id", koliId).maybeSingle();
     if (koli?.vendor_produksi !== session.vendorId) throw new Error("Forbidden: koli ini bukan milik vendor Anda.");
   } else {
-    requireAnyInternalRole(session, ["procurement", "finance"]);
+    requireAnyInternalRole(session, ["procurement", "finance", "sysadmin"]);
   }
   const db = supabaseServer();
   const { data } = await db.from("delivery_koli_ekspedisi_photos").select("data_url,file_name").eq("delivery_koli_id", koliId).maybeSingle();
