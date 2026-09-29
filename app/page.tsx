@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ClipboardList, Package, Wallet, Building2, Lock, X, ShieldCheck, Factory, Eye, EyeOff, Warehouse, Crown, ShieldAlert } from "lucide-react";
+import { ClipboardList, Package, Wallet, Building2, Lock, X, ShieldCheck, Factory, Eye, EyeOff, Warehouse, Crown, ShieldAlert, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
 import { INTERNAL_ACCOUNTS, type InternalRole } from "@/lib/internal-auth";
@@ -26,10 +26,17 @@ export default function ModuleSelectPage() {
   useEffect(() => setMounted(true), []);
 
   const login = useInternalAuthStore((s) => s.login);
+  const loginUser = useInternalAuthStore((s) => s.loginUser);
   const logoutVendor = useVendorAuthStore((s) => s.logout);
   const router = useRouter();
 
   const [selectedRole, setSelectedRole] = useState<InternalRole | null>(null);
+  // Revisi 2026-09-29 (migration 0060, owner: "procurement ternyata ada dua orang, fulan dan
+  // fulin ... biar tau siapa PIC-nya") -- toggle "Akun Utama" (password bersama, seperti
+  // sebelumnya) vs "Anggota Tim" (username per orang, dibuatkan Sysadmin dari "Akun & Password") --
+  // pola PERSIS toggle yang sama di halaman login vendor produksi (app/vendor-maklon/login).
+  const [mode, setMode] = useState<"main" | "team">("main");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
@@ -39,8 +46,17 @@ export default function ModuleSelectPage() {
 
   function pickRole(role: InternalRole) {
     setSelectedRole(role);
+    setMode("main");
+    setUsername("");
     setPassword("");
     setShowPassword(false);
+    setError("");
+  }
+
+  function switchMode(next: "main" | "team") {
+    setMode(next);
+    setUsername("");
+    setPassword("");
     setError("");
   }
 
@@ -57,12 +73,12 @@ export default function ModuleSelectPage() {
     const account = INTERNAL_ACCOUNTS.find((a) => a.role === selectedRole)!;
     setError("");
     setSubmitting(true);
-    const ok = await login(selectedRole, password);
+    const ok = mode === "main" ? await login(selectedRole, password) : await loginUser(selectedRole, username, password);
     setSubmitting(false);
     if (ok) {
       router.push(account.homeHref);
     } else {
-      setError("Password salah.");
+      setError(mode === "main" ? "Password salah." : "Username atau password salah.");
     }
   }
 
@@ -160,7 +176,35 @@ export default function ModuleSelectPage() {
                     <X size={16} />
                   </button>
                 </div>
+                <div className="flex gap-1 border-b border-border-subtle px-4 pb-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => switchMode("main")}
+                    className={cn("flex-1 rounded-md py-1.5 font-sans text-[10.5px] font-semibold transition-colors", mode === "main" ? "bg-action-primary text-white" : "text-text-muted")}
+                  >
+                    Akun Utama
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => switchMode("team")}
+                    className={cn("flex-1 rounded-md py-1.5 font-sans text-[10.5px] font-semibold transition-colors", mode === "team" ? "bg-action-primary text-white" : "text-text-muted")}
+                  >
+                    Anggota Tim
+                  </button>
+                </div>
                 <form onSubmit={handleSubmit} className="flex flex-col gap-2.5 px-4 py-3.5">
+                  {mode === "team" && (
+                    <div>
+                      <div className="font-sans text-[9.5px] font-medium uppercase tracking-wider text-text-muted">Username</div>
+                      <input
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        className="input mt-1 !py-1.5 !text-[11.5px]"
+                        autoFocus
+                        placeholder="mis. budi.procurement"
+                      />
+                    </div>
+                  )}
                   <div>
                     <div className="flex items-center gap-1 font-sans text-[9.5px] font-medium uppercase tracking-wider text-text-muted">
                       <Lock size={10} />
@@ -172,7 +216,7 @@ export default function ModuleSelectPage() {
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         className="input !py-1.5 !pr-8 !text-[11.5px]"
-                        autoFocus
+                        autoFocus={mode === "main"}
                         placeholder="••••••••"
                       />
                       <button
@@ -190,8 +234,9 @@ export default function ModuleSelectPage() {
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="rounded-md bg-action-primary px-3 py-[7px] font-sans text-[11.5px] font-semibold text-white disabled:opacity-60"
+                    className="flex items-center justify-center gap-1.5 rounded-md bg-action-primary px-3 py-[7px] font-sans text-[11.5px] font-semibold text-white disabled:opacity-60"
                   >
+                    {mode === "team" && <Users size={12} />}
                     {submitting ? "Memeriksa..." : "Masuk"}
                   </button>
                 </form>

@@ -128,6 +128,10 @@ function ItemDetail({ item }: { item: Item }) {
             {item.state.cycle.map((e, i) => (
               <li key={i}>
                 <span className={e.action === "APPROVED" ? "text-success-fg" : "font-semibold text-danger-fg"}>{e.action === "APPROVED" ? "✓" : "✕"}</span> {APPROVAL_STEP_LABEL[e.step] ?? `Langkah ${e.step}`} — {APPROVAL_ROLE_LABEL[e.role]}
+                {/* Item revisi 2026-09-29 (migration 0060, owner: "biar tau siapa PIC-nya") --
+                   nama orang yang klik, kalau ada (entri lama sebelum revisi ini tidak punya field
+                   ini sama sekali, jadi cukup disembunyikan, bukan tampil "undefined"). */}
+                {e.actorName && <span className="font-medium text-text-primary"> ({e.actorName})</span>}
                 <span className="text-text-muted"> · {fmtTime(e.at)}</span>
                 {e.note && <span className="text-text-muted"> · “{e.note}”</span>}
               </li>

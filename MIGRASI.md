@@ -1,5 +1,40 @@
 # Migrasi Project — Status & Riwayat
 
+## Multi-user per modul internal + atribusi approval -- migration 0060 (2026-09-29)
+`supabase/migrations/0060_internal_role_users.sql`: tabel `internal_role_users` (akun anggota tim
+per modul internal -- PPIC/Procurement/Finance/SCM/GM/Produksi/Warehouse/Sysadmin, username unik
+se-aplikasi, TIDAK ada picker halaman -- akses selalu PENUH ke role itu, sama seperti akun utama;
+BEDA dari vendor_users yang punya allowed_pages) + `internal_action_log` (jejak "siapa klik apa",
+pola sama vendor_action_log). Owner: "procurement ternyata ada dua orang, fulan dan fulin ... biar
+tau siapa PIC-nya" -- pola PERSIS migration 0057 (vendor_users), diterapkan ke SEMUA modul internal
+sekaligus, bukan cuma satu.
+
+Login: toggle "Akun Utama"/"Anggota Tim" di modal login modul internal (app/page.tsx, sama seperti
+halaman login vendor) -- `loginInternalUserAction` (lib/auth/actions.ts). Sesi cookie internal
+sekarang bawa `internalActors` per-role (lib/auth/session.ts, `InternalActor`) -- role yang login
+lewat akun utama TIDAK punya entri di situ (fallback ke label modul, mis. "Procurement").
+
+Atribusi: `PoApprovalEntry.actorName` (lib/mrp/poApproval.ts, field opsional -- entri lama sebelum
+migration ini TIDAK punya field ini, jsonb jadi tidak perlu migrasi data) diisi lewat
+`requireInternalRoleWithActor`/`recordApprovalStep` di SEMUA jalur approve PO Material & PO Maklon
+(approvePoStepAction/rejectPoStepAction, approveMaterialPoAction, approveMaklonPoAction,
+approveAllMaterialPosAction, approveVendorMaterialPosAction, approveMaterialPosByIdsAction) --
+ditampilkan di "Riwayat approval" (components/mrp/po-approval-queue.tsx). Titik aksi LAIN (bukan
+approval PO) belum ikut mencatat ke `internal_action_log` -- bisa menyusul tanpa migration baru
+kalau dibutuhkan (helper `logInternalAction` sudah ada, lib/mrp/actions.ts).
+
+Kelola akun: Sysadmin "Akun & Password" (app/sysadmin/accounts/page.tsx), bagian "Anggota Tim Modul
+Internal" -- SATU-SATUNYA jalur (beda dari vendor_users yang dikelola sehari-hari vendor sendiri
+lewat "Tim Saya", Sysadmin cuma jalur darurat) karena modul internal tidak punya portal
+self-service. Semua mutasi (tambah/edit/reset password/hapus) WAJIB alasan, tercatat ke
+`sysadmin_audit_log` seperti mutasi Sysadmin lain.
+
+**Owner menjalankan migration manual di SQL Editor Supabase.** Kode aman kalau migration belum
+jalan: login akun utama semua modul TIDAK berubah sama sekali; login "Anggota Tim" & bagian
+"Anggota Tim Modul Internal" di Sysadmin baru bisa dipakai setelah tabelnya ada (sebelum itu,
+listInternalRoleUsersAction gagal dengan pesan error yang ditangkap normal, TIDAK meng-crash
+halaman Akun & Password -- bagian lain di halaman itu tetap tampil).
+
 ## Sub-izin Produksi + picker izin baru (2026-09-28, tanpa migration baru)
 Izin akun tim vendor (migration 0057) sekarang bisa dipecah SAMPAI KE TAB dalam modul "Produksi"
 (Cutting, Finish Good, Reject, Rework, Final Produksi) -- bukan cuma "boleh/tidak" 1 halaman utuh.

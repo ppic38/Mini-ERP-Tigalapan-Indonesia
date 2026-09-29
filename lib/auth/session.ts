@@ -29,7 +29,14 @@ const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
  *  (jarang terjadi, tapi tidak dianggap "akses penuh" seperti akun utama). */
 export type VendorActor = { vendorUserId: string; username: string; name: string; allowedPages: string[] };
 
-export type Session = { internalRoles: InternalRole[]; vendorId: string | null; vendorActor: VendorActor | null };
+/** Identitas anggota tim modul internal (owner 2026-09-29, migration 0060) -- HANYA ada untuk role
+ *  yang login-nya lewat akun sub-user (internal_role_users), bukan akun utama modul (password
+ *  bersama). Satu cookie sesi internal bisa punya BEBERAPA role aktif sekaligus (lihat catatan di
+ *  atas), jadi actor disimpan per-role (array), BUKAN satu field tunggal -- role yang login lewat
+ *  akun utama tidak punya entri di sini sama sekali. */
+export type InternalActor = { internalUserId: string; username: string; name: string; role: InternalRole };
+
+export type Session = { internalRoles: InternalRole[]; internalActors: InternalActor[]; vendorId: string | null; vendorActor: VendorActor | null };
 
 /** Interface minimal yang dipenuhi baik `next/headers` cookies() (Server Action/Component)
  *  MAUPUN `NextRequest.cookies` (proxy.ts) -- supaya readSession() bisa dipakai dari keduanya. */
@@ -45,8 +52,8 @@ async function signToken(payload: Record<string, unknown>): Promise<string> {
   return new SignJWT(payload).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime(`${SESSION_TTL_SECONDS}s`).sign(secretKey());
 }
 
-export async function createInternalSessionToken(roles: InternalRole[]): Promise<string> {
-  return signToken({ kind: "internal", roles });
+export async function createInternalSessionToken(roles: InternalRole[], actors: InternalActor[] = []): Promise<string> {
+  return signToken({ kind: "internal", roles, actors });
 }
 
 /** `actor` diisi HANYA untuk login sub-user (loginVendorUserAction) -- login akun utama vendor
@@ -55,16 +62,25 @@ export async function createVendorSessionToken(vendorId: string, actor?: VendorA
   return signToken({ kind: "vendor", vendorId, actor: actor ?? null });
 }
 
-async function verifyInternalToken(token: string | undefined): Promise<InternalRole[]> {
-  if (!token) return [];
+function parseInternalActor(raw: unknown): InternalActor | null {
+  if (!raw || typeof raw !== "object") return null;
+  const a = raw as Record<string, unknown>;
+  if (typeof a.internalUserId !== "string" || typeof a.username !== "string" || typeof a.name !== "string" || typeof a.role !== "string") return null;
+  return { internalUserId: a.internalUserId, username: a.username, name: a.name, role: a.role as InternalRole };
+}
+
+async function verifyInternalToken(token: string | undefined): Promise<{ roles: InternalRole[]; actors: InternalActor[] }> {
+  if (!token) return { roles: [], actors: [] };
   try {
     const { payload } = await jwtVerify(token, secretKey());
     if (payload.kind === "internal" && Array.isArray(payload.roles)) {
-      return (payload.roles as unknown[]).filter((r): r is InternalRole => typeof r === "string");
+      const roles = (payload.roles as unknown[]).filter((r): r is InternalRole => typeof r === "string");
+      const actors = Array.isArray(payload.actors) ? (payload.actors as unknown[]).map(parseInternalActor).filter((a): a is InternalActor => a !== null) : [];
+      return { roles, actors };
     }
-    return [];
+    return { roles: [], actors: [] };
   } catch {
-    return [];
+    return { roles: [], actors: [] };
   }
 }
 
@@ -90,11 +106,18 @@ async function verifyVendorToken(token: string | undefined): Promise<{ vendorId:
  *  proxy.ts (lewat NextRequest.cookies) DAN dari requireSession() di bawah (lewat next/headers
  *  cookies()) -- satu sumber kebenaran untuk cara membaca sesi, tidak duplikat logic. */
 export async function readSession(cookieStore: ReadableCookies): Promise<Session> {
-  const [internalRoles, vendor] = await Promise.all([
+  const [internal, vendor] = await Promise.all([
     verifyInternalToken(cookieStore.get(INTERNAL_SESSION_COOKIE)?.value),
     verifyVendorToken(cookieStore.get(VENDOR_SESSION_COOKIE)?.value),
   ]);
-  return { internalRoles, vendorId: vendor?.vendorId ?? null, vendorActor: vendor?.vendorActor ?? null };
+  return { internalRoles: internal.roles, internalActors: internal.actors, vendorId: vendor?.vendorId ?? null, vendorActor: vendor?.vendorActor ?? null };
+}
+
+/** Cari actor (nama anggota tim) untuk 1 role tertentu -- `null` kalau role itu login lewat akun
+ *  utama (password bersama), bukan akun sub-user. Dipakai action yang ingin mencatat "siapa
+ *  klik" ke internal_action_log (lihat requireInternalRoleWithActor di lib/mrp/actions.ts). */
+export function internalActorForRole(session: Session, role: InternalRole): InternalActor | null {
+  return session.internalActors.find((a) => a.role === role) ?? null;
 }
 
 /** Dipakai dari DALAM setiap Server Action yang memutasi data (lib/mrp/actions.ts, dst.) --

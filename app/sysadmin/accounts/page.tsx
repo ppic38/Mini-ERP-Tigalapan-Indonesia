@@ -6,18 +6,25 @@ import { Button } from "@/components/ui/button";
 import {
   listAllVendorTeamMembersAction,
   listInternalAccountsAction,
+  listInternalRoleUsersAction,
   listVendorAccountsAction,
   resetVendorPasswordAction,
   setInternalAccountPasswordAction,
+  sysadminAddInternalRoleUserAction,
+  sysadminDeleteInternalRoleUserAction,
   sysadminDeleteVendorTeamMemberAction,
+  sysadminResetInternalRoleUserPasswordAction,
   sysadminResetVendorTeamMemberPasswordAction,
+  sysadminUpdateInternalRoleUserAction,
   sysadminUpdateVendorTeamMemberAction,
   type InternalAccountRow,
+  type InternalRoleUserRow,
   type VendorAccountRow,
   type VendorTeamMemberOverviewRow,
 } from "@/lib/mrp/sysadminActions";
 import { describeVendorPermissions } from "@/lib/mrp/vendorPages";
 import { VendorPermissionPicker } from "@/components/mrp/vendor-permission-picker";
+import { INTERNAL_ACCOUNTS, type InternalRole } from "@/lib/internal-auth";
 
 function fmtTime(iso?: string): string {
   if (!iso) return "—";
@@ -164,6 +171,126 @@ function ReasonModal({ title, danger, onConfirm, onClose }: { title: string; dan
   );
 }
 
+/** Tambah anggota tim modul internal (migration 0060) -- beda dari AddMemberModal vendor di atas:
+ *  ada pemilih MODUL (role), TIDAK ada picker halaman (akses selalu penuh ke role itu, sama seperti
+ *  akun utama -- lihat catatan panjang di lib/mrp/sysadminActions.ts). Alasan WAJIB, sama seperti
+ *  semua mutasi Sysadmin lain di halaman ini (tidak ada portal self-service utk modul internal,
+ *  jadi setiap penambahan akun juga masuk log audit, bukan cuma edit/hapus/reset password). */
+function AddInternalRoleUserModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const [role, setRole] = useState<InternalRole>(INTERNAL_ACCOUNTS[0].role);
+  const [username, setUsername] = useState("");
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSave() {
+    if (!reason.trim()) return setError("Alasan wajib diisi.");
+    setSaving(true);
+    setError(null);
+    const res = await sysadminAddInternalRoleUserAction({ role, username, name, password }, reason.trim());
+    setSaving(false);
+    if (!res.ok) return setError(res.error);
+    onDone();
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={onClose}>
+      <div className="w-full max-w-[480px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
+        <div className="border-b border-border-subtle px-5 py-3.5 font-sans text-[13px] font-semibold text-text-primary">Tambah Anggota Tim Modul Internal</div>
+        <div className="flex flex-col gap-3 px-5 py-4">
+          <div>
+            <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Modul</div>
+            <select value={role} onChange={(e) => setRole(e.target.value as InternalRole)} className="input w-full">
+              {INTERNAL_ACCOUNTS.map((a) => (
+                <option key={a.role} value={a.role}>
+                  {a.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Username (unik, tanpa spasi)</div>
+            <input value={username} onChange={(e) => setUsername(e.target.value)} className="input w-full font-mono" placeholder="mis. budi.procurement" autoFocus />
+          </div>
+          <div>
+            <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Nama</div>
+            <input value={name} onChange={(e) => setName(e.target.value)} className="input w-full" placeholder="mis. Budi Santoso" />
+          </div>
+          <div>
+            <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Password (min. 6 karakter)</div>
+            <input value={password} onChange={(e) => setPassword(e.target.value)} className="input w-full font-mono" />
+          </div>
+          <div>
+            <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Alasan (wajib, tercatat ke log audit)</div>
+            <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} className="input w-full" placeholder="mis. PIC baru di modul ini" />
+          </div>
+          {error && <div className="rounded-md border border-danger bg-danger-bg px-3 py-2 font-sans text-[11.5px] text-danger-fg">{error}</div>}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-border-subtle px-5 py-3.5">
+          <button onClick={onClose} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary">
+            Batal
+          </button>
+          <Button onClick={handleSave} disabled={saving} variant="primary" size="sm">
+            {saving ? "Menyimpan…" : "Tambah"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Edit nama anggota tim modul internal -- reset password & nonaktifkan/hapus dilakukan lewat
+ *  modal terpisah (PasswordModal/ReasonModal, sudah ada di file ini), sama pola EditTeamMemberModal
+ *  vendor di atas TAPI tanpa picker halaman (lihat catatan AddInternalRoleUserModal). */
+function EditInternalRoleUserModal({ member, onSave, onClose }: { member: InternalRoleUserRow; onSave: (name: string, reason: string) => Promise<{ ok: boolean; error?: string }>; onClose: () => void }) {
+  const [name, setName] = useState(member.name);
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSave() {
+    if (!reason.trim()) return setError("Alasan wajib diisi.");
+    setSaving(true);
+    setError(null);
+    const res = await onSave(name, reason.trim());
+    setSaving(false);
+    if (!res.ok) return setError(res.error ?? "Gagal menyimpan.");
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={onClose}>
+      <div className="w-full max-w-[440px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
+        <div className="border-b border-border-subtle px-5 py-3.5 font-sans text-[13px] font-semibold text-text-primary">
+          Edit — <span className="font-mono">{member.username}</span>
+        </div>
+        <div className="flex flex-col gap-3 px-5 py-4">
+          <div>
+            <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Nama</div>
+            <input value={name} onChange={(e) => setName(e.target.value)} className="input w-full" autoFocus />
+          </div>
+          <div>
+            <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Alasan (wajib, tercatat ke log audit)</div>
+            <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} className="input w-full" />
+          </div>
+          {error && <div className="rounded-md border border-danger bg-danger-bg px-3 py-2 font-sans text-[11.5px] text-danger-fg">{error}</div>}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-border-subtle px-5 py-3.5">
+          <button onClick={onClose} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary">
+            Batal
+          </button>
+          <Button onClick={handleSave} disabled={saving} variant="primary" size="sm">
+            {saving ? "Menyimpan…" : "Simpan"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function SysadminAccountsPage() {
   const [internalAccounts, setInternalAccounts] = useState<InternalAccountRow[] | null>(null);
   const [vendorAccounts, setVendorAccounts] = useState<VendorAccountRow[] | null>(null);
@@ -178,14 +305,27 @@ export default function SysadminAccountsPage() {
   const [togglingMember, setTogglingMember] = useState<VendorTeamMemberOverviewRow | null>(null);
   const [deletingMember, setDeletingMember] = useState<VendorTeamMemberOverviewRow | null>(null);
 
+  // Anggota tim modul internal (migration 0060) -- lihat catatan panjang di
+  // lib/mrp/sysadminActions.ts kenapa ini SATU-SATUNYA jalur kelola (tidak ada portal self-service
+  // per modul seperti "Tim Saya" vendor).
+  const [internalRoleUsers, setInternalRoleUsers] = useState<InternalRoleUserRow[] | null>(null);
+  const [internalTeamSearch, setInternalTeamSearch] = useState("");
+  const [showAddInternalUser, setShowAddInternalUser] = useState(false);
+  const [editingInternalUser, setEditingInternalUser] = useState<InternalRoleUserRow | null>(null);
+  const [resettingInternalUser, setResettingInternalUser] = useState<InternalRoleUserRow | null>(null);
+  const [togglingInternalUser, setTogglingInternalUser] = useState<InternalRoleUserRow | null>(null);
+  const [deletingInternalUser, setDeletingInternalUser] = useState<InternalRoleUserRow | null>(null);
+
   const reload = useCallback(async () => {
-    const [ia, va, ta] = await Promise.all([listInternalAccountsAction(), listVendorAccountsAction(), listAllVendorTeamMembersAction()]);
+    const [ia, va, ta, iu] = await Promise.all([listInternalAccountsAction(), listVendorAccountsAction(), listAllVendorTeamMembersAction(), listInternalRoleUsersAction()]);
     if (ia.ok) setInternalAccounts(ia.data);
     if (va.ok) setVendorAccounts(va.data);
     if (ta.ok) setTeamMembers(ta.data);
+    if (iu.ok) setInternalRoleUsers(iu.data);
     if (!ia.ok) setLoadError(ia.error);
     else if (!va.ok) setLoadError(va.error);
     else if (!ta.ok) setLoadError(ta.error);
+    else if (!iu.ok) setLoadError(iu.error);
     else setLoadError(null);
   }, []);
   useEffect(() => {
@@ -305,6 +445,62 @@ export default function SysadminAccountsPage() {
               ));
             })()}
         </div>
+
+        <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
+          <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
+            <div>
+              <span className="font-sans text-[13px] font-semibold text-text-primary">Anggota Tim Modul Internal</span>
+              <div className="font-sans text-[10.5px] text-text-muted">
+                PPIC/Procurement/Finance/dst bisa punya beberapa orang login sendiri-sendiri (bukan cuma 1 password bersama) — supaya PO/PV yang di-approve tercatat siapa PIC-nya.
+              </div>
+            </div>
+            <input
+              value={internalTeamSearch}
+              onChange={(e) => setInternalTeamSearch(e.target.value)}
+              placeholder="Cari username/nama/modul…"
+              className="input ml-auto w-[220px] !py-1 !text-[11.5px]"
+            />
+            <Button onClick={() => setShowAddInternalUser(true)} variant="dashed" size="sm">
+              + Tambah
+            </Button>
+          </div>
+          <div className="grid grid-cols-[1fr_1fr_1fr_80px_170px] gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+            <span>Username</span>
+            <span>Nama</span>
+            <span>Modul</span>
+            <span>Status</span>
+            <span className="text-right">Aksi</span>
+          </div>
+          {internalRoleUsers == null && <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Memuat…</div>}
+          {internalRoleUsers != null &&
+            (() => {
+              const q = internalTeamSearch.trim().toLowerCase();
+              const filtered = q ? internalRoleUsers.filter((m) => `${m.username} ${m.name} ${m.role}`.toLowerCase().includes(q)) : internalRoleUsers;
+              if (filtered.length === 0) return <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada anggota tim modul internal.</div>;
+              return filtered.map((m) => (
+                <div key={m.id} className="grid grid-cols-[1fr_1fr_1fr_80px_170px] items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0">
+                  <span className="font-mono">{m.username}</span>
+                  <span>{m.name}</span>
+                  <span>{INTERNAL_ACCOUNTS.find((a) => a.role === m.role)?.label ?? m.role}</span>
+                  <span className={m.active ? "font-semibold text-success-fg" : "text-text-muted"}>{m.active ? "Aktif" : "Nonaktif"}</span>
+                  <span className="flex items-center justify-end gap-1.5">
+                    <Button onClick={() => setEditingInternalUser(m)} variant="ghost" size="xs">
+                      Edit
+                    </Button>
+                    <Button onClick={() => setResettingInternalUser(m)} variant="ghost" size="xs">
+                      Reset Pass
+                    </Button>
+                    <Button onClick={() => setTogglingInternalUser(m)} variant="ghost" size="xs">
+                      {m.active ? "Nonaktifkan" : "Aktifkan"}
+                    </Button>
+                    <Button onClick={() => setDeletingInternalUser(m)} variant="danger" size="xs">
+                      Hapus
+                    </Button>
+                  </span>
+                </div>
+              ));
+            })()}
+        </div>
       </div>
 
       {editingInternal && (
@@ -369,6 +565,53 @@ export default function SysadminAccountsPage() {
           onClose={() => setDeletingMember(null)}
           onConfirm={async (reason) => {
             const res = await sysadminDeleteVendorTeamMemberAction(deletingMember.id, reason);
+            if (res.ok) void reload();
+            return res.ok ? { ok: true } : { ok: false, error: res.error };
+          }}
+        />
+      )}
+
+      {showAddInternalUser && <AddInternalRoleUserModal onClose={() => setShowAddInternalUser(false)} onDone={reload} />}
+      {editingInternalUser && (
+        <EditInternalRoleUserModal
+          member={editingInternalUser}
+          onClose={() => setEditingInternalUser(null)}
+          onSave={async (name, reason) => {
+            const res = await sysadminUpdateInternalRoleUserAction(editingInternalUser.id, { name }, reason);
+            if (res.ok) void reload();
+            return res.ok ? { ok: true } : { ok: false, error: res.error };
+          }}
+        />
+      )}
+      {resettingInternalUser && (
+        <PasswordModal
+          title={`Reset Password — ${resettingInternalUser.username}`}
+          onClose={() => setResettingInternalUser(null)}
+          onSave={async (password, reason) => {
+            const res = await sysadminResetInternalRoleUserPasswordAction(resettingInternalUser.id, password, reason);
+            if (res.ok) void reload();
+            return res.ok ? { ok: true } : { ok: false, error: res.error };
+          }}
+        />
+      )}
+      {togglingInternalUser && (
+        <ReasonModal
+          title={`${togglingInternalUser.active ? "Nonaktifkan" : "Aktifkan"} — ${togglingInternalUser.username}`}
+          onClose={() => setTogglingInternalUser(null)}
+          onConfirm={async (reason) => {
+            const res = await sysadminUpdateInternalRoleUserAction(togglingInternalUser.id, { active: !togglingInternalUser.active }, reason);
+            if (res.ok) void reload();
+            return res.ok ? { ok: true } : { ok: false, error: res.error };
+          }}
+        />
+      )}
+      {deletingInternalUser && (
+        <ReasonModal
+          title={`Hapus akun ${deletingInternalUser.username}`}
+          danger
+          onClose={() => setDeletingInternalUser(null)}
+          onConfirm={async (reason) => {
+            const res = await sysadminDeleteInternalRoleUserAction(deletingInternalUser.id, reason);
             if (res.ok) void reload();
             return res.ok ? { ok: true } : { ok: false, error: res.error };
           }}

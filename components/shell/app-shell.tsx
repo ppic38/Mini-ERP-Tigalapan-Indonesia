@@ -82,6 +82,7 @@ export function AppShell({
 
   const router = useRouter();
   const unlockedRoles = useInternalAuthStore((s) => s.unlockedRoles);
+  const internalActors = useInternalAuthStore((s) => s.actors);
   const logoutInternal = useInternalAuthStore((s) => s.logout);
   const logoutVendor = useVendorAuthStore((s) => s.logout);
   const vendorActor = useVendorAuthStore((s) => s.actor);
@@ -255,7 +256,16 @@ export function AppShell({
   // (proteksi sesungguhnya tetap di proxy.ts; ini murni supaya menu yang ditutup tidak ditampilkan
   // sebagai link mati), dan nama topbar menyertakan nama anggota yang login.
   const sidebarItems = role === "vendorMaklon" && vendorActor ? nav.items.filter((i) => !i.href || vendorHasPageAccess(vendorActor.allowedPages, i.href)) : nav.items;
-  const topbarRole = role === "vendorMaklon" && vendorActor ? `${roleOverride ?? nav.role} · ${vendorActor.name}` : (roleOverride ?? nav.role);
+  // Akun anggota tim modul internal (migration 0060) -- tidak ada penyaringan sidebar (akses tetap
+  // seutuhnya sama dengan akun utama modul itu, cuma soal atribusi "siapa PIC-nya"), topbar cukup
+  // menambahkan nama orangnya.
+  const internalActor = internalActors[role as InternalRole];
+  const topbarRole =
+    role === "vendorMaklon" && vendorActor
+      ? `${roleOverride ?? nav.role} · ${vendorActor.name}`
+      : internalActor
+        ? `${roleOverride ?? nav.role} · ${internalActor.name}`
+        : (roleOverride ?? nav.role);
 
   return (
     <div className="flex min-h-screen bg-surface-page">

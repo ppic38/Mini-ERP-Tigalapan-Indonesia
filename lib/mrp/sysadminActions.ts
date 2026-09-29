@@ -185,6 +185,96 @@ export async function sysadminDeleteVendorTeamMemberAction(id: string, reason: s
 }
 
 // =========================================================================
+// Anggota tim modul internal (migration 0060, owner 2026-09-29: "procurement ternyata ada dua
+// orang, fulan dan fulin ... biar tau siapa PIC-nya") -- BEDA dari anggota tim vendor produksi di
+// atas (yang dikelola SEHARI-HARI oleh vendor sendiri dari "Tim Saya", Sysadmin cuma jalur
+// darurat): modul internal TIDAK punya portal self-service semacam itu, jadi Sysadmin adalah
+// SATU-SATUNYA tempat mengelola akun ini. Tidak ada konsep "allowedPages" -- anggota tim dapat
+// akses PENUH ke halaman role itu, sama seperti akun utama (password bersama); bedanya cuma
+// atribusi nama di internal_action_log & approval_log (lihat requireInternalRoleWithActor,
+// lib/mrp/actions.ts).
+// =========================================================================
+
+export type InternalRoleUserRow = { id: string; role: InternalRole; username: string; name: string; active: boolean; createdAt: string };
+
+export async function listInternalRoleUsersAction(): Promise<ActionResult<InternalRoleUserRow[]>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    const { data, error } = await supabaseServer().from("internal_role_users").select("id,role,username,name,active,created_at").order("created_at", { ascending: false });
+    if (error) throw new Error(error.message);
+    return (data ?? []).map((r) => ({ id: r.id, role: r.role as InternalRole, username: r.username, name: r.name, active: r.active, createdAt: r.created_at }));
+  });
+}
+
+export async function sysadminAddInternalRoleUserAction(input: { role: InternalRole; username: string; name: string; password: string }, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    if (!INTERNAL_ACCOUNTS.some((a) => a.role === input.role)) throw new Error("Modul tidak dikenali.");
+    const username = input.username.trim();
+    if (!/^[a-zA-Z0-9._-]{3,32}$/.test(username)) throw new Error("Username 3-32 karakter, huruf/angka/titik/garis (tanpa spasi).");
+    if (!input.name.trim()) throw new Error("Nama wajib diisi.");
+    if (input.password.length < 6) throw new Error("Password minimal 6 karakter.");
+    const db = supabaseServer();
+    const { data: existing } = await db.from("internal_role_users").select("id").ilike("username", username).maybeSingle();
+    if (existing) throw new Error(`Username "${username}" sudah dipakai -- pilih username lain.`);
+    const id = await nextReadableId("IRU");
+    const hash = await bcrypt.hash(input.password, 10);
+    const { error } = await db.from("internal_role_users").insert({ id, role: input.role, username, name: input.name.trim(), password_hash: hash, active: true });
+    if (error) throw new Error(error.message);
+    await writeAuditLog("ADD_INTERNAL_ROLE_USER", "internal_role_users", id, reason.trim(), null, { role: input.role, username, name: input.name.trim() });
+  });
+}
+
+export async function sysadminUpdateInternalRoleUserAction(id: string, patch: { name?: string; active?: boolean }, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: before, error: fetchErr } = await db.from("internal_role_users").select("name,active").eq("id", id).maybeSingle();
+    if (fetchErr) throw new Error(fetchErr.message);
+    if (!before) throw new Error("Anggota tim tidak ditemukan.");
+    const p: Record<string, unknown> = {};
+    if (patch.name !== undefined) {
+      if (!patch.name.trim()) throw new Error("Nama wajib diisi.");
+      p.name = patch.name.trim();
+    }
+    if (patch.active !== undefined) p.active = patch.active;
+    const { error } = await db.from("internal_role_users").update(p).eq("id", id);
+    if (error) throw new Error(error.message);
+    await writeAuditLog("UPDATE_INTERNAL_ROLE_USER", "internal_role_users", id, reason.trim(), before, patch);
+  });
+}
+
+export async function sysadminResetInternalRoleUserPasswordAction(id: string, newPassword: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    if (newPassword.length < 6) throw new Error("Password minimal 6 karakter.");
+    const db = supabaseServer();
+    const { data: row } = await db.from("internal_role_users").select("id,username").eq("id", id).maybeSingle();
+    if (!row) throw new Error("Anggota tim tidak ditemukan.");
+    const hash = await bcrypt.hash(newPassword, 10);
+    const { error } = await db.from("internal_role_users").update({ password_hash: hash }).eq("id", id);
+    if (error) throw new Error(error.message);
+    await writeAuditLog("RESET_INTERNAL_ROLE_USER_PASSWORD", "internal_role_users", id, reason.trim(), null, { username: row.username });
+  });
+}
+
+export async function sysadminDeleteInternalRoleUserAction(id: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: before } = await db.from("internal_role_users").select("username,name,role").eq("id", id).maybeSingle();
+    if (!before) throw new Error("Anggota tim tidak ditemukan.");
+    const { error } = await db.from("internal_role_users").delete().eq("id", id);
+    if (error) throw new Error(error.message);
+    await writeAuditLog("DELETE_INTERNAL_ROLE_USER", "internal_role_users", id, reason.trim(), before, null);
+  });
+}
+
+// =========================================================================
 // Batalkan PO (Material & Produksi) -- "just in case ada kesalahan data"
 // =========================================================================
 

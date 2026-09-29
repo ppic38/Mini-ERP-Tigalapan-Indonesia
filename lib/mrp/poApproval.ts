@@ -22,6 +22,11 @@ export type PoApprovalEntry = {
   action: "APPROVED" | "REJECTED";
   at: string;
   note?: string;
+  /** Nama orang yang klik (migration 0060, owner 2026-09-29: "biar tau siapa PIC-nya") -- label
+   *  modul (mis. "Procurement") kalau login lewat akun utama, atau nama anggota tim kalau login
+   *  lewat akun sub-user. Opsional -- entri lama (sebelum revisi ini) tidak punya field ini sama
+   *  sekali, jsonb jadi tidak perlu migrasi data. */
+  actorName?: string;
 };
 
 export const APPROVAL_LEVEL_TABLE = [

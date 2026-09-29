@@ -27,7 +27,8 @@ async function toActionResult<T>(fn: () => Promise<T>): Promise<ActionResult<T>>
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
-import { requireSession, requireInternalRole, requireAnyInternalRole } from "../auth/session";
+import { requireSession, requireInternalRole, requireAnyInternalRole, internalActorForRole } from "../auth/session";
+import { internalAccountFor, type InternalRole } from "../internal-auth";
 import { supabaseServer } from "../supabase/server";
 import { nextReadableId, nextPoDisplayId } from "./repo/ids";
 import { getFlowSnapshot, getFlowSnapshotWithMeta } from "./repo/snapshot";
@@ -138,6 +139,34 @@ async function logVendorAction(actor: { vendorId: string; vendorUserId: string |
     await supabaseServer()
       .from("vendor_action_log")
       .insert({ id, vendor_produksi: actor.vendorId, vendor_user_id: actor.vendorUserId, actor_name: actor.actorName, action, target_type: targetType ?? null, target_id: targetId ?? null });
+  } catch {
+    // diabaikan dengan sengaja -- lihat catatan di atas.
+  }
+}
+
+/** Sama seperti requireInternalRole, TAPI juga mengembalikan identitas anggota tim yang login
+ *  (migration 0060, owner 2026-09-29: "biar tau siapa PIC-nya") -- `actorName` = nama anggota tim
+ *  kalau login lewat akun sub-user (internal_role_users), atau label modul (mis. "Procurement")
+ *  kalau login lewat akun utama (password bersama, sesi tidak menyimpan nama personal). Dipakai
+ *  HANYA di action yang ingin dicatat ke internal_action_log/approval_log (lihat logInternalAction
+ *  & recordApprovalStep) -- action lain yang tidak butuh jejak "siapa klik" tetap pakai
+ *  requireInternalRole biasa, tidak berubah. */
+async function requireInternalRoleWithActor(role: InternalRole): Promise<{ role: InternalRole; internalUserId: string | null; actorName: string }> {
+  const session = await requireSession();
+  requireInternalRole(session, role);
+  const actor = internalActorForRole(session, role);
+  if (actor) return { role, internalUserId: actor.internalUserId, actorName: actor.name };
+  return { role, internalUserId: null, actorName: internalAccountFor(role)?.label ?? role };
+}
+
+/** Tulis 1 baris ke internal_action_log (migration 0060) -- best-effort, pola PERSIS logVendorAction
+ *  di atas (tidak melempar error kalau gagal). */
+async function logInternalAction(actor: { role: InternalRole; internalUserId: string | null; actorName: string }, action: string, targetType?: string, targetId?: string): Promise<void> {
+  try {
+    const id = await nextReadableId("IAL");
+    await supabaseServer()
+      .from("internal_action_log")
+      .insert({ id, role: actor.role, internal_user_id: actor.internalUserId, actor_name: actor.actorName, action, target_type: targetType ?? null, target_id: targetId ?? null });
   } catch {
     // diabaikan dengan sengaja -- lihat catatan di atas.
   }
@@ -800,13 +829,13 @@ export async function revertMaterialPoRollRoundingAction(): Promise<{ affectedPo
 }
 
 export async function approveMaterialPoAction(id: string): Promise<void> {
-  await requireInternalRole(await requireSession(), "finance");
+  const actor = await requireInternalRoleWithActor("finance");
   const db = supabaseServer();
   const po = await fetchOneMaterialPo(db, id);
   if (!po) return;
   // Matriks Approval PO (migration 0055): ini = persetujuan langkah Finance (FAT Manager); PO lama
   // (tanpa level) tetap langsung final. Lihat financeApproveMaterialPo.
-  await financeApproveMaterialPo(db, po);
+  await financeApproveMaterialPo(db, po, actor.actorName);
 }
 
 /** Dipakai approveMaterialPoAction: kalau splitMaterialPoByEntitas menghasilkan >1 PO baru,
@@ -847,12 +876,12 @@ async function writeMaterialPoSplit(db: ReturnType<typeof supabaseServer>, origi
 }
 
 export async function approveMaklonPoAction(id: string): Promise<void> {
-  await requireInternalRole(await requireSession(), "finance");
+  const actor = await requireInternalRoleWithActor("finance");
   const db = supabaseServer();
   // Approve HANYA mengubah `approved` -- status FULL/PARTIAL_WAITING_MATERIAL dipertahankan
   // apa adanya (lihat finalizeMaklonPo). Matriks Approval PO (migration 0055): ini = persetujuan
   // langkah Finance; PO lama (tanpa level) tetap langsung final.
-  await financeApproveMaklonPo(db, id);
+  await financeApproveMaklonPo(db, id, actor.actorName);
 }
 
 // =========================================================================
@@ -1984,22 +2013,22 @@ export async function setMaterialPoColorEntityAction(poId: string, warna: string
 }
 
 export async function approveAllMaterialPosAction(): Promise<void> {
-  await requireInternalRole(await requireSession(), "finance");
+  const actor = await requireInternalRoleWithActor("finance");
   const db = supabaseServer();
   const toApprove = await fetchUnapprovedMaterialPos(db, undefined);
   const mrpIds = Array.from(new Set(toApprove.map((po) => po.mrpId)));
   for (const po of toApprove) {
-    await financeApproveMaterialPo(db, po);
+    await financeApproveMaterialPo(db, po, actor.actorName);
   }
   for (const mrpId of mrpIds) await checkPoApproved(mrpId);
 }
 
 export async function approveVendorMaterialPosAction(mrpId: string, vendor: string): Promise<void> {
-  await requireInternalRole(await requireSession(), "finance");
+  const actor = await requireInternalRoleWithActor("finance");
   const db = supabaseServer();
   const toApprove = await fetchUnapprovedMaterialPos(db, { mrpId, vendorProduksi: vendor });
   for (const po of toApprove) {
-    await financeApproveMaterialPo(db, po);
+    await financeApproveMaterialPo(db, po, actor.actorName);
   }
   await checkPoApproved(mrpId);
 }
@@ -2011,13 +2040,13 @@ export async function approveVendorMaterialPosAction(mrpId: string, vendor: stri
  *  supplier lain yang belum dicek Finance. Di sini cuma id yang dikirim yang diproses -- logika
  *  split per entitas SAMA persis dengan approveVendorMaterialPosAction/approveMaterialPoAction. */
 export async function approveMaterialPosByIdsAction(mrpId: string, poIds: string[]): Promise<void> {
-  await requireInternalRole(await requireSession(), "finance");
+  const actor = await requireInternalRoleWithActor("finance");
   if (poIds.length === 0) return;
   const db = supabaseServer();
   for (const id of poIds) {
     const po = await fetchOneMaterialPo(db, id);
     if (!po || po.mrpId !== mrpId || po.approved || po.status === "CANCELLED") continue;
-    await financeApproveMaterialPo(db, po);
+    await financeApproveMaterialPo(db, po, actor.actorName);
   }
   await checkPoApproved(mrpId);
 }
@@ -6023,10 +6052,25 @@ async function notifyNextApprovers(subject: ApprovalSubject, state: PoApprovalSt
 }
 
 /** Catat 1 langkah (setuju/tolak) ke approval_log, lalu finalisasi kalau semua langkah selesai. */
-async function recordApprovalStep(db: SupabaseClient, type: PoType, subject: ApprovalSubject, role: ApprovalRole, action: "APPROVED" | "REJECTED", note?: string): Promise<void> {
+async function recordApprovalStep(
+  db: SupabaseClient,
+  type: PoType,
+  subject: ApprovalSubject,
+  role: ApprovalRole,
+  action: "APPROVED" | "REJECTED",
+  note?: string,
+  actorName?: string
+): Promise<void> {
   const state = poApprovalState(subject);
   if (state.currentStep == null) throw new Error("PO ini tidak sedang menunggu approval.");
-  const entry: PoApprovalEntry = { step: state.currentStep, role, action, at: new Date().toISOString(), ...(note?.trim() ? { note: note.trim() } : {}) };
+  const entry: PoApprovalEntry = {
+    step: state.currentStep,
+    role,
+    action,
+    at: new Date().toISOString(),
+    ...(note?.trim() ? { note: note.trim() } : {}),
+    ...(actorName ? { actorName } : {}),
+  };
   const log = [...(subject.approvalLog ?? []), entry];
   const { error } = await db.from(PO_TABLE[type]).update({ approval_log: log }).eq("id", subject.id);
   if (error) throw new Error(error.message);
@@ -6044,8 +6088,10 @@ async function recordApprovalStep(db: SupabaseClient, type: PoType, subject: App
   }
 }
 
-/** Approval Finance (FAT Manager) untuk PO Material -- dipakai tombol "Approve" lama Finance (tunggal & massal). */
-async function financeApproveMaterialPo(db: SupabaseClient, po: MaterialPO): Promise<void> {
+/** Approval Finance (FAT Manager) untuk PO Material -- dipakai tombol "Approve" lama Finance (tunggal & massal).
+ *  `actorName` opsional (migration 0060) -- diteruskan ke approval_log kalau pemanggilnya sudah tahu
+ *  siapa yang klik (lihat requireInternalRoleWithActor). */
+async function financeApproveMaterialPo(db: SupabaseClient, po: MaterialPO, actorName?: string): Promise<void> {
   if (po.approved || po.status === "CANCELLED") return;
   const state = poApprovalState(po);
   if (state.legacy) {
@@ -6058,11 +6104,13 @@ async function financeApproveMaterialPo(db: SupabaseClient, po: MaterialPO): Pro
     "MATERIAL",
     { id: po.id, mrpId: po.mrpId, amount: po.amount, approved: po.approved, approvalLevel: po.approvalLevel, approvalLog: po.approvalLog, approvalSubmittedAt: po.approvalSubmittedAt },
     "finance",
-    "APPROVED"
+    "APPROVED",
+    undefined,
+    actorName
   );
 }
 
-async function financeApproveMaklonPo(db: SupabaseClient, id: string): Promise<void> {
+async function financeApproveMaklonPo(db: SupabaseClient, id: string, actorName?: string): Promise<void> {
   const subject = await loadApprovalSubject(db, "MAKLON", id);
   if (!subject || subject.approved) return;
   const state = poApprovalState(subject);
@@ -6071,11 +6119,11 @@ async function financeApproveMaklonPo(db: SupabaseClient, id: string): Promise<v
     return;
   }
   if (state.rejected || !state.pendingRoles.includes("finance")) return;
-  await recordApprovalStep(db, "MAKLON", subject, "finance", "APPROVED");
+  await recordApprovalStep(db, "MAKLON", subject, "finance", "APPROVED", undefined, actorName);
 }
 
 async function poStepImpl(type: PoType, id: string, asRole: ApprovalRole, action: "APPROVED" | "REJECTED", note?: string): Promise<void> {
-  requireInternalRole(await requireSession(), asRole);
+  const actor = await requireInternalRoleWithActor(asRole);
   const db = supabaseServer();
   const subject = await loadApprovalSubject(db, type, id);
   if (!subject) throw new Error("PO tidak ditemukan.");
@@ -6093,7 +6141,8 @@ async function poStepImpl(type: PoType, id: string, asRole: ApprovalRole, action
     throw new Error(`Bukan giliran ${APPROVAL_ROLE_LABEL[asRole]} -- PO menunggu ${APPROVAL_STEP_LABEL[state.currentStep ?? 0] ?? "langkah lain"}.`);
   }
   if (action === "REJECTED" && !note?.trim()) throw new Error("Alasan penolakan wajib diisi.");
-  await recordApprovalStep(db, type, subject, asRole, action, note);
+  await recordApprovalStep(db, type, subject, asRole, action, note, actor.actorName);
+  await logInternalAction(actor, `${action === "APPROVED" ? "Setujui" : "Tolak"} PO ${id}`, type === "MATERIAL" ? "material_pos" : "maklon_pos", id);
 }
 
 /** Setujui langkah approval PO sebagai `asRole` (harus giliran role itu). */

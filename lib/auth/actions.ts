@@ -49,9 +49,51 @@ export async function loginInternalAction(role: InternalRole, password: string):
   const cookieStore = await cookies();
   const existing = await readSession(cookieStore);
   const roles = Array.from(new Set([...existing.internalRoles, role]));
-  const token = await createInternalSessionToken(roles);
+  // Login akun UTAMA (password bersama) -- hapus actor lama untuk role ini kalau sebelumnya sempat
+  // login sebagai anggota tim di role yang sama (migration 0060), supaya sesi tidak keliru masih
+  // menganggap ini akun sub-user setelah ganti ke akun utama.
+  const actors = existing.internalActors.filter((a) => a.role !== role);
+  const token = await createInternalSessionToken(roles, actors);
   cookieStore.set(INTERNAL_SESSION_COOKIE, token, sessionCookieOptions);
   return { ok: true };
+}
+
+/** Login akun ANGGOTA TIM modul internal (migration 0060, owner 2026-09-29: "procurement ternyata
+ *  ada dua orang, fulan dan fulin ... biar tau siapa PIC-nya") -- `username` unik se-aplikasi,
+ *  pola PERSIS loginVendorUserAction di bawah. Sesi yang terbentuk PERSIS sama dengan login akun
+ *  utama (role tetap masuk ke `internalRoles`, jadi requireInternalRole dkk tidak berubah sama
+ *  sekali) -- yang membedakan cuma actor per-role yang menempel, dibaca lewat
+ *  internalActorForRole (lib/auth/session.ts) untuk atribusi di internal_action_log. Akun
+ *  nonaktif (`active=false`) ditolak. */
+export async function loginInternalUserAction(
+  role: InternalRole,
+  username: string,
+  password: string
+): Promise<LoginResult & { actor?: { username: string; name: string } }> {
+  const account = INTERNAL_ACCOUNTS.find((a) => a.role === role);
+  if (!account) return { ok: false, error: "Modul tidak dikenali." };
+  const query = username.trim();
+  if (!query) return { ok: false, error: "Username atau password salah." };
+
+  const { data: match, error } = await supabaseServer()
+    .from("internal_role_users")
+    .select("id,role,username,name,password_hash,active")
+    .eq("role", role)
+    .ilike("username", query)
+    .maybeSingle();
+  if (error) return { ok: false, error: "Gagal menghubungi server, coba lagi." };
+  if (!match || !match.active) return { ok: false, error: "Username atau password salah." };
+
+  const passwordOk = await bcrypt.compare(password, match.password_hash);
+  if (!passwordOk) return { ok: false, error: "Username atau password salah." };
+
+  const cookieStore = await cookies();
+  const existing = await readSession(cookieStore);
+  const roles = Array.from(new Set([...existing.internalRoles, role]));
+  const actors = [...existing.internalActors.filter((a) => a.role !== role), { internalUserId: match.id, username: match.username, name: match.name, role }];
+  const token = await createInternalSessionToken(roles, actors);
+  cookieStore.set(INTERNAL_SESSION_COOKIE, token, sessionCookieOptions);
+  return { ok: true, actor: { username: match.username, name: match.name } };
 }
 
 /** Cek login vendor produksi (maklon): cocokkan nama/kode vendor (case-insensitive),
@@ -116,10 +158,11 @@ export async function logoutInternalAction(role: InternalRole): Promise<void> {
   const cookieStore = await cookies();
   const existing = await readSession(cookieStore);
   const remaining = existing.internalRoles.filter((r) => r !== role);
+  const remainingActors = existing.internalActors.filter((a) => a.role !== role);
   if (remaining.length === 0) {
     cookieStore.delete(INTERNAL_SESSION_COOKIE);
   } else {
-    cookieStore.set(INTERNAL_SESSION_COOKIE, await createInternalSessionToken(remaining), sessionCookieOptions);
+    cookieStore.set(INTERNAL_SESSION_COOKIE, await createInternalSessionToken(remaining, remainingActors), sessionCookieOptions);
   }
 }
 
