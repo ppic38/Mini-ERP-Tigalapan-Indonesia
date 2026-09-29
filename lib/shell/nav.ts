@@ -142,3 +142,21 @@ export const NAV: Record<RoleKey, RoleNav> = {
     ],
   },
 };
+
+/** Revisi 2026-09-29 (owner: "profil saya jangan begini. tapi buat halaman penuh seperti halaman
+ *  menu kalau dibuka. bukan pop up") -- "Profil Saya" (components/shell/profil-saya-page.tsx)
+ *  BUKAN modal lagi, tapi halaman penuh per modul (sama seperti halaman lain lewat AppShell), jadi
+ *  tiap modul internal punya route sendiri, TIDAK ada di sidebar (nav.items di atas) -- cuma
+ *  diakses lewat menu "Profil Saya" di dropdown topbar (components/shell/app-shell.tsx). Hanya
+ *  8 modul GATED (lihat GATED_ROLES di app-shell.tsx) yang punya profil pribadi -- vendor dan
+ *  admin lama tidak termasuk lingkup permintaan ini. */
+export const PROFILE_HREF: Partial<Record<RoleKey, string>> = {
+  ppic: "/dashboard/ppic/profil-saya",
+  procurement: "/procurement/profil-saya",
+  finance: "/finance/profil-saya",
+  scm: "/scm/profil-saya",
+  gm: "/gm/profil-saya",
+  produksi: "/produksi/profil-saya",
+  warehouse: "/warehouse/profil-saya",
+  sysadmin: "/sysadmin/profil-saya",
+};

@@ -1,16 +1,24 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AppShell } from "@/components/shell/app-shell";
+import { Button } from "@/components/ui/button";
 import { getMyInternalProfileAction, updateMyInternalProfileAction } from "@/lib/mrp/internalProfileActions";
 import type { InternalRole } from "@/lib/internal-auth";
 
 /** "Profil Saya" -- owner 2026-09-29: "buat untuk akun dari tiap modul itu bisa lihat akun
- *  profile. misal username, Full Name, Password. Dan bisa edit itu". Muncul di topbar HANYA untuk
- *  akun yang login lewat username sendiri (internal_role_users, migration 0060) -- akun utama
- *  (password bersama modul) tidak punya baris personal untuk diedit lewat sini (lihat AppShell,
- *  ganti password akun utama tetap lewat Sysadmin). Password saat ini WAJIB diisi kalau mau ganti
- *  password baru -- dicek di server (updateMyInternalProfileAction), bukan cuma validasi client. */
-export function MyProfileModal({ role, onClose }: { role: InternalRole; onClose: () => void }) {
+ *  profile. misal username, Full Name, Password. Dan bisa edit itu", lalu direvisi lagi hari yang
+ *  sama: "profil saya jangan begini. tapi buat halaman penuh seperti halaman menu kalau dibuka.
+ *  bukan pop up" -- jadi halaman PENUH lewat AppShell (bukan modal lagi, lihat riwayat git untuk
+ *  versi modal lama), satu komponen dipakai ulang oleh 8 route per modul (lihat PROFILE_HREF di
+ *  lib/shell/nav.ts + app/<modul>/profil-saya/page.tsx masing-masing, tiap file cuma 3 baris
+ *  render komponen ini dengan `role` beda). Menu "Profil Saya" di topbar (app-shell.tsx) cuma
+ *  ditampilkan kalau login lewat akun bernama, tapi halaman ini sendiri tidak "mengunci" akun utama
+ *  yang nekat buka URL-nya langsung -- `getMyInternalProfileAction` di server akan menolak dengan
+ *  pesan error yang ditampilkan apa adanya (bukan crash/redirect), karena akun utama memang tidak
+ *  punya baris `internal_role_users` untuk ditampilkan. Password saat ini WAJIB dicocokkan dulu di
+ *  server sebelum ganti password baru. */
+export function ProfilSayaPage({ role, activeHref }: { role: InternalRole; activeHref: string }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [username, setUsername] = useState("");
@@ -68,37 +76,35 @@ export function MyProfileModal({ role, onClose }: { role: InternalRole; onClose:
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={onClose}>
-      <div className="w-full max-w-[440px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center border-b border-border-subtle px-5 py-3.5">
-          <span className="font-sans text-[13px] font-semibold text-text-primary">Profil Saya</span>
-          <button onClick={onClose} className="ml-auto font-sans text-lg leading-none text-text-muted hover:text-danger-fg">
-            ×
-          </button>
-        </div>
-
-        {loading && <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Memuat…</div>}
+    <AppShell role={role} activeHref={activeHref} breadcrumb={["Dashboard", "Profil Saya"]} title="Profil Saya" subtitle="Lihat & ubah nama dan password akun Anda sendiri.">
+      <div className="flex max-w-[560px] flex-col gap-4">
+        {loading && (
+          <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-8 text-center font-sans text-xs text-text-muted">Memuat…</div>
+        )}
 
         {!loading && loadError && (
-          <div className="px-5 py-4">
-            <div className="rounded-md border border-danger bg-danger-bg px-3 py-2 font-sans text-[11.5px] text-danger-fg">{loadError}</div>
-          </div>
+          <div className="rounded-md border border-danger bg-danger-bg px-4 py-2.5 font-sans text-[12px] text-danger-fg">{loadError}</div>
         )}
 
         {!loading && !loadError && (
-          <div className="flex flex-col gap-3 px-5 py-4">
-            <div>
-              <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Username</div>
-              <input value={username} disabled className="input w-full bg-[#F7F9FB] font-mono text-text-muted" />
-            </div>
-            <div>
-              <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Full Name</div>
-              <input value={name} onChange={(e) => setName(e.target.value)} className="input w-full" />
+          <>
+            <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
+              <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Informasi Akun</div>
+              <div className="flex flex-col gap-3 px-4 py-4">
+                <div>
+                  <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Username</div>
+                  <input value={username} disabled className="input w-full bg-[#F7F9FB] font-mono text-text-muted" />
+                </div>
+                <div>
+                  <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Full Name</div>
+                  <input value={name} onChange={(e) => setName(e.target.value)} className="input w-full" />
+                </div>
+              </div>
             </div>
 
-            <div className="mt-1 border-t border-border-subtle pt-3">
-              <div className="mb-2 font-sans text-[11px] font-semibold text-text-primary">Ganti Password (opsional)</div>
-              <div className="flex flex-col gap-2.5">
+            <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
+              <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Ganti Password (opsional)</div>
+              <div className="flex flex-col gap-3 px-4 py-4">
                 <div>
                   <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Password Saat Ini</div>
                   <input
@@ -120,26 +126,17 @@ export function MyProfileModal({ role, onClose }: { role: InternalRole; onClose:
               </div>
             </div>
 
-            {error && <div className="rounded-md border border-danger bg-danger-bg px-3 py-2 font-sans text-[11.5px] text-danger-fg">{error}</div>}
-            {success && <div className="rounded-md border border-success bg-success-bg px-3 py-2 font-sans text-[11.5px] text-success-fg">{success}</div>}
-          </div>
-        )}
+            {error && <div className="rounded-md border border-danger bg-danger-bg px-4 py-2.5 font-sans text-[12px] text-danger-fg">{error}</div>}
+            {success && <div className="rounded-md border border-success-fg/30 bg-success-bg px-4 py-2.5 font-sans text-[12px] text-success-fg">{success}</div>}
 
-        <div className="flex justify-end gap-2 border-t border-border-subtle px-5 py-3.5">
-          <button onClick={onClose} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary">
-            Tutup
-          </button>
-          {!loading && !loadError && (
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="rounded-md bg-action-primary px-3.5 py-[7px] font-sans text-xs font-semibold text-white disabled:opacity-60"
-            >
-              {saving ? "Menyimpan…" : "Simpan"}
-            </button>
-          )}
-        </div>
+            <div>
+              <Button onClick={handleSave} disabled={saving} variant="primary" size="md">
+                {saving ? "Menyimpan…" : "Simpan Perubahan"}
+              </Button>
+            </div>
+          </>
+        )}
       </div>
-    </div>
+    </AppShell>
   );
 }
