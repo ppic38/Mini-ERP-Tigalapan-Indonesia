@@ -178,21 +178,49 @@ function AddInternalRoleUserModal({ role, onClose, onDone }: { role: InternalRol
   );
 }
 
-/** Edit nama akun login modul internal -- reset password & nonaktifkan/hapus dilakukan lewat
- *  modal terpisah (PasswordModal/ReasonModal, sudah ada di file ini). */
-function EditInternalRoleUserModal({ member, onSave, onClose }: { member: InternalRoleUserRow; onSave: (name: string, reason: string) => Promise<{ ok: boolean; error?: string }>; onClose: () => void }) {
+/** Edit akun login modul internal -- Revisi 2026-09-29 (owner: "gabung saja yang reset pass
+ *  dengan edit") -- SEBELUMNYA "Edit" (nama saja) dan "Reset Pass" (password saja) 2 tombol/modal
+ *  terpisah, sekarang 1 modal: Nama + Password Baru (opsional, kosongkan kalau tidak mau ganti).
+ *  Nonaktifkan/Hapus TETAP modal terpisah (ReasonModal) -- itu aksi destructive/status, beda
+ *  kategori dari "edit data". `onSaveName`/`onSavePassword` dipanggil terpisah (2 server action
+ *  beda) tapi dari 1 form & 1 alasan yang sama. */
+function EditInternalRoleUserModal({
+  member,
+  onSaveName,
+  onSavePassword,
+  onClose,
+}: {
+  member: InternalRoleUserRow;
+  onSaveName: (name: string, reason: string) => Promise<{ ok: boolean; error?: string }>;
+  onSavePassword: (password: string, reason: string) => Promise<{ ok: boolean; error?: string }>;
+  onClose: () => void;
+}) {
   const [name, setName] = useState(member.name);
+  const [newPassword, setNewPassword] = useState("");
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSave() {
     if (!reason.trim()) return setError("Alasan wajib diisi.");
+    if (newPassword && newPassword.length < 6) return setError("Password baru minimal 6 karakter.");
     setSaving(true);
     setError(null);
-    const res = await onSave(name, reason.trim());
+    if (name.trim() && name.trim() !== member.name) {
+      const res = await onSaveName(name.trim(), reason.trim());
+      if (!res.ok) {
+        setSaving(false);
+        return setError(res.error ?? "Gagal menyimpan nama.");
+      }
+    }
+    if (newPassword) {
+      const res = await onSavePassword(newPassword, reason.trim());
+      if (!res.ok) {
+        setSaving(false);
+        return setError(res.error ?? "Gagal menyimpan password.");
+      }
+    }
     setSaving(false);
-    if (!res.ok) return setError(res.error ?? "Gagal menyimpan.");
     onClose();
   }
 
@@ -206,6 +234,10 @@ function EditInternalRoleUserModal({ member, onSave, onClose }: { member: Intern
           <div>
             <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Nama</div>
             <input value={name} onChange={(e) => setName(e.target.value)} className="input w-full" autoFocus />
+          </div>
+          <div>
+            <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Password Baru (opsional, kosongkan kalau tidak diganti)</div>
+            <input value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="input w-full font-mono" placeholder="min. 6 karakter" />
           </div>
           <div>
             <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Alasan (wajib, tercatat ke log audit)</div>
@@ -248,7 +280,6 @@ export default function SysadminAccountsPage() {
   const [internalUserSearch, setInternalUserSearch] = useState("");
   const [showAddInternalUser, setShowAddInternalUser] = useState(false);
   const [editingInternalUser, setEditingInternalUser] = useState<InternalRoleUserRow | null>(null);
-  const [resettingInternalUser, setResettingInternalUser] = useState<InternalRoleUserRow | null>(null);
   const [togglingInternalUser, setTogglingInternalUser] = useState<InternalRoleUserRow | null>(null);
   const [deletingInternalUser, setDeletingInternalUser] = useState<InternalRoleUserRow | null>(null);
 
@@ -288,13 +319,6 @@ export default function SysadminAccountsPage() {
 
       {tab === "internal" && (
         <div className="mt-4 flex flex-col gap-4">
-          <div className="rounded-md border border-[#CFE0EF] bg-info-bg px-4 py-2.5 font-sans text-[11.5px] leading-[1.5] text-info-fg">
-            Password modul internal awalnya diatur lewat env var Vercel (<span className="font-mono">INTERNAL_PASSWORD_&lt;ROLE&gt;</span>). Begitu Anda set password di sini, login modul itu
-            langsung memakai password baru ini (env var lama boleh dibiarkan). Selain itu, tiap modul bisa punya beberapa akun login sekaligus (mis. &quot;procurement1&quot;, &quot;procurement2&quot;)
-            — akses sama persis, cuma beda username, supaya PO/PV yang di-approve tercatat siapa PIC-nya. Pilih dulu modulnya di bawah, baru kelola akunnya. Setiap perubahan WAJIB isi alasan,
-            tercatat permanen di Log Audit.
-          </div>
-
           <div className="flex flex-wrap gap-1.5">
             {INTERNAL_ACCOUNTS.map((a) => (
               <button
@@ -335,7 +359,7 @@ export default function SysadminAccountsPage() {
                 + Tambah Akun
               </Button>
             </div>
-            <div className="grid grid-cols-[1fr_1fr_80px_170px] gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+            <div className="grid grid-cols-[1fr_1fr_100px_260px] gap-x-4 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
               <span>Username</span>
               <span>Nama</span>
               <span>Status</span>
@@ -346,16 +370,13 @@ export default function SysadminAccountsPage() {
               <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada akun login untuk modul {selectedLabel}.</div>
             )}
             {roleUsers.map((m) => (
-              <div key={m.id} className="grid grid-cols-[1fr_1fr_80px_170px] items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0">
+              <div key={m.id} className="grid grid-cols-[1fr_1fr_100px_260px] items-center gap-x-4 border-b border-[#F1F4F7] px-4 py-3 font-sans text-xs text-[#31414F] last:border-b-0">
                 <span className="font-mono">{m.username}</span>
                 <span>{m.name}</span>
                 <span className={m.active ? "font-semibold text-success-fg" : "text-text-muted"}>{m.active ? "Aktif" : "Nonaktif"}</span>
-                <span className="flex items-center justify-end gap-1.5">
+                <span className="flex items-center justify-end gap-2">
                   <Button onClick={() => setEditingInternalUser(m)} variant="ghost" size="xs">
                     Edit
-                  </Button>
-                  <Button onClick={() => setResettingInternalUser(m)} variant="ghost" size="xs">
-                    Reset Pass
                   </Button>
                   <Button onClick={() => setTogglingInternalUser(m)} variant="ghost" size="xs">
                     {m.active ? "Nonaktifkan" : "Aktifkan"}
@@ -427,19 +448,13 @@ export default function SysadminAccountsPage() {
         <EditInternalRoleUserModal
           member={editingInternalUser}
           onClose={() => setEditingInternalUser(null)}
-          onSave={async (name, reason) => {
+          onSaveName={async (name, reason) => {
             const res = await sysadminUpdateInternalRoleUserAction(editingInternalUser.id, { name }, reason);
             if (res.ok) void reload();
             return res.ok ? { ok: true } : { ok: false, error: res.error };
           }}
-        />
-      )}
-      {resettingInternalUser && (
-        <PasswordModal
-          title={`Reset Password — ${resettingInternalUser.username}`}
-          onClose={() => setResettingInternalUser(null)}
-          onSave={async (password, reason) => {
-            const res = await sysadminResetInternalRoleUserPasswordAction(resettingInternalUser.id, password, reason);
+          onSavePassword={async (password, reason) => {
+            const res = await sysadminResetInternalRoleUserPasswordAction(editingInternalUser.id, password, reason);
             if (res.ok) void reload();
             return res.ok ? { ok: true } : { ok: false, error: res.error };
           }}
