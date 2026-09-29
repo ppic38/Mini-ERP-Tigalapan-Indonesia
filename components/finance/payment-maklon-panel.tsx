@@ -18,6 +18,8 @@ import {
   vendorInvoiceTotalPaid,
 } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { vendorInvoicePaymentCorrections } from "@/components/sysadmin/finance-corrections";
 import type { MrpDetail } from "@/lib/mrp/store";
 import type { EkspedisiRateRow, ItemSellingPriceRow } from "@/lib/mrp/masterData";
 import type { DeliveryKoli, Mrp, ProductionBatch, ProductionGroupMeta, ProductionResult, RawMaterialInvoice, VendorInvoice } from "@/lib/mrp/types";
@@ -464,19 +466,22 @@ export function PaymentMaklonPanel() {
 
   function renderInvoiceLinesDetail(inv: VendorInvoice) {
     return (
-      <InvoiceLinesDetail
-        inv={inv}
-        vendorInvoices={vendorInvoices}
-        mrpDetails={mrpDetails}
-        staticMrps={staticMrps}
-        productionBatches={productionBatches}
-        productionResults={productionResults}
-        productionGroupMeta={productionGroupMeta}
-        rawInvoices={rawInvoices}
-        deliveryKolis={deliveryKolis}
-        ekspedisiRates={ekspedisiRates}
-        itemSellingPrices={itemSellingPrices}
-      />
+      <div>
+        <InvoiceLinesDetail
+          inv={inv}
+          vendorInvoices={vendorInvoices}
+          mrpDetails={mrpDetails}
+          staticMrps={staticMrps}
+          productionBatches={productionBatches}
+          productionResults={productionResults}
+          productionGroupMeta={productionGroupMeta}
+          rawInvoices={rawInvoices}
+          deliveryKolis={deliveryKolis}
+          ekspedisiRates={ekspedisiRates}
+          itemSellingPrices={itemSellingPrices}
+        />
+        <SysadminActionsBar actions={vendorInvoicePaymentCorrections(inv)} />
+      </div>
     );
   }
 

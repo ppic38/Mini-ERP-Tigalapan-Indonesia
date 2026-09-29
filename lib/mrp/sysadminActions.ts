@@ -469,6 +469,122 @@ export async function sysadminRevertInvoiceDeliveryAction(invoiceIds: string[], 
 }
 
 // =========================================================================
+// Koreksi pembayaran Finance -- "salah klik Bayar / salah upload bukti, kembalikan supaya bisa
+// diproses ulang" (owner 2026-09-29, modul Finance). Semuanya MUNDUR SATU LANGKAH ke status
+// sebelum langkah itu, dan hanya kalau langkah berikutnya belum terjadi. Bukti pembayaran yang
+// sudah diupload TIDAK dihapus (sama seperti "Batalkan Bayar" bawaan Finance: file itu jejak audit
+// dan akan ditimpa upload berikutnya).
+// =========================================================================
+
+/** Batalkan pembayaran invoice material: PAID -> INVOICED (Finance bisa bayar ulang). Menolak kalau
+ *  invoice sudah lanjut (Delivery dst -- Procurement harus mengembalikan Delivery dulu) atau kalau
+ *  invoice ini PV pengganti klaim (terikat ledger kredit/debit klaim). `releaseDeposit` juga
+ *  menghapus baris DEBIT deposit yang dipakai membayar invoice ini (hasil applyVendorDepositAction),
+ *  supaya saldo supplier pulih dan tidak terpotong dua kali saat dibayar ulang. */
+export async function sysadminRevertMaterialInvoicePaidAction(invoiceId: string, releaseDeposit: boolean, reason: string): Promise<ActionResult<{ depositReleased: number }>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: inv, error } = await db.from("raw_material_invoices").select("id,po_id,mrp_id,status,paid_at,source_claim_id,total_biaya").eq("id", invoiceId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!inv) throw new Error("Invoice tidak ditemukan.");
+    if (inv.source_claim_id) throw new Error("Invoice ini PV pengganti klaim -- pembayarannya terikat ledger deposit klaim, tidak bisa dikembalikan dari sini.");
+    if (inv.status === "INVOICED") throw new Error("Invoice ini belum dibayar.");
+    if (inv.status !== "PAID") throw new Error(`Invoice sudah berstatus ${inv.status} (lanjut setelah pembayaran) -- kembalikan langkah setelahnya dulu (mis. Kembalikan Delivery di Material Tracking).`);
+
+    let depositRows: { id: string; supplier: string; amount: number }[] = [];
+    if (releaseDeposit) {
+      const { data: rows, error: depErr } = await db.from("vendor_deposits").select("id,supplier,amount").eq("kind", "DEBIT").eq("source_invoice_id", invoiceId);
+      if (depErr) throw new Error(depErr.message);
+      depositRows = (rows ?? []).map((r) => ({ id: r.id, supplier: r.supplier, amount: Number(r.amount) }));
+    }
+    const { error: updErr } = await db.from("raw_material_invoices").update({ status: "INVOICED", paid_at: null }).eq("id", invoiceId);
+    if (updErr) throw new Error(updErr.message);
+    if (depositRows.length > 0) {
+      const { error: delErr } = await db.from("vendor_deposits").delete().in("id", depositRows.map((r) => r.id));
+      if (delErr) throw new Error(`Status invoice sudah dikembalikan, tapi gagal memulihkan saldo deposit: ${delErr.message}`);
+    }
+    await writeAuditLog(
+      "REVERT_MATERIAL_INVOICE_PAID",
+      "raw_material_invoices",
+      invoiceId,
+      reason.trim(),
+      { status: inv.status, paidAt: inv.paid_at, depositDebits: depositRows },
+      { status: "INVOICED", paidAt: null, depositReleased: depositRows.length }
+    );
+    const depositNote = depositRows.length > 0 ? ` Saldo deposit yang terpakai (${depositRows.length} baris) dipulihkan.` : "";
+    await notifyAffected(
+      `Pembayaran invoice ${invoiceId} (PO ${inv.po_id}, ${inv.mrp_id}) dibatalkan Sysadmin — alasan: ${reason.trim()}. Status kembali ke Invoiced; silakan proses bayar ulang.${depositNote}`,
+      ["finance", "procurement"]
+    );
+    return { depositReleased: depositRows.length };
+  });
+}
+
+/** Batalkan pembayaran invoice vendor produksi (per pcs): PAID -> APPROVED. Bongkar Koli yang sudah
+ *  dilakukan Warehouse TIDAK ikut dibatalkan (itu gate satu arah, HPP sudah tercatat); yang belum
+ *  dibongkar tertahan lagi sampai invoice dibayar ulang. */
+export async function sysadminRevertVendorInvoicePaidAction(invoiceId: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: inv, error } = await db.from("vendor_invoices").select("id,vendor_produksi,status,paid_at").eq("id", invoiceId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!inv) throw new Error("Invoice vendor tidak ditemukan.");
+    if (inv.status !== "PAID") throw new Error(`Invoice ini berstatus ${inv.status}, bukan PAID -- tidak ada pembayaran yang bisa dibatalkan.`);
+    const { error: updErr } = await db.from("vendor_invoices").update({ status: "APPROVED", paid_at: null }).eq("id", invoiceId);
+    if (updErr) throw new Error(updErr.message);
+    await writeAuditLog("REVERT_VENDOR_INVOICE_PAID", "vendor_invoices", invoiceId, reason.trim(), { status: inv.status, paidAt: inv.paid_at }, { status: "APPROVED", paidAt: null });
+    await notifyAffected(`Pembayaran invoice vendor ${invoiceId} dibatalkan Sysadmin — alasan: ${reason.trim()}. Status kembali ke Disetujui; menunggu pembayaran Finance lagi.`, ["finance", "procurement"]);
+    await notifyAffected(`Pembayaran invoice ${invoiceId} dibatalkan Sysadmin (alasan: ${reason.trim()}). Status kembali ke Disetujui, menunggu pembayaran.`, ["vendorMaklon"], inv.vendor_produksi);
+  });
+}
+
+/** Mundurkan invoice PO Produksi FOB (maklon_invoices): PAID -> APPROVED (PO kembali ke DELIVERY, status
+ *  sebelum dibayar) atau APPROVED -> SUBMITTED. Hanya invoice FOB -- invoice CMT arsip tidak menyimpan
+ *  status PO sebelum bayar, jadi tidak aman dimundurkan otomatis. */
+export async function sysadminRevertMaklonInvoiceAction(invoiceId: string, from: "PAID" | "APPROVED", reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: inv, error } = await db.from("maklon_invoices").select("id,maklon_po_id,vendor_produksi,status,approved_at,paid_at").eq("id", invoiceId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!inv) throw new Error("Invoice tidak ditemukan.");
+    if (inv.status !== from) throw new Error(`Invoice ini berstatus ${inv.status}, bukan ${from} -- tidak bisa dimundurkan dari langkah itu.`);
+    const { data: po, error: poErr } = await db.from("maklon_pos").select("id,is_fob,status").eq("id", inv.maklon_po_id).maybeSingle();
+    if (poErr) throw new Error(poErr.message);
+    if (!po?.is_fob) throw new Error("Hanya invoice PO Produksi FOB yang bisa dimundurkan dari sini (invoice CMT arsip tidak didukung).");
+
+    if (from === "PAID") {
+      if (po.status !== "FULLY_PAID") throw new Error(`PO Produksi berstatus ${po.status}, bukan FULLY_PAID -- pembayaran tidak bisa dimundurkan otomatis.`);
+      const { error: e1 } = await db.from("maklon_invoices").update({ status: "APPROVED", paid_at: null }).eq("id", invoiceId);
+      if (e1) throw new Error(e1.message);
+      // Status PO sebelum dibayar selalu DELIVERY untuk FOB (lihat submitFobMaklonInvoiceAction).
+      const { error: e2 } = await db.from("maklon_pos").update({ status: "DELIVERY" }).eq("id", po.id);
+      if (e2) throw new Error(`Status invoice sudah dikembalikan, tapi gagal memulihkan status PO: ${e2.message}`);
+    } else {
+      const { error: e1 } = await db.from("maklon_invoices").update({ status: "SUBMITTED", approved_at: null }).eq("id", invoiceId);
+      if (e1) throw new Error(e1.message);
+    }
+    const toStatus = from === "PAID" ? "APPROVED" : "SUBMITTED";
+    await writeAuditLog(
+      from === "PAID" ? "REVERT_MAKLON_INVOICE_PAID" : "REVERT_MAKLON_INVOICE_APPROVAL",
+      "maklon_invoices",
+      invoiceId,
+      reason.trim(),
+      { status: inv.status, approvedAt: inv.approved_at, paidAt: inv.paid_at, poStatus: po.status },
+      { status: toStatus, poStatus: from === "PAID" ? "DELIVERY" : po.status }
+    );
+    const text = `Invoice PO Produksi FOB ${invoiceId} (PO ${inv.maklon_po_id}) dimundurkan Sysadmin ke ${toStatus} — alasan: ${reason.trim()}.`;
+    await notifyAffected(text, ["finance"]);
+    await notifyAffected(text, ["vendorMaklon"], inv.vendor_produksi);
+  });
+}
+
+// =========================================================================
 // Koreksi code lot / code roll 1 roll -- salah ketik saat Paying Voucher (Procurement) atau saat
 // Good Receive (vendor produksi), owner 2026-09-29 (Sysadmin "melihat dan mengoreksi", mulai dari
 // modul Procurement). Aturan pengaman:

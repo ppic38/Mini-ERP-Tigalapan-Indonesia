@@ -8,6 +8,8 @@ import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatRupiah, maklonInvoiceBadge } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { fobInvoiceCorrections } from "@/components/sysadmin/finance-corrections";
 import type { MaklonInvoice } from "@/lib/mrp/types";
 
 export default function InvoiceMaklonPage() {
@@ -45,18 +47,22 @@ export default function InvoiceMaklonPage() {
       key: "aksi",
       label: "Aksi",
       default: true,
-      render: (i) =>
-        i.status === "SUBMITTED" ? (
-          <Button onClick={() => approveMaklonInvoice(i.id)} variant="success" size="xs">
-            Approve
-          </Button>
-        ) : i.status === "APPROVED" ? (
-          <Button onClick={() => payMaklonInvoice(i.id)} variant="success" size="xs">
-            Bayar
-          </Button>
-        ) : (
-          <span className="font-sans text-[11.5px] font-medium text-[#94A3B0]">Dibayar</span>
-        ),
+      render: (i) => (
+        <div>
+          {i.status === "SUBMITTED" ? (
+            <Button onClick={() => approveMaklonInvoice(i.id)} variant="success" size="xs">
+              Approve
+            </Button>
+          ) : i.status === "APPROVED" ? (
+            <Button onClick={() => payMaklonInvoice(i.id)} variant="success" size="xs">
+              Bayar
+            </Button>
+          ) : (
+            <span className="font-sans text-[11.5px] font-medium text-[#94A3B0]">Dibayar</span>
+          )}
+          <SysadminActionsBar actions={fobInvoiceCorrections(i, maklonPOs.find((p) => p.id === i.maklonPoId))} />
+        </div>
+      ),
     },
   ];
 

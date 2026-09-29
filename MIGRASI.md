@@ -30,7 +30,16 @@ melihat dan mengoreksi ... jangan ada conflict sidebar jadi procurement saja saa
   permanen wajib ketik ulang No. PO; setelah sukses masuk Log Audit + notifikasi ke modul terdampak.
   Aturan boleh/tidak di UI hanya cermin -- server (`sysadminActions.ts`) yang memutuskan. Code roll
   hanya bisa diubah kalau roll sudah diterima & belum ditimbang; code lot bebas (label saja).
-  Belum dikerjakan: Paying Voucher, Klaim Material, Master Data, dan modul selain Procurement.
+  Belum dikerjakan: Paying Voucher, Klaim Material, Master Data.
+- **Tahap 3 -- modul Finance** (`components/sysadmin/finance-corrections.ts`): Payment Material
+  (detail invoice: Batalkan pembayaran PAID->INVOICED, plus varian "pulihkan deposit" kalau ada deposit
+  yang terpotong untuk invoice itu; PV pengganti klaim DITOLAK karena terikat ledger klaim), Payment
+  Maklon (invoice vendor per pcs: PAID->APPROVED; Bongkar Koli Warehouse yang sudah terjadi tidak
+  dibatalkan), Invoice Maklon FOB (PAID->APPROVED + PO kembali DELIVERY, APPROVED->SUBMITTED; CMT
+  arsip tidak didukung), dan PO Material disetujui (Tarik kembali/Batalkan). Aksi server:
+  `sysadminRevertMaterialInvoicePaidAction`, `sysadminRevertVendorInvoicePaidAction`,
+  `sysadminRevertMaklonInvoiceAction`. Belum: mundurkan approval di antrean Finance (bisa dari halaman
+  Purchase Order Procurement), halaman Saldo Deposit (tombol Hapus-nya sudah dihilangkan dari UI).
 
 ## Multi-user per modul internal + atribusi approval -- migration 0060 (2026-09-29)
 `supabase/migrations/0060_internal_role_users.sql`: tabel `internal_role_users` (akun anggota tim

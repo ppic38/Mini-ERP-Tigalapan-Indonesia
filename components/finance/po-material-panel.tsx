@@ -18,6 +18,8 @@ import {
 } from "@/lib/mrp/derive";
 import { countPendingMaterialPoForMrp, pendingMarker } from "@/lib/shell/badges";
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { materialPoCorrections } from "@/components/sysadmin/procurement-corrections";
 import type { ColorBreakdown, MaterialPO } from "@/lib/mrp/types";
 import type { MrpDetail } from "@/lib/mrp/store";
 
@@ -664,6 +666,7 @@ export function PoMaterialPanel() {
                                                disaring), sekarang jelas kelihatan sampai level mana & siapa yang
                                                approve, bukan cuma label "disetujui" polos. */}
                                             <ApprovalChain state={poApprovalState(p)} />
+                                            <SysadminActionsBar actions={materialPoCorrections(p)} />
                                           </div>
                                         </td>
                                       </tr>

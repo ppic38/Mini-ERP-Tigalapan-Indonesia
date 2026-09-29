@@ -19,6 +19,8 @@ import {
   isSyntheticSupplier,
 } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { materialInvoicePaymentCorrections } from "@/components/sysadmin/finance-corrections";
 import type { RawMaterialInvoice } from "@/lib/mrp/types";
 // Item 2.7: getInvoicePaymentProofAction DIPANGGIL LANGSUNG dari komponen ini (bukan lewat store)
 // -- sama pola dengan getMaterialClaimPhotoAction (material-claims/page.tsx), payload PDF-nya
@@ -587,6 +589,7 @@ export function PaymentPanel() {
             <div className="border-t border-[#F1F4F7] px-3 py-2 font-sans text-[11.5px] text-text-muted">Belum ada PO Produksi terkait untuk MRP/vendor ini.</div>
           )}
         </div>
+        <SysadminActionsBar actions={materialInvoicePaymentCorrections(i, vendorDeposits)} />
       </div>
     );
   }

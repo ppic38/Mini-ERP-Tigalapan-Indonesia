@@ -147,7 +147,7 @@ export type CorrectionAction = {
 export function SysadminActionsBar({ actions }: { actions: CorrectionAction[] }) {
   const sysadmin = useSysadminMode();
   const [openKey, setOpenKey] = useState<string | null>(null);
-  if (!sysadmin) return null;
+  if (!sysadmin || actions.length === 0) return null;
   const open = actions.find((a) => a.key === openKey);
   return (
     // onClick stopPropagation: tombol berada di dalam baris tabel yang bisa di-klik (buka rincian).
