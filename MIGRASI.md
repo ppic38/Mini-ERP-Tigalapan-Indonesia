@@ -9,10 +9,14 @@ pola sama vendor_action_log). Owner: "procurement ternyata ada dua orang, fulan 
 tau siapa PIC-nya" -- pola PERSIS migration 0057 (vendor_users), diterapkan ke SEMUA modul internal
 sekaligus, bukan cuma satu.
 
-Login: toggle "Akun Utama"/"Anggota Tim" di modal login modul internal (app/page.tsx, sama seperti
-halaman login vendor) -- `loginInternalUserAction` (lib/auth/actions.ts). Sesi cookie internal
-sekarang bawa `internalActors` per-role (lib/auth/session.ts, `InternalActor`) -- role yang login
-lewat akun utama TIDAK punya entri di situ (fallback ke label modul, mis. "Procurement").
+Login: **Revisi 2026-09-29 (owner tolak model berjenjang)** -- modal login modul internal
+(app/page.tsx) SEMPAT punya toggle "Akun Utama"/"Anggota Tim" (commit `c1704fa`), tapi owner minta
+model FLAT ("procurement1"/"procurement2", akses sama, tanpa toggle) -- sekarang cuma SATU form:
+Username (opsional) + Password. Submit coba `login()` (akun utama) dulu, kalau username diisi
+dicoba `loginUser()` (`loginInternalUserAction`, lib/auth/actions.ts) juga. Sesi cookie internal
+bawa `internalActors` per-role (lib/auth/session.ts, `InternalActor`) -- role yang login lewat akun
+utama TIDAK punya entri di situ (fallback ke label modul, mis. "Procurement"). Login Vendor Produksi
+(app/vendor-maklon/login) direvisi sama persis di hari yang sama.
 
 Atribusi: `PoApprovalEntry.actorName` (lib/mrp/poApproval.ts, field opsional -- entri lama sebelum
 migration ini TIDAK punya field ini, jsonb jadi tidak perlu migrasi data) diisi lewat
@@ -23,11 +27,24 @@ ditampilkan di "Riwayat approval" (components/mrp/po-approval-queue.tsx). Titik 
 approval PO) belum ikut mencatat ke `internal_action_log` -- bisa menyusul tanpa migration baru
 kalau dibutuhkan (helper `logInternalAction` sudah ada, lib/mrp/actions.ts).
 
-Kelola akun: Sysadmin "Akun & Password" (app/sysadmin/accounts/page.tsx), bagian "Anggota Tim Modul
-Internal" -- SATU-SATUNYA jalur (beda dari vendor_users yang dikelola sehari-hari vendor sendiri
-lewat "Tim Saya", Sysadmin cuma jalur darurat) karena modul internal tidak punya portal
-self-service. Semua mutasi (tambah/edit/reset password/hapus) WAJIB alasan, tercatat ke
-`sysadmin_audit_log` seperti mutasi Sysadmin lain.
+Kelola akun (Sysadmin): "Akun & Password" (app/sysadmin/accounts/page.tsx) **direstrukturisasi
+2026-09-29** jadi 2 sub-tab (pola `Tabs` sama dengan PO Approval Finance) -- "Akun Internal" (pilih
+modul lewat chip dulu, baru kelola: baris Password Modul/env var + tabel Akun Login khusus modul
+itu, bisa tambah akun kedua dst di modul yang sama) dan "Akun Vendor Produksi" (tabel vendor, tidak
+berubah). Tabel flat lama ("Anggota Tim Vendor Produksi" jalur darurat & "Akun Login Modul Internal
+(Multi-User)") dihapus dari tampilan. Ini SATU-SATUNYA jalur ADMIN (tambah/reset password
+paksa/nonaktifkan/hapus akun siapa saja) -- WAJIB alasan, tercatat ke `sysadmin_audit_log`.
+
+Profil Saya (self-service, BEDA dari jalur Sysadmin di atas): owner 2026-09-29 "akun dari tiap
+modul itu bisa lihat akun profile ... username, Full Name, Password. Dan bisa edit itu" --
+`lib/mrp/internalProfileActions.ts` (`getMyInternalProfileAction`/`updateMyInternalProfileAction`)
++ `components/shell/my-profile-modal.tsx`, dipicu dari menu "Profil Saya" di dropdown topbar
+(components/shell/topbar.tsx, AppShell). HANYA muncul untuk akun yang login lewat username sendiri
+(`internalActor` ada di sesi) -- akun utama tidak punya baris personal untuk diedit lewat sini.
+Ganti password WAJIB password saat ini dicocokkan dulu di server (tidak butuh alasan, ini
+self-service bukan aksi admin darurat). Nama baru baru tampil di topbar setelah logout+login ulang
+(nama dibaca dari token sesi, bukan query ulang tiap request) -- keterbatasan yang sama seperti
+vendor_users, bukan bug baru.
 
 **Owner menjalankan migration manual di SQL Editor Supabase.** Kode aman kalau migration belum
 jalan: login akun utama semua modul TIDAK berubah sama sekali; login "Anggota Tim" & bagian

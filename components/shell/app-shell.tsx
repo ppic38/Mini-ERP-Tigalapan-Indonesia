@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/shell/sidebar";
 import { Topbar } from "@/components/shell/topbar";
+import { MyProfileModal } from "@/components/shell/my-profile-modal";
 import { NAV } from "@/lib/shell/nav";
 import { useMrpStore } from "@/lib/mrp/store";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
@@ -68,6 +69,10 @@ export function AppShell({
 }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  // "Profil Saya" (owner 2026-09-29: "akun dari tiap modul itu bisa lihat akun profile ... dan
+  // bisa edit itu") -- hanya untuk akun yang login lewat username sendiri (internalActor di bawah),
+  // akun utama (password bersama modul) tidak punya baris personal untuk diedit lewat sini.
+  const [showProfile, setShowProfile] = useState(false);
   // Revisi 2026-09-07: `hydrated` sudah lama ada di store (di-set true begitu getFlowSnapshot()
   // pertama SUKSES lewat StoreHydrator) tapi TIDAK PERNAH dibaca di mana pun -- akibatnya tiap
   // halaman langsung render dengan array store yang masih KOSONG selama snapshot awal masih
@@ -279,6 +284,7 @@ export function AppShell({
           onMarkAllRead={() => markAllNotificationsRead(myNotifications.map((n) => n.id))}
           onDismiss={dismissNotification}
           showNotifications={role === "vendorMaklon"}
+          onOpenProfile={isGated && internalActor ? () => setShowProfile(true) : undefined}
           onLogout={
             isGated
               ? () => {
@@ -321,6 +327,7 @@ export function AppShell({
           )}
         </div>
       </div>
+      {showProfile && isGated && <MyProfileModal role={role as InternalRole} onClose={() => setShowProfile(false)} />}
     </div>
   );
 }

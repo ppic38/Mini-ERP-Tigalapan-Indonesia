@@ -30,6 +30,7 @@ export function Topbar({
   onMarkAllRead,
   onDismiss,
   onLogout,
+  onOpenProfile,
   showNotifications = false,
 }: {
   role: string;
@@ -39,6 +40,7 @@ export function Topbar({
   onMarkAllRead?: () => void;
   onDismiss?: (id: string) => void;
   onLogout?: () => void;
+  onOpenProfile?: () => void;
   showNotifications?: boolean;
 }) {
   const [notifOpen, setNotifOpen] = useState(false);
@@ -127,6 +129,17 @@ export function Topbar({
           </button>
           {profileOpen && (
             <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-[190px] overflow-hidden rounded-lg border border-border-subtle bg-white py-1 shadow-lg">
+              {onOpenProfile && (
+                <button
+                  onClick={() => {
+                    setProfileOpen(false);
+                    onOpenProfile();
+                  }}
+                  className="block w-full px-3.5 py-2 text-left font-sans text-xs font-medium text-text-primary hover:bg-[#F7F9FB]"
+                >
+                  Profil Saya
+                </button>
+              )}
               {onLogout && (
                 <button
                   onClick={onLogout}
