@@ -7,6 +7,7 @@ import type { ActionResult } from "./action-result";
 import { INTERNAL_ACCOUNTS, type InternalRole } from "../internal-auth";
 import { nextReadableId } from "./repo/ids";
 import type { NotificationAudience } from "./types";
+import { weightVariance } from "./derive";
 
 /** Bungkus aksi supaya alasan gagalnya sampai ke user di production (sama pola dengan lib/mrp/actions.ts). */
 async function toActionResult<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
@@ -581,6 +582,160 @@ export async function sysadminRevertMaklonInvoiceAction(invoiceId: string, from:
     const text = `Invoice PO Produksi FOB ${invoiceId} (PO ${inv.maklon_po_id}) dimundurkan Sysadmin ke ${toStatus} — alasan: ${reason.trim()}.`;
     await notifyAffected(text, ["finance"]);
     await notifyAffected(text, ["vendorMaklon"], inv.vendor_produksi);
+  });
+}
+
+// =========================================================================
+// Koreksi Cutting vendor produksi (owner 2026-09-30). Tiga koreksi per roll (batch) yang MUNDUR satu
+// langkah dan hanya boleh selama roll BELUM menyentuh tahap sesudahnya (Finish Good / pengiriman):
+//   1. Batalkan resting  -- roll dikeluarkan dari produksi (batch dihapus), kembali ke pool roll siap
+//      diresting; hanya kalau belum ada hasil cutting.
+//   2. Batalkan hasil cutting -- kembali ke status resting, hasil per size dihapus, vendor menginput ulang.
+//   3. Koreksi berat bersih -- salah timbang; hanya untuk berat yang TIDAK menjadi klaim selisih berat
+//      (klaim butuh foto bukti & alur retur Procurement, tidak boleh dibuat/dihapus dari sini).
+// =========================================================================
+
+type BatchForCorrection = {
+  id: string;
+  mrp_id: string;
+  vendor_produksi: string;
+  warna: string;
+  lengan: string;
+  code_roll: string | null;
+  cutting_at: string | null;
+  closed_at: string | null;
+  fg_logged_snapshot: Record<string, number> | null;
+};
+
+/** Ambil batch + pastikan belum menyentuh tahap sesudah Cutting (FG, pengiriman, Final Produksi). */
+async function loadBatchUntouchedByFg(db: ReturnType<typeof supabaseServer>, batchId: string): Promise<BatchForCorrection> {
+  const { data: batch, error } = await db
+    .from("production_batches")
+    .select("id,mrp_id,vendor_produksi,warna,lengan,code_roll,cutting_at,closed_at,fg_logged_snapshot")
+    .eq("id", batchId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!batch) throw new Error("Roll tidak ditemukan (mungkin sudah dibatalkan).");
+  if (batch.closed_at) throw new Error("Roll ini sudah ditutup (Tutup Roll) -- buka lagi dulu dari portal vendor sebelum dikoreksi.");
+  if (batch.fg_logged_snapshot && Object.keys(batch.fg_logged_snapshot).length > 0) throw new Error("Roll ini sudah punya progres Finish Good -- tidak bisa dikoreksi dari sini.");
+  const [{ count: fgCount, error: fgErr }, { count: koliCount, error: koliErr }, { data: meta, error: metaErr }] = await Promise.all([
+    db.from("production_batch_fg_sizes").select("size", { count: "exact", head: true }).eq("production_batch_id", batchId),
+    db.from("delivery_koli_items").select("delivery_koli_id", { count: "exact", head: true }).eq("source_batch_id", batchId),
+    db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", `${batch.mrp_id}|${batch.warna}|${batch.lengan}`).maybeSingle(),
+  ]);
+  if (fgErr || koliErr || metaErr) throw new Error((fgErr ?? koliErr ?? metaErr)!.message);
+  if ((fgCount ?? 0) > 0) throw new Error("Roll ini sudah punya hasil Finish Good -- tidak bisa dikoreksi dari sini.");
+  if ((koliCount ?? 0) > 0) throw new Error("Roll ini sudah masuk koli pengiriman -- tidak bisa dikoreksi dari sini.");
+  if (meta?.fg_confirmed_at || meta?.done_at) throw new Error(`Grup ${batch.warna} · ${batch.lengan} sudah Selesai/Final Produksi -- buka kunci dulu dari portal vendor.`);
+  return batch as BatchForCorrection;
+}
+
+export async function sysadminUndoRestingAction(batchId: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const batch = await loadBatchUntouchedByFg(db, batchId);
+    if (batch.cutting_at) throw new Error("Roll ini sudah punya hasil cutting -- batalkan hasil cutting dulu.");
+    const { data: full } = await db.from("production_batches").select("*").eq("id", batchId).maybeSingle();
+    const { error: sizeErr } = await db.from("production_batch_sizes").delete().eq("production_batch_id", batchId);
+    if (sizeErr) throw new Error(sizeErr.message);
+    const { error: delErr } = await db.from("production_batches").delete().eq("id", batchId);
+    if (delErr) throw new Error(delErr.message);
+    await writeAuditLog("UNDO_RESTING", "production_batches", batchId, reason.trim(), { batch: full }, { removed: true });
+    await notifyAffected(
+      `Resting roll ${batch.code_roll ?? batchId} (${batch.mrp_id} · ${batch.warna} · ${batch.lengan}) dibatalkan Sysadmin — alasan: ${reason.trim()}. Roll kembali ke daftar roll yang siap diresting.`,
+      ["vendorMaklon"],
+      batch.vendor_produksi
+    );
+  });
+}
+
+export async function sysadminUndoCuttingAction(batchId: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const batch = await loadBatchUntouchedByFg(db, batchId);
+    if (!batch.cutting_at) throw new Error("Roll ini belum punya hasil cutting.");
+    const { data: sizes, error: sizesErr } = await db.from("production_batch_sizes").select("size,qty").eq("production_batch_id", batchId);
+    if (sizesErr) throw new Error(sizesErr.message);
+    const { error: sizeErr } = await db.from("production_batch_sizes").delete().eq("production_batch_id", batchId);
+    if (sizeErr) throw new Error(sizeErr.message);
+    const { error: updErr } = await db.from("production_batches").update({ cutting_at: null }).eq("id", batchId);
+    if (updErr) {
+      // Pulihkan hasil per size yang sudah terhapus supaya roll tidak tertinggal setengah.
+      if ((sizes ?? []).length > 0) await db.from("production_batch_sizes").insert((sizes ?? []).map((s) => ({ ...s, production_batch_id: batchId })));
+      throw new Error(updErr.message);
+    }
+    // Resolusi yield alert (kalau ada) ikut dihapus -- alert lama tidak boleh tampil "sudah ditindak" begitu roll dicutting ulang.
+    await db.from("production_yield_resolutions").delete().eq("production_batch_id", batchId);
+    await writeAuditLog("UNDO_CUTTING", "production_batches", batchId, reason.trim(), { cuttingAt: batch.cutting_at, sizes }, { cuttingAt: null });
+    await notifyAffected(
+      `Hasil cutting roll ${batch.code_roll ?? batchId} (${batch.mrp_id} · ${batch.warna} · ${batch.lengan}) dibatalkan Sysadmin — alasan: ${reason.trim()}. Roll kembali ke status resting; silakan input ulang hasil cutting.`,
+      ["vendorMaklon"],
+      batch.vendor_produksi
+    );
+  });
+}
+
+/** Cari roll fisik (raw_material_invoice_rolls) milik sebuah batch lewat pencocokan code_roll -- pola sama
+ *  dengan submitCuttingDefectClaimAction (ProductionBatch tidak menyimpan invoiceId/rollIndex). */
+async function findRollForBatch(db: ReturnType<typeof supabaseServer>, batch: BatchForCorrection) {
+  if (!batch.code_roll) throw new Error("Roll ini tidak punya code roll -- roll fisiknya tidak bisa ditelusuri.");
+  const { data: invs, error: invErr } = await db.from("raw_material_invoices").select("id,po_id,supplier").eq("mrp_id", batch.mrp_id).eq("destination_vendor", batch.vendor_produksi);
+  if (invErr) throw new Error(invErr.message);
+  const invIds = (invs ?? []).map((i) => i.id);
+  if (invIds.length === 0) throw new Error("Invoice material untuk roll ini tidak ditemukan.");
+  const { data: colors, error: colErr } = await db.from("raw_material_invoice_colors").select("id,invoice_id").in("invoice_id", invIds).eq("warna", batch.warna).eq("lengan", batch.lengan);
+  if (colErr) throw new Error(colErr.message);
+  const colorIds = (colors ?? []).map((c) => c.id);
+  if (colorIds.length === 0) throw new Error("Data warna roll tidak ditemukan.");
+  const { data: rolls, error: rollErr } = await db
+    .from("raw_material_invoice_rolls")
+    .select("invoice_color_id,roll_index,gross_kg,net_kg,claim_defect_at,claim_retur_requested_at,claim_resolved_at")
+    .in("invoice_color_id", colorIds)
+    .eq("code_roll", batch.code_roll);
+  if (rollErr) throw new Error(rollErr.message);
+  if ((rolls ?? []).length !== 1) throw new Error(`Roll fisik untuk code roll ${batch.code_roll} tidak unik/tidak ditemukan (${(rolls ?? []).length} cocok).`);
+  const roll = rolls![0];
+  const color = (colors ?? []).find((c) => c.id === roll.invoice_color_id)!;
+  const inv = (invs ?? []).find((i) => i.id === color.invoice_id)!;
+  return { roll, invoiceId: inv.id, poId: inv.po_id, supplier: inv.supplier as string | null };
+}
+
+export async function sysadminSetBatchNetWeightAction(batchId: string, netKg: number, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    if (!Number.isFinite(netKg) || netKg <= 0) throw new Error("Berat bersih harus angka lebih dari 0.");
+    const db = supabaseServer();
+    const batch = await loadBatchUntouchedByFg(db, batchId);
+    const { roll, invoiceId, poId } = await findRollForBatch(db, batch);
+    if (roll.claim_defect_at || roll.claim_retur_requested_at) throw new Error("Roll ini punya klaim (cacat fisik / retur) -- berat tidak bisa dikoreksi dari sini.");
+    if (roll.gross_kg == null) throw new Error("Berat kotor roll tidak diketahui -- tidak bisa memvalidasi toleransi.");
+    const variance = weightVariance(Number(roll.gross_kg), netKg);
+    if (variance.claimable) {
+      throw new Error(`Berat baru ${netKg} kg (${variance.pct.toFixed(1)}% dari berat kotor ${roll.gross_kg} kg) di luar toleransi -- itu menjadi klaim selisih berat yang butuh foto bukti dan alur retur, tidak bisa dibuat dari sini.`);
+    }
+    if (roll.net_kg != null && Number(roll.net_kg) === netKg) throw new Error("Berat baru sama dengan yang tersimpan.");
+    const { error: updErr } = await db
+      .from("raw_material_invoice_rolls")
+      .update({ net_kg: netKg, weigh_confirmed_at: new Date().toISOString() })
+      .eq("invoice_color_id", roll.invoice_color_id)
+      .eq("roll_index", roll.roll_index);
+    if (updErr) throw new Error(updErr.message);
+    await writeAuditLog(
+      "EDIT_ROLL_NET_WEIGHT",
+      "raw_material_invoice_rolls",
+      `${invoiceId}|${batch.warna}|${batch.lengan}|${roll.roll_index}`,
+      reason.trim(),
+      { netKg: roll.net_kg, batchId },
+      { netKg }
+    );
+    const text = `Berat bersih roll ${batch.code_roll} (PO ${poId}, ${batch.warna} · ${batch.lengan}) dikoreksi Sysadmin: ${roll.net_kg ?? "—"} → ${netKg} kg — alasan: ${reason.trim()}.`;
+    await notifyAffected(text, ["procurement"]);
+    await notifyAffected(text, ["vendorMaklon"], batch.vendor_produksi);
   });
 }
 

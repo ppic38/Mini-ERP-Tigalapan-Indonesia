@@ -48,6 +48,16 @@ melihat dan mengoreksi ... jangan ada conflict sidebar jadi procurement saja saa
   Koreksi pertama: Good Receive -- "Batalkan terima" per roll (`sysadminUndoRollArrivalAction`; diblokir
   kalau roll sudah ditimbang atau PO Produksi vendor sudah mulai produksi) + tabel koreksi code lot/roll.
   Belum: Cutting (berat timbang), Produksi, Pengiriman, Invoice & Payment vendor.
+- **Tahap 3 -- Vendor Produksi: Cutting (2026-09-30)** (`components/sysadmin/batch-corrections.tsx`, tab
+  Cutting -> "Lihat roll" per roll): (1) "Batalkan resting" (hapus batch belum-dicutting, roll kembali ke
+  pool resting -- `sysadminUndoRestingAction`), (2) "Batalkan cutting" (cutting_at kosong + hapus hasil
+  per size + hapus resolusi yield alert -- `sysadminUndoCuttingAction`), (3) "Koreksi berat" (net_kg
+  roll fisik, ditelusuri lewat pencocokan code_roll seperti submitCuttingDefectClaimAction --
+  `sysadminSetBatchNetWeightAction`). Semua HANYA untuk roll yang belum ditutup, belum punya
+  progres/hasil Finish Good, belum masuk koli, dan grupnya belum Selesai/Final (`loadBatchUntouchedByFg`).
+  Koreksi berat ditolak kalau berat baru masuk klaim selisih berat (butuh foto + alur retur), atau roll
+  punya klaim cacat fisik/retur, atau code_roll tidak unik. Belum: Finish Good/Reject/Rework/Final,
+  Pengiriman, Invoice & Payment vendor.
 - **Tahap 3 -- modul Produksi (2026-09-30)** (`components/sysadmin/produksi-corrections.ts`): halaman
   Monitoring Produksi, Monitoring Reject, dan Kebutuhan Bahan read-only -- satu-satunya aksi tulis di
   modul ini adalah Yield Alert, jadi koreksinya cuma di sana: "Buka lagi" alert yang sudah ditindak

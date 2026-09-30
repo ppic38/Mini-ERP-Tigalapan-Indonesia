@@ -30,6 +30,7 @@ import {
 } from "@/lib/mrp/derive";
 import { countCuttingAwaitingUpdateForMrp, pendingMarker } from "@/lib/shell/badges";
 import { RESTING_TARGET_MINUTES } from "@/lib/mrp/seed";
+import { SysadminBatchActions } from "@/components/sysadmin/batch-corrections";
 import type { AduanPolaRow, Lengan, ProductionBatch } from "@/lib/mrp/types";
 
 /** Item 3.2 (feedback batch 2026-09-04): kompres foto bukti di BROWSER sebelum dikirim ke Server
@@ -1069,6 +1070,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                               ) : (
                                 <span className="text-text-muted">Target: {targetTotal} pcs</span>
                               )}
+                              <SysadminBatchActions batch={b} invoices={invoices} />
                             </span>
                           </div>
                         );
