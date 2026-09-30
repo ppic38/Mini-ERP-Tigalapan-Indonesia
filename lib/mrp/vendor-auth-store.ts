@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { loginVendorAction, loginVendorUserAction, logoutVendorAction } from "../auth/actions";
 import { useMrpStore } from "./store";
+import { useInternalAuthStore } from "../internal-auth-store";
 
 // CATATAN MIGRASI SUPABASE: dulu login() mengecek password langsung ke
 // VENDOR_PRODUKSI[id].password (plaintext, ter-bundle ke client, seragam "vendor123"
@@ -39,6 +40,10 @@ export const useVendorAuthStore = create<VendorAuthState>()(
         const result = await loginVendorAction(nameOrId, password);
         if (!result.ok) return false;
         set({ loggedInVendorId: result.vendorId ?? null, actor: null });
+        // Login vendor = identitas aktif di browser ini pindah ke vendor (lihat ActiveIdentity di
+        // lib/internal-auth-store.ts) -- supaya sesi Sysadmin yang lupa di-logout tidak membuat portal
+        // vendor tampil sebagai Sysadmin.
+        useInternalAuthStore.getState().setActiveIdentity("vendor");
         // Lihat catatan sama di lib/internal-auth-store.ts -- StoreHydrator tidak lagi refetch
         // otomatis tiap pindah halaman, jadi perlu dipicu manual begitu login sukses.
         void useMrpStore.getState().refresh();
@@ -48,12 +53,15 @@ export const useVendorAuthStore = create<VendorAuthState>()(
         const result = await loginVendorUserAction(username, password);
         if (!result.ok) return false;
         set({ loggedInVendorId: result.vendorId ?? null, actor: result.actor ?? null });
+        useInternalAuthStore.getState().setActiveIdentity("vendor");
         void useMrpStore.getState().refresh();
         return true;
       },
       logout: () => {
         void logoutVendorAction();
         set({ loggedInVendorId: null, actor: null });
+        const internal = useInternalAuthStore.getState();
+        if (internal.activeIdentity === "vendor") internal.setActiveIdentity(null);
       },
     }),
     { name: "vendor-auth-v1" }

@@ -20,8 +20,13 @@ melihat dan mengoreksi ... jangan ada conflict sidebar jadi procurement saja saa
   approval, batalkan Delivery invoice) menulis notifikasi ke modul/vendor terdampak
   (`notifyAffected`, `lib/mrp/sysadminActions.ts`, best-effort -- gagal notifikasi tidak menggagalkan
   koreksi). Mode Sysadmin tidak menampilkan lonceng (tidak ada notifikasi yang ditujukan ke Sysadmin).
-- Catatan: satu browser yang membuka Sysadmin DAN modul lain sekaligus akan selalu tampil sebagai
-  Sysadmin di halaman modul internal (cookie sesi dipakai bersama).
+- **Identitas aktif (perbaikan 2026-09-30)**: satu browser boleh menyimpan beberapa sesi sekaligus
+  (cookie sesi dipakai bersama), jadi `useInternalAuthStore.activeIdentity` mencatat login TERAKHIR
+  (role internal atau "vendor"). Mode Sysadmin (`isSysadminActive`) hanya aktif kalau identitas
+  aktifnya Sysadmin -- sebelumnya sesi Sysadmin yang lupa di-logout membuat portal vendor yang baru
+  login tampil sebagai Sysadmin (bug report owner). Login modul/vendor lain memindahkan identitas;
+  membuka halaman milik Sysadmin (bookmark) mengembalikannya. `proxy.ts` tidak lagi membuka
+  pembatasan halaman anggota tim vendor hanya karena ada sesi Sysadmin di browser yang sama.
 - **Tahap 3 -- koreksi langsung di halaman Procurement** (mode Sysadmin saja; tombol dari
   `components/sysadmin/`): halaman Purchase Order (tab PO Material: Tarik kembali / Mundurkan approval /
   Batalkan; tab PO Produksi: Mundurkan approval / Batalkan) dan Material Tracking (detail batch:

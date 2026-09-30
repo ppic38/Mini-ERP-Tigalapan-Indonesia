@@ -7,7 +7,7 @@ import { Topbar } from "@/components/shell/topbar";
 import { NAV, PROFILE_HREF, SYSADMIN_GROUP_ORDER, sysadminNavGroups } from "@/lib/shell/nav";
 import { SysadminVendorSwitcher } from "@/components/sysadmin/vendor-switcher";
 import { useMrpStore } from "@/lib/mrp/store";
-import { useInternalAuthStore } from "@/lib/internal-auth-store";
+import { isSysadminActive, useInternalAuthStore } from "@/lib/internal-auth-store";
 import { useVendorAuthStore } from "@/lib/mrp/vendor-auth-store";
 import { vendorHasPageAccess } from "@/lib/mrp/vendorPages";
 import { seenPoKey, useSeenPoIds } from "@/lib/shell/seen-po";
@@ -97,12 +97,24 @@ export function AppShell({
   // Revisi 2026-09-30 (owner: Sysadmin ikut melihat & mengoreksi Vendor Produksi): portal vendor
   // (vendorMaklon) SEKARANG ikut -- shell-nya juga milik Sysadmin kalau sesi ini punya Sysadmin
   // terbuka (vendor yang dilihat dipilih lewat SysadminVendorSwitcher, lihat VendorAuthGuard).
-  const sysadminMode = (isGated || role === "vendorMaklon") && unlockedRoles.includes("sysadmin");
+  //
+  // Revisi 2026-09-30 (bug report owner: login vendor tapi tampilan jadi milik Sysadmin): mode ini HANYA
+  // aktif kalau identitas aktif di browser ini Sysadmin (login terakhir -- isSysadminActive). Sesi
+  // Sysadmin yang lupa di-logout tidak lagi menimpa tampilan modul/vendor yang login sesudahnya.
+  const activeIdentity = useInternalAuthStore((s) => s.activeIdentity);
+  const setActiveIdentity = useInternalAuthStore((s) => s.setActiveIdentity);
+  const sysadminMode = (isGated || role === "vendorMaklon") && isSysadminActive(unlockedRoles, activeIdentity);
   const authorized = !isGated || sysadminMode || unlockedRoles.includes(role as InternalRole);
 
   useEffect(() => {
     if (mounted && isGated && !authorized) router.replace("/");
   }, [mounted, isGated, authorized, router]);
+
+  // Membuka halaman milik Sysadmin sendiri (mis. lewat bookmark) = kembali memakai identitas Sysadmin,
+  // meski login terakhir di browser ini modul/vendor lain.
+  useEffect(() => {
+    if (mounted && role === "sysadmin" && unlockedRoles.includes("sysadmin") && activeIdentity !== null && activeIdentity !== "sysadmin") setActiveIdentity("sysadmin");
+  }, [mounted, role, unlockedRoles, activeIdentity, setActiveIdentity]);
 
   // Identitas shell: di mode Sysadmin selalu Sysadmin (lihat komentar sysadminMode di atas).
   const shellRole: keyof typeof NAV = sysadminMode ? "sysadmin" : role;

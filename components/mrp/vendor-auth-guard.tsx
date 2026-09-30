@@ -3,7 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useVendorAuthStore } from "@/lib/mrp/vendor-auth-store";
-import { useInternalAuthStore } from "@/lib/internal-auth-store";
+import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { useSysadminVendorStore } from "@/lib/shell/sysadmin-vendor-store";
 import { SysadminVendorPicker } from "@/components/sysadmin/vendor-picker";
 
@@ -17,7 +17,9 @@ export function VendorAuthGuard({ children }: { children: (vendorId: string) => 
   useEffect(() => setMounted(true), []);
 
   const loggedInVendorId = useVendorAuthStore((s) => s.loggedInVendorId);
-  const sysadmin = useInternalAuthStore((s) => s.unlockedRoles.includes("sysadmin"));
+  // Mode Sysadmin hanya kalau identitas aktifnya Sysadmin -- vendor yang login SETELAH Sysadmin tetap
+  // melihat portalnya sendiri (lihat ActiveIdentity di lib/internal-auth-store.ts).
+  const sysadmin = useSysadminMode();
   const sysadminVendorId = useSysadminVendorStore((s) => s.vendorId);
   const router = useRouter();
 

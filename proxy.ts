@@ -50,7 +50,9 @@ export async function proxy(request: NextRequest) {
     // membuka halaman portal vendor tanpa login vendor (vendor yang dilihat dipilih di sisi klien,
     // lihat VendorAuthGuard). Hanya akses LIHAT -- Server Action vendor memakai requireVendorSession
     // (butuh session.vendorId) sehingga aksi transaksi vendor tetap ditolak untuk Sysadmin.
-    if (session.internalRoles.includes("sysadmin")) return NextResponse.next();
+    // Hanya kalau TIDAK ada sesi vendor: kalau ada, aturan vendor (termasuk batas halaman anggota tim)
+    // tetap berlaku, supaya sesi Sysadmin yang tertinggal di browser vendor tidak membuka pembatasan itu.
+    if (!session.vendorId && session.internalRoles.includes("sysadmin")) return NextResponse.next();
     if (!session.vendorId) return NextResponse.redirect(new URL("/vendor-maklon/login", request.url));
     // Akun anggota tim (migration 0057, owner 2026-09-27: "tim cutting, tim finish good,
     // packing") -- dibatasi ke halaman yang diizinkan saja, DAN tidak boleh membuka "Tim Saya"

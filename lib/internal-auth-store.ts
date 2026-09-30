@@ -18,9 +18,26 @@ export type InternalActorInfo = { username: string; name: string };
 // lib/auth/session.ts) -- store ini cuma jadi CACHE hasilnya di client, dipakai
 // AppShell/Sidebar untuk render, BUKAN lagi satu-satunya lapisan proteksi (proteksi
 // sesungguhnya ada di proxy.ts, yang mengecek cookie tsb).
+/** Identitas yang sedang AKTIF di browser ini = login TERAKHIR (role internal atau "vendor"). Satu browser
+ *  boleh menyimpan beberapa sesi sekaligus (lihat catatan desain di lib/auth/session.ts), jadi perlu
+ *  penanda mana yang sedang dipakai. Dipakai untuk memutuskan "Mode Sysadmin" (lihat isSysadminActive):
+ *  tanpa ini, sesi Sysadmin yang lupa di-logout membuat SEMUA halaman (termasuk halaman vendor yang
+ *  baru login) tampil sebagai Sysadmin. `null` = belum ada penanda (state lama sebelum fitur ini) atau
+ *  akun aktifnya baru logout. */
+export type ActiveIdentity = InternalRole | "vendor" | null;
+
+/** Mode Sysadmin aktif kalau Sysadmin terbuka DAN identitas aktifnya Sysadmin (atau belum ada penanda --
+ *  perilaku lama, Sysadmin yang dianggap aktif). Login modul/vendor lain SETELAH Sysadmin memindahkan
+ *  identitas aktif sehingga halaman tampil normal sebagai modul/vendor itu. */
+export function isSysadminActive(unlockedRoles: InternalRole[], activeIdentity: ActiveIdentity): boolean {
+  return unlockedRoles.includes("sysadmin") && (activeIdentity === null || activeIdentity === "sysadmin");
+}
+
 type InternalAuthState = {
   unlockedRoles: InternalRole[];
   actors: Partial<Record<InternalRole, InternalActorInfo>>;
+  activeIdentity: ActiveIdentity;
+  setActiveIdentity: (identity: ActiveIdentity) => void;
   login: (role: InternalRole, password: string) => Promise<boolean>;
   /** Login akun ANGGOTA TIM lewat username unik (lihat loginInternalUserAction). */
   loginUser: (role: InternalRole, username: string, password: string) => Promise<boolean>;
@@ -32,12 +49,14 @@ export const useInternalAuthStore = create<InternalAuthState>()(
     (set, get) => ({
       unlockedRoles: [],
       actors: {},
+      activeIdentity: null,
+      setActiveIdentity: (identity) => set({ activeIdentity: identity }),
       login: async (role, password) => {
         const result = await loginInternalAction(role, password);
         if (!result.ok) return false;
         const nextActors = { ...get().actors };
         delete nextActors[role];
-        set({ unlockedRoles: Array.from(new Set([...get().unlockedRoles, role])), actors: nextActors });
+        set({ unlockedRoles: Array.from(new Set([...get().unlockedRoles, role])), actors: nextActors, activeIdentity: role });
         // StoreHydrator sekarang cuma fetch snapshot sekali saat mount + saat fokus/poll berkala
         // (lihat components/shell/store-hydrator.tsx, demi navigasi antar halaman yang cepat) --
         // tanpa baris ini, halaman pertama setelah login akan kosong sampai fokus/poll berikutnya.
@@ -47,7 +66,7 @@ export const useInternalAuthStore = create<InternalAuthState>()(
       loginUser: async (role, username, password) => {
         const result = await loginInternalUserAction(role, username, password);
         if (!result.ok) return false;
-        set({ unlockedRoles: Array.from(new Set([...get().unlockedRoles, role])), actors: { ...get().actors, [role]: result.actor } });
+        set({ unlockedRoles: Array.from(new Set([...get().unlockedRoles, role])), actors: { ...get().actors, [role]: result.actor }, activeIdentity: role });
         void useMrpStore.getState().refresh();
         return true;
       },
@@ -55,7 +74,7 @@ export const useInternalAuthStore = create<InternalAuthState>()(
         void logoutInternalAction(role);
         const nextActors = { ...get().actors };
         delete nextActors[role];
-        set({ unlockedRoles: get().unlockedRoles.filter((r) => r !== role), actors: nextActors });
+        set({ unlockedRoles: get().unlockedRoles.filter((r) => r !== role), actors: nextActors, activeIdentity: get().activeIdentity === role ? null : get().activeIdentity });
       },
     }),
     { name: "internal-auth-v1" }
