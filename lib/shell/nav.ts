@@ -151,8 +151,11 @@ export const SYSADMIN_GROUP_ORDER: RoleKey[] = ["ppic", "procurement", "finance"
 
 export type NavGroup = { key: RoleKey; label: string; items: NavItem[] };
 
+/** Revisi 2026-09-30 (owner: "tidak usah sematkan dashboard dari berbagai macam modul di bagian modul
+ *  sysadmin"): menu Dashboard tiap modul tidak ikut ke sidebar bertumpuk Sysadmin. Halamannya tetap
+ *  ada dan bisa dibuka lewat URL -- hanya tidak dipasang di sidebar. */
 export function sysadminNavGroups(): NavGroup[] {
-  return SYSADMIN_GROUP_ORDER.map((key) => ({ key, label: NAV[key].role, items: NAV[key].items }));
+  return SYSADMIN_GROUP_ORDER.map((key) => ({ key, label: NAV[key].role, items: NAV[key].items.filter((item) => item.label !== "Dashboard") }));
 }
 
 /** Revisi 2026-09-29 (owner: "profil saya jangan begini. tapi buat halaman penuh seperti halaman

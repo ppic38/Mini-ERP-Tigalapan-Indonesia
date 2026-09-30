@@ -13,7 +13,7 @@ melihat dan mengoreksi ... jangan ada conflict sidebar jadi procurement saja saa
   getter foto/bukti (bukti bayar, foto ekspedisi, foto klaim) ikut mengizinkan Sysadmin (baca saja).
   Auto-import Master Data di AppShell dilewati di mode Sysadmin (tidak menulis apa pun).
 - **Sidebar bertumpuk**: `sysadminNavGroups()` (`lib/shell/nav.ts`) mengambil menu dari `NAV[role]` tiap
-  modul (bukan salinan) -- menu baru otomatis ikut. Grup yang memuat halaman aktif selalu terbuka; grup
+  modul (bukan salinan) -- menu baru otomatis ikut. Grup yang memuat halaman aktif otomatis terbuka saat halaman dibuka tapi boleh ditutup manual; menu Dashboard tiap modul TIDAK dipasang di sidebar ini (revisi 2026-09-30); grup
   lain ingat pilihan user (localStorage `sidebar-open-groups-v1`). Badge = gabungan semua modul.
 - **Notifikasi**: lonceng navbar sekarang tampil di semua modul internal (dulu hanya vendor produksi).
   Aksi koreksi Sysadmin yang sudah ada (batalkan PO Material/Produksi, tarik PO Material, mundurkan

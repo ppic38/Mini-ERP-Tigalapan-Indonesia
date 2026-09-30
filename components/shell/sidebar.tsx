@@ -110,14 +110,20 @@ export function Sidebar({
    *  `NavItem.badge` statis kalau ada nilainya untuk href tsb. */
   badgeOverrides?: Record<string, number>;
 }) {
-  // Grup yang memuat halaman aktif SELALU terbuka (dipaksa, bukan cuma default) supaya menu yang
-  // sedang dipakai tidak pernah tersembunyi; grup lain mengikuti pilihan terakhir user (localStorage,
-  // best-effort -- AppShell baru merender Sidebar setelah mount di client, jadi aman dibaca di sini).
+  // Grup yang memuat halaman aktif otomatis TERBUKA saat halaman dibuka (supaya menu yang sedang
+  // dipakai langsung kelihatan), tapi BOLEH ditutup manual seperti grup lain (revisi 2026-09-30, owner:
+  // "menu judul modul tidak bisa di-close ketika sudah dibuka"). Grup lain mengikuti pilihan terakhir
+  // user (localStorage, best-effort -- AppShell baru merender Sidebar setelah mount di client, jadi
+  // aman dibaca di sini). Sidebar ikut mount ulang tiap pindah halaman, jadi grup aktif yang baru
+  // ditutup akan terbuka lagi begitu user membuka halaman lain di modul itu.
   const activeGroup = groups?.find((g) => (activeHref ? g.items.some((i) => i.href === activeHref) : false))?.key ?? activeGroupKey;
-  const [openKeys, setOpenKeys] = useState<string[]>(() => (groups ? readOpenGroups() : []));
-  const isOpen = (key: string) => key === activeGroup || openKeys.includes(key);
+  const [openKeys, setOpenKeys] = useState<string[]>(() => {
+    if (!groups) return [];
+    const stored = readOpenGroups();
+    return activeGroup && !stored.includes(activeGroup) ? [...stored, activeGroup] : stored;
+  });
+  const isOpen = (key: string) => openKeys.includes(key);
   function toggleGroup(key: string) {
-    if (key === activeGroup) return;
     setOpenKeys((prev) => {
       const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
       try {
@@ -139,7 +145,8 @@ export function Sidebar({
           ? groups.map((group) => {
               const open = isOpen(group.key);
               const groupBadge = group.items.reduce((sum, i) => sum + (badgeFor(i, badgeOverrides) ?? 0), 0);
-              const locked = group.key === activeGroup;
+              // Judul grup yang memuat halaman aktif ditandai putih (tetap bisa diklik untuk menutup).
+              const isActiveGroup = group.key === activeGroup;
               return (
                 <div key={group.key} className="flex flex-col gap-0.5">
                   <button
@@ -148,7 +155,7 @@ export function Sidebar({
                     aria-expanded={open}
                     className={cn(
                       "flex items-center gap-1.5 rounded-[8px] px-2 py-2 text-left font-sans text-[11px] font-semibold uppercase tracking-wider",
-                      locked ? "cursor-default text-white" : "text-[#7C89A6] hover:text-white"
+                      isActiveGroup ? "text-white" : "text-[#7C89A6] hover:text-white"
                     )}
                   >
                     {open ? <ChevronDown size={13} className="flex-shrink-0" /> : <ChevronRight size={13} className="flex-shrink-0" />}
