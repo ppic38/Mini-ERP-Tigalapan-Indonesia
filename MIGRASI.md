@@ -31,7 +31,7 @@ melihat dan mengoreksi ... jangan ada conflict sidebar jadi procurement saja saa
   Aturan boleh/tidak di UI hanya cermin -- server (`sysadminActions.ts`) yang memutuskan. Code roll
   hanya bisa diubah kalau roll sudah diterima & belum ditimbang; code lot bebas (label saja).
   Belum dikerjakan: Paying Voucher, Klaim Material, Master Data.
-- **Revisi 2026-09-30 (sidebar)**: grup Sysadmin paling atas & di-highlight oranye ("UTAMA"); menu
+- **Revisi 2026-09-30 (sidebar)**: grup Sysadmin paling atas & di-highlight ungu ("UTAMA"), grup Vendor Produksi oranye (mengikuti warna kartu di halaman login); menu
   "Batalkan PO" & "Kembalikan Data" dihapus dari sidebar (koreksinya sekarang tombol di halaman modul;
   halaman lamanya `/sysadmin/po` & `/sysadmin/invoice-status` masih ada lewat URL).
 - **Tahap 3 -- modul Vendor Produksi (2026-09-30)**: Sysadmin ikut melihat portal vendor. Portal vendor

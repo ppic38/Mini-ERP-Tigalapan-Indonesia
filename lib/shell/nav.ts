@@ -154,8 +154,11 @@ const SYSADMIN_GROUP_LABEL: Partial<Record<RoleKey, string>> = { vendorMaklon: "
  *  akun tim milik vendor itu sendiri -- hanya untuk akun utama vendor, bukan urusan Sysadmin). */
 const SYSADMIN_HIDDEN_ITEMS = new Set(["Dashboard", "Tim Saya"]);
 
-/** `primary` = grup milik pengguna sendiri (Sysadmin) -- di-highlight di sidebar (lihat Sidebar). */
-export type NavGroup = { key: RoleKey; label: string; items: NavItem[]; primary?: boolean };
+/** `primary` = grup milik pengguna sendiri (Sysadmin) -- diberi label "Utama" di sidebar. `accent` =
+ *  warna kotak grup, mengikuti warna kartu modul di halaman login (lihat Sidebar.ACCENT_STYLES). */
+export type NavGroup = { key: RoleKey; label: string; items: NavItem[]; primary?: boolean; accent?: "purple" | "orange" };
+
+const SYSADMIN_GROUP_ACCENT: Partial<Record<RoleKey, "purple" | "orange">> = { sysadmin: "purple", vendorMaklon: "orange" };
 
 /** Revisi 2026-09-30 (owner: "tidak usah sematkan dashboard dari berbagai macam modul di bagian modul
  *  sysadmin"): menu Dashboard tiap modul tidak ikut ke sidebar bertumpuk Sysadmin. Halamannya tetap
@@ -166,6 +169,7 @@ export function sysadminNavGroups(): NavGroup[] {
     label: SYSADMIN_GROUP_LABEL[key] ?? NAV[key].role,
     items: NAV[key].items.filter((item) => !SYSADMIN_HIDDEN_ITEMS.has(item.label)),
     primary: key === "sysadmin",
+    accent: SYSADMIN_GROUP_ACCENT[key],
   }));
 }
 

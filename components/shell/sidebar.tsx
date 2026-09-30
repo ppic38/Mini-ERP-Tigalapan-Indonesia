@@ -45,6 +45,14 @@ function iconForLabel(label: string): LucideIcon {
   return Send;
 }
 
+/** Warna grup berwarna di sidebar Sysadmin -- sama dengan warna kartu modul di halaman login
+ *  (Sysadmin ungu, Vendor Produksi oranye). Kelas ditulis lengkap (bukan disusun dari string) supaya
+ *  Tailwind mendeteksinya. */
+const ACCENT_STYLES = {
+  purple: { box: "border-accent-purple/50 bg-accent-purple/15", icon: "text-[#C4B5FD]", pill: "bg-accent-purple text-white" },
+  orange: { box: "border-accent-orange/60 bg-accent-orange/15", icon: "text-accent-orange", pill: "bg-accent-orange text-[#1F1500]" },
+} as const;
+
 /** Badge satu menu: override real-time dari store kalau ada, kalau tidak badge statis NavItem. */
 function badgeFor(item: NavItem, badgeOverrides?: Record<string, number>): number | undefined {
   return (item.href ? badgeOverrides?.[item.href] : undefined) ?? item.badge;
@@ -147,26 +155,27 @@ export function Sidebar({
               const groupBadge = group.items.reduce((sum, i) => sum + (badgeFor(i, badgeOverrides) ?? 0), 0);
               // Judul grup yang memuat halaman aktif ditandai putih (tetap bisa diklik untuk menutup).
               const isActiveGroup = group.key === activeGroup;
-              // Grup utama (Sysadmin, revisi 2026-09-30 owner: "highlight agar ketahuan di modul ini
-              // sysadmin main menunya", warna diganti jadi oranye) diberi kotak berwarna + ikon +
-              // label "Utama" supaya jelas beda dari grup modul lain yang cuma "dipinjam" untuk dilihat.
+              // Grup berwarna mengikuti warna kartu modul di halaman login (revisi 2026-09-30, owner):
+              // Sysadmin ungu + ikon + label "Utama" (menu utamanya, jelas beda dari modul lain yang cuma
+              // "dipinjam" untuk dilihat), Vendor Produksi oranye/kuning (kotak saja).
               const primary = !!group.primary;
+              const accent = group.accent ? ACCENT_STYLES[group.accent] : null;
               return (
-                <div key={group.key} className={cn("flex flex-col gap-0.5", primary && "mb-1.5 rounded-[10px] border border-accent-orange/60 bg-accent-orange/15 p-1")}>
+                <div key={group.key} className={cn("flex flex-col gap-0.5", accent && cn("mb-1.5 rounded-[10px] border p-1", accent.box))}>
                   <button
                     type="button"
                     onClick={() => toggleGroup(group.key)}
                     aria-expanded={open}
                     className={cn(
                       "flex items-center gap-1.5 rounded-[8px] px-2 py-2 text-left font-sans text-[11px] font-semibold uppercase tracking-wider",
-                      isActiveGroup || primary ? "text-white" : "text-[#7C89A6] hover:text-white"
+                      isActiveGroup || accent ? "text-white" : "text-[#7C89A6] hover:text-white"
                     )}
                   >
                     {open ? <ChevronDown size={13} className="flex-shrink-0" /> : <ChevronRight size={13} className="flex-shrink-0" />}
-                    {primary && <ShieldCheck size={13} className="flex-shrink-0 text-accent-orange" />}
+                    {primary && accent && <ShieldCheck size={13} className={cn("flex-shrink-0", accent.icon)} />}
                     <span className="flex-1">{group.label}</span>
-                    {primary && (
-                      <span className="flex-shrink-0 rounded-full bg-accent-orange px-1.5 py-px font-sans text-[8.5px] font-bold normal-case tracking-wider text-[#1F1500]">UTAMA</span>
+                    {primary && accent && (
+                      <span className={cn("flex-shrink-0 rounded-full px-1.5 py-px font-sans text-[8.5px] font-bold normal-case tracking-wider", accent.pill)}>UTAMA</span>
                     )}
                     {!open && groupBadge > 0 && (
                       <span className="flex-shrink-0 rounded-full bg-danger px-[5px] py-px font-mono text-[9px] font-semibold normal-case tracking-normal text-white">{groupBadge}</span>
