@@ -4836,6 +4836,14 @@ export async function dismissNotificationAction(id: string): Promise<void> {
  */
 export async function resetMrpAction(mrpId: string): Promise<void> {
   await requireInternalRole(await requireSession(), "ppic");
+  await resetMrpCore(mrpId);
+}
+
+/** Isi penghapusan MRP (2 fase validasi + hapus, lihat komentar di atas) -- dipisah dari resetMrpAction
+ *  supaya bisa dipakai juga oleh sysadminDeleteMrpAction. TIDAK di-export (di file "use server" setiap
+ *  export jadi endpoint yang bisa dipanggil klien) dan TIDAK memeriksa sesi -- pemanggil WAJIB sudah
+ *  memeriksa hak akses. */
+async function resetMrpCore(mrpId: string): Promise<void> {
   const db = supabaseServer();
 
   const { data: mrpRow, error: mrpFetchErr } = await db.from("mrp").select("id").eq("id", mrpId).maybeSingle();
@@ -4940,6 +4948,70 @@ export async function resetMrpAction(mrpId: string): Promise<void> {
   // production_group_meta, delivery_kolis, dan vendor_invoice_lines milik MRP ini.
   const { error: mrpErr } = await db.from("mrp").delete().eq("id", mrpId);
   if (mrpErr) throw new Error(`Reset MRP gagal di tabel "mrp": ${mrpErr.message}`);
+}
+
+/** Revisi 2026-09-30 (owner: Sysadmin "punya akses lebih seperti cancel, hapus, edit", modul PPIC): hapus
+ *  1 MRP versi Sysadmin. Beda dari "Reset MRP" milik PPIC (resetMrpAction, tanpa syarat selain validasi
+ *  lintas-MRP): di sini ada PENGAMAN TAMBAHAN -- MRP yang sudah punya jejak UANG atau FISIK tidak boleh
+ *  dihapus (invoice sudah dibayar/berjalan, invoice vendor/maklon disetujui/dibayar, produksi sudah
+ *  mulai, koli sudah dikirim, ada riwayat klaim, ada pemakaian deposit). Sysadmin harus mengembalikan
+ *  langkah-langkah itu dulu lewat tombol koreksi masing-masing -- supaya penghapusan tidak menghilangkan
+ *  jejak keuangan. Yang boleh: MRP yang baru sampai tahap MRP/PO/invoice belum dibayar. Wajib alasan,
+ *  ketik ulang No. MRP di UI, dan tercatat lengkap ke Log Audit. */
+export async function sysadminDeleteMrpAction(mrpId: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    requireInternalRole(await requireSession(), "sysadmin");
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+
+    const { data: mrp, error: mrpErr } = await db.from("mrp").select("*").eq("id", mrpId).maybeSingle();
+    if (mrpErr) throw new Error(mrpErr.message);
+    if (!mrp) throw new Error(`MRP ${mrpId} tidak ditemukan (mungkin sudah dihapus).`);
+
+    // ===== PENGAMAN: jejak uang/fisik -- baca-saja, sebelum ada yang dihapus =====
+    const [rawInv, matPos, maklonPos, batches, kolis, claims, lines, maklonInv] = await Promise.all([
+      db.from("raw_material_invoices").select("id,status").eq("mrp_id", mrpId),
+      db.from("material_pos").select("id", { count: "exact", head: true }).eq("mrp_id", mrpId),
+      db.from("maklon_pos").select("id", { count: "exact", head: true }).eq("mrp_id", mrpId),
+      db.from("production_batches").select("id", { count: "exact", head: true }).eq("mrp_id", mrpId),
+      db.from("delivery_kolis").select("id", { count: "exact", head: true }).eq("mrp_id", mrpId),
+      db.from("material_claim_history").select("id", { count: "exact", head: true }).eq("mrp_id", mrpId),
+      db.from("vendor_invoice_lines").select("vendor_invoice_id").eq("mrp_id", mrpId),
+      db.from("maklon_invoices").select("id,status").eq("mrp_id", mrpId),
+    ]);
+    for (const r of [rawInv, matPos, maklonPos, batches, kolis, claims, lines, maklonInv]) if (r.error) throw new Error(`Gagal memvalidasi MRP ${mrpId}: ${r.error.message}`);
+
+    const started = (rawInv.data ?? []).find((i) => i.status !== "INVOICED" && i.status !== "WAITING_INVOICE");
+    if (started) throw new Error(`Invoice material ${started.id} sudah berstatus ${started.status} (dibayar/berjalan) -- kembalikan dulu (Batalkan pembayaran / Kembalikan Delivery) sebelum MRP dihapus.`);
+    if ((batches.count ?? 0) > 0) throw new Error("Produksi sudah berjalan untuk MRP ini -- MRP tidak bisa dihapus.");
+    if ((kolis.count ?? 0) > 0) throw new Error("Sudah ada koli pengiriman untuk MRP ini (termasuk yang mungkin sudah dibongkar Warehouse) -- MRP tidak bisa dihapus.");
+    if ((claims.count ?? 0) > 0) throw new Error("Ada riwayat klaim material untuk MRP ini -- MRP tidak bisa dihapus.");
+    const paidMaklon = (maklonInv.data ?? []).find((i) => i.status === "APPROVED" || i.status === "PAID");
+    if (paidMaklon) throw new Error(`Invoice PO Produksi ${paidMaklon.id} sudah ${paidMaklon.status} -- mundurkan dulu sebelum MRP dihapus.`);
+    const vendorInvIds = Array.from(new Set((lines.data ?? []).map((l) => l.vendor_invoice_id)));
+    if (vendorInvIds.length > 0) {
+      const { data: vInv, error: vErr } = await db.from("vendor_invoices").select("id,status").in("id", vendorInvIds);
+      if (vErr) throw new Error(`Gagal memvalidasi invoice vendor: ${vErr.message}`);
+      const approved = (vInv ?? []).find((i) => i.status === "APPROVED" || i.status === "PAID");
+      if (approved) throw new Error(`Invoice vendor ${approved.id} sudah ${approved.status} -- mundurkan dulu sebelum MRP dihapus.`);
+    }
+    const rawIds = (rawInv.data ?? []).map((i) => i.id);
+    if (rawIds.length > 0) {
+      const { count: depCount, error: depErr } = await db.from("vendor_deposits").select("id", { count: "exact", head: true }).in("source_invoice_id", rawIds);
+      if (depErr) throw new Error(`Gagal memvalidasi deposit: ${depErr.message}`);
+      if ((depCount ?? 0) > 0) throw new Error("Ada pemakaian saldo deposit untuk invoice MRP ini -- pulihkan deposit dulu (Batalkan + pulihkan deposit) sebelum MRP dihapus.");
+    }
+
+    const summary = { materialPos: matPos.count ?? 0, maklonPos: maklonPos.count ?? 0, invoicesMaterial: rawIds.length, invoicesVendor: vendorInvIds.length };
+    await resetMrpCore(mrpId);
+
+    const auditId = await nextReadableId("AUD");
+    const { error: auditErr } = await db
+      .from("sysadmin_audit_log")
+      .insert({ id: auditId, action: "DELETE_MRP", target_type: "mrp", target_id: mrpId, reason: reason.trim(), before: { mrp, ...summary }, after: { deleted: true } });
+    if (auditErr) throw new Error(`MRP sudah dihapus, tapi gagal menulis log audit: ${auditErr.message}`);
+    await insertNotification(notif(`MRP ${mrpId} dihapus Sysadmin — alasan: ${reason.trim()}. PO/invoice terkait ikut terhapus; impor ulang MRP yang benar kalau diperlukan.`, ["ppic", "scm", "procurement"]));
+  });
 }
 
 /** Item revisi 2026-09-13 (owner-reported, security review): snapshot penuh ini dulu dikirim APA

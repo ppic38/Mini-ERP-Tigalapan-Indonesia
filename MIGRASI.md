@@ -13,7 +13,7 @@ melihat dan mengoreksi ... jangan ada conflict sidebar jadi procurement saja saa
   getter foto/bukti (bukti bayar, foto ekspedisi, foto klaim) ikut mengizinkan Sysadmin (baca saja).
   Auto-import Master Data di AppShell dilewati di mode Sysadmin (tidak menulis apa pun).
 - **Sidebar bertumpuk**: `sysadminNavGroups()` (`lib/shell/nav.ts`) mengambil menu dari `NAV[role]` tiap
-  modul (bukan salinan) -- menu baru otomatis ikut. Grup yang memuat halaman aktif otomatis terbuka saat halaman dibuka tapi boleh ditutup manual; menu Dashboard tiap modul TIDAK dipasang di sidebar ini (revisi 2026-09-30); grup
+  modul (bukan salinan) -- menu baru otomatis ikut. Grup yang memuat halaman aktif otomatis terbuka saat halaman dibuka tapi boleh ditutup manual; menu Dashboard & Master Data tiap modul TIDAK dipasang di sidebar ini (revisi 2026-09-30); grup
   lain ingat pilihan user (localStorage `sidebar-open-groups-v1`). Badge = gabungan semua modul.
 - **Notifikasi**: lonceng navbar sekarang tampil di semua modul internal (dulu hanya vendor produksi).
   Aksi koreksi Sysadmin yang sudah ada (batalkan PO Material/Produksi, tarik PO Material, mundurkan
@@ -48,6 +48,14 @@ melihat dan mengoreksi ... jangan ada conflict sidebar jadi procurement saja saa
   Koreksi pertama: Good Receive -- "Batalkan terima" per roll (`sysadminUndoRollArrivalAction`; diblokir
   kalau roll sudah ditimbang atau PO Produksi vendor sudah mulai produksi) + tabel koreksi code lot/roll.
   Belum: Cutting (berat timbang), Produksi, Pengiriman, Invoice & Payment vendor.
+- **Tahap 3 -- modul PPIC (2026-09-30)** (`components/sysadmin/ppic-corrections.ts`, halaman MRP): kolom
+  Aksi -- "Mundurkan approval SCM" / "Ajukan ulang ke SCM" (MRP PPIC_APPROVED/REJECTED -> menunggu
+  approval; PPIC_APPROVED hanya kalau belum ada PO; `sysadminRevertMrpApprovalAction`) dan "Hapus MRP"
+  (`sysadminDeleteMrpAction` di actions.ts, memakai `resetMrpCore` hasil refaktor resetMrpAction --
+  validasi lintas-MRP & urutan hapus tidak berubah). Hapus MRP versi Sysadmin punya PENGAMAN jejak
+  uang/fisik: ditolak kalau invoice material sudah dibayar/berjalan, produksi jalan, ada koli, ada
+  riwayat klaim, invoice vendor/maklon disetujui/dibayar, atau ada pemakaian deposit -- mundurkan dulu
+  lewat tombol koreksi modul terkait. Tombol "Reset MRP" bawaan PPIC disembunyikan di Mode Sysadmin.
 - **Tahap 3 -- modul Warehouse (2026-09-30)** (`components/sysadmin/warehouse-corrections.ts`): Riwayat
   Penerimaan -- "Batalkan bongkar koli" per penerimaan (`sysadminUndoWarehouseReceiptAction`): menghapus
   warehouse_receipts + koli + item supaya resi muncul lagi di Penerimaan dan bisa dibongkar ulang

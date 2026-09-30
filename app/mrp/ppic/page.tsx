@@ -8,6 +8,9 @@ import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
 import { ImportDropzone } from "@/components/mrp/import-dropzone";
 import { MrpWarnaBreakdownTable } from "@/components/mrp/mrp-warna-breakdown-table";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { mrpCorrections } from "@/components/sysadmin/ppic-corrections";
+import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { useMrpStore } from "@/lib/mrp/store";
 import { mrpStatusBadges, mrpStatusBadgeTone, mrpWarnaBreakdown, effectiveMrpQty, formatPcs, formatDate, ppicApprovalBadge, vendorsForMrp } from "@/lib/mrp/derive";
 import type { ParsedMrpImport } from "@/lib/mrp/parseImport";
@@ -41,6 +44,10 @@ export default function MrpListPage() {
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
   const invoices = useMrpStore((s) => s.invoices);
   const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
+  const maklonInvoices = useMrpStore((s) => s.maklonInvoices);
+  const productionBatches = useMrpStore((s) => s.productionBatches);
+  const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
+  const sysadmin = useSysadminMode();
   const importMrp = useMrpStore((s) => s.importMrp);
   const resetMrp = useMrpStore((s) => s.resetMrp);
   const kerahMansetSettings = useMrpStore((s) => s.kerahMansetSettings);
@@ -268,17 +275,26 @@ export default function MrpListPage() {
                         </td>
                       )}
                       <td className="px-3 py-[13px]">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleResetMrp(mrp.id);
-                          }}
-                          disabled={resettingId === mrp.id}
-                          title="Hapus semua data MRP ini saja (PO, invoice, produksi, pengiriman) -- tidak bisa dibatalkan"
-                          className="rounded-[5px] border border-[#EFC9C4] px-2.5 py-[5px] font-sans text-[11px] font-semibold text-danger-fg hover:bg-danger-bg disabled:opacity-50"
-                        >
-                          {resettingId === mrp.id ? "Menghapus…" : "Reset MRP"}
-                        </button>
+                        {/* Mode Sysadmin: "Reset MRP" milik PPIC disembunyikan (server menolak Sysadmin) --
+                            diganti tombol Sysadmin yang punya pengaman jejak uang/fisik. */}
+                        {sysadmin ? (
+                          <SysadminActionsBar
+                            compact
+                            actions={mrpCorrections(mrp.id, { detail, materialPOs, maklonPOs, invoices, vendorInvoices, maklonInvoices, productionBatches, deliveryKolis })}
+                          />
+                        ) : (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleResetMrp(mrp.id);
+                            }}
+                            disabled={resettingId === mrp.id}
+                            title="Hapus semua data MRP ini saja (PO, invoice, produksi, pengiriman) -- tidak bisa dibatalkan"
+                            className="rounded-[5px] border border-[#EFC9C4] px-2.5 py-[5px] font-sans text-[11px] font-semibold text-danger-fg hover:bg-danger-bg disabled:opacity-50"
+                          >
+                            {resettingId === mrp.id ? "Menghapus…" : "Reset MRP"}
+                          </button>
+                        )}
                       </td>
                       <td className="px-3 py-[13px]">
                         {isExpanded ? (

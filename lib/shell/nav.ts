@@ -150,9 +150,11 @@ export const SYSADMIN_GROUP_ORDER: RoleKey[] = ["sysadmin", "ppic", "procurement
  *  "PT Maklon ABC" -- nama vendor sebenarnya per-akun). */
 const SYSADMIN_GROUP_LABEL: Partial<Record<RoleKey, string>> = { vendorMaklon: "Vendor Produksi" };
 
-/** Menu yang TIDAK dipasang di sidebar Sysadmin: Dashboard (revisi 2026-09-30) dan "Tim Saya" (kelola
- *  akun tim milik vendor itu sendiri -- hanya untuk akun utama vendor, bukan urusan Sysadmin). */
-const SYSADMIN_HIDDEN_ITEMS = new Set(["Dashboard", "Tim Saya"]);
+/** Menu yang TIDAK dipasang di sidebar Sysadmin: Dashboard, dan "Master Data" (revisi 2026-09-30, owner:
+ *  "bagian master data tidak usah masuk di sysadmin" -- dikelola modul masing-masing), dan "Tim Saya"
+ *  (kelola akun tim milik vendor itu sendiri -- hanya untuk akun utama vendor, bukan urusan Sysadmin).
+ *  Halamannya tetap ada dan bisa dibuka lewat URL; hanya tidak dipasang di sidebar. */
+const SYSADMIN_HIDDEN_ITEMS = new Set(["Dashboard", "Master Data", "Tim Saya"]);
 
 /** `primary` = grup milik pengguna sendiri (Sysadmin) -- diberi label "Utama" di sidebar. `accent` =
  *  warna kotak grup, mengikuti warna kartu modul di halaman login (lihat Sidebar.ACCENT_STYLES). */

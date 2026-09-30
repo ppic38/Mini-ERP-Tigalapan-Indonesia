@@ -585,6 +585,46 @@ export async function sysadminRevertMaklonInvoiceAction(invoiceId: string, from:
 }
 
 // =========================================================================
+// Kembalikan MRP ke "menunggu approval SCM" (owner 2026-09-30, modul PPIC): SCM salah setuju/tolak,
+// atau MRP perlu diperiksa ulang. Berlaku untuk PPIC_APPROVED dan REJECTED. Untuk PPIC_APPROVED hanya
+// boleh kalau Procurement belum membuat PO dari MRP ini (tidak ada material_pos/maklon_pos, po_sent
+// false) -- kalau PO sudah ada, tarik/batalkan PO-nya dulu lewat tombol koreksi Procurement.
+// =========================================================================
+
+export async function sysadminRevertMrpApprovalAction(mrpId: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: mrp, error } = await db.from("mrp").select("id,ppic_approval,ppic_approved_at,ppic_rejection_note,po_sent").eq("id", mrpId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!mrp) throw new Error("MRP tidak ditemukan.");
+    if (mrp.ppic_approval === "WAITING_PPIC_APPROVAL") throw new Error("MRP ini sudah menunggu approval SCM.");
+    if (mrp.ppic_approval === "PPIC_APPROVED") {
+      const [{ count: matPos, error: e1 }, { count: maklonPos, error: e2 }] = await Promise.all([
+        db.from("material_pos").select("id", { count: "exact", head: true }).eq("mrp_id", mrpId),
+        db.from("maklon_pos").select("id", { count: "exact", head: true }).eq("mrp_id", mrpId),
+      ]);
+      if (e1 || e2) throw new Error((e1 ?? e2)!.message);
+      if (mrp.po_sent || (matPos ?? 0) > 0 || (maklonPos ?? 0) > 0) {
+        throw new Error("Procurement sudah membuat PO dari MRP ini -- tarik kembali / batalkan PO-nya dulu (tombol Sysadmin di halaman Purchase Order) sebelum approval SCM dimundurkan.");
+      }
+    }
+    const { error: updErr } = await db.from("mrp").update({ ppic_approval: "WAITING_PPIC_APPROVAL", ppic_approved_at: null, ppic_rejection_note: null }).eq("id", mrpId);
+    if (updErr) throw new Error(updErr.message);
+    await writeAuditLog(
+      "REVERT_MRP_APPROVAL",
+      "mrp",
+      mrpId,
+      reason.trim(),
+      { ppicApproval: mrp.ppic_approval, approvedAt: mrp.ppic_approved_at, rejectionNote: mrp.ppic_rejection_note },
+      { ppicApproval: "WAITING_PPIC_APPROVAL" }
+    );
+    await notifyAffected(`MRP ${mrpId} dikembalikan Sysadmin ke menunggu approval SCM (sebelumnya ${mrp.ppic_approval}) — alasan: ${reason.trim()}.`, ["scm", "ppic", "procurement"]);
+  });
+}
+
+// =========================================================================
 // Batalkan "Bongkar Koli" Warehouse (owner 2026-09-30, modul Warehouse). 1 resi group = tepat 1
 // warehouse_receipt (+ baris koli & item). Membatalkan = menghapus ketiganya, sehingga resi itu muncul
 // lagi di Penerimaan dan Warehouse bisa membongkar ulang. Aman karena arsip ini tidak jadi dasar
