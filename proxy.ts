@@ -46,6 +46,11 @@ export async function proxy(request: NextRequest) {
   const session = await readSession(request.cookies);
 
   if (pathname.startsWith("/vendor-maklon")) {
+    // Revisi 2026-09-30 (owner: Sysadmin ikut melihat & mengoreksi Vendor Produksi): Sysadmin boleh
+    // membuka halaman portal vendor tanpa login vendor (vendor yang dilihat dipilih di sisi klien,
+    // lihat VendorAuthGuard). Hanya akses LIHAT -- Server Action vendor memakai requireVendorSession
+    // (butuh session.vendorId) sehingga aksi transaksi vendor tetap ditolak untuk Sysadmin.
+    if (session.internalRoles.includes("sysadmin")) return NextResponse.next();
     if (!session.vendorId) return NextResponse.redirect(new URL("/vendor-maklon/login", request.url));
     // Akun anggota tim (migration 0057, owner 2026-09-27: "tim cutting, tim finish good,
     // packing") -- dibatasi ke halaman yang diizinkan saja, DAN tidak boleh membuka "Tim Saya"

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/shell/sidebar";
 import { Topbar } from "@/components/shell/topbar";
 import { NAV, PROFILE_HREF, SYSADMIN_GROUP_ORDER, sysadminNavGroups } from "@/lib/shell/nav";
+import { SysadminVendorSwitcher } from "@/components/sysadmin/vendor-switcher";
 import { useMrpStore } from "@/lib/mrp/store";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
 import { useVendorAuthStore } from "@/lib/mrp/vendor-auth-store";
@@ -93,8 +94,10 @@ export function AppShell({
   // MODE SYSADMIN = sesi ini punya Sysadmin terbuka DAN halaman yang dibuka adalah halaman modul
   // internal (isGated). Di mode ini identitas shell (sidebar bertumpuk, topbar, logout, profil)
   // SELALU milik Sysadmin, tidak peduli `role` halaman -- `role` cuma menentukan ISI halaman.
-  // Portal vendor (vendorMaklon, bukan isGated) sengaja TIDAK ikut: shell-nya tetap shell vendor.
-  const sysadminMode = isGated && unlockedRoles.includes("sysadmin");
+  // Revisi 2026-09-30 (owner: Sysadmin ikut melihat & mengoreksi Vendor Produksi): portal vendor
+  // (vendorMaklon) SEKARANG ikut -- shell-nya juga milik Sysadmin kalau sesi ini punya Sysadmin
+  // terbuka (vendor yang dilihat dipilih lewat SysadminVendorSwitcher, lihat VendorAuthGuard).
+  const sysadminMode = (isGated || role === "vendorMaklon") && unlockedRoles.includes("sysadmin");
   const authorized = !isGated || sysadminMode || unlockedRoles.includes(role as InternalRole);
 
   useEffect(() => {
@@ -281,12 +284,19 @@ export function AppShell({
   // menambahkan nama orangnya.
   // shellRole (bukan role halaman): di mode Sysadmin nama/profil/logout selalu milik akun Sysadmin.
   const internalActor = internalActors[shellRole as InternalRole];
-  const topbarRole =
-    role === "vendorMaklon" && vendorActor
+  // Di mode Sysadmin nama halaman/vendor (roleOverride/entityOverride milik halaman vendor) TIDAK
+  // dipakai -- topbar selalu menampilkan identitas Sysadmin.
+  const topbarRole = sysadminMode
+    ? internalActor
+      ? `${nav.role} · ${internalActor.name}`
+      : nav.role
+    : role === "vendorMaklon" && vendorActor
       ? `${roleOverride ?? nav.role} · ${vendorActor.name}`
       : internalActor
         ? `${roleOverride ?? nav.role} · ${internalActor.name}`
         : (roleOverride ?? nav.role);
+  // Logout/profil milik shell internal (bukan shell vendor) -- termasuk Sysadmin yang sedang di halaman vendor.
+  const internalShell = isGated || sysadminMode;
 
   return (
     <div className="flex min-h-screen bg-surface-page">
@@ -300,7 +310,7 @@ export function AppShell({
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar
           role={topbarRole}
-          entity={entityOverride ?? nav.entity}
+          entity={sysadminMode ? nav.entity : (entityOverride ?? nav.entity)}
           notifications={myNotifications}
           onMarkRead={markNotificationRead}
           onMarkAllRead={() => markAllNotificationsRead(myNotifications.map((n) => n.id))}
@@ -309,13 +319,13 @@ export function AppShell({
           // disitu"): lonceng sekarang tampil di SEMUA modul internal (bukan cuma vendor produksi),
           // termasuk pemberitahuan koreksi dari Sysadmin. Mode Sysadmin sendiri tidak menampilkan
           // lonceng -- tidak ada notifikasi yang ditujukan ke Sysadmin (jejaknya ada di Log Audit).
-          showNotifications={role === "vendorMaklon" || (isGated && !sysadminMode)}
+          showNotifications={!sysadminMode && (role === "vendorMaklon" || isGated)}
           // Revisi 2026-09-29 (owner: "profil saya jangan begini. tapi buat halaman penuh ...
           // bukan pop up") -- navigasi ke halaman penuh per modul (PROFILE_HREF, lib/shell/nav.ts),
           // BUKAN modal lagi. Hanya ditampilkan kalau login lewat akun bernama (internalActor ada).
-          onOpenProfile={isGated && internalActor && PROFILE_HREF[shellRole as InternalRole] ? () => router.push(PROFILE_HREF[shellRole as InternalRole]!) : undefined}
+          onOpenProfile={internalShell && internalActor && PROFILE_HREF[shellRole as InternalRole] ? () => router.push(PROFILE_HREF[shellRole as InternalRole]!) : undefined}
           onLogout={
-            isGated
+            internalShell
               ? () => {
                   logoutInternal(shellRole as InternalRole);
                   router.push("/");
@@ -329,8 +339,17 @@ export function AppShell({
           }
         />
         {sysadminMode && role !== "sysadmin" && (
-          <div className="border-b border-border-subtle bg-warning-bg px-[22px] py-2 font-sans text-[11.5px] text-warning-fg">
-            <span className="font-semibold">Mode Sysadmin</span> — Anda sedang melihat halaman {NAV[role].role}. Hanya melihat &amp; mengoreksi; aksi transaksi normal modul ini tidak tersedia.
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border-subtle bg-warning-bg px-[22px] py-2 font-sans text-[11.5px] text-warning-fg">
+            <span className="font-semibold">Mode Sysadmin</span>
+            {role === "vendorMaklon" ? (
+              <>
+                <span>— Anda sedang melihat portal Vendor Produksi milik</span>
+                <SysadminVendorSwitcher />
+                <span>. Hanya melihat &amp; mengoreksi; aksi transaksi vendor tidak tersedia.</span>
+              </>
+            ) : (
+              <span>— Anda sedang melihat halaman {NAV[role].role}. Hanya melihat &amp; mengoreksi; aksi transaksi normal modul ini tidak tersedia.</span>
+            )}
           </div>
         )}
         <div className="flex items-center gap-2 px-[22px] pt-3.5 font-sans text-xs text-[#94A3B0]">

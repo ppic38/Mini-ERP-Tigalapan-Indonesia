@@ -141,18 +141,19 @@ export type CorrectionAction = {
   run: (reason: string) => Promise<ActionResult<unknown>>;
 };
 
-/** Deretan tombol koreksi Sysadmin untuk 1 baris (mis. 1 PO). Tidak render apa-apa kalau bukan mode
+/** Deretan tombol koreksi Sysadmin untuk 1 baris (mis. 1 PO). `compact` = tanpa label "Sysadmin" dan
+ *  tanpa jarak atas (untuk sel sempit seperti kolom status per-roll). Tidak render apa-apa kalau bukan mode
  *  Sysadmin. Tombol yang tidak boleh dijalankan tetap tampil tapi nonaktif + tooltip alasannya --
  *  supaya Sysadmin tahu aksinya ada tapi kenapa belum bisa (mis. "sudah diinvoice"). */
-export function SysadminActionsBar({ actions }: { actions: CorrectionAction[] }) {
+export function SysadminActionsBar({ actions, compact }: { actions: CorrectionAction[]; compact?: boolean }) {
   const sysadmin = useSysadminMode();
   const [openKey, setOpenKey] = useState<string | null>(null);
   if (!sysadmin || actions.length === 0) return null;
   const open = actions.find((a) => a.key === openKey);
   return (
     // onClick stopPropagation: tombol berada di dalam baris tabel yang bisa di-klik (buka rincian).
-    <div onClick={(e) => e.stopPropagation()} className="mt-1 flex flex-wrap items-center gap-1">
-      <span className="font-sans text-[9.5px] font-semibold uppercase tracking-wider text-warning-fg">Sysadmin</span>
+    <div onClick={(e) => e.stopPropagation()} className={"flex flex-wrap items-center gap-1 " + (compact ? "" : "mt-1")}>
+      {!compact && <span className="font-sans text-[9.5px] font-semibold uppercase tracking-wider text-warning-fg">Sysadmin</span>}
       {actions.map((a) => (
         <Button key={a.key} onClick={() => setOpenKey(a.key)} disabled={!!a.disabledReason} title={a.disabledReason} variant={a.danger ? "danger" : "ghost"} size="xs">
           {a.label}

@@ -585,6 +585,79 @@ export async function sysadminRevertMaklonInvoiceAction(invoiceId: string, from:
 }
 
 // =========================================================================
+// Batalkan penerimaan 1 roll di Good Receive (vendor produksi salah menekan "Terima") -- owner
+// 2026-09-30, modul Vendor Produksi. Mundur satu langkah: roll kembali "belum diterima" supaya vendor
+// bisa menerimanya lagi dengan benar. Hanya boleh kalau langkah setelahnya belum terjadi:
+//   - roll belum ditimbang di Cutting (net_kg kosong), DAN
+//   - PO Produksi vendor untuk MRP itu masih menunggu material (belum "Mulai Produksi").
+// code_lot TIDAK direset (label dari Procurement/vendor), code_roll direset karena dibuat saat terima.
+// =========================================================================
+
+const MAKLON_WAITING_STATUSES = ["FULL_WAITING_MATERIAL", "PARTIAL_WAITING_MATERIAL"];
+
+export async function sysadminUndoRollArrivalAction(
+  input: { invoiceId: string; warna: string; lengan: "PENDEK" | "PANJANG"; rollIndex: number },
+  reason: string
+): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const { invoiceId, warna, lengan, rollIndex } = input;
+    const db = supabaseServer();
+    const colorId = `${invoiceId}-${warna}-${lengan}`;
+    const { data: roll, error } = await db
+      .from("raw_material_invoice_rolls")
+      .select("received_at,net_kg,code_roll")
+      .eq("invoice_color_id", colorId)
+      .eq("roll_index", rollIndex)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!roll) throw new Error("Roll tidak ditemukan.");
+    if (!roll.received_at) throw new Error("Roll ini belum ditandai diterima.");
+    if (roll.net_kg != null) throw new Error("Roll ini sudah ditimbang di Cutting -- penerimaannya tidak bisa dibatalkan dari sini.");
+
+    const { data: inv, error: invErr } = await db.from("raw_material_invoices").select("id,po_id,mrp_id,status,destination_vendor").eq("id", invoiceId).maybeSingle();
+    if (invErr) throw new Error(invErr.message);
+    if (!inv) throw new Error("Invoice tidak ditemukan.");
+    const { data: pos, error: poErr } = await db.from("maklon_pos").select("id,status").eq("mrp_id", inv.mrp_id).eq("vendor_produksi", inv.destination_vendor);
+    if (poErr) throw new Error(poErr.message);
+    const started = (pos ?? []).find((p) => !MAKLON_WAITING_STATUSES.includes(p.status));
+    if (started) throw new Error(`PO Produksi ${started.id} sudah berstatus ${started.status} (produksi sudah dimulai) -- penerimaan roll tidak bisa dibatalkan dari sini.`);
+
+    const { error: updErr } = await db.from("raw_material_invoice_rolls").update({ received_at: null, code_roll: null }).eq("invoice_color_id", colorId).eq("roll_index", rollIndex);
+    if (updErr) throw new Error(updErr.message);
+
+    // Kalau tidak ada lagi roll/item tambahan yang diterima di invoice ini, status kembali ke DELIVERY
+    // (RECEIVING baru terjadi begitu penerimaan pertama, lihat markRollArrivedAction).
+    let statusReverted = false;
+    if (inv.status === "RECEIVING") {
+      const { data: colors } = await db.from("raw_material_invoice_colors").select("id").eq("invoice_id", invoiceId);
+      const colorIds = (colors ?? []).map((c) => c.id);
+      const [{ count: rollsLeft }, { count: addBuysLeft }] = await Promise.all([
+        db.from("raw_material_invoice_rolls").select("roll_index", { count: "exact", head: true }).in("invoice_color_id", colorIds.length > 0 ? colorIds : [""]).not("received_at", "is", null),
+        db.from("raw_material_invoice_addbuys").select("id", { count: "exact", head: true }).eq("invoice_id", invoiceId).not("received_at", "is", null),
+      ]);
+      if ((rollsLeft ?? 0) === 0 && (addBuysLeft ?? 0) === 0) {
+        const { error: stErr } = await db.from("raw_material_invoices").update({ status: "DELIVERY", received_at: null }).eq("id", invoiceId);
+        if (stErr) throw new Error(`Roll sudah dikembalikan, tapi gagal memulihkan status invoice: ${stErr.message}`);
+        statusReverted = true;
+      }
+    }
+    await writeAuditLog(
+      "UNDO_ROLL_ARRIVAL",
+      "raw_material_invoice_rolls",
+      `${invoiceId}|${warna}|${lengan}|${rollIndex}`,
+      reason.trim(),
+      { receivedAt: roll.received_at, codeRoll: roll.code_roll, invoiceStatus: inv.status },
+      { receivedAt: null, codeRoll: null, invoiceStatus: statusReverted ? "DELIVERY" : inv.status }
+    );
+    const text = `Penerimaan Roll ${rollIndex + 1} ${warna} · ${lengan} (PO ${inv.po_id}, ${inv.mrp_id}) dibatalkan Sysadmin — alasan: ${reason.trim()}. Roll kembali belum diterima; silakan terima ulang.`;
+    await notifyAffected(text, ["procurement"]);
+    await notifyAffected(text, ["vendorMaklon"], inv.destination_vendor);
+  });
+}
+
+// =========================================================================
 // Koreksi code lot / code roll 1 roll -- salah ketik saat Paying Voucher (Procurement) atau saat
 // Good Receive (vendor produksi), owner 2026-09-29 (Sysadmin "melihat dan mengoreksi", mulai dari
 // modul Procurement). Aturan pengaman:

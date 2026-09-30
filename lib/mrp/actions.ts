@@ -110,9 +110,17 @@ function nowClock() {
   return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
 }
 
+/** Pesan penolakan aksi vendor: Sysadmin bisa MELIHAT portal vendor tapi bukan menjalankan transaksinya. */
+function vendorOnlyError(session: { internalRoles: string[] }): Error {
+  if (session.internalRoles.includes("sysadmin")) {
+    return new Error("Mode Sysadmin hanya untuk melihat & mengoreksi -- aksi ini milik vendor produksi. Untuk koreksi data pakai tombol Sysadmin di halaman.");
+  }
+  return new Error("Forbidden: aksi ini hanya untuk vendor produksi.");
+}
+
 async function requireVendorSession(): Promise<string> {
   const session = await requireSession();
-  if (!session.vendorId) throw new Error("Forbidden: aksi ini hanya untuk vendor produksi.");
+  if (!session.vendorId) throw vendorOnlyError(session);
   return session.vendorId;
 }
 
@@ -124,7 +132,7 @@ async function requireVendorSession(): Promise<string> {
  *  yang tidak butuh jejak "siapa klik apa" tetap pakai requireVendorSession biasa, tidak berubah. */
 async function requireVendorSessionWithActor(): Promise<{ vendorId: string; vendorUserId: string | null; actorName: string }> {
   const session = await requireSession();
-  if (!session.vendorId) throw new Error("Forbidden: aksi ini hanya untuk vendor produksi.");
+  if (!session.vendorId) throw vendorOnlyError(session);
   if (session.vendorActor) return { vendorId: session.vendorId, vendorUserId: session.vendorActor.vendorUserId, actorName: session.vendorActor.name };
   const { data } = await supabaseServer().from("vendors_produksi").select("name").eq("id", session.vendorId).maybeSingle();
   return { vendorId: session.vendorId, vendorUserId: null, actorName: data?.name ?? session.vendorId };

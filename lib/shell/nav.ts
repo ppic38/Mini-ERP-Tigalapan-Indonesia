@@ -67,14 +67,11 @@ export const NAV: Record<RoleKey, RoleNav> = {
     entity: "Tigalapan Indonesia",
     items: [
       { label: "Akun & Password", href: "/sysadmin/accounts" },
-      { label: "Batalkan PO", href: "/sysadmin/po" },
-      // Revisi 2026-09-28 (owner: "case2 seperti ini bisa diatur di sysadmin ... dari tingkat besar
-      // hingga tingkat detail ... hanya beberapa yang ingin disetting", diperluas ke "akses tingkat
-      // tinggi untuk manipulasi apa pun ... diterapkan ke setiap modul", dipersempit ke Procurement
-      // & Finance dulu) -- kembalikan langkah approval PO, tarik kembali PO Material yang belum
-      // diinvoice, & kembalikan batch invoice yang salah ke-set Delivery. Granular per baris/PO,
-      // bukan borongan.
-      { label: "Kembalikan Data", href: "/sysadmin/invoice-status" },
+      // Revisi 2026-09-30 (owner: menu "Batalkan PO" & "Kembalikan Data" dihapus dari sidebar
+      // "karena itu dilakukan langsung di modul level bawah"): koreksi PO/invoice/roll sekarang tombol
+      // Sysadmin di halaman modulnya masing-masing (components/sysadmin/). Halaman lamanya
+      // (/sysadmin/po, /sysadmin/invoice-status) masih ada & bisa dibuka lewat URL, hanya tidak
+      // dipasang di menu.
       { label: "Log Audit", href: "/sysadmin/audit-log" },
     ],
   },
@@ -147,7 +144,15 @@ export const NAV: Record<RoleKey, RoleNav> = {
  *  lain tapi di-stack, ada PPIC dan isi menunya, Procurement, dst"): urutan grup sidebar Sysadmin.
  *  Isi tiap grup DIAMBIL dari NAV[role].items di atas (bukan salinan), jadi menu baru/berubah di
  *  sebuah modul otomatis ikut. Sysadmin paling atas dan di-highlight (revisi 2026-09-30, owner). */
-export const SYSADMIN_GROUP_ORDER: RoleKey[] = ["sysadmin", "ppic", "procurement", "finance", "scm", "gm", "produksi", "warehouse"];
+export const SYSADMIN_GROUP_ORDER: RoleKey[] = ["sysadmin", "ppic", "procurement", "finance", "scm", "gm", "produksi", "warehouse", "vendorMaklon"];
+
+/** Label grup di sidebar Sysadmin kalau berbeda dari NAV[role].role (NAV.vendorMaklon.role cuma placeholder
+ *  "PT Maklon ABC" -- nama vendor sebenarnya per-akun). */
+const SYSADMIN_GROUP_LABEL: Partial<Record<RoleKey, string>> = { vendorMaklon: "Vendor Produksi" };
+
+/** Menu yang TIDAK dipasang di sidebar Sysadmin: Dashboard (revisi 2026-09-30) dan "Tim Saya" (kelola
+ *  akun tim milik vendor itu sendiri -- hanya untuk akun utama vendor, bukan urusan Sysadmin). */
+const SYSADMIN_HIDDEN_ITEMS = new Set(["Dashboard", "Tim Saya"]);
 
 /** `primary` = grup milik pengguna sendiri (Sysadmin) -- di-highlight di sidebar (lihat Sidebar). */
 export type NavGroup = { key: RoleKey; label: string; items: NavItem[]; primary?: boolean };
@@ -158,8 +163,8 @@ export type NavGroup = { key: RoleKey; label: string; items: NavItem[]; primary?
 export function sysadminNavGroups(): NavGroup[] {
   return SYSADMIN_GROUP_ORDER.map((key) => ({
     key,
-    label: NAV[key].role,
-    items: NAV[key].items.filter((item) => item.label !== "Dashboard"),
+    label: SYSADMIN_GROUP_LABEL[key] ?? NAV[key].role,
+    items: NAV[key].items.filter((item) => !SYSADMIN_HIDDEN_ITEMS.has(item.label)),
     primary: key === "sysadmin",
   }));
 }

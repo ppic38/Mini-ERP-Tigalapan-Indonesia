@@ -20,6 +20,9 @@ import {
 } from "@/lib/mrp/derive";
 import { countGoodReceiveEligibleForMrp, pendingMarker } from "@/lib/shell/badges";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { RollCodeEditor } from "@/components/sysadmin/roll-code-editor";
+import { rollArrivalCorrections } from "@/components/sysadmin/vendor-corrections";
 import type { Lengan } from "@/lib/mrp/types";
 
 // Revisi 2026-09-29 (owner: "buat untuk vendor produksi bisa input code lot"): codeLot opsional,
@@ -709,16 +712,24 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                               />
                             )}
                             <span className="text-right font-mono">{formatDecimal(r.grossKg)}</span>
-                            <span className="flex items-center justify-end gap-2">
-                              {arrival ? (
-                                <>
-                                  <span className="font-mono text-[11px] text-text-muted">{formatDate(arrival.arrivedAt)}</span>
-                                  <StatusPill tone="success">Diterima</StatusPill>
-                                </>
-                              ) : (
-                                <Button onClick={() => markArrived(r.lengan, r.idx)} disabled={!code.codeRoll.trim()} variant="accent" size="sm" className="w-[96px]">
-                                  Terima
-                                </Button>
+                            <span className="flex flex-col items-end gap-1">
+                              <span className="flex items-center justify-end gap-2">
+                                {arrival ? (
+                                  <>
+                                    <span className="font-mono text-[11px] text-text-muted">{formatDate(arrival.arrivedAt)}</span>
+                                    <StatusPill tone="success">Diterima</StatusPill>
+                                  </>
+                                ) : (
+                                  <Button onClick={() => markArrived(r.lengan, r.idx)} disabled={!code.codeRoll.trim()} variant="accent" size="sm" className="w-[96px]">
+                                    Terima
+                                  </Button>
+                                )}
+                              </span>
+                              {arrival && selectedInvoice && (
+                                <SysadminActionsBar
+                                  compact
+                                  actions={rollArrivalCorrections({ invoice: selectedInvoice, warna: selectedWarna, lengan: r.lengan, rollIndex: r.idx, vendorId, maklonPOs })}
+                                />
                               )}
                             </span>
                           </div>
@@ -816,6 +827,11 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                   )}
                 </div>
               </div>
+              {selectedInvoice && (
+                <div className="px-4 pb-3">
+                  <RollCodeEditor invoice={selectedInvoice} />
+                </div>
+              )}
             </div>
           )}
         </>

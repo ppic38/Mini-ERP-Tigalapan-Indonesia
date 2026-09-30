@@ -148,11 +148,11 @@ export function Sidebar({
               // Judul grup yang memuat halaman aktif ditandai putih (tetap bisa diklik untuk menutup).
               const isActiveGroup = group.key === activeGroup;
               // Grup utama (Sysadmin, revisi 2026-09-30 owner: "highlight agar ketahuan di modul ini
-              // sysadmin main menunya") diberi kotak berwarna + ikon + label "Utama" supaya jelas
-              // beda dari grup modul lain yang cuma "dipinjam" untuk dilihat.
+              // sysadmin main menunya", warna diganti jadi oranye) diberi kotak berwarna + ikon +
+              // label "Utama" supaya jelas beda dari grup modul lain yang cuma "dipinjam" untuk dilihat.
               const primary = !!group.primary;
               return (
-                <div key={group.key} className={cn("flex flex-col gap-0.5", primary && "mb-1.5 rounded-[10px] border border-accent-purple/50 bg-accent-purple/15 p-1")}>
+                <div key={group.key} className={cn("flex flex-col gap-0.5", primary && "mb-1.5 rounded-[10px] border border-accent-orange/60 bg-accent-orange/15 p-1")}>
                   <button
                     type="button"
                     onClick={() => toggleGroup(group.key)}
@@ -163,10 +163,10 @@ export function Sidebar({
                     )}
                   >
                     {open ? <ChevronDown size={13} className="flex-shrink-0" /> : <ChevronRight size={13} className="flex-shrink-0" />}
-                    {primary && <ShieldCheck size={13} className="flex-shrink-0 text-[#C4B5FD]" />}
+                    {primary && <ShieldCheck size={13} className="flex-shrink-0 text-accent-orange" />}
                     <span className="flex-1">{group.label}</span>
                     {primary && (
-                      <span className="flex-shrink-0 rounded-full bg-accent-purple px-1.5 py-px font-sans text-[8.5px] font-bold normal-case tracking-wider text-white">UTAMA</span>
+                      <span className="flex-shrink-0 rounded-full bg-accent-orange px-1.5 py-px font-sans text-[8.5px] font-bold normal-case tracking-wider text-[#1F1500]">UTAMA</span>
                     )}
                     {!open && groupBadge > 0 && (
                       <span className="flex-shrink-0 rounded-full bg-danger px-[5px] py-px font-mono text-[9px] font-semibold normal-case tracking-normal text-white">{groupBadge}</span>

@@ -31,6 +31,18 @@ melihat dan mengoreksi ... jangan ada conflict sidebar jadi procurement saja saa
   Aturan boleh/tidak di UI hanya cermin -- server (`sysadminActions.ts`) yang memutuskan. Code roll
   hanya bisa diubah kalau roll sudah diterima & belum ditimbang; code lot bebas (label saja).
   Belum dikerjakan: Paying Voucher, Klaim Material, Master Data.
+- **Revisi 2026-09-30 (sidebar)**: grup Sysadmin paling atas & di-highlight oranye ("UTAMA"); menu
+  "Batalkan PO" & "Kembalikan Data" dihapus dari sidebar (koreksinya sekarang tombol di halaman modul;
+  halaman lamanya `/sysadmin/po` & `/sysadmin/invoice-status` masih ada lewat URL).
+- **Tahap 3 -- modul Vendor Produksi (2026-09-30)**: Sysadmin ikut melihat portal vendor. Portal vendor
+  dibangun per-vendor, jadi Sysadmin MEMILIH vendor yang dilihat (`useSysadminVendorStore`, dropdown di
+  spanduk Mode Sysadmin / layar pilih vendor) -- `VendorAuthGuard` memberi `vendorId` pilihan itu kalau
+  Sysadmin terbuka, `proxy.ts` meloloskan Sysadmin ke `/vendor-maklon/*`, shell (sidebar bertumpuk,
+  topbar, logout) tetap milik Sysadmin di halaman vendor. Grup sidebar baru "Vendor Produksi" (tanpa
+  "Tim Saya"). Aksi transaksi vendor tetap ditolak (`requireVendorSession` butuh `session.vendorId`).
+  Koreksi pertama: Good Receive -- "Batalkan terima" per roll (`sysadminUndoRollArrivalAction`; diblokir
+  kalau roll sudah ditimbang atau PO Produksi vendor sudah mulai produksi) + tabel koreksi code lot/roll.
+  Belum: Cutting (berat timbang), Produksi, Pengiriman, Invoice & Payment vendor.
 - **Tahap 3 -- modul Finance** (`components/sysadmin/finance-corrections.ts`): Payment Material
   (detail invoice: Batalkan pembayaran PAID->INVOICED, plus varian "pulihkan deposit" kalau ada deposit
   yang terpotong untuk invoice itu; PV pengganti klaim DITOLAK karena terikat ledger klaim), Payment
