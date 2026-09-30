@@ -1422,6 +1422,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                                       key={size}
                                       size={size}
                                       max={targetSizes[size] ?? 0}
+                                      // Revisi 2026-09-30 (owner): di lapangan hasil cutting bisa melebihi target MRP --
+                                      // target hanya acuan (tombol Maks tetap mengisi sebesar target), bukan batas.
+                                      allowExceed
                                       value={sizeDraft[size] ?? 0}
                                       onChange={(v) => setCuttingSizeDraft((prev) => ({ ...prev, [b.id]: { ...(prev[b.id] ?? {}), [size]: v } }))}
                                     />

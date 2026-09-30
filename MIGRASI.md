@@ -1,5 +1,15 @@
 # Migrasi Project — Status & Riwayat
 
+## Input Hasil Cutting boleh melebihi target MRP (2026-09-30, tanpa migration)
+Owner: "di lapangan bisa input cutting lebih dari target yang diberikan, jangan set maks, tapi fungsi tombol Maks
+dan naik-turun satu angka tetap dipertahankan". `SizeQtyControl` (`components/mrp/size-qty-control.tsx`) dapat prop
+`allowExceed`: `max` jadi TARGET, bukan batas -- ketikan dan tombol ▲ boleh melampauinya (kelebihan ditandai "+N"),
+tombol "Maks" tetap mengisi sebesar target, ▼/▲ tetap +-1. Dipakai HANYA di modal Input Hasil Cutting
+(`production-cutting-tab.tsx`); "Edit FG" (`production-result-panel.tsx`) tetap dibatasi (FG tidak boleh melebihi
+hasil cutting, juga ditegakkan server di `editRollFgImpl`). Server tidak pernah membatasi hasil cutting terhadap
+target (hanya UI yang membatasi), jadi tidak ada perubahan server. Yield per roll bisa >100%; batas yang sudah ada
+di turunan (persentase progres dikunci 100%, dst.) aman.
+
 ## Toleransi selisih berat di Master Data SCM -- migration 0061 (2026-09-30)
 Owner: "toleransi ditambahkan di master data SCM ... berlaku di semua vendor produksi ... sekarang ganti jadi 8%".
 Sebelumnya konstanta 2% di `derive.ts`. Sekarang: angka (%) diatur role SCM di halaman baru **SCM > Master Data**
