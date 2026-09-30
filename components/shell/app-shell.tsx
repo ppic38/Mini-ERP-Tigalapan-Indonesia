@@ -350,18 +350,12 @@ export function AppShell({
                 : undefined
           }
         />
-        {sysadminMode && role !== "sysadmin" && (
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border-subtle bg-warning-bg px-[22px] py-2 font-sans text-[11.5px] text-warning-fg">
-            <span className="font-semibold">Mode Sysadmin</span>
-            {role === "vendorMaklon" ? (
-              <>
-                <span>— Anda sedang melihat portal Vendor Produksi milik</span>
-                <SysadminVendorSwitcher />
-                <span>. Hanya melihat &amp; mengoreksi; aksi transaksi vendor tidak tersedia.</span>
-              </>
-            ) : (
-              <span>— Anda sedang melihat halaman {NAV[role].role}. Hanya melihat &amp; mengoreksi; aksi transaksi normal modul ini tidak tersedia.</span>
-            )}
+        {/* Revisi 2026-09-30 (owner: hilangkan teks kuning, filter vendor dibuat simpel): spanduk
+            "Mode Sysadmin" dihapus; di halaman portal Vendor Produksi cukup pemilih vendor saja. */}
+        {sysadminMode && role === "vendorMaklon" && (
+          <div className="flex items-center gap-2 border-b border-border-subtle bg-white px-[22px] py-2 font-sans text-[11.5px] text-text-muted">
+            <span>Vendor:</span>
+            <SysadminVendorSwitcher />
           </div>
         )}
         <div className="flex items-center gap-2 px-[22px] pt-3.5 font-sans text-xs text-[#94A3B0]">

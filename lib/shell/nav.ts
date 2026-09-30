@@ -154,7 +154,7 @@ const SYSADMIN_GROUP_LABEL: Partial<Record<RoleKey, string>> = { vendorMaklon: "
  *  "bagian master data tidak usah masuk di sysadmin" -- dikelola modul masing-masing), dan "Tim Saya"
  *  (kelola akun tim milik vendor itu sendiri -- hanya untuk akun utama vendor, bukan urusan Sysadmin).
  *  Halamannya tetap ada dan bisa dibuka lewat URL; hanya tidak dipasang di sidebar. */
-const SYSADMIN_HIDDEN_ITEMS = new Set(["Dashboard", "Master Data", "Tim Saya"]);
+const SYSADMIN_HIDDEN_ITEMS = new Set(["Dashboard", "Master Data", "Tim Saya", "PO Produksi Saya", "PO Material Saya"]);
 
 /** `primary` = grup milik pengguna sendiri (Sysadmin) -- diberi label "Utama" di sidebar. `accent` =
  *  warna kotak grup, mengikuti warna kartu modul di halaman login (lihat Sidebar.ACCENT_STYLES). */
