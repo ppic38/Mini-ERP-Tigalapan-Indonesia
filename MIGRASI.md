@@ -48,6 +48,18 @@ melihat dan mengoreksi ... jangan ada conflict sidebar jadi procurement saja saa
   Koreksi pertama: Good Receive -- "Batalkan terima" per roll (`sysadminUndoRollArrivalAction`; diblokir
   kalau roll sudah ditimbang atau PO Produksi vendor sudah mulai produksi) + tabel koreksi code lot/roll.
   Belum: Cutting (berat timbang), Produksi, Pengiriman, Invoice & Payment vendor.
+- **Tahap 3 -- Vendor Produksi: Finish Good & Final Produksi (2026-09-30)**: vendor SUDAH punya undo
+  sendiri (Buka lagi roll, Buka kunci FG, Buka kunci Final) dengan pengaman ketat, jadi Sysadmin
+  melakukan LANGKAH YANG SAMA atas nama vendor -- inti fungsinya dipakai bersama
+  (`reopenProductionBatchCore`, `undoFgConfirmCore` hasil refaktor di actions.ts, tidak diduplikasi)
+  sehingga aturan pengamannya persis sama; ditambah alasan wajib, Log Audit, notifikasi vendor.
+  Aksi: `sysadminReopenRollAction`, `sysadminUndoFgConfirmAction`, `sysadminUndoFinalAction` (ada di
+  actions.ts karena inti tidak di-export). Beda dari versi vendor: "Buka kunci Final" Sysadmin ditolak
+  kalau PO Produksi sudah ditutup (Close PO). Tombol: tab Finish Good (header grup "Buka kunci Finish
+  Good", baris roll "Buka lagi") dan tab Final Produksi ("Buka kunci Final"); tombol vendor
+  disembunyikan di Mode Sysadmin. Kalau ditolak karena reject sudah dirework/dibuang atau roll sudah
+  masuk koli -> koreksi Rework / Pengiriman dulu (belum dikerjakan). "Edit FG" & "Tutup Roll" tidak
+  punya padanan Sysadmin (vendor mengedit sendiri setelah Sysadmin membuka).
 - **Tahap 3 -- Vendor Produksi: Cutting (2026-09-30)** (`components/sysadmin/batch-corrections.tsx`, tab
   Cutting -> "Lihat roll" per roll): (1) "Batalkan resting" (hapus batch belum-dicutting, roll kembali ke
   pool resting -- `sysadminUndoRestingAction`), (2) "Batalkan cutting" (cutting_at kosong + hapus hasil

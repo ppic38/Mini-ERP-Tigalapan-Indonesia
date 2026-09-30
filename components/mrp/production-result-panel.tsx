@@ -6,6 +6,9 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { Button } from "@/components/ui/button";
 import { SizeQtyControl } from "@/components/mrp/size-qty-control";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { fgConfirmCorrections, rollReopenCorrections } from "@/components/sysadmin/vendor-corrections";
+import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { useMrpStore } from "@/lib/mrp/store";
 import { usePendingActions } from "@/lib/mrp/usePendingActions";
 import {
@@ -134,6 +137,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
   // closeProductionBatchAction. Menggantikan input size bebas per grup untuk kind="FG".
   const closeProductionBatch = useMrpStore((s) => s.closeProductionBatch);
   const reopenProductionBatch = useMrpStore((s) => s.reopenProductionBatch);
+  const sysadmin = useSysadminMode();
   const editRollFg = useMrpStore((s) => s.editRollFg);
   // Modal "Edit FG" per roll (koreksi Finish Good aktual, naik/turun).
   const [editFgBatchId, setEditFgBatchId] = useState<string | null>(null);
@@ -402,14 +406,20 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                         </>
                       )}
                       <span className="flex items-center justify-end gap-2">
-                        {kind === "FG" && isFgConfirmed && !isFinalDone && (
-                          // undoFgConfirm sudah optimistic penuh di store.ts -- isPending/teks
-                          // "Membuka…" dilepas (redundant, sempat kelihatan walau state lokal
-                          // sudah berubah seketika).
-                          <Button onClick={() => runAction(groupKey, undoFgConfirm(groupKey))} variant="muted" size="xs">
-                            Buka kunci ↺
-                          </Button>
-                        )}
+                        {kind === "FG" && isFgConfirmed && (sysadmin ? (
+                          // Mode Sysadmin: tombol vendor diganti tombol Sysadmin (server menolak Sysadmin
+                          // memakai tombol vendor) -- aturan pengaman sama, plus alasan wajib & Log Audit.
+                          <SysadminActionsBar compact actions={fgConfirmCorrections({ groupKey, warna: g.warna, lengan: g.lengan, isFinalDone })} />
+                        ) : (
+                          !isFinalDone && (
+                            // undoFgConfirm sudah optimistic penuh di store.ts -- isPending/teks
+                            // "Membuka…" dilepas (redundant, sempat kelihatan walau state lokal
+                            // sudah berubah seketika).
+                            <Button onClick={() => runAction(groupKey, undoFgConfirm(groupKey))} variant="muted" size="xs">
+                              Buka kunci ↺
+                            </Button>
+                          )
+                        ))}
                         <Button onClick={() => toggleGroup(g.warna, g.lengan)} variant="accent" size="xs">
                           {expanded ? "Sembunyikan" : "Lihat by size →"}
                         </Button>
@@ -791,14 +801,17 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                     </button>
                                     {/* closeProductionBatch sudah optimistic penuh -- isPending/teks
                                        "Menutup…" dilepas. */}
-                                    {b.closedAt && (
-                                      <button
-                                        onClick={() => runAction("reopen-" + b.id, reopenProductionBatch(b.id))}
-                                        className="font-sans text-[10.5px] font-semibold text-action-primary underline"
-                                      >
-                                        Buka lagi
-                                      </button>
-                                    )}
+                                    {b.closedAt &&
+                                      (sysadmin ? (
+                                        <SysadminActionsBar compact actions={rollReopenCorrections(b, isFinalDone)} />
+                                      ) : (
+                                        <button
+                                          onClick={() => runAction("reopen-" + b.id, reopenProductionBatch(b.id))}
+                                          className="font-sans text-[10.5px] font-semibold text-action-primary underline"
+                                        >
+                                          Buka lagi
+                                        </button>
+                                      ))}
                                     {!b.closedAt && (
                                       <button
                                         onClick={() => runAction(closeKey, closeProductionBatch(b.id, b.fgSizeQty ?? {}))}

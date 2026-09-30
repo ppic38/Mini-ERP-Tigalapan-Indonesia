@@ -3767,10 +3767,19 @@ export async function reopenProductionBatchAction(batchId: string): Promise<Acti
 
 async function reopenProductionBatchImpl(batchId: string): Promise<void> {
   const vendorId = await requireVendorSession();
+  const { data: owner } = await supabaseServer().from("production_batches").select("vendor_produksi").eq("id", batchId).single();
+  if (!owner) throw new Error("Roll tidak ditemukan.");
+  if (owner.vendor_produksi !== vendorId) throw new Error("Roll ini bukan milik vendor Anda.");
+  await reopenProductionBatchCore(batchId);
+}
+
+/** Isi "Buka lagi roll" -- dipisah dari reopenProductionBatchImpl supaya dipakai juga oleh
+ *  sysadminReopenRollAction. TIDAK di-export dan TIDAK memeriksa sesi/kepemilikan -- pemanggil WAJIB
+ *  sudah memeriksanya. */
+async function reopenProductionBatchCore(batchId: string): Promise<void> {
   const db = supabaseServer();
   const { data: batch } = await db.from("production_batches").select("id,mrp_id,vendor_produksi,warna,lengan,closed_at").eq("id", batchId).single();
   if (!batch) throw new Error("Roll tidak ditemukan.");
-  if (batch.vendor_produksi !== vendorId) throw new Error("Roll ini bukan milik vendor Anda.");
   if (!batch.closed_at) return;
   const groupKey = `${batch.mrp_id}|${batch.warna}|${batch.lengan}`;
   const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).maybeSingle();
@@ -4227,6 +4236,13 @@ export async function undoFgConfirmAction(groupKey: string): Promise<ActionResul
 
 async function undoFgConfirmImpl(groupKey: string): Promise<void> {
   await requireVendorSession();
+  await undoFgConfirmCore(groupKey);
+}
+
+/** Isi "Buka kunci Finish Good" -- dipisah dari undoFgConfirmImpl supaya dipakai juga oleh
+ *  sysadminUndoFgConfirmAction. TIDAK di-export dan TIDAK memeriksa sesi -- pemanggil WAJIB sudah
+ *  memeriksanya. */
+async function undoFgConfirmCore(groupKey: string): Promise<void> {
   const db = supabaseServer();
   const { data: meta } = await db.from("production_group_meta").select("done_at,fg_confirmed_at").eq("group_key", groupKey).maybeSingle();
   if (meta?.done_at) {
@@ -4948,6 +4964,76 @@ async function resetMrpCore(mrpId: string): Promise<void> {
   // production_group_meta, delivery_kolis, dan vendor_invoice_lines milik MRP ini.
   const { error: mrpErr } = await db.from("mrp").delete().eq("id", mrpId);
   if (mrpErr) throw new Error(`Reset MRP gagal di tabel "mrp": ${mrpErr.message}`);
+}
+
+// -------------------------------------------------------------------------
+// Koreksi Sysadmin untuk Finish Good vendor produksi (owner 2026-09-30). Sysadmin melakukan atas nama
+// vendor persis langkah "undo" yang sudah dimiliki vendor -- dengan ATURAN PENGAMAN YANG SAMA (inti
+// reopenProductionBatchCore / undoFgConfirmCore dipakai bersama, tidak diduplikasi), plus alasan wajib,
+// Log Audit, dan notifikasi vendor. Ada di file ini (bukan sysadminActions.ts) karena inti-intinya tidak
+// di-export (di file "use server" setiap export jadi endpoint).
+// -------------------------------------------------------------------------
+
+async function requireSysadminSession(reason: string): Promise<void> {
+  requireInternalRole(await requireSession(), "sysadmin");
+  if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+}
+
+async function writeSysadminAudit(action: string, targetType: string, targetId: string, reason: string, before: unknown, after: unknown): Promise<void> {
+  const id = await nextReadableId("AUD");
+  const { error } = await supabaseServer()
+    .from("sysadmin_audit_log")
+    .insert({ id, action, target_type: targetType, target_id: targetId, reason: reason.trim(), before: before ?? null, after: after ?? null });
+  if (error) throw new Error(`Aksi berhasil tapi gagal menulis log audit: ${error.message}`);
+}
+
+/** Buka lagi 1 roll yang sudah ditutup (Tutup Roll) atas nama vendor. */
+export async function sysadminReopenRollAction(batchId: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadminSession(reason);
+    const { data: batch } = await supabaseServer().from("production_batches").select("mrp_id,vendor_produksi,warna,lengan,code_roll,closed_at").eq("id", batchId).maybeSingle();
+    if (!batch) throw new Error("Roll tidak ditemukan.");
+    if (!batch.closed_at) throw new Error("Roll ini belum ditutup.");
+    await reopenProductionBatchCore(batchId);
+    await writeSysadminAudit("REOPEN_ROLL", "production_batches", batchId, reason, { closedAt: batch.closed_at }, { closedAt: null });
+    await insertNotification(
+      notif(`Roll ${batch.code_roll ?? batchId} (${batch.mrp_id} · ${batch.warna} · ${batch.lengan}) dibuka lagi oleh Sysadmin — alasan: ${reason.trim()}. Finish Good yang tersimpan tetap utuh; silakan lanjutkan/koreksi lalu Tutup Roll lagi.`, ["vendorMaklon"], batch.vendor_produksi)
+    );
+  });
+}
+
+/** Buka kunci "Selesai Produksi" tahap 1 (Finish Good) sebuah grup warna·lengan atas nama vendor. */
+export async function sysadminUndoFgConfirmAction(groupKey: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadminSession(reason);
+    const { data: meta } = await supabaseServer().from("production_group_meta").select("vendor_produksi,warna,lengan,mrp_id,fg_confirmed_at").eq("group_key", groupKey).maybeSingle();
+    if (!meta?.fg_confirmed_at) throw new Error("Grup ini belum ditandai Selesai Produksi (Finish Good).");
+    await undoFgConfirmCore(groupKey);
+    await writeSysadminAudit("UNDO_FG_CONFIRM", "production_group_meta", groupKey, reason, { fgConfirmedAt: meta.fg_confirmed_at }, { fgConfirmedAt: null });
+    await insertNotification(
+      notif(`Selesai Produksi (Finish Good) ${meta.mrp_id} · ${meta.warna} · ${meta.lengan} dibuka kuncinya oleh Sysadmin — alasan: ${reason.trim()}. Reject dihitung ulang saat Anda menandai Selesai lagi.`, ["vendorMaklon"], meta.vendor_produksi)
+    );
+  });
+}
+
+/** Buka kunci Final Produksi (tahap 2) sebuah grup atas nama vendor. Beda dari versi vendor
+ *  (undoProductionGroupDoneAction, tanpa syarat): ditolak kalau PO Produksi-nya sudah ditutup (Close PO),
+ *  karena Close PO mengunci grup lewat jalur yang sama dan membukanya sebagian membuat data tidak konsisten. */
+export async function sysadminUndoFinalAction(groupKey: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadminSession(reason);
+    const db = supabaseServer();
+    const { data: meta } = await db.from("production_group_meta").select("vendor_produksi,warna,lengan,mrp_id,done_at").eq("group_key", groupKey).maybeSingle();
+    if (!meta?.done_at) throw new Error("Grup ini belum di-Final Produksi.");
+    const { data: po } = await db.from("maklon_pos").select("id,closed_at").eq("mrp_id", meta.mrp_id).eq("vendor_produksi", meta.vendor_produksi).not("closed_at", "is", null).limit(1);
+    if ((po ?? []).length > 0) throw new Error(`PO Produksi ${po![0].id} sudah ditutup (Close PO) -- buka lagi PO-nya dulu sebelum Final Produksi grup ini dibuka.`);
+    const { error } = await db.from("production_group_meta").update({ done_at: null }).eq("group_key", groupKey);
+    if (error) throw new Error(error.message);
+    await writeSysadminAudit("UNDO_FINAL_PRODUKSI", "production_group_meta", groupKey, reason, { doneAt: meta.done_at }, { doneAt: null });
+    await insertNotification(
+      notif(`Final Produksi ${meta.mrp_id} · ${meta.warna} · ${meta.lengan} dibuka kuncinya oleh Sysadmin — alasan: ${reason.trim()}. Silakan koreksi lalu Selesai Produksi lagi.`, ["vendorMaklon"], meta.vendor_produksi)
+    );
+  });
 }
 
 /** Revisi 2026-09-30 (owner: Sysadmin "punya akses lebih seperti cancel, hapus, edit", modul PPIC): hapus

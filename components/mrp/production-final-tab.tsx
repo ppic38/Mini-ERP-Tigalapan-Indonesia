@@ -5,6 +5,9 @@ import type { Lengan } from "@/lib/mrp/types";
 import { StatusPill } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { CloseProductionPoModal } from "@/components/mrp/close-production-po-modal";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { finalUndoCorrections } from "@/components/sysadmin/vendor-corrections";
+import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { useMrpStore } from "@/lib/mrp/store";
 import { usePendingActions } from "@/lib/mrp/usePendingActions";
 import {
@@ -82,6 +85,7 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
   const materialClaimAcceptances = useMrpStore((s) => s.materialClaimAcceptances);
   const markProductionGroupDone = useMrpStore((s) => s.markProductionGroupDone);
   const undoProductionGroupDone = useMrpStore((s) => s.undoProductionGroupDone);
+  const sysadmin = useSysadminMode();
   const closeProductionPo = useMrpStore((s) => s.closeProductionPo);
   const reopenProductionPo = useMrpStore((s) => s.reopenProductionPo);
 
@@ -309,13 +313,17 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
                 // stopPropagation: klik tombol tidak ikut membuka/menutup rincian baris.
                 <span className="flex flex-col items-end gap-1" onClick={(e) => e.stopPropagation()}>
                   {isPoClosed ? null : r.isDone ? (
-                    <button
-                      onClick={() => runAction(r.groupKey, undoProductionGroupDone(r.groupKey))}
-                      title="Buka kunci grup ini supaya Finish Good/Reject/Rework bisa dibuka lagi (mulai dari tab Finish Good)"
-                      className="rounded-md border border-[#CBD5DF] bg-white px-3 py-[6px] font-sans text-[11px] font-semibold text-action-primary"
-                    >
-                      Buka kunci ↺
-                    </button>
+                    sysadmin ? (
+                      <SysadminActionsBar compact actions={finalUndoCorrections({ groupKey: r.groupKey, warna: r.warna, lengan: r.lengan })} />
+                    ) : (
+                      <button
+                        onClick={() => runAction(r.groupKey, undoProductionGroupDone(r.groupKey))}
+                        title="Buka kunci grup ini supaya Finish Good/Reject/Rework bisa dibuka lagi (mulai dari tab Finish Good)"
+                        className="rounded-md border border-[#CBD5DF] bg-white px-3 py-[6px] font-sans text-[11px] font-semibold text-action-primary"
+                      >
+                        Buka kunci ↺
+                      </button>
+                    )
                   ) : r.isFgConfirmed && r.openRollCount > 0 ? (
                     <span className="max-w-[210px] text-right font-sans text-[10.5px] leading-[1.4] text-text-muted">Masih {r.openRollCount} roll belum selesai — selesaikan di tab Finish Good</span>
                   ) : r.isFgConfirmed ? (
