@@ -8,6 +8,7 @@ import { INTERNAL_ACCOUNTS, type InternalRole } from "../internal-auth";
 import { nextReadableId } from "./repo/ids";
 import type { NotificationAudience } from "./types";
 import { weightVariance } from "./derive";
+import { loadWeightTolerancePct } from "./weightToleranceServer";
 
 /** Bungkus aksi supaya alasan gagalnya sampai ke user di production (sama pola dengan lib/mrp/actions.ts). */
 async function toActionResult<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
@@ -586,6 +587,232 @@ export async function sysadminRevertMaklonInvoiceAction(invoiceId: string, from:
 }
 
 // =========================================================================
+// Batalkan Rework (owner 2026-09-30, Reject/Rework vendor). reworkRejectSizeAction menulis SEPASANG
+// baris production_results pada menit yang sama: (a) REJECT berqty NEGATIF di grup asal (note "Rework N
+// pcs ke {lengan} size {size} ({usia})") dan (b) FG di grup tujuan (note "Rework dari {lengan} size
+// {size} ({usia})"). Vendor TIDAK punya cara membatalkan rework yang salah pilih size/lengan. Koreksi ini
+// menghapus KEDUANYA sehingga sisa reject grup asal kembali utuh. Pasangan dicari lewat recorded_at + isi
+// note + qty/size yang cocok (tidak ada kolom penaut) -- kalau ada beberapa pasangan identik pada menit
+// yang sama, salah satunya dihapus (keduanya setara). Ditolak kalau grup asal/tujuan sudah Final Produksi,
+// atau hasil rework itu sudah masuk koli pengiriman (item kind REWORK).
+// =========================================================================
+
+export async function sysadminUndoReworkAction(fgResultId: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: fg, error } = await db
+      .from("production_results")
+      .select("id,group_key,mrp_id,vendor_produksi,warna,lengan,kind,note,usia,recorded_at,production_result_sizes(size,qty)")
+      .eq("id", fgResultId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!fg) throw new Error("Baris rework tidak ditemukan (mungkin sudah dibatalkan).");
+    const m = fg.kind === "FG" ? (fg.note ?? "").match(/^Rework dari (\S+) size (\S+)/) : null;
+    if (!m) throw new Error("Baris ini bukan hasil Rework.");
+    const fromLengan = m[1];
+    const fromSize = m[2];
+    const toSizeRow = (fg.production_result_sizes ?? [])[0];
+    if (!toSizeRow || (fg.production_result_sizes ?? []).length !== 1) throw new Error("Data ukuran rework tidak lazim (bukan tepat 1 size) -- tidak bisa dibatalkan otomatis.");
+    const qty = Number(toSizeRow.qty);
+
+    const sourceGroupKey = `${fg.mrp_id}|${fg.warna}|${fromLengan}`;
+    const { data: metas, error: metaErr } = await db.from("production_group_meta").select("group_key,done_at").in("group_key", [sourceGroupKey, fg.group_key]);
+    if (metaErr) throw new Error(metaErr.message);
+    if ((metas ?? []).some((g) => g.done_at)) throw new Error("Grup asal/tujuan rework sudah Final Produksi -- buka kunci Final dulu sebelum rework dibatalkan.");
+
+    // Hasil rework yang SUDAH dikirim (item koli kind REWORK untuk warna/lengan tujuan) -- dibatalkan
+    // akan membuat qty terkirim melebihi stok rework, jadi ditolak.
+    const { data: kolis, error: koliErr } = await db.from("delivery_kolis").select("id").eq("mrp_id", fg.mrp_id).eq("vendor_produksi", fg.vendor_produksi);
+    if (koliErr) throw new Error(koliErr.message);
+    const koliIds = (kolis ?? []).map((k) => k.id);
+    if (koliIds.length > 0) {
+      const { count: shipped, error: shipErr } = await db
+        .from("delivery_koli_items")
+        .select("delivery_koli_id", { count: "exact", head: true })
+        .in("delivery_koli_id", koliIds)
+        .eq("kind", "REWORK")
+        .eq("warna", fg.warna)
+        .eq("lengan", fg.lengan);
+      if (shipErr) throw new Error(shipErr.message);
+      if ((shipped ?? 0) > 0) throw new Error("Hasil rework untuk warna/lengan ini sudah masuk koli pengiriman -- keluarkan dari koli (Batalkan pengiriman / Hapus koli) dulu.");
+    }
+
+    // Cari pasangan REJECT-nya.
+    const expectedNote = `Rework ${qty} pcs ke ${fg.lengan} size ${toSizeRow.size} (${fg.usia ?? ""})`;
+    const { data: candidates, error: candErr } = await db
+      .from("production_results")
+      .select("id,note,production_result_sizes(size,qty)")
+      .eq("group_key", sourceGroupKey)
+      .eq("kind", "REJECT")
+      .eq("recorded_at", fg.recorded_at);
+    if (candErr) throw new Error(candErr.message);
+    const reject = (candidates ?? []).find((c) => {
+      const sizes = c.production_result_sizes ?? [];
+      return c.note === expectedNote && sizes.length === 1 && sizes[0].size === fromSize && Number(sizes[0].qty) === -qty;
+    });
+    if (!reject) throw new Error("Pasangan baris reject untuk rework ini tidak ditemukan secara pasti -- tidak dibatalkan otomatis supaya tidak salah hapus.");
+
+    const ids = [reject.id, fg.id];
+    const { error: sizeErr } = await db.from("production_result_sizes").delete().in("production_result_id", ids);
+    if (sizeErr) throw new Error(sizeErr.message);
+    const { error: delErr } = await db.from("production_results").delete().in("id", ids);
+    if (delErr) {
+      // Pulihkan ukuran yang sudah terhapus supaya hasil tidak tertinggal tanpa size.
+      await db.from("production_result_sizes").insert([
+        { production_result_id: reject.id, size: fromSize, qty: -qty },
+        { production_result_id: fg.id, size: toSizeRow.size, qty },
+      ]);
+      throw new Error(`Gagal membatalkan rework (data dikembalikan seperti semula): ${delErr.message}`);
+    }
+    await writeAuditLog(
+      "UNDO_REWORK",
+      "production_results",
+      ids.join(","),
+      reason.trim(),
+      { fgResult: { id: fg.id, groupKey: fg.group_key, note: fg.note, usia: fg.usia, size: toSizeRow.size, qty }, rejectResult: { id: reject.id, groupKey: sourceGroupKey, note: reject.note, size: fromSize, qty: -qty } },
+      { removed: true }
+    );
+    await notifyAffected(
+      `Rework ${qty} pcs ${fg.warna} (${fromLengan} ${fromSize} → ${fg.lengan} ${toSizeRow.size}, MRP ${fg.mrp_id}) dibatalkan Sysadmin — alasan: ${reason.trim()}. Sisa reject kembali utuh; silakan rework ulang dengan size/lengan yang benar.`,
+      ["vendorMaklon"],
+      fg.vendor_produksi
+    );
+  });
+}
+
+// =========================================================================
+// Koreksi invoice vendor di Procurement (owner 2026-09-30, Invoice & Payment vendor). Procurement hanya
+// punya tombol "Setujui" (+ tambah denda/reward) tanpa cara mundur: (1) Sysadmin memundurkan status
+// APPROVED/REVISION -> SUBMITTED supaya invoice bisa ditinjau & disetujui ulang (PAID harus dibatalkan
+// dulu di Finance), (2) menghapus 1 item denda/reward yang salah input (hanya selagi invoice belum
+// disetujui -- denda/reward ikut membentuk nilai yang dibayar). Pembatalan pembayaran ada di Finance.
+// =========================================================================
+
+export async function sysadminRevertVendorInvoiceStatusAction(invoiceId: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: inv, error } = await db.from("vendor_invoices").select("id,vendor_produksi,status,approved_at").eq("id", invoiceId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!inv) throw new Error("Invoice vendor tidak ditemukan.");
+    if (inv.status === "PAID") throw new Error("Invoice ini sudah dibayar -- batalkan pembayarannya dulu di Finance (Payment Maklon) sebelum statusnya dimundurkan.");
+    if (inv.status === "SUBMITTED") throw new Error("Invoice ini sudah berstatus menunggu review (SUBMITTED).");
+    const { error: updErr } = await db.from("vendor_invoices").update({ status: "SUBMITTED", approved_at: null }).eq("id", invoiceId);
+    if (updErr) throw new Error(updErr.message);
+    await writeAuditLog("REVERT_VENDOR_INVOICE_STATUS", "vendor_invoices", invoiceId, reason.trim(), { status: inv.status, approvedAt: inv.approved_at }, { status: "SUBMITTED", approvedAt: null });
+    await notifyAffected(`Status invoice vendor ${invoiceId} dikembalikan Sysadmin dari ${inv.status} ke menunggu review — alasan: ${reason.trim()}. Silakan tinjau dan setujui ulang.`, ["procurement", "finance"]);
+    await notifyAffected(`Status invoice ${invoiceId} dikembalikan Sysadmin ke menunggu review (alasan: ${reason.trim()}).`, ["vendorMaklon"], inv.vendor_produksi);
+  });
+}
+
+export async function sysadminDeleteVendorInvoiceAdjustmentAction(adjustmentId: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: adj, error } = await db.from("vendor_invoice_adjustments").select("id,vendor_invoice_id,kind,label,amount,note").eq("id", adjustmentId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!adj) throw new Error("Item denda/reward tidak ditemukan (mungkin sudah dihapus).");
+    const { data: inv, error: invErr } = await db.from("vendor_invoices").select("id,vendor_produksi,status").eq("id", adj.vendor_invoice_id).maybeSingle();
+    if (invErr) throw new Error(invErr.message);
+    if (!inv) throw new Error("Invoice induk tidak ditemukan.");
+    if (inv.status === "APPROVED" || inv.status === "PAID") throw new Error(`Invoice ${inv.id} sudah ${inv.status} -- mundurkan statusnya ke menunggu review dulu sebelum item denda/reward dihapus.`);
+    const { error: delErr } = await db.from("vendor_invoice_adjustments").delete().eq("id", adjustmentId);
+    if (delErr) throw new Error(delErr.message);
+    await writeAuditLog("DELETE_VENDOR_INVOICE_ADJUSTMENT", "vendor_invoice_adjustments", adjustmentId, reason.trim(), { adjustment: adj, invoiceStatus: inv.status }, { deleted: true });
+    await notifyAffected(`Item ${adj.kind === "DENDA" ? "denda" : adj.kind === "REWARD" ? "reward" : "catatan"} “${adj.label}” pada invoice ${inv.id} dihapus Sysadmin — alasan: ${reason.trim()}. Nilai akhir invoice dihitung ulang.`, ["procurement"]);
+    await notifyAffected(`Item “${adj.label}” pada invoice ${inv.id} dihapus Sysadmin (alasan: ${reason.trim()}). Nilai akhir invoice dihitung ulang.`, ["vendorMaklon"], inv.vendor_produksi);
+  });
+}
+
+// =========================================================================
+// Koreksi Pengiriman vendor produksi (owner 2026-09-30). Alur vendor: buat koli -> "Set Ekspedisi &
+// Resi" (langsung berstatus terkirim, Warehouse diberi tahu) -> ajukan invoice -> Procurement setujui
+// -> Finance bayar -> Warehouse bongkar. Vendor TIDAK bisa membatalkan resi yang salah (no resi,
+// ekspedisi, berat, foto) begitu terkirim, dan tidak bisa menghapus koli. Dua koreksi Sysadmin:
+//   1. Batalkan pengiriman 1 grup resi -- SEMUA koli di grup itu kembali ke "belum ada ekspedisi" supaya
+//      vendor mengulang Set Ekspedisi & Resi dengan data benar. Hanya kalau belum diinvoice, belum
+//      dibongkar Warehouse, dan belum dikonfirmasi WMS. Foto lampiran lama dibiarkan (tidak dihapus,
+//      ditimpa upload berikutnya; penanda ekspedisi_note_at dikosongkan sehingga tidak tampil).
+//   2. Hapus koli yang BELUM dikirim -- koli salah isi/kosong; roll kembali tersedia (pelacakan roll
+//      dihitung dari item koli, jadi otomatis).
+// =========================================================================
+
+export async function sysadminUndoKoliShipmentAction(koliId: string, reason: string): Promise<ActionResult<{ kolis: number }>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: first, error } = await db.from("delivery_kolis").select("id,resi_group_id").eq("id", koliId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!first) throw new Error("Koli tidak ditemukan.");
+    // Grup resi = semua koli dengan resi_group_id yang sama; koli lama tanpa grup = grup isi-dirinya-sendiri.
+    const groupQuery = db.from("delivery_kolis").select("id,mrp_id,vendor_produksi,no_koli,ekspedisi,no_resi,berat_koli,delivered_at,resi_group_id,resi_invoiced_at,wms_received_at,ekspedisi_note");
+    const { data: kolis, error: groupErr } = await (first.resi_group_id ? groupQuery.eq("resi_group_id", first.resi_group_id) : groupQuery.eq("id", koliId));
+    if (groupErr) throw new Error(groupErr.message);
+    const rows = kolis ?? [];
+    if (rows.length === 0) throw new Error("Grup resi tidak ditemukan.");
+    if (rows.some((r) => !r.delivered_at)) throw new Error("Grup ini belum dikirim -- tidak ada pengiriman yang bisa dibatalkan.");
+    const invoiced = rows.find((r) => r.resi_invoiced_at);
+    if (invoiced) throw new Error(`Koli ${invoiced.no_koli ?? invoiced.id} sudah diajukan invoice -- invoice vendornya harus dikembalikan/direvisi dulu di Procurement sebelum pengiriman dibatalkan.`);
+    const wms = rows.find((r) => r.wms_received_at);
+    if (wms) throw new Error(`Koli ${wms.no_koli ?? wms.id} sudah dikonfirmasi diterima di WMS -- pengiriman tidak bisa dibatalkan dari sini.`);
+    const ids = rows.map((r) => r.id);
+    const { count: receiptCount, error: rcErr } = await db.from("warehouse_receipt_kolis").select("id", { count: "exact", head: true }).in("delivery_koli_id", ids);
+    if (rcErr) throw new Error(rcErr.message);
+    if ((receiptCount ?? 0) > 0) throw new Error("Koli di grup ini sudah dibongkar Warehouse -- Batalkan bongkar koli dulu (Warehouse -> Riwayat Penerimaan).");
+
+    const { error: updErr } = await db
+      .from("delivery_kolis")
+      .update({ delivered_at: null, berat_koli: null, ekspedisi: "", ekspedisi_note: null, ekspedisi_note_at: null, no_resi: null, resi_group_id: null })
+      .in("id", ids);
+    if (updErr) throw new Error(updErr.message);
+    const resi = rows[0].no_resi ?? rows[0].resi_group_id ?? koliId;
+    await writeAuditLog(
+      "UNDO_KOLI_SHIPMENT",
+      "delivery_kolis",
+      ids.join(","),
+      reason.trim(),
+      { kolis: rows.map((r) => ({ id: r.id, noKoli: r.no_koli, ekspedisi: r.ekspedisi, noResi: r.no_resi, beratKoli: r.berat_koli, deliveredAt: r.delivered_at, resiGroupId: r.resi_group_id, note: r.ekspedisi_note })) },
+      { delivered: false, ekspedisi: "", resi: null }
+    );
+    const label = rows.map((r) => r.no_koli ?? r.id).join(", ");
+    await notifyAffected(`Pengiriman resi ${resi} (koli ${label}) dibatalkan Sysadmin — alasan: ${reason.trim()}. Koli kembali ke "Belum ada ekspedisi"; silakan Set Ekspedisi & Resi ulang dengan data yang benar.`, ["vendorMaklon"], rows[0].vendor_produksi);
+    await notifyAffected(`Pengiriman koli ${label} dari vendor dibatalkan Sysadmin (alasan: ${reason.trim()}) -- belum ada barang yang perlu diterima dari resi ini.`, ["warehouse"]);
+    return { kolis: rows.length };
+  });
+}
+
+export async function sysadminDeleteKoliAction(koliId: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: koli, error } = await db.from("delivery_kolis").select("id,mrp_id,vendor_produksi,no_koli,delivered_at,resi_group_id").eq("id", koliId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!koli) throw new Error("Koli tidak ditemukan (mungkin sudah dihapus).");
+    if (koli.delivered_at) throw new Error("Koli ini sudah dikirim -- batalkan pengiriman resinya dulu sebelum koli dihapus.");
+    const { data: items, error: itemsErr } = await db.from("delivery_koli_items").select("warna,lengan,size,qty,kind,usia,source_batch_id").eq("delivery_koli_id", koliId);
+    if (itemsErr) throw new Error(itemsErr.message);
+    // Foto lampiran ekspedisi (kalau ada) dihapus dulu -- baris ini menunjuk koli.
+    await db.from("delivery_koli_ekspedisi_photos").delete().eq("delivery_koli_id", koliId);
+    const { error: itemDelErr } = await db.from("delivery_koli_items").delete().eq("delivery_koli_id", koliId);
+    if (itemDelErr) throw new Error(itemDelErr.message);
+    const { error: delErr } = await db.from("delivery_kolis").delete().eq("id", koliId);
+    if (delErr) {
+      // Pulihkan item yang sudah terhapus supaya koli tidak tertinggal kosong.
+      if ((items ?? []).length > 0) await db.from("delivery_koli_items").insert((items ?? []).map((it) => ({ ...it, delivery_koli_id: koliId })));
+      throw new Error(`Gagal menghapus koli (isi dikembalikan seperti semula): ${delErr.message}`);
+    }
+    await writeAuditLog("DELETE_KOLI", "delivery_kolis", koliId, reason.trim(), { koli, items }, { deleted: true });
+    await notifyAffected(`Koli ${koli.no_koli ?? koliId} (${koli.mrp_id}) dihapus Sysadmin — alasan: ${reason.trim()}. Roll/item di dalamnya kembali tersedia untuk koli baru.`, ["vendorMaklon"], koli.vendor_produksi);
+  });
+}
+
+// =========================================================================
 // Koreksi Cutting vendor produksi (owner 2026-09-30). Tiga koreksi per roll (batch) yang MUNDUR satu
 // langkah dan hanya boleh selama roll BELUM menyentuh tahap sesudahnya (Finish Good / pengiriman):
 //   1. Batalkan resting  -- roll dikeluarkan dari produksi (batch dihapus), kembali ke pool roll siap
@@ -714,9 +941,11 @@ export async function sysadminSetBatchNetWeightAction(batchId: string, netKg: nu
     const { roll, invoiceId, poId } = await findRollForBatch(db, batch);
     if (roll.claim_defect_at || roll.claim_retur_requested_at) throw new Error("Roll ini punya klaim (cacat fisik / retur) -- berat tidak bisa dikoreksi dari sini.");
     if (roll.gross_kg == null) throw new Error("Berat kotor roll tidak diketahui -- tidak bisa memvalidasi toleransi.");
-    const variance = weightVariance(Number(roll.gross_kg), netKg);
+    // Toleransi diatur SCM (Master Data SCM) -- selalu dibaca segar dari database.
+    const tolerancePct = await loadWeightTolerancePct();
+    const variance = weightVariance(Number(roll.gross_kg), netKg, tolerancePct);
     if (variance.claimable) {
-      throw new Error(`Berat baru ${netKg} kg (${variance.pct.toFixed(1)}% dari berat kotor ${roll.gross_kg} kg) di luar toleransi -- itu menjadi klaim selisih berat yang butuh foto bukti dan alur retur, tidak bisa dibuat dari sini.`);
+      throw new Error(`Berat baru ${netKg} kg (${variance.pct.toFixed(1)}% dari berat kotor ${roll.gross_kg} kg) di luar toleransi ${tolerancePct}% -- itu menjadi klaim selisih berat yang butuh foto bukti dan alur retur, tidak bisa dibuat dari sini.`);
     }
     if (roll.net_kg != null && Number(roll.net_kg) === netKg) throw new Error("Berat baru sama dengan yang tersimpan.");
     const { error: updErr } = await db

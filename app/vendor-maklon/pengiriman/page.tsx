@@ -20,6 +20,8 @@ import {
 } from "@/lib/mrp/derive";
 import { countPengirimanPendingForMrp, pendingMarker } from "@/lib/shell/badges";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { koliDeleteCorrections, koliShipmentCorrections } from "@/components/sysadmin/vendor-corrections";
 import type { AvailableFgRow } from "@/lib/mrp/derive";
 import type { DeliveryKoli, DeliveryKoliItem, Lengan, ShippableKind } from "@/lib/mrp/types";
 
@@ -124,6 +126,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   const productionResults = useMrpStore((s) => s.productionResults);
   const productionBatches = useMrpStore((s) => s.productionBatches);
   const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
+  const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
   const ekspedisiRates = useMrpStore((s) => s.ekspedisiRates);
   const productionGroupMeta = useMrpStore((s) => s.productionGroupMeta);
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
@@ -693,10 +696,11 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                           {isExpanded ? <ChevronDown className="h-3.5 w-3.5 flex-none text-text-muted" /> : <ChevronRight className="h-3.5 w-3.5 flex-none text-text-muted" />}
                           {summarizeItems(k.items)}
                         </button>
-                        <span className="text-right">
+                        <span className="flex items-center justify-end gap-1.5">
                           <Button onClick={() => editKoli(k)} disabled={k.id.startsWith("tmp-")} variant="ghost" size="xs">
                             Edit
                           </Button>
+                          {!k.id.startsWith("tmp-") && <SysadminActionsBar compact actions={koliDeleteCorrections(k)} />}
                         </span>
                       </div>
                       {isExpanded && (
@@ -844,7 +848,8 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     )}
                     {/* Revisi 2026-09-23 (owner): tombol "Submit Invoice" pindah ke halaman Invoice & Payment
                         (tab Invoice Vendor) -- di sini cukup status ringkas. */}
-                    <span className="ml-auto">
+                    <span className="ml-auto flex items-center gap-2">
+                      <SysadminActionsBar compact actions={koliShipmentCorrections(kolis, warehouseReceipts)} />
                       {alreadyInvoiced ? (
                         <span className="rounded-full bg-success-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-success-fg">Sudah diinvoice</span>
                       ) : (

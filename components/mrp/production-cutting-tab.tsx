@@ -24,6 +24,7 @@ import {
   restingSessionGroups,
   targetSizesForBatch,
   weightVariance,
+  getWeightTolerancePct,
   YIELD_ALERT_THRESHOLD_PCT,
   type MaterialClaimStage,
   type RestingCandidateRoll,
@@ -666,7 +667,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
 
               {claimableLines.length > 0 && (
                 <div className="mt-2.5 rounded-md border border-[#F0DFC2] bg-warning-bg px-3 py-2 font-sans text-[11px] leading-[1.5] text-warning-fg">
-                  {claimableLines.length} roll selisih beratnya di luar toleransi (lebih ringan dari berat kotor). Ajukan Claim untuk roll itu, atau koreksi berat bersihnya, sebelum Resting.
+                  {claimableLines.length} roll selisih beratnya di luar toleransi {getWeightTolerancePct()}% (lebih ringan dari berat kotor). Ajukan Claim untuk roll itu, atau koreksi berat bersihnya, sebelum Resting.
                 </div>
               )}
               {restingError && <div className="mt-2.5 rounded-md border border-danger bg-danger-bg px-3 py-2 font-sans text-[11px] leading-[1.5] text-danger-fg">{restingError}</div>}

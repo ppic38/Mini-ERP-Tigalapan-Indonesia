@@ -8,7 +8,7 @@ import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { ClaimReplacementModal } from "@/components/mrp/claim-replacement-modal";
 import { ClaimReplacementBundleModal } from "@/components/mrp/claim-replacement-bundle-modal";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatDate, formatDecimal, materialClaimsList, materialClaimStage, type MaterialClaimRow, type MaterialClaimStage } from "@/lib/mrp/derive";
+import { formatDate, formatDecimal, getWeightTolerancePct, materialClaimsList, materialClaimStage, type MaterialClaimRow, type MaterialClaimStage } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { MaterialClaimHistory } from "@/lib/mrp/types";
 // Item 2.4: getMaterialClaimPhotoAction DIPANGGIL LANGSUNG dari halaman ini (bukan lewat store) --
@@ -409,7 +409,7 @@ export default function MaterialClaimsPage() {
       title="Klaim material"
       // Item 13: subtitle dulu berasumsi SEMUA klaim adalah selisih berat -- sekarang ada juga
       // klaim fisik (reason "FISIK"), jadi hitung terpisah supaya teksnya tetap akurat.
-      subtitle={`${rows.length} klaim (${rows.filter((r) => r.reason === "BERAT").length} selisih berat KURANG dari toleransi −2%, ${rows.filter((r) => r.reason === "FISIK").length} fisik) — ${unresolvedCount} belum selesai`}
+      subtitle={`${rows.length} klaim (${rows.filter((r) => r.reason === "BERAT").length} selisih berat KURANG dari toleransi −${getWeightTolerancePct()}%, ${rows.filter((r) => r.reason === "FISIK").length} fisik) — ${unresolvedCount} belum selesai`}
     >
       <div className="flex gap-2 rounded-lg border border-border-subtle bg-surface-card p-1.5">
         {(

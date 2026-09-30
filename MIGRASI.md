@@ -1,5 +1,26 @@
 # Migrasi Project — Status & Riwayat
 
+## Toleransi selisih berat di Master Data SCM -- migration 0061 (2026-09-30)
+Owner: "toleransi ditambahkan di master data SCM ... berlaku di semua vendor produksi ... sekarang ganti jadi 8%".
+Sebelumnya konstanta 2% di `derive.ts`. Sekarang: angka (%) diatur role SCM di halaman baru **SCM > Master Data**
+(`/scm/master-data`, `components/scm/weight-tolerance-panel.tsx`), SATU angka untuk SEMUA vendor produksi, default
+**8**. `supabase/migrations/0061_weight_tolerance_setting.sql`: tabel `app_number_settings` (key/value NUMERIC --
+`app_settings` migration 0052 hanya boolean) + baris `weight_tolerance_pct` = 8 + trigger penanda perubahan data
+(migration 0049). **Owner menjalankan migration manual di SQL Editor.** Kode aman kalau belum dijalankan: jatuh ke
+default 8 yang sama; tombol Simpan akan menjawab "jalankan migration 0061 dulu".
+Cara kerja: `derive.ts` menyimpan toleransi AKTIF di variabel modul (`getWeightTolerancePct`/`setWeightTolerancePct`)
+-- `weightVariance(gross, net, tolerancePct?)` & `materialClaimsList(invoices, tolerancePct?)` memakainya, jadi
+puluhan pemanggil lama tidak diubah. Browser mengisinya dari `getFlowSnapshotAction` (field `weightTolerancePct`,
+dipasang di `store.refresh` SEBELUM state di-set); server membacanya segar dari database di awal aksi yang memakainya
+(`loadWeightTolerancePct`, `lib/mrp/weightToleranceServer.ts`): `receiveRawMaterialRollAction`,
+`confirmRollWeighAction`, `fetchOneInvoiceForClaims`, `sysadminSetBatchNetWeightAction`. PENEGAKAN: server menolak
+menyimpan berat bersih yang lebih ringan dari toleransi tanpa klaim (kecuali bahan migrasi/supplier sintetis).
+Simpan = `setWeightTolerancePctAction` (hanya SCM, tercatat di internal_action_log, notifikasi ke Procurement & semua
+vendor). Panel menampilkan SIMULASI DAMPAK sebelum simpan (klaim yang hilang / roll yang baru jadi klaim) dan
+MEMBLOKIR kalau ada klaim yang sedang diproses (diterima/PV pengganti/retur) yang akan berubah status, karena klaim
+diturunkan LIVE dari berat tersimpan vs toleransi -- mengubah angka memengaruhi roll yang SUDAH ditimbang. Sysadmin
+hanya melihat (aksi ditolak server untuk non-SCM).
+
 ## Sysadmin: sidebar bertumpuk + lihat semua modul + notifikasi koreksi (2026-09-29, tanpa migration baru)
 Owner: Sysadmin "punya akses ke semua modul ... sidebar seperti modul lain tapi di-stack ... hanya bisa
 melihat dan mengoreksi ... jangan ada conflict sidebar jadi procurement saja saat masuk modul".
@@ -48,6 +69,29 @@ melihat dan mengoreksi ... jangan ada conflict sidebar jadi procurement saja saa
   Koreksi pertama: Good Receive -- "Batalkan terima" per roll (`sysadminUndoRollArrivalAction`; diblokir
   kalau roll sudah ditimbang atau PO Produksi vendor sudah mulai produksi) + tabel koreksi code lot/roll.
   Belum: Cutting (berat timbang), Produksi, Pengiriman, Invoice & Payment vendor.
+- **Tahap 3 -- Vendor Produksi: Reject/Rework & Invoice vendor (2026-09-30)**: (1) Riwayat rework --
+  "Batalkan rework" (`sysadminUndoReworkAction`): reworkRejectSizeAction menulis SEPASANG
+  production_results (REJECT negatif di grup asal + FG di grup tujuan, menit yang sama) tanpa kolom
+  penaut, jadi pasangan dicari lewat recorded_at + isi note + size/qty yang cocok; kalau tidak ketemu
+  pasti DITOLAK (tidak menebak). Ditolak juga kalau grup asal/tujuan Final Produksi atau hasil rework
+  sudah masuk koli (item kind REWORK). (2) Tampilan Reject: tombol "Buka lagi" roll diganti padanan
+  Sysadmin (aksi sama dengan Finish Good). (3) Procurement > Invoice Vendor: "Kembalikan ke menunggu
+  review" (`sysadminRevertVendorInvoiceStatusAction`, APPROVED/REVISION -> SUBMITTED; PAID harus
+  dibatalkan dulu di Finance) dan "Hapus" item denda/reward (`sysadminDeleteVendorInvoiceAdjustmentAction`,
+  hanya selagi belum disetujui). TIDAK ada "batalkan/hapus invoice": invoice REVISION sudah dilepas dari
+  hitungan invoiced (invoicedQtyByMrp) lewat alur Revisi bawaan, dan invoice tidak menyimpan koli mana
+  yang ditagihkan -- penelusuran balik ke `resi_invoiced_at` tidak tegas.
+- **Tahap 3 -- Vendor Produksi: Pengiriman (2026-09-30)** (halaman Pengiriman, `vendor-corrections.ts`):
+  vendor TIDAK bisa membatalkan resi yang salah setelah terkirim dan tidak bisa menghapus koli -- dua
+  koreksi Sysadmin mengisi celah itu. (1) "Batalkan pengiriman" di header grup Riwayat pengiriman
+  (`sysadminUndoKoliShipmentAction`): SEMUA koli satu grup resi kembali ke "belum ada ekspedisi"
+  (delivered_at/berat/ekspedisi/no_resi/resi_group_id/catatan dikosongkan; foto lampiran lama tidak
+  dihapus) supaya vendor mengulang Set Ekspedisi & Resi; DITOLAK kalau ada koli yang sudah diinvoice
+  (`resi_invoiced_at`), sudah dibongkar Warehouse, atau sudah dikonfirmasi WMS; wajib ketik ulang No.
+  Resi. (2) "Hapus koli" untuk koli yang belum dikirim (`sysadminDeleteKoliAction`, isi tercatat di Log
+  Audit, isi dipulihkan otomatis kalau penghapusan induk gagal). TIDAK ada koreksi "batalkan submit
+  invoice": tabel vendor_invoices tidak menyimpan koli mana yang ditagihkan (hanya baris
+  warna/lengan/qty), jadi penelusuran baliknya tidak pasti -- pakai alur Revisi invoice di Procurement.
 - **Tahap 3 -- Vendor Produksi: Finish Good & Final Produksi (2026-09-30)**: vendor SUDAH punya undo
   sendiri (Buka lagi roll, Buka kunci FG, Buka kunci Final) dengan pengaman ketat, jadi Sysadmin
   melakukan LANGKAH YANG SAMA atas nama vendor -- inti fungsinya dipakai bersama

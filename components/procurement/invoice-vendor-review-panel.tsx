@@ -18,6 +18,8 @@ import {
   vendorInvoiceFinalAmount,
 } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { invoiceAdjustmentCorrections, vendorInvoiceStatusCorrections } from "@/components/sysadmin/vendor-corrections";
 import type { VendorInvoice, VendorInvoiceAdjustmentKind } from "@/lib/mrp/types";
 
 /** Panel "Invoice Vendor" — konten dipindah dari halaman standalone /procurement/invoice-vendor
@@ -276,7 +278,8 @@ export function InvoiceVendorReviewPanel() {
                               {a.label}
                               {a.note && <span className="text-text-muted"> ({a.note})</span>}
                             </span>
-                            <span className="font-mono">
+                            <span className="flex items-center gap-2 font-mono">
+                              <SysadminActionsBar compact actions={invoiceAdjustmentCorrections(inv, a)} />
                               {a.kind === "TIDAK_ADA" ? "—" : (a.kind === "DENDA" ? "−" : "+") + formatRupiah(a.amount)}
                             </span>
                           </div>
@@ -342,6 +345,8 @@ export function InvoiceVendorReviewPanel() {
                         </button>
                       </div>
                     )}
+                    {/* Koreksi Sysadmin (owner 2026-09-30): mundurkan invoice yang salah disetujui. */}
+                    <SysadminActionsBar actions={vendorInvoiceStatusCorrections(inv)} />
                   </div>
 
                   {/* Item 2026-09-10 (feedback: "Tambahkan informasi mengenai lampiran ekspedisi

@@ -27,7 +27,7 @@ import type {
 } from "./types";
 import type { ParsedMrpImport } from "./parseImport";
 import type { EkspedisiRateRow, EntitasRow, HargaFobRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, MaterialSupplierRow, SupplierRow, VendorProduksiMasterRow, WarnaAliasRow } from "./masterData";
-import { localDateString } from "./derive";
+import { DEFAULT_WEIGHT_TOLERANCE_PCT, localDateString, setWeightTolerancePct } from "./derive";
 import * as rawActions from "./actions";
 import type { ApprovalRole } from "./poApproval";
 import type { SkuImportInputRow, SkuImportSummary, WarnaAliasImportInputRow, HargaKainImportInputRow } from "./actions";
@@ -266,6 +266,10 @@ export type FlowState = {
    *  (app/vendor-maklon/po-produksi/page.tsx). Field lain vendor (ratePerPc, estDays, dst.) TETAP
    *  di VENDOR_PRODUKSI (lib/mrp/seed.ts), tidak ikut pindah ke sini. */
   vendorProduksiList: VendorProduksiMasterRow[];
+  /** Toleransi selisih berat (%) berat kotor vs berat bersih -- diatur SCM di Master Data SCM, berlaku untuk
+   *  semua vendor produksi (lihat derive.ts weightVariance). Ikut getFlowSnapshotAction (BUKAN dibentuk oleh
+   *  repo/snapshot.ts, makanya opsional di tipe); default 8 sebelum terisi. */
+  weightTolerancePct?: number;
   /** True selama snapshot AWAL belum selesai di-fetch dari Supabase (lihat StoreHydrator di
    *  components/shell/store-hydrator.tsx). Halaman-halaman bisa pakai ini untuk skeleton/loading
    *  state kalau perlu -- opsional, tidak wajib dicek. */
@@ -537,6 +541,8 @@ type FlowActions = {
    *  Ganti total fitur "Reset data" lama (resetAll, dihapus). Confirm dialog WAJIB ditampilkan di
    *  caller SEBELUM memanggil ini -- lihat app/mrp/ppic/page.tsx. */
   resetMrp: (mrpId: string) => Promise<void>;
+  /** Ubah toleransi selisih berat (%) -- hanya SCM (server menolak role lain). Melempar Error dengan alasan. */
+  updateWeightTolerancePct: (pct: number) => Promise<void>;
 };
 
 const emptyState: FlowState = {
@@ -577,6 +583,7 @@ const emptyState: FlowState = {
   warnaAliases: [],
   hargaFob: [],
   vendorProduksiList: [],
+  weightTolerancePct: DEFAULT_WEIGHT_TOLERANCE_PCT,
   hydrated: false,
   busy: false,
 };
@@ -818,7 +825,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       // minta penuh) -- server membuang field master dari hasil kalau versinya sama.
       const st = get();
       const holdsMaster = st.hargaKain.length > 0 || st.hargaMaklon.length > 0 || st.itemSellingPrices.length > 0;
-      const { busy: _snapshotBusy, dataVersion, masterVersion, ...snapshot } = await actions.getFlowSnapshotAction(holdsMaster ? lastMasterVersion : null);
+      const { busy: _snapshotBusy, dataVersion, masterVersion, weightTolerancePct, ...snapshot } = await actions.getFlowSnapshotAction(holdsMaster ? lastMasterVersion : null);
       // Ada tulisan baru yang mulai selama snapshot di perjalanan -> snapshot ini bisa basi &
       // akan menimpa patch optimistic tulisan itu. Buang, ulangi (maks 4x; kalau tetap ada
       // tulisan terus-menerus, refresh milik tulisan terakhir yang akan menyegarkan).
@@ -827,7 +834,10 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       // `busy` SENGAJA tidak ikut di-spread -- ini flag UI lokal punya store.ts (lihat
       // withBusyTracking), bukan bagian data server; overwrite balik pakai kosong/false dari sini
       // akan salah kalau ada action LAIN yang kebetulan masih berjalan bersamaan.
-      set({ ...snapshot, hydrated: true });
+      // Toleransi selisih berat (Master Data SCM) dipasang ke derive.ts SEBELUM state di-set, supaya semua
+      // turunan (klaim, kunci roll, dst.) yang dihitung ulang akibat snapshot ini langsung memakai angka terbaru.
+      setWeightTolerancePct(weightTolerancePct);
+      set({ ...snapshot, weightTolerancePct, hydrated: true });
       lastDataVersion = dataVersion;
       lastMasterVersion = masterVersion;
       return;
@@ -2494,6 +2504,14 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   },
   resetMrp: async (mrpId: string) => {
     await actions.resetMrpAction(mrpId);
+    backgroundRefresh();
+  },
+  // Toleransi selisih berat (Master Data SCM). Tidak optimistic: angka ini menentukan klaim di banyak tempat,
+  // jadi baru dipasang setelah server mengonfirmasi tersimpan (alasan gagal dilempar ke pemanggil).
+  updateWeightTolerancePct: async (pct: number) => {
+    const res = unwrapAction(await actions.setWeightTolerancePctAction(pct));
+    setWeightTolerancePct(res.pct);
+    set({ weightTolerancePct: res.pct });
     backgroundRefresh();
   },
   });

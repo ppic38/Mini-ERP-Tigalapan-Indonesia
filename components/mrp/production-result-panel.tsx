@@ -654,9 +654,13 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                     <div key={bt.id} className="flex flex-wrap items-center gap-2">
                                       <span className="font-mono">{bt.codeRoll || bt.id}</span>
                                       <span className="font-mono font-semibold">{short.map(([sz, v]) => `${sz} ${v} pcs`).join(" · ")}</span>
-                                      <button onClick={() => runAction("reopen-" + bt.id, reopenProductionBatch(bt.id))} className="font-semibold text-action-primary underline">
-                                        Buka lagi
-                                      </button>
+                                      {sysadmin ? (
+                                        <SysadminActionsBar compact actions={rollReopenCorrections(bt, isFinalDone)} />
+                                      ) : (
+                                        <button onClick={() => runAction("reopen-" + bt.id, reopenProductionBatch(bt.id))} className="font-semibold text-action-primary underline">
+                                          Buka lagi
+                                        </button>
+                                      )}
                                     </div>
                                   ))}
                                 </div>

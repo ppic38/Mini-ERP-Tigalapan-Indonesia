@@ -32,6 +32,7 @@ import { internalAccountFor, type InternalRole } from "../internal-auth";
 import { supabaseServer } from "../supabase/server";
 import { nextReadableId, nextPoDisplayId } from "./repo/ids";
 import { getFlowSnapshot, getFlowSnapshotWithMeta } from "./repo/snapshot";
+import { loadWeightTolerancePct, WEIGHT_TOLERANCE_KEY } from "./weightToleranceServer";
 import {
   localDateString,
   maklonAmountForLenganBuckets,
@@ -58,6 +59,7 @@ import {
   hargaMaklonRateInfo,
   vendorCumulativeQtyByLengan,
   isSyntheticSupplier,
+  DEFAULT_WEIGHT_TOLERANCE_PCT,
 } from "./derive";
 import { ENTITAS_LIST, RESTING_TARGET_MINUTES, VENDOR_PRODUKSI } from "./seed";
 import {
@@ -1611,6 +1613,8 @@ export async function receiveRawMaterialRollAction(
 ): Promise<void> {
   const vendorId = await requireVendorSession();
   const db = supabaseServer();
+  // Toleransi selisih berat diatur SCM (Master Data SCM) -- selalu dibaca segar dari database di sini.
+  const tolerancePct = await loadWeightTolerancePct();
   const colorId = `${invoiceId}-${warna}-${lengan}`;
   const { data: rollRow } = await db
     .from("raw_material_invoice_rolls")
@@ -1618,6 +1622,19 @@ export async function receiveRawMaterialRollAction(
     .eq("invoice_color_id", colorId)
     .eq("roll_index", rollIndex)
     .single();
+
+  // Penegakan di server (owner 2026-09-30: berat bersih yang diinput vendor HARUS mengikuti toleransi dari
+  // SCM): berat yang lebih ringan dari toleransi tidak boleh disimpan sebagai berat "normal" tanpa klaim --
+  // UI vendor sudah menghitung hal yang sama, ini mencegah celah kalau UI-nya basi (toleransi baru diubah)
+  // atau aksi dipanggil langsung. Bahan hasil migrasi (supplier "MIGRASI") dikecualikan, sama seperti klaimnya.
+  if (!claim && rollRow?.gross_kg != null && Number.isFinite(netKg)) {
+    const { data: supRow } = await db.from("raw_material_invoices").select("supplier").eq("id", invoiceId).maybeSingle();
+    if (!isSyntheticSupplier(supRow?.supplier) && weightVariance(Number(rollRow.gross_kg), netKg, tolerancePct).claimable) {
+      throw new Error(
+        `Berat bersih ${netKg} kg lebih ringan dari toleransi ${tolerancePct}% terhadap berat kotor ${rollRow.gross_kg} kg -- harus diajukan sebagai klaim selisih berat (muat ulang halaman kalau toleransi baru saja diubah SCM).`
+      );
+    }
+  }
 
   if (rollRow && rollRow.net_kg != null && rollRow.gross_kg != null) {
     // Item 4.4: SEKARANG cuma roll yang lebih RINGAN dari toleransi ("claimable") yang mengunci --
@@ -1992,6 +2009,7 @@ export async function confirmRollWeighAction(
 ): Promise<{ confirmed: number; skipped: { invoiceId: string; warna: string; lengan: Lengan; rollIndex: number }[] }> {
   const vendorId = await requireVendorSession();
   const db = supabaseServer();
+  await loadWeightTolerancePct();
   const skipped: { invoiceId: string; warna: string; lengan: Lengan; rollIndex: number }[] = [];
   let confirmed = 0;
   // Kepemilikan: pastikan tiap invoiceId yang diminta memang milik vendor sesi ini -- tanpa ini,
@@ -2402,6 +2420,8 @@ export async function unresolveMaterialClaimAction(key: string): Promise<void> {
  *  di-stub kosong -- 3 pemanggilnya (request/markDelivered/confirmReceived retur klaim) semua
  *  cuma butuh materialClaimsList([inv]).find((c) => c.key === key), tidak baca field lain. */
 async function fetchOneInvoiceForClaims(db: SupabaseClient, invoiceId: string): Promise<RawMaterialInvoice | undefined> {
+  // Pemanggilnya memakai materialClaimsList([inv]) -- pastikan toleransi aktif = nilai terbaru dari SCM.
+  await loadWeightTolerancePct();
   const [invRes, colorRes] = await Promise.all([
     db.from("raw_material_invoices").select("*").eq("id", invoiceId).maybeSingle(),
     db.from("raw_material_invoice_colors").select("*, raw_material_invoice_rolls(*)").eq("invoice_id", invoiceId),
@@ -5169,17 +5189,20 @@ export async function getFlowSnapshotAction(clientMasterVersion?: number | null)
   const masterVersion = vendorOnly ? null : await readMasterDataVersion();
   const masterUnchanged = masterVersion !== null && clientMasterVersion !== null && clientMasterVersion !== undefined && masterVersion === clientMasterVersion;
   const { state, masterIncluded } = await getFlowSnapshotWithMeta({ skipMaster: vendorOnly || masterUnchanged });
+  // Toleransi selisih berat (Master Data SCM) ikut dikirim bersama snapshot supaya browser semua vendor &
+  // modul memakai angka yang sama (dipasang ke derive.ts oleh store.refresh).
+  const weightTolerancePct = await loadWeightTolerancePct();
   if (vendorOnly) {
     // Sesi vendor MURNI tidak pernah butuh tabel harga (dulu dibuang di sini setelah ditarik; sekarang
     // tidak ditarik sama sekali kalau migration 0050 sudah jalan).
-    return { ...state, hargaMaklon: [], hargaKain: [], hargaKainPks: [], hargaRib: [], hargaKerahManset: [], itemSellingPrices: [], hargaFob: [], dataVersion, masterVersion: null as number | null };
+    return { ...state, hargaMaklon: [], hargaKain: [], hargaKainPks: [], hargaRib: [], hargaKerahManset: [], itemSellingPrices: [], hargaFob: [], dataVersion, masterVersion: null as number | null, weightTolerancePct };
   }
   if (!masterIncluded) {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { hargaMaklon, hargaKain, hargaKainPks, hargaRib, hargaKerahManset, itemSellingPrices, hargaFob, ...rest } = state;
-    return { ...rest, dataVersion, masterVersion: masterVersion as number | null };
+    return { ...rest, dataVersion, masterVersion: masterVersion as number | null, weightTolerancePct };
   }
-  return { ...state, dataVersion, masterVersion };
+  return { ...state, dataVersion, masterVersion, weightTolerancePct };
 }
 
 // =========================================================================
@@ -5781,6 +5804,43 @@ async function getAppSettingImpl(key: string): Promise<boolean | null> {
   if (error) throw new Error(error.message);
   return data?.value ?? null;
 }
+/** Revisi 2026-09-30 (owner: "toleransi ditambahkan di master data SCM ... berlaku di semua vendor produksi"):
+ *  ubah toleransi selisih berat (%) antara berat kotor invoice dan berat bersih hasil timbang vendor --
+ *  HANYA role SCM. Satu angka untuk SEMUA vendor produksi; langsung dipakai vendor saat menginput berat bersih
+ *  (UI Cutting) dan ditegakkan server (receiveRawMaterialRollAction). Disimpan di app_number_settings
+ *  (migration 0061). Dicatat ke internal_action_log (siapa yang mengubah) + notifikasi ke Procurement & semua
+ *  vendor. PERHATIAN: klaim selisih berat diturunkan LIVE dari berat tersimpan vs toleransi ini, jadi mengubah
+ *  angka memengaruhi roll yang SUDAH ditimbang -- halaman Master Data SCM menampilkan simulasi dampaknya dan
+ *  memblokir kalau ada klaim yang sedang diproses akan berubah status. */
+export async function setWeightTolerancePctAction(pct: number): Promise<ActionResult<{ pct: number }>> {
+  return toActionResult(async () => {
+    const actor = await requireInternalRoleWithActor("scm");
+    if (!Number.isFinite(pct)) throw new Error("Toleransi harus berupa angka.");
+    const value = Math.round(pct * 100) / 100;
+    if (value < 0 || value > 50) throw new Error("Toleransi harus antara 0% dan 50%.");
+    const db = supabaseServer();
+    const { data: old } = await db.from("app_number_settings").select("value").eq("key", WEIGHT_TOLERANCE_KEY).maybeSingle();
+    const previous = old ? Number(old.value) : DEFAULT_WEIGHT_TOLERANCE_PCT;
+    const { error } = await db
+      .from("app_number_settings")
+      .upsert({ key: WEIGHT_TOLERANCE_KEY, value, updated_at: new Date().toISOString(), updated_by: actor.actorName }, { onConflict: "key" });
+    if (error) {
+      if (/app_number_settings|relation|does not exist|schema cache/i.test(error.message)) {
+        throw new Error("Tabel pengaturan belum ada di database -- jalankan migration 0061_weight_tolerance_setting.sql di Supabase SQL Editor dulu.");
+      }
+      throw new Error(error.message);
+    }
+    await loadWeightTolerancePct();
+    await logInternalAction(actor, `Ubah toleransi selisih berat ${previous}% -> ${value}%`, "app_number_settings", WEIGHT_TOLERANCE_KEY);
+    if (value !== previous) {
+      await insertNotification(
+        notif(`Toleransi selisih berat diubah SCM dari ${previous}% menjadi ${value}% -- berlaku untuk semua vendor produksi (berat bersih lebih ringan dari ${value}% berat kotor = klaim).`, ["procurement", "vendorMaklon"])
+      );
+    }
+    return { pct: value };
+  });
+}
+
 export async function setAppSettingAction(key: string, value: boolean): Promise<ActionResult<void>> {
   return toActionResult(() => setAppSettingImpl(key, value));
 }

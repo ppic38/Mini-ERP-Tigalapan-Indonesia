@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { CorrectionDialog, SysadminActionsBar, type CorrectionAction } from "@/components/sysadmin/correction-dialog";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
-import { formatDecimal, weightVariance } from "@/lib/mrp/derive";
+import { formatDecimal, getWeightTolerancePct, weightVariance } from "@/lib/mrp/derive";
 import { sysadminSetBatchNetWeightAction, sysadminUndoCuttingAction, sysadminUndoRestingAction } from "@/lib/mrp/sysadminActions";
 import type { ProductionBatch, RawMaterialInvoice } from "@/lib/mrp/types";
 
@@ -84,7 +84,7 @@ function WeightDialog({ batch, roll, onClose }: { batch: ProductionBatch; roll: 
       title={`Koreksi berat bersih ${batch.codeRoll ?? batch.id}`}
       impact={[
         `Berat kotor ${formatDecimal(roll.grossKg)} kg, berat bersih tersimpan ${formatDecimal(roll.netKg)} kg.`,
-        "Hanya berat yang TIDAK menjadi klaim selisih berat (dalam toleransi ±2% atau lebih berat dari berat kotor). Klaim butuh foto bukti dan alur retur Procurement, tidak bisa dibuat dari sini.",
+        `Hanya berat yang TIDAK menjadi klaim selisih berat (dalam toleransi ${getWeightTolerancePct()}% yang diatur SCM, atau lebih berat dari berat kotor). Klaim butuh foto bukti dan alur retur Procurement, tidak bisa dibuat dari sini.`,
         "Vendor dan Procurement menerima notifikasi.",
       ]}
       confirmLabel="Simpan berat"

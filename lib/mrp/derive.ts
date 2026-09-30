@@ -1175,17 +1175,37 @@ export function materialReceivedForMaklon(mrpId: string, vendorProduksi: string,
   return invoices.some((i) => i.mrpId === mrpId && i.destinationVendor === vendorProduksi && receivedStages.includes(i.status));
 }
 
-export const WEIGHT_TOLERANCE_PCT = 2;
+// Revisi 2026-09-30 (owner: "toleransi ditambahkan di master data SCM ... berlaku di semua vendor produksi
+// ... sekarang ganti jadi 8%"): toleransi selisih berat TIDAK lagi konstanta 2% -- diatur SCM di Master Data
+// SCM (tabel app_number_settings, key "weight_tolerance_pct", migration 0061) dan berlaku untuk SEMUA vendor
+// produksi. `DEFAULT_WEIGHT_TOLERANCE_PCT` (8) dipakai sampai nilai dari database sampai (migration belum
+// dijalankan / belum dimuat). Nilai AKTIF disimpan di variabel modul ini supaya puluhan pemanggil
+// weightVariance/materialClaimsList (client & server) tidak perlu diubah satu-satu: browser mengisinya dari
+// snapshot (lib/mrp/store.ts refresh), server mengisinya dari database di awal aksi yang memakainya
+// (loadWeightTolerancePct, lib/mrp/weightToleranceServer.ts).
+export const DEFAULT_WEIGHT_TOLERANCE_PCT = 8;
+
+let activeWeightTolerancePct = DEFAULT_WEIGHT_TOLERANCE_PCT;
+
+export function setWeightTolerancePct(pct: number): void {
+  if (Number.isFinite(pct) && pct >= 0) activeWeightTolerancePct = pct;
+}
+
+export function getWeightTolerancePct(): number {
+  return activeWeightTolerancePct;
+}
 
 // Item 4 (feedback batch 2026-09-04): klaim cuma masuk akal kalau material datang LEBIH RINGAN
 // dari yang diinvoice -- kalau lebih BERAT dari invoice, itu bukan kerugian, jadi tidak perlu
 // diklaim (disimpan normal, roll tetap bisa dipakai). `withinTolerance` sengaja dipertahankan
 // apa adanya (dua arah) supaya konsumen lama yang masih memakainya tidak berubah perilaku --
 // `claimable` adalah field TAMBAHAN yang searah, dipakai buat gate klaim/roll-lock yang baru.
-export function weightVariance(grossKg: number, netKg: number) {
+// `tolerancePct` opsional -- dipakai untuk simulasi dampak perubahan toleransi (halaman Master Data SCM);
+// kalau kosong memakai toleransi aktif.
+export function weightVariance(grossKg: number, netKg: number, tolerancePct: number = activeWeightTolerancePct) {
   const diff = netKg - grossKg;
   const pct = grossKg > 0 ? (diff / grossKg) * 100 : 0;
-  const withinTolerance = Math.abs(pct) <= WEIGHT_TOLERANCE_PCT;
+  const withinTolerance = Math.abs(pct) <= tolerancePct;
   const claimable = !withinTolerance && diff < 0;
   return { diff, pct, withinTolerance, claimable };
 }
@@ -1266,7 +1286,7 @@ export function materialClaimStage(
  *  dengan selisih di luar toleransi & lebih ringan PASTI sudah lewat dialog "Kirim Claim" di Cutting
  *  vendor (lihat components/mrp/production-cutting-tab.tsx), jadi tidak butuh flag terpisah untuk
  *  tahu roll mana yang "diklaim". Dipakai halaman Procurement > Klaim Material. */
-export function materialClaimsList(invoices: RawMaterialInvoice[]): MaterialClaimRow[] {
+export function materialClaimsList(invoices: RawMaterialInvoice[], tolerancePct?: number): MaterialClaimRow[] {
   const out: MaterialClaimRow[] = [];
   for (const inv of invoices) {
     // Bahan hasil migrasi tidak punya supplier yang bisa diklaim -- berat kotornya cuma catatan awal.
@@ -1277,7 +1297,7 @@ export function materialClaimsList(invoices: RawMaterialInvoice[]): MaterialClai
       c.rolls.forEach((grossKg, idx) => {
         const receipt = receipts[idx];
         if (!receipt) return;
-        const variance = weightVariance(grossKg, receipt.netKg);
+        const variance = weightVariance(grossKg, receipt.netKg, tolerancePct);
         // Item 13 (feedback batch 2026-09-10): roll ini masuk daftar klaim kalau selisih
         // beratnya claimable (perilaku lama, reason "BERAT") ATAU sudah diklaim FISIK (shading/
         // kotor/dll, tidak ada selisih berat sama sekali, reason "FISIK") -- lihat

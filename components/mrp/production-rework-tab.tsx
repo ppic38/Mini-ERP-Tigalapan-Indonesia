@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { useMrpStore } from "@/lib/mrp/store";
 import { cumulativeSizeQtyForGroup, cutWarnaLenganGroups, formatDateTimeShort, mrpDetailFor, mrpIdsWithRemainingReject, productionGroupMetaFor, reworkSizeAllowed, sizeIndex } from "@/lib/mrp/derive";
 import { countRemainingRejectGroupsForMrp, pendingMarker } from "@/lib/shell/badges";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { reworkUndoCorrections } from "@/components/sysadmin/vendor-corrections";
 import type { Lengan, Usia } from "@/lib/mrp/types";
 
 const USIA_OPTIONS: Usia[] = ["DEWASA", "KIDS"];
@@ -300,19 +302,26 @@ export function ProductionReworkTab({ vendorId }: { vendorId: string }) {
           const fromSize = parseFromSize(r.note ?? "");
           const toSize = Object.keys(r.sizeQty)[0] ?? "—";
           return (
-            <div key={r.id} className="grid grid-cols-8 items-center gap-x-2 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0">
-              <span className="font-mono">{r.mrpId}</span>
-              <span>{mrpDetailFor(r.mrpId, mrpDetails)?.mrp.kategori ?? "—"}</span>
-              <span>
-                {r.warna} · {r.lengan}
-              </span>
-              <span>{r.usia ?? "—"}</span>
-              <span className="font-mono font-medium">
-                {fromSize ?? "—"} <span className="text-text-muted">→</span> {toSize}
-              </span>
-              <span className="text-right font-mono font-medium">{Object.values(r.sizeQty).reduce((a, b) => a + b, 0)}</span>
-              <span>{r.note}</span>
-              <span className="font-mono text-[11px] text-text-muted">{formatDateTimeShort(r.recordedAt)}</span>
+            <div key={r.id} className="border-b border-[#F1F4F7] last:border-b-0">
+              <div className="grid grid-cols-8 items-center gap-x-2 px-4 py-[11px] font-sans text-xs text-[#31414F]">
+                <span className="font-mono">{r.mrpId}</span>
+                <span>{mrpDetailFor(r.mrpId, mrpDetails)?.mrp.kategori ?? "—"}</span>
+                <span>
+                  {r.warna} · {r.lengan}
+                </span>
+                <span>{r.usia ?? "—"}</span>
+                <span className="font-mono font-medium">
+                  {fromSize ?? "—"} <span className="text-text-muted">→</span> {toSize}
+                </span>
+                <span className="text-right font-mono font-medium">{Object.values(r.sizeQty).reduce((a, b) => a + b, 0)}</span>
+                <span>{r.note}</span>
+                <span className="font-mono text-[11px] text-text-muted">{formatDateTimeShort(r.recordedAt)}</span>
+              </div>
+              {/* Koreksi Sysadmin (owner 2026-09-30): vendor tidak punya cara membatalkan rework yang
+                  salah. `empty:hidden` -- wadah tidak makan ruang kalau bukan Sysadmin. */}
+              <div className="px-4 pb-2 empty:hidden">
+                <SysadminActionsBar actions={reworkUndoCorrections(r, productionGroupMeta)} />
+              </div>
             </div>
           );
         })}

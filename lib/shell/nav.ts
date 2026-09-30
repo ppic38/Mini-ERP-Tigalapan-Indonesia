@@ -60,6 +60,8 @@ export const NAV: Record<RoleKey, RoleNav> = {
       { label: "Approval MRP", href: "/scm/approval-mrp" },
       { label: "Approval PO", href: "/scm/approval-po" },
       { label: "Monitoring", href: "/scm/monitoring" },
+      // Revisi 2026-09-30 (owner): Master Data SCM -- saat ini toleransi selisih berat (berlaku semua vendor produksi).
+      { label: "Master Data", href: "/scm/master-data" },
     ],
   },
   sysadmin: {

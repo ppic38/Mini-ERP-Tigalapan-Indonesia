@@ -1,6 +1,13 @@
 import type { CorrectionAction } from "@/components/sysadmin/correction-dialog";
-import type { Lengan, MaklonPO, ProductionBatch, RawMaterialInvoice } from "@/lib/mrp/types";
-import { sysadminUndoRollArrivalAction } from "@/lib/mrp/sysadminActions";
+import type { DeliveryKoli, Lengan, MaklonPO, ProductionBatch, ProductionGroupMeta, ProductionResult, RawMaterialInvoice, VendorInvoice, VendorInvoiceAdjustment, WarehouseReceipt } from "@/lib/mrp/types";
+import {
+  sysadminDeleteKoliAction,
+  sysadminDeleteVendorInvoiceAdjustmentAction,
+  sysadminRevertVendorInvoiceStatusAction,
+  sysadminUndoKoliShipmentAction,
+  sysadminUndoReworkAction,
+  sysadminUndoRollArrivalAction,
+} from "@/lib/mrp/sysadminActions";
 import { sysadminReopenRollAction, sysadminUndoFgConfirmAction, sysadminUndoFinalAction } from "@/lib/mrp/actions";
 
 // Daftar koreksi Sysadmin untuk portal Vendor Produksi (owner 2026-09-30). Sama seperti modul lain:
@@ -105,6 +112,135 @@ export function finalUndoCorrections(args: { groupKey: string; warna: string; le
       ],
       confirmLabel: "Buka kunci Final",
       run: (reason) => sysadminUndoFinalAction(groupKey, reason),
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pengiriman (owner 2026-09-30). Vendor tidak bisa membatalkan resi yang salah setelah terkirim dan
+// tidak bisa menghapus koli -- dua koreksi Sysadmin ini mengisi celah itu.
+// ---------------------------------------------------------------------------------------------
+
+/** "Batalkan pengiriman" 1 grup resi: semua koli di grup kembali ke "belum ada ekspedisi". Diblokir kalau
+ *  sudah diinvoice, sudah dibongkar Warehouse, atau sudah dikonfirmasi WMS (cermin
+ *  sysadminUndoKoliShipmentAction). */
+export function koliShipmentCorrections(kolis: DeliveryKoli[], warehouseReceipts: WarehouseReceipt[]): CorrectionAction[] {
+  if (kolis.length === 0) return [];
+  const first = kolis[0];
+  const ids = new Set(kolis.map((k) => k.id));
+  let block: string | undefined;
+  if (kolis.some((k) => k.resiInvoicedAt)) block = "Sudah diajukan invoice — kembalikan/revisi invoice vendornya dulu di Procurement";
+  else if (warehouseReceipts.some((r) => r.koliIds.some((id) => ids.has(id)))) block = "Sudah dibongkar Warehouse — Batalkan bongkar koli dulu";
+  else if (kolis.some((k) => k.wmsReceivedAt)) block = "Sudah dikonfirmasi diterima di WMS";
+  const label = kolis.map((k) => k.noKoli || k.id).join(", ");
+  return [
+    {
+      key: "undo-shipment",
+      label: "Batalkan pengiriman",
+      danger: true,
+      disabledReason: block,
+      title: `Batalkan pengiriman resi ${first.noResi ?? "—"}`,
+      impact: [
+        `Semua koli di resi ini (${label}) kembali ke “Belum ada ekspedisi”: ekspedisi, no resi, catatan, dan berat dikosongkan.`,
+        "Vendor bisa Set Ekspedisi & Resi ulang dengan data yang benar. Foto lampiran lama tidak dihapus (ditimpa upload berikutnya, tidak ditampilkan lagi).",
+        "Hanya untuk resi yang belum diinvoice, belum dibongkar Warehouse, dan belum dikonfirmasi WMS. Data lama tercatat di Log Audit.",
+        "Vendor dan Warehouse menerima notifikasi.",
+      ],
+      confirmLabel: "Batalkan pengiriman",
+      confirmText: first.noResi || undefined,
+      run: (reason) => sysadminUndoKoliShipmentAction(first.id, reason),
+    },
+  ];
+}
+
+/** "Hapus koli" untuk koli yang BELUM dikirim (salah isi/kosong). */
+export function koliDeleteCorrections(k: DeliveryKoli): CorrectionAction[] {
+  return [
+    {
+      key: "delete-koli",
+      label: "Hapus koli",
+      danger: true,
+      disabledReason: k.deliveredAt ? "Koli sudah dikirim — batalkan pengiriman resinya dulu" : undefined,
+      title: `Hapus koli ${k.noKoli || k.id}`,
+      impact: [
+        "PERMANEN. Koli dan isinya dihapus; roll/item di dalamnya kembali tersedia untuk koli baru.",
+        "Hanya untuk koli yang belum dikirim. Isi koli tercatat di Log Audit. Vendor menerima notifikasi.",
+      ],
+      confirmLabel: "Hapus koli",
+      confirmText: k.noKoli || undefined,
+      run: (reason) => sysadminDeleteKoliAction(k.id, reason),
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------------------------
+// Rework & invoice vendor (owner 2026-09-30). Vendor tidak punya cara membatalkan rework yang salah;
+// Procurement tidak punya cara memundurkan invoice vendor yang salah disetujui atau menghapus item
+// denda/reward yang salah input.
+// ---------------------------------------------------------------------------------------------
+
+/** "Batalkan rework" untuk 1 baris Riwayat rework (baris FG hasil rework). Diblokir kalau grup asal/tujuan
+ *  sudah Final Produksi (cermin sysadminUndoReworkAction); pengecekan "sudah masuk koli" dan pasangan
+ *  reject dilakukan server. */
+export function reworkUndoCorrections(r: ProductionResult, groupMeta: ProductionGroupMeta[]): CorrectionAction[] {
+  const fromLengan = (r.note ?? "").match(/^Rework dari (\S+) size/)?.[1];
+  const sourceKey = fromLengan ? `${r.mrpId}|${r.warna}|${fromLengan}` : undefined;
+  const finalDone = groupMeta.some((g) => !!g.doneAt && (g.groupKey === r.groupKey || g.groupKey === sourceKey));
+  const qty = Object.values(r.sizeQty).reduce((a, b) => a + b, 0);
+  return [
+    {
+      key: "undo-rework",
+      label: "Batalkan rework",
+      danger: true,
+      disabledReason: finalDone ? "Grup asal/tujuan sudah Final Produksi — buka kunci Final dulu" : undefined,
+      title: `Batalkan rework ${qty} pcs ${r.warna} · ${r.lengan}`,
+      impact: [
+        "Kedua catatan rework dihapus (pengurangan di reject asal dan penambahan FG di tujuan); sisa reject grup asal kembali utuh.",
+        "Vendor bisa rework ulang dengan size/lengan yang benar.",
+        "Ditolak kalau hasil rework sudah masuk koli pengiriman, atau pasangan catatannya tidak ditemukan pasti. Vendor menerima notifikasi.",
+      ],
+      confirmLabel: "Batalkan rework",
+      run: (reason) => sysadminUndoReworkAction(r.id, reason),
+    },
+  ];
+}
+
+/** Mundurkan status invoice vendor (APPROVED/REVISION -> menunggu review). PAID dibatalkan dulu di Finance. */
+export function vendorInvoiceStatusCorrections(inv: VendorInvoice): CorrectionAction[] {
+  if (inv.status === "SUBMITTED") return [];
+  return [
+    {
+      key: "revert-invoice-status",
+      label: "Kembalikan ke menunggu review",
+      disabledReason: inv.status === "PAID" ? "Sudah dibayar — Batalkan pembayaran dulu di Finance (Payment Maklon)" : undefined,
+      title: `Kembalikan status invoice ${inv.id}`,
+      impact: [
+        `Status invoice dari ${inv.status} kembali ke menunggu review (SUBMITTED); persetujuan dibatalkan.`,
+        "Procurement bisa menambah/menghapus denda-reward lalu menyetujui ulang. Invoice hilang dari antrean Payment Finance sampai disetujui lagi.",
+        "Procurement, Finance, dan vendor menerima notifikasi.",
+      ],
+      confirmLabel: "Kembalikan status",
+      run: (reason) => sysadminRevertVendorInvoiceStatusAction(inv.id, reason),
+    },
+  ];
+}
+
+/** Hapus 1 item denda/reward yang salah input -- hanya selagi invoice belum disetujui. */
+export function invoiceAdjustmentCorrections(inv: VendorInvoice, adj: VendorInvoiceAdjustment): CorrectionAction[] {
+  const label = adj.kind === "DENDA" ? "denda" : adj.kind === "REWARD" ? "reward" : "catatan";
+  return [
+    {
+      key: "delete-adjustment",
+      label: "Hapus",
+      danger: true,
+      disabledReason: inv.status === "APPROVED" || inv.status === "PAID" ? "Invoice sudah disetujui/dibayar — kembalikan ke menunggu review dulu" : undefined,
+      title: `Hapus item ${label} “${adj.label}”`,
+      impact: [
+        `Item ${label} “${adj.label}” dihapus dari invoice ${inv.id}; nilai akhir invoice dihitung ulang tanpa item ini.`,
+        "Hanya selagi invoice belum disetujui. Item lama tercatat di Log Audit. Procurement dan vendor menerima notifikasi.",
+      ],
+      confirmLabel: "Hapus item",
+      run: (reason) => sysadminDeleteVendorInvoiceAdjustmentAction(adj.id, reason),
     },
   ];
 }
