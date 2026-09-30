@@ -48,6 +48,13 @@ melihat dan mengoreksi ... jangan ada conflict sidebar jadi procurement saja saa
   Koreksi pertama: Good Receive -- "Batalkan terima" per roll (`sysadminUndoRollArrivalAction`; diblokir
   kalau roll sudah ditimbang atau PO Produksi vendor sudah mulai produksi) + tabel koreksi code lot/roll.
   Belum: Cutting (berat timbang), Produksi, Pengiriman, Invoice & Payment vendor.
+- **Tahap 3 -- modul Produksi (2026-09-30)** (`components/sysadmin/produksi-corrections.ts`): halaman
+  Monitoring Produksi, Monitoring Reject, dan Kebutuhan Bahan read-only -- satu-satunya aksi tulis di
+  modul ini adalah Yield Alert, jadi koreksinya cuma di sana: "Buka lagi" alert yang sudah ditindak
+  (`sysadminReopenYieldAlertAction`, hapus baris `production_yield_resolutions`; catatan lama masuk Log
+  Audit). Di Mode Sysadmin tombol "Buka lagi"/"Tandai ditindak" milik Produksi disembunyikan (server
+  menolak Sysadmin). Koreksi data produksi sebenarnya (Cutting/Finish Good/dst.) ada di portal Vendor
+  Produksi -- belum dikerjakan.
 - **Tahap 3 -- modul SCM (2026-09-30)**: (1) Approval MRP -- tabel Riwayat: "Mundurkan approval SCM" /
   "Ajukan ulang ke SCM" per MRP (`mrpApprovalCorrections`, dipisah dari `mrpCorrections` PPIC supaya
   dipakai bersama; aksi server sama `sysadminRevertMrpApprovalAction`). (2) Approval PO -- tombol

@@ -585,6 +585,30 @@ export async function sysadminRevertMaklonInvoiceAction(invoiceId: string, from:
 }
 
 // =========================================================================
+// Buka lagi Yield Alert yang sudah "ditindak" (owner 2026-09-30, modul Produksi): Produksi salah
+// menandai alert yield <99% sebagai ditindak (atau catatannya keliru) -- baris resolusi dihapus supaya
+// alert kembali "Belum ditindak" dan Produksi bisa menindaklanjuti ulang dengan catatan yang benar.
+// Resolusi hanya penanda (production_yield_resolutions), tidak memengaruhi data produksi lain.
+// =========================================================================
+
+export async function sysadminReopenYieldAlertAction(batchId: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: res, error } = await db.from("production_yield_resolutions").select("note,resolved_at").eq("production_batch_id", batchId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!res) throw new Error("Alert ini sudah berstatus belum ditindak.");
+    const { data: batch } = await db.from("production_batches").select("mrp_id,vendor_produksi,warna,lengan,code_roll").eq("id", batchId).maybeSingle();
+    const { error: delErr } = await db.from("production_yield_resolutions").delete().eq("production_batch_id", batchId);
+    if (delErr) throw new Error(delErr.message);
+    await writeAuditLog("REOPEN_YIELD_ALERT", "production_yield_resolutions", batchId, reason.trim(), { note: res.note, resolvedAt: res.resolved_at }, { resolved: false });
+    const label = batch ? `${batch.mrp_id} · ${batch.warna} · ${batch.lengan}${batch.code_roll ? ` · roll ${batch.code_roll}` : ""}` : batchId;
+    await notifyAffected(`Yield alert ${label} dibuka lagi oleh Sysadmin — alasan: ${reason.trim()}. Status kembali "Belum ditindak"; silakan tindak lanjuti ulang.`, ["produksi"]);
+  });
+}
+
+// =========================================================================
 // Kembalikan MRP ke "menunggu approval SCM" (owner 2026-09-30, modul PPIC): SCM salah setuju/tolak,
 // atau MRP perlu diperiksa ulang. Berlaku untuk PPIC_APPROVED dan REJECTED. Untuk PPIC_APPROVED hanya
 // boleh kalau Procurement belum membuat PO dari MRP ini (tidak ada material_pos/maklon_pos, po_sent

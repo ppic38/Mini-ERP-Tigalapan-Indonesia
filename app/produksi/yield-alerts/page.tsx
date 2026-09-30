@@ -7,6 +7,9 @@ import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatDateTime, productionYieldAlertsList, type ProductionYieldAlertRow } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { yieldAlertCorrections } from "@/components/sysadmin/produksi-corrections";
+import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 
 export default function ProduksiYieldAlertsPage() {
   const [mounted, setMounted] = useState(false);
@@ -17,6 +20,7 @@ export default function ProduksiYieldAlertsPage() {
   const productionYieldResolutions = useMrpStore((s) => s.productionYieldResolutions);
   const resolveProductionYield = useMrpStore((s) => s.resolveProductionYield);
   const unresolveProductionYield = useMrpStore((s) => s.unresolveProductionYield);
+  const sysadmin = useSysadminMode();
 
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({});
 
@@ -76,12 +80,19 @@ export default function ProduksiYieldAlertsPage() {
                 {resolution?.note}
                 {resolution?.resolvedAt && <span className="block font-mono text-[10px]">{formatDateTime(resolution.resolvedAt)}</span>}
               </span>
-              <button onClick={() => unresolveProductionYield(r.batchId)} className="flex-none font-sans text-[11px] font-semibold text-action-primary underline">
-                Buka lagi
-              </button>
+              {/* Mode Sysadmin: "Buka lagi" milik Produksi (server menolak Sysadmin) diganti tombol Sysadmin. */}
+              {sysadmin ? (
+                <SysadminActionsBar compact actions={yieldAlertCorrections({ batchId: r.batchId, mrpId: r.mrpId, codeRoll: r.codeRoll })} />
+              ) : (
+                <button onClick={() => unresolveProductionYield(r.batchId)} className="flex-none font-sans text-[11px] font-semibold text-action-primary underline">
+                  Buka lagi
+                </button>
+              )}
             </div>
           );
         }
+        // Sysadmin hanya melihat & mengoreksi -- menindak alert baru adalah tugas Produksi.
+        if (sysadmin) return <span className="font-sans text-[11.5px] text-text-muted">Menunggu tindak lanjut Produksi</span>;
         return (
           <div className="flex min-w-[260px] flex-col gap-1.5">
             <input
