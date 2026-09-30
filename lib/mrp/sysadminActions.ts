@@ -585,6 +585,63 @@ export async function sysadminRevertMaklonInvoiceAction(invoiceId: string, from:
 }
 
 // =========================================================================
+// Batalkan "Bongkar Koli" Warehouse (owner 2026-09-30, modul Warehouse). 1 resi group = tepat 1
+// warehouse_receipt (+ baris koli & item). Membatalkan = menghapus ketiganya, sehingga resi itu muncul
+// lagi di Penerimaan dan Warehouse bisa membongkar ulang. Aman karena arsip ini tidak jadi dasar
+// tabel lain (bukan ledger stok berjalan, lihat migration 0031). Catatan akuntansi: `hpp_per_item`
+// di item penerimaan adalah SNAPSHOT saat dibongkar -- pembongkaran ulang mengambil snapshot BARU dari
+// HPP live saat itu (itu tujuan koreksinya kalau angka lama keliru). Penghapusan tidak atomik (anak
+// dulu, baru induk, karena FK tanpa cascade) -- kalau penghapusan induk gagal, anak dikembalikan.
+// =========================================================================
+
+export async function sysadminUndoWarehouseReceiptAction(receiptId: string, reason: string): Promise<ActionResult<{ itemsRemoved: number }>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: receipt, error } = await db.from("warehouse_receipts").select("*").eq("id", receiptId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!receipt) throw new Error("Penerimaan tidak ditemukan (mungkin sudah dibatalkan).");
+    const [{ data: kolis, error: koliErr }, { data: items, error: itemsErr }] = await Promise.all([
+      db.from("warehouse_receipt_kolis").select("delivery_koli_id").eq("warehouse_receipt_id", receiptId),
+      db.from("warehouse_receipt_items").select("delivery_koli_id,warna,lengan,size,kind,qty,hpp_per_item,source_batch_id").eq("warehouse_receipt_id", receiptId),
+    ]);
+    if (koliErr) throw new Error(koliErr.message);
+    if (itemsErr) throw new Error(itemsErr.message);
+
+    const { error: delItemsErr } = await db.from("warehouse_receipt_items").delete().eq("warehouse_receipt_id", receiptId);
+    if (delItemsErr) throw new Error(delItemsErr.message);
+    const { error: delKolisErr } = await db.from("warehouse_receipt_kolis").delete().eq("warehouse_receipt_id", receiptId);
+    if (delKolisErr) {
+      if ((items ?? []).length > 0) await db.from("warehouse_receipt_items").insert((items ?? []).map((it) => ({ ...it, warehouse_receipt_id: receiptId })));
+      throw new Error(delKolisErr.message);
+    }
+    const { error: delReceiptErr } = await db.from("warehouse_receipts").delete().eq("id", receiptId);
+    if (delReceiptErr) {
+      // Pulihkan anak yang sudah terhapus supaya penerimaan tidak tertinggal tanpa isi.
+      if ((kolis ?? []).length > 0) await db.from("warehouse_receipt_kolis").insert((kolis ?? []).map((k) => ({ ...k, warehouse_receipt_id: receiptId })));
+      if ((items ?? []).length > 0) await db.from("warehouse_receipt_items").insert((items ?? []).map((it) => ({ ...it, warehouse_receipt_id: receiptId })));
+      throw new Error(`Gagal membatalkan penerimaan (data dikembalikan seperti semula): ${delReceiptErr.message}`);
+    }
+
+    const totalNilai = (items ?? []).reduce((a, it) => a + Number(it.qty) * Number(it.hpp_per_item), 0);
+    await writeAuditLog(
+      "UNDO_WAREHOUSE_RECEIPT",
+      "warehouse_receipts",
+      receiptId,
+      reason.trim(),
+      { receipt, koliIds: (kolis ?? []).map((k) => k.delivery_koli_id), items, totalNilai },
+      { removed: true }
+    );
+    await notifyAffected(
+      `Bongkar koli resi ${receipt.resi_group_id} (${receipt.mrp_id}) dibatalkan Sysadmin — alasan: ${reason.trim()}. Resi kembali ke daftar Penerimaan; silakan bongkar ulang.`,
+      ["warehouse", "finance", "produksi"]
+    );
+    return { itemsRemoved: (items ?? []).length };
+  });
+}
+
+// =========================================================================
 // Batalkan penerimaan 1 roll di Good Receive (vendor produksi salah menekan "Terima") -- owner
 // 2026-09-30, modul Vendor Produksi. Mundur satu langkah: roll kembali "belum diterima" supaya vendor
 // bisa menerimanya lagi dengan benar. Hanya boleh kalau langkah setelahnya belum terjadi:

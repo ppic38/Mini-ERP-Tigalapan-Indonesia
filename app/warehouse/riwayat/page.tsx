@@ -7,6 +7,8 @@ import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatDate, formatPcs, formatRupiah, mrpMetaFor } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { warehouseReceiptCorrections } from "@/components/sysadmin/warehouse-corrections";
 import type { WarehouseReceipt } from "@/lib/mrp/types";
 
 function ReceiptItemsTable({ receipt }: { receipt: WarehouseReceipt }) {
@@ -112,7 +114,12 @@ export default function WarehouseRiwayatPage() {
         keyOf={(r) => r.id}
         firstColumnLabel="No Penerimaan"
         firstColumnRender={(r) => <span className="font-mono">{r.id}</span>}
-        renderExpanded={(r) => <ReceiptItemsTable receipt={r} />}
+        renderExpanded={(r) => (
+          <div>
+            <ReceiptItemsTable receipt={r} />
+            <SysadminActionsBar actions={warehouseReceiptCorrections(r)} />
+          </div>
+        )}
         emptyText="Belum ada penerimaan yang dibongkar."
       />
     </AppShell>

@@ -48,6 +48,13 @@ melihat dan mengoreksi ... jangan ada conflict sidebar jadi procurement saja saa
   Koreksi pertama: Good Receive -- "Batalkan terima" per roll (`sysadminUndoRollArrivalAction`; diblokir
   kalau roll sudah ditimbang atau PO Produksi vendor sudah mulai produksi) + tabel koreksi code lot/roll.
   Belum: Cutting (berat timbang), Produksi, Pengiriman, Invoice & Payment vendor.
+- **Tahap 3 -- modul Warehouse (2026-09-30)** (`components/sysadmin/warehouse-corrections.ts`): Riwayat
+  Penerimaan -- "Batalkan bongkar koli" per penerimaan (`sysadminUndoWarehouseReceiptAction`): menghapus
+  warehouse_receipts + koli + item supaya resi muncul lagi di Penerimaan dan bisa dibongkar ulang
+  (snapshot `hpp_per_item` BARU dari HPP live saat itu). Wajib ketik ulang No. Resi; data lama tersimpan
+  di Log Audit; penghapusan anak-lalu-induk dipulihkan otomatis kalau gagal di tengah. Warehouse,
+  Finance, Produksi diberi notifikasi. Tidak ada koreksi di halaman Penerimaan (yang belum dibongkar
+  tidak ada yang perlu dikembalikan).
 - **Tahap 3 -- modul Finance** (`components/sysadmin/finance-corrections.ts`): Payment Material
   (detail invoice: Batalkan pembayaran PAID->INVOICED, plus varian "pulihkan deposit" kalau ada deposit
   yang terpotong untuk invoice itu; PV pengganti klaim DITOLAK karena terikat ledger klaim), Payment
