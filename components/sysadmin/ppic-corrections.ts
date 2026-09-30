@@ -8,10 +8,13 @@ import { sysadminRevertMrpApprovalAction } from "@/lib/mrp/sysadminActions";
 // boleh/tidak di sini hanya untuk UI (tombol nonaktif + alasan), server yang memutuskan -- server juga
 // memeriksa hal yang tidak terlihat di klien (riwayat klaim, pemakaian deposit).
 
-type MrpCorrectionData = {
+type MrpApprovalData = {
   detail: MrpDetail | undefined;
   materialPOs: MaterialPO[];
   maklonPOs: MaklonPO[];
+};
+
+type MrpCorrectionData = MrpApprovalData & {
   invoices: RawMaterialInvoice[];
   vendorInvoices: VendorInvoice[];
   maklonInvoices: MaklonInvoice[];
@@ -32,17 +35,17 @@ function deleteBlock(mrpId: string, d: MrpCorrectionData): string | undefined {
   return undefined;
 }
 
-export function mrpCorrections(mrpId: string, d: MrpCorrectionData): CorrectionAction[] {
-  // MRP demo/statis (tanpa detail) tidak punya data transaksi -- tidak ada yang dikoreksi.
+/** Koreksi approval SCM atas 1 MRP (dipakai halaman MRP PPIC dan riwayat Approval MRP SCM): MRP yang
+ *  sudah disetujui -> "Mundurkan approval SCM", yang ditolak -> "Ajukan ulang ke SCM". Kosong untuk MRP
+ *  yang sudah menunggu approval (tidak ada yang dikoreksi) atau MRP demo tanpa detail. */
+export function mrpApprovalCorrections(mrpId: string, d: MrpApprovalData): CorrectionAction[] {
   if (!d.detail) return [];
   const approval = d.detail.ppicApproval;
+  if (approval !== "PPIC_APPROVED" && approval !== "REJECTED") return [];
   const poCount = d.materialPOs.filter((p) => p.mrpId === mrpId && p.status !== "CANCELLED").length + d.maklonPOs.filter((p) => p.mrpId === mrpId).length;
-  const invoiceCount = d.invoices.filter((i) => i.mrpId === mrpId).length + d.vendorInvoices.filter((i) => i.lines.some((l) => l.mrpId === mrpId)).length;
-
-  const actions: CorrectionAction[] = [];
-  if (approval === "PPIC_APPROVED" || approval === "REJECTED") {
-    const resubmit = approval === "REJECTED";
-    actions.push({
+  const resubmit = approval === "REJECTED";
+  return [
+    {
       key: "revert-approval",
       label: resubmit ? "Ajukan ulang ke SCM" : "Mundurkan approval SCM",
       disabledReason: approval === "PPIC_APPROVED" && (d.detail.poSent || poCount > 0) ? "Procurement sudah membuat PO — tarik/batalkan PO dulu" : undefined,
@@ -54,8 +57,17 @@ export function mrpCorrections(mrpId: string, d: MrpCorrectionData): CorrectionA
       ],
       confirmLabel: resubmit ? "Ajukan ulang" : "Mundurkan approval",
       run: (reason) => sysadminRevertMrpApprovalAction(mrpId, reason),
-    });
-  }
+    },
+  ];
+}
+
+export function mrpCorrections(mrpId: string, d: MrpCorrectionData): CorrectionAction[] {
+  // MRP demo/statis (tanpa detail) tidak punya data transaksi -- tidak ada yang dikoreksi.
+  if (!d.detail) return [];
+  const poCount = d.materialPOs.filter((p) => p.mrpId === mrpId && p.status !== "CANCELLED").length + d.maklonPOs.filter((p) => p.mrpId === mrpId).length;
+  const invoiceCount = d.invoices.filter((i) => i.mrpId === mrpId).length + d.vendorInvoices.filter((i) => i.lines.some((l) => l.mrpId === mrpId)).length;
+
+  const actions: CorrectionAction[] = [...mrpApprovalCorrections(mrpId, d)];
   actions.push({
     key: "delete",
     label: "Hapus MRP",

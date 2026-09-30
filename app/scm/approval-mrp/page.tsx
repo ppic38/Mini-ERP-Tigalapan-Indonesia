@@ -5,6 +5,8 @@ import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { MrpWarnaBreakdownTable } from "@/components/mrp/mrp-warna-breakdown-table";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { mrpApprovalCorrections } from "@/components/sysadmin/ppic-corrections";
 import { useMrpStore } from "@/lib/mrp/store";
 import type { MrpDetail } from "@/lib/mrp/store";
 import { effectiveMrpQty, formatDate, formatPcs, mrpWarnaBreakdown, ppicApprovalBadge, vendorsForMrp } from "@/lib/mrp/derive";
@@ -15,6 +17,7 @@ export default function ScmApprovalMrpPage() {
 
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
+  const materialPOs = useMrpStore((s) => s.materialPOs);
   const approvePpicMrp = useMrpStore((s) => s.approvePpicMrp);
   const rejectPpicMrp = useMrpStore((s) => s.rejectPpicMrp);
 
@@ -118,7 +121,12 @@ export default function ScmApprovalMrpPage() {
         keyOf={(d) => d.mrp.id}
         firstColumnLabel="No. MRP"
         firstColumnRender={(d) => <span className="font-mono">{d.mrp.id}</span>}
-        renderExpanded={(d) => <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(d)} />}
+        renderExpanded={(d) => (
+          <div>
+            <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(d)} />
+            <SysadminActionsBar actions={mrpApprovalCorrections(d.mrp.id, { detail: d, materialPOs, maklonPOs })} />
+          </div>
+        )}
         filterDefs={[
           { label: "No MRP", options: Array.from(new Set(history.map((d) => d.mrp.id))), test: (d, v) => d.mrp.id === v },
           {

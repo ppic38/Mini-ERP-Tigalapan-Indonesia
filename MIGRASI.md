@@ -48,6 +48,14 @@ melihat dan mengoreksi ... jangan ada conflict sidebar jadi procurement saja saa
   Koreksi pertama: Good Receive -- "Batalkan terima" per roll (`sysadminUndoRollArrivalAction`; diblokir
   kalau roll sudah ditimbang atau PO Produksi vendor sudah mulai produksi) + tabel koreksi code lot/roll.
   Belum: Cutting (berat timbang), Produksi, Pengiriman, Invoice & Payment vendor.
+- **Tahap 3 -- modul SCM (2026-09-30)**: (1) Approval MRP -- tabel Riwayat: "Mundurkan approval SCM" /
+  "Ajukan ulang ke SCM" per MRP (`mrpApprovalCorrections`, dipisah dari `mrpCorrections` PPIC supaya
+  dipakai bersama; aksi server sama `sysadminRevertMrpApprovalAction`). (2) Approval PO -- tombol
+  Sysadmin (Tarik kembali / Mundurkan approval / Batalkan, dari `materialPoCorrections` &
+  `maklonPoCorrections`) dipasang di `PoApprovalQueue`, komponen antrean yang DIPAKAI BERSAMA
+  Procurement (tab "Approval PO Saya"), SCM, dan GM -- jadi satu titik ini menutup ketiganya
+  (menutup juga celah tab approval Procurement yang dicatat di tahap Procurement). Halaman
+  Monitoring SCM read-only, tidak ada koreksi.
 - **Tahap 3 -- modul PPIC (2026-09-30)** (`components/sysadmin/ppic-corrections.ts`, halaman MRP): kolom
   Aksi -- "Mundurkan approval SCM" / "Ajukan ulang ke SCM" (MRP PPIC_APPROVED/REJECTED -> menunggu
   approval; PPIC_APPROVED hanya kalau belum ada PO; `sysadminRevertMrpApprovalAction`) dan "Hapus MRP"

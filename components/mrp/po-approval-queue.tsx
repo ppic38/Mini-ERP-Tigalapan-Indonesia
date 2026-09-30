@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
 import { PoDownloadModal, type PoDownloadRequest } from "@/components/procurement/po-download-modal";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { maklonPoCorrections, materialPoCorrections } from "@/components/sysadmin/procurement-corrections";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatRupiah, formatDate, mrpDetailFor } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI, ROLL_KG_ESTIMATE } from "@/lib/mrp/seed";
@@ -264,6 +266,12 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
             Ditolak {st.rejectedBy ? APPROVAL_ROLE_LABEL[st.rejectedBy] : ""}: {st.rejectNote}
           </div>
         )}
+        {/* Koreksi Sysadmin (owner 2026-09-30): antrean ini dipakai bersama Procurement/SCM/GM, jadi 1
+           tempat ini menutup ketiganya. `empty:hidden` -- wadah tidak makan ruang kalau bukan Sysadmin
+           (SysadminActionsBar tidak merender apa pun). */}
+        <div className="px-4 pb-2 empty:hidden">
+          <SysadminActionsBar actions={item.type === "MATERIAL" ? materialPoCorrections(item.po as MaterialPO) : maklonPoCorrections(item.po as MaklonPO)} />
+        </div>
         {open && <ItemDetail item={item} />}
       </div>
     );
