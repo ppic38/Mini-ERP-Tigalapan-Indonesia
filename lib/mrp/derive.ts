@@ -1429,6 +1429,20 @@ export function receivedRollCountForColor(mrpId: string, vendorProduksi: string,
   return count;
 }
 
+/** Total roll (diterima ATAU belum) untuk 1 warna·lengan, dijumlah dari semua invoice bahan mentah
+ *  MRP·vendor ini -- pasangan `receivedRollCountForColor` di atas buat pembilangnya. Owner 2026-09-30
+ *  ("progres pengerjaan rol ... sejalan tuh yang qty dengan roll ... tambahkan kolom material itu
+ *  0/n"): dipakai di Monitoring Produksi supaya progres qty FG ada pendampingnya "berapa roll bahan
+ *  yang sudah diterima dari total roll yang dipesan" per warna·lengan. */
+export function totalRollCountForColor(mrpId: string, vendorProduksi: string, warna: string, lengan: Lengan, invoices: RawMaterialInvoice[]): number {
+  let count = 0;
+  for (const i of invoices) {
+    if (i.mrpId !== mrpId || i.destinationVendor !== vendorProduksi) continue;
+    count += i.colorEntries.filter((c) => c.warna === warna && c.lengan === lengan).reduce((a, c) => a + c.rolls.length, 0);
+  }
+  return count;
+}
+
 /** Sama dengan `receivedRollCountForColor`, TAPI cuma menghitung roll yang sudah punya
  *  `codeRoll` — dipakai khusus untuk "berapa roll yang BISA dipilih untuk cutting" (lihat
  *  `availableRollsForAduanRow`). Roll yang diterima tanpa codeRoll (field opsional saat Good

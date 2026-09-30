@@ -6,9 +6,20 @@ import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatDate, formatPcs, formatRupiah, maklonPoBadgeWithApproval, maklonPoDeliveryProgress, maklonPoInvoiceLockedBy, targetDoneProduksiForGroup, vendorItemSizeProgress } from "@/lib/mrp/derive";
+import {
+  formatDate,
+  formatPcs,
+  formatRupiah,
+  maklonPoBadgeWithApproval,
+  maklonPoDeliveryProgress,
+  maklonPoInvoiceLockedBy,
+  receivedRollCountForColor,
+  targetDoneProduksiForGroup,
+  totalRollCountForColor,
+  vendorItemSizeProgress,
+} from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
-import type { MaklonPO, RawMaterialInvoice } from "@/lib/mrp/types";
+import type { Lengan, MaklonPO, RawMaterialInvoice } from "@/lib/mrp/types";
 
 /** Item 2026-09-18 (owner: "gabung saja Monitoring Produksi dengan Deadline Produksi") --
  *  halaman "Deadline Produksi" yang tadinya terpisah DIHAPUS, deadline (bahan diterima + lead time
@@ -83,6 +94,7 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
               <th className="whitespace-nowrap px-2 py-1.5 text-left">Sisa Waktu</th>
               <th className="w-full px-2 py-1.5 text-left">Progres FG (dari hasil cutting aktual)</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-right">Qty</th>
+              <th className="whitespace-nowrap px-2 py-1.5 text-right">Material (Roll)</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-left">Reject / Rework</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-right">%</th>
               <th className="whitespace-nowrap px-2 py-1.5 pr-3 text-left">Status</th>
@@ -98,6 +110,8 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
               );
               const denom = s.cutting > 0 ? s.cutting : s.target;
               const fgPct = s.cutting > 0 ? Math.min(100, (s.finishGood / s.cutting) * 100) : 0;
+              const rollReceived = receivedRollCountForColor(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, invoices);
+              const rollTotal = totalRollCountForColor(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, invoices);
               const info = deadlineInfoFor(po.mrpId, po.vendorProduksi, g.warna, invoices);
               const status = statusFor(s.finishGood, denom, s.cutting > 0, info);
               return (
@@ -119,6 +133,9 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
                     <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] text-text-muted">
                       {formatPcs(s.finishGood)}/{formatPcs(denom)}
                     </td>
+                    <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] text-text-muted">
+                      {rollTotal > 0 ? `${rollReceived}/${rollTotal}` : "—"}
+                    </td>
                     <td className="whitespace-nowrap px-2 py-2 font-sans text-[10px]">
                       {s.reject > 0 && <span className="text-danger-fg">−{formatPcs(s.reject)} reject</span>}
                       {s.reject > 0 && s.rework > 0 && " · "}
@@ -133,7 +150,7 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
                   </tr>
                   {open && (
                     <tr className="border-t border-[#F1F4F7] bg-[#FAFBFC]">
-                      <td colSpan={9} className="px-3 py-2 pl-9">
+                      <td colSpan={10} className="px-3 py-2 pl-9">
                         <div className="flex flex-wrap gap-1.5">
                           {g.rows.map((r) => {
                             const sizeDenom = r.cutting > 0 ? r.cutting : r.target;
