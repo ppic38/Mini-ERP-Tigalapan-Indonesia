@@ -308,7 +308,7 @@ export default function ProduksiMonitoringPage() {
       })
       .filter((r) => r.info.deadline)
       .sort((a, b) => (a.info.daysLeft ?? 0) - (b.info.daysLeft ?? 0))[0];
-    return worst?.status ?? null;
+    return worst ?? null;
   }
 
   const columns: ColumnDef<MrpGroup>[] = [
@@ -336,7 +336,15 @@ export default function ProduksiMonitoringPage() {
       default: true,
       render: (g) => {
         const worst = worstStatusFor(g);
-        return worst ? <StatusPill tone={worst.tone}>{worst.label}</StatusPill> : <span className="font-sans text-[11px] text-text-muted">Menunggu bahan</span>;
+        if (!worst) return <span className="font-sans text-[11px] text-text-muted">Menunggu bahan</span>;
+        const { info, status } = worst;
+        const days = info.daysLeft;
+        const sisa = days == null ? "" : days < 0 ? `${-days} hari lewat` : `${days} hari lagi`;
+        return (
+          <StatusPill tone={status.tone}>
+            {status.label === "SELESAI" ? "SELESAI" : `${info.deadline ? formatDate(info.deadline) : "—"} · ${sisa}`}
+          </StatusPill>
+        );
       },
     },
   ];
