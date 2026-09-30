@@ -13,7 +13,7 @@ import {
   maklonPoBadgeWithApproval,
   maklonPoDeliveryProgress,
   maklonPoInvoiceLockedBy,
-  receivedRollCountForColor,
+  completedRollCountForColor,
   targetDoneProduksiForGroup,
   totalRollCountForColor,
   vendorItemSizeProgress,
@@ -110,7 +110,7 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
               );
               const denom = s.cutting > 0 ? s.cutting : s.target;
               const fgPct = s.cutting > 0 ? Math.min(100, (s.finishGood / s.cutting) * 100) : 0;
-              const rollReceived = receivedRollCountForColor(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, invoices);
+              const rollReceived = completedRollCountForColor(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, productionBatches);
               const rollTotal = totalRollCountForColor(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, invoices);
               const info = deadlineInfoFor(po.mrpId, po.vendorProduksi, g.warna, invoices);
               const status = statusFor(s.finishGood, denom, s.cutting > 0, info);

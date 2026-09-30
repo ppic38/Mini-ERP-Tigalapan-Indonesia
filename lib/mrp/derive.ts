@@ -1443,6 +1443,13 @@ export function totalRollCountForColor(mrpId: string, vendorProduksi: string, wa
   return count;
 }
 
+/** Roll yang SUDAH selesai diproduksi (di-"Tutup Roll" -> qty FG-nya terisi) untuk 1 warna·lengan.
+ *  Owner 2026-09-30: kolom Material (Roll) di Monitoring Produksi harus mulai 0/n dan naik sejalan
+ *  pengisian qty produksi -- BUKAN roll yang sekadar diterima (itu sudah n/n begitu Good Receive). */
+export function completedRollCountForColor(mrpId: string, vendorProduksi: string, warna: string, lengan: Lengan, batches: ProductionBatch[]): number {
+  return batches.filter((b) => b.mrpId === mrpId && b.vendorProduksi === vendorProduksi && b.warna === warna && b.lengan === lengan && b.closedAt).length;
+}
+
 /** Sama dengan `receivedRollCountForColor`, TAPI cuma menghitung roll yang sudah punya
  *  `codeRoll` — dipakai khusus untuk "berapa roll yang BISA dipilih untuk cutting" (lihat
  *  `availableRollsForAduanRow`). Roll yang diterima tanpa codeRoll (field opsional saat Good
