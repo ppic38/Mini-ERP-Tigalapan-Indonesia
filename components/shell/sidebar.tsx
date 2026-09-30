@@ -147,19 +147,27 @@ export function Sidebar({
               const groupBadge = group.items.reduce((sum, i) => sum + (badgeFor(i, badgeOverrides) ?? 0), 0);
               // Judul grup yang memuat halaman aktif ditandai putih (tetap bisa diklik untuk menutup).
               const isActiveGroup = group.key === activeGroup;
+              // Grup utama (Sysadmin, revisi 2026-09-30 owner: "highlight agar ketahuan di modul ini
+              // sysadmin main menunya") diberi kotak berwarna + ikon + label "Utama" supaya jelas
+              // beda dari grup modul lain yang cuma "dipinjam" untuk dilihat.
+              const primary = !!group.primary;
               return (
-                <div key={group.key} className="flex flex-col gap-0.5">
+                <div key={group.key} className={cn("flex flex-col gap-0.5", primary && "mb-1.5 rounded-[10px] border border-accent-purple/50 bg-accent-purple/15 p-1")}>
                   <button
                     type="button"
                     onClick={() => toggleGroup(group.key)}
                     aria-expanded={open}
                     className={cn(
                       "flex items-center gap-1.5 rounded-[8px] px-2 py-2 text-left font-sans text-[11px] font-semibold uppercase tracking-wider",
-                      isActiveGroup ? "text-white" : "text-[#7C89A6] hover:text-white"
+                      isActiveGroup || primary ? "text-white" : "text-[#7C89A6] hover:text-white"
                     )}
                   >
                     {open ? <ChevronDown size={13} className="flex-shrink-0" /> : <ChevronRight size={13} className="flex-shrink-0" />}
+                    {primary && <ShieldCheck size={13} className="flex-shrink-0 text-[#C4B5FD]" />}
                     <span className="flex-1">{group.label}</span>
+                    {primary && (
+                      <span className="flex-shrink-0 rounded-full bg-accent-purple px-1.5 py-px font-sans text-[8.5px] font-bold normal-case tracking-wider text-white">UTAMA</span>
+                    )}
                     {!open && groupBadge > 0 && (
                       <span className="flex-shrink-0 rounded-full bg-danger px-[5px] py-px font-mono text-[9px] font-semibold normal-case tracking-normal text-white">{groupBadge}</span>
                     )}
