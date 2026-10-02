@@ -590,7 +590,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   <div className="flex flex-wrap items-end gap-2">
                     <div>
                       <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Gramasi semua</div>
-                      <NumberInput value={fillGramasi} onChange={setFillGramasi} decimals={0} className="input mt-0.5 w-[90px] text-right" />
+                      <NumberInput value={fillGramasi} onChange={setFillGramasi} decimals={2} commaOnly className="input mt-0.5 w-[90px] text-right" />
                     </div>
                     <div>
                       <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Setting semua</div>
@@ -647,7 +647,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         {formatDecimal(variance.diff)} ({variance.pct.toFixed(1)}%)
                       </span>
                       <span className="flex justify-end">
-                        <NumberInput value={l.gramasi} onChange={(v) => updateLine(l.id, { gramasi: v })} decimals={0} className="input w-[80px] text-right" />
+                        <NumberInput value={l.gramasi} onChange={(v) => updateLine(l.id, { gramasi: v })} decimals={2} commaOnly className="input w-[80px] text-right" />
                       </span>
                       <input value={l.setting} onChange={(e) => updateLine(l.id, { setting: e.target.value })} placeholder="Setting" className="rounded-md border border-[#DDE4EB] px-1.5 py-1 text-[11.5px]" />
                       <span className="flex justify-end gap-1.5">
