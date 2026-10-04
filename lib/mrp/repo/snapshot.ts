@@ -764,6 +764,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
       createdAt: b.created_at,
       codeRoll: b.code_roll ?? undefined,
       setting: b.setting ?? undefined,
+      sizeShifts: Array.isArray(b.size_shifts) && b.size_shifts.length > 0 ? (b.size_shifts as { from: string; to: string; qty: number }[]) : undefined,
       sizeQty: sizeRows.length > 0 ? sizeQty : undefined,
       fgSizeQty: fgSizeRows.length > 0 ? fgSizeQty : undefined,
       closedAt: b.closed_at ?? undefined,

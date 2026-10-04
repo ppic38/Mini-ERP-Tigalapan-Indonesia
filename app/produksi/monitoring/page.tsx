@@ -13,6 +13,7 @@ import {
   maklonPoBadgeWithApproval,
   maklonPoDeliveryProgress,
   maklonPoInvoiceLockedBy,
+  sizeShiftsForGroup,
   completedRollCountForColor,
   targetDoneProduksiForGroup,
   totalRollCountForColor,
@@ -112,6 +113,7 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
               const fgPct = s.cutting > 0 ? Math.min(100, (s.finishGood / s.cutting) * 100) : 0;
               const rollReceived = completedRollCountForColor(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, productionBatches);
               const rollTotal = totalRollCountForColor(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, invoices);
+              const shifts = sizeShiftsForGroup(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, productionBatches);
               const info = deadlineInfoFor(po.mrpId, po.vendorProduksi, g.warna, invoices);
               const status = statusFor(s.finishGood, denom, s.cutting > 0, info);
               return (
@@ -120,6 +122,11 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
                     <td className="py-2 pl-3 text-text-muted">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
                     <td className="whitespace-nowrap px-2 py-2 font-sans text-[11.5px] font-medium text-[#31414F]">
                       {g.warna} · {g.lengan}
+                      {shifts.length > 0 && (
+                        <span title="Ada sisa kain yang dialihkan ke size lain -- buka baris untuk detail" className="ml-1.5 rounded bg-info-bg px-1.5 py-0.5 font-sans text-[9.5px] font-semibold text-info-fg">
+                          ALIH SIZE
+                        </span>
+                      )}
                     </td>
                     <td className="whitespace-nowrap px-2 py-2 font-mono text-[10.5px] text-text-muted">{info.deadline ? formatDate(info.deadline) : "—"}</td>
                     <td className="whitespace-nowrap px-2 py-2 font-mono text-[10.5px] text-text-muted">
@@ -151,13 +158,23 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
                   {open && (
                     <tr className="border-t border-[#F1F4F7] bg-[#FAFBFC]">
                       <td colSpan={10} className="px-3 py-2 pl-9">
+                        {shifts.length > 0 && (
+                          <div className="mb-2 flex flex-col gap-0.5 font-sans text-[11px] text-[#31414F]">
+                            <span className="text-[10px] font-medium uppercase tracking-wider text-text-muted">Alih size (sisa kain)</span>
+                            {shifts.map((sh, i) => (
+                              <span key={i}>
+                                <span className="font-mono font-semibold">{sh.codeRoll}</span> · {formatPcs(sh.qty)} pcs {sh.from} → {sh.to} <span className="text-text-muted">(sisa kain, bukan rework)</span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
                         <div className="flex flex-wrap gap-1.5">
                           {g.rows.map((r) => {
                             const sizeDenom = r.cutting > 0 ? r.cutting : r.target;
                             return (
                               <span
                                 key={r.size}
-                                title={`Target ${r.target} · Cutting ${r.cutting} · FG ${r.finishGood}${r.reject ? ` · Reject ${r.reject}` : ""}${r.rework ? ` · Rework ${r.rework}` : ""}`}
+                                title={`${r.target === 0 ? "Di luar rencana · " : ""}Target ${r.target} · Cutting ${r.cutting} · FG ${r.finishGood}${r.reject ? ` · Reject ${r.reject}` : ""}${r.rework ? ` · Rework ${r.rework}` : ""}`}
                                 className="rounded border border-[#E4E9EE] bg-white px-2 py-1 font-mono text-[10.5px] text-[#31414F]"
                               >
                                 <span className="font-semibold">{r.size}</span> {formatPcs(r.finishGood)}/{formatPcs(sizeDenom)}

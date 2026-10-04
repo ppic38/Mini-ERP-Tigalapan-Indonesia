@@ -3246,8 +3246,28 @@ export function vendorItemSizeProgress(mrpId: string, vendorProduksi: string, mr
         rework: reworkSizeMap[t.size] ?? 0,
       });
     }
+    // Size yang punya hasil cutting/FG/reject/rework TAPI tidak ada di rencana (mis. hasil alih size sisa kain,
+    // 2026-10-04) tetap diberi baris (target 0) supaya qty-nya tidak hilang dari monitoring.
+    const known = new Set(rows.filter((r) => r.warna === warna && r.lengan === lengan).map((r) => r.size));
+    const extraSizes = new Set([...Object.keys(cuttingBySize), ...Object.keys(fgBySize), ...Object.keys(rejectBySize), ...Object.keys(reworkSizeMap)]);
+    for (const size of extraSizes) {
+      if (known.has(size)) continue;
+      const row = { warna, lengan, size, target: 0, cutting: cuttingBySize[size] ?? 0, finishGood: fgBySize[size] ?? 0, reject: rejectBySize[size] ?? 0, rework: reworkSizeMap[size] ?? 0 };
+      if (row.cutting + row.finishGood + row.reject + row.rework > 0) rows.push(row);
+    }
   }
   return rows.sort((a, b) => a.warna.localeCompare(b.warna) || a.lengan.localeCompare(b.lengan) || a.size.localeCompare(b.size));
+}
+
+/** Alih size sisa kain per roll (migration 0062) untuk 1 grup warna·lengan -- dipakai Monitoring Produksi
+ *  sebagai tempat info "hasil cutting roll ini berubah dari rencana". Bukan rework: tidak ada reject. */
+export function sizeShiftsForGroup(mrpId: string, vendorProduksi: string, warna: string, lengan: Lengan, batches: ProductionBatch[]): { codeRoll: string; from: string; to: string; qty: number }[] {
+  const out: { codeRoll: string; from: string; to: string; qty: number }[] = [];
+  for (const b of batches) {
+    if (b.mrpId !== mrpId || b.vendorProduksi !== vendorProduksi || b.warna !== warna || b.lengan !== lengan || !b.cuttingAt) continue;
+    for (const sh of b.sizeShifts ?? []) out.push({ codeRoll: b.codeRoll ?? "—", from: sh.from, to: sh.to, qty: sh.qty });
+  }
+  return out;
 }
 
 /** Per size: Finish Good yang berasal dari REWORK (reject dipotong ulang jadi baju size/lengan

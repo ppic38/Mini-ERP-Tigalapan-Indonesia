@@ -476,7 +476,7 @@ type FlowActions = {
    *  lewat 1 round-trip server (bukan N), optimistic PENUH (patch state SEBELUM await, pola sama
    *  seperti markRollArrived) supaya modal Hasil Cutting bisa langsung tertutup tanpa nunggu apa
    *  pun -- lihat saveGroup di production-cutting-tab.tsx. */
-  updateBatchesToCutting: (batchIds: string[], cuttingAt: string, sizeQtyByBatchId: Record<string, Record<string, number>>) => Promise<void>;
+  updateBatchesToCutting: (batchIds: string[], cuttingAt: string, sizeQtyByBatchId: Record<string, Record<string, number>>, sizeShiftsByBatchId?: Record<string, { from: string; to: string; qty: number }[]>) => Promise<void>;
   /** Item 14 (feedback batch 2026-09-10): edit resting_at untuk 1 sesi resting (beberapa batch
    *  sekaligus, semuanya berbagi resting_at yang sama). */
   updateBatchRestingAt: (batchIds: string[], restingAt: string) => Promise<void>;
@@ -2108,14 +2108,14 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // Fix-nya: 1 round-trip untuk SEMUA batchIds sekaligus (updateBatchesToCuttingAction), patch
   // optimistic PENUH SEBELUM await (pola sama seperti markRollArrived di atas), 1 kali
   // backgroundRefresh() di akhir saja (bukan N kali).
-  updateBatchesToCutting: async (batchIds, cuttingAt, sizeQtyByBatchId) => {
+  updateBatchesToCutting: async (batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId = {}) => {
     const idSet = new Set(batchIds);
     const previous = get().productionBatches;
     set({
-      productionBatches: previous.map((b) => (idSet.has(b.id) ? { ...b, cuttingAt, sizeQty: sizeQtyByBatchId[b.id] ?? b.sizeQty } : b)),
+      productionBatches: previous.map((b) => (idSet.has(b.id) ? { ...b, cuttingAt, sizeQty: sizeQtyByBatchId[b.id] ?? b.sizeQty, sizeShifts: (sizeShiftsByBatchId[b.id] ?? []).length > 0 ? sizeShiftsByBatchId[b.id] : undefined } : b)),
     });
     try {
-      unwrapAction(await actions.updateBatchesToCuttingAction(batchIds, cuttingAt, sizeQtyByBatchId));
+      unwrapAction(await actions.updateBatchesToCuttingAction(batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId));
     } catch (err) {
       set({ productionBatches: previous });
       window.alert("Gagal menyimpan hasil cutting -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));

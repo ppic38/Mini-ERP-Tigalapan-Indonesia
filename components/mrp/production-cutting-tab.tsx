@@ -22,6 +22,8 @@ import {
   restingCandidateRolls,
   restingMinutes,
   restingSessionGroups,
+  SIZE_ORDER,
+  sizeIndex,
   targetSizesForBatch,
   weightVariance,
   getWeightTolerancePct,
@@ -185,6 +187,10 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   const [activeCuttingGroupKey, setActiveCuttingGroupKey] = useState<string | null>(null);
   // Hasil aduan AKTUAL per roll (qty per size), keyed per batch id.
   const [cuttingSizeDraft, setCuttingSizeDraft] = useState<Record<string, Record<string, number>>>({});
+  // Alih size sisa kain (owner 2026-10-04, migration 0062): per roll, per size ASAL -> { size tujuan, qty }.
+  // `cuttingSizeDraft` hanya berisi hasil di size-nya sendiri (TANPA pcs hasil alih); pcs alih ditambahkan
+  // ke size tujuan saat Simpan (mergedSizeQty), dan dikurangkan lagi saat modal dibuka untuk edit.
+  const [cuttingShiftDraft, setCuttingShiftDraft] = useState<Record<string, Record<string, { to: string; qty: number }>>>({});
   // BUG FIX (2026-09-09): error server (mis. grup sudah dikunci "Final Produksi") ditangkap &
   // ditampilkan di modal supaya user tahu PERSIS kenapa gagal.
   const [cuttingGroupError, setCuttingGroupError] = useState<string | null>(null);
@@ -511,7 +517,19 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
     const groupBatches = editAll ? (session?.batches ?? []) : (session?.batches ?? []).filter(batchNeedsCuttingInput);
     setCuttingSizeDraft((prev) => {
       const next = { ...prev };
-      for (const b of groupBatches) next[b.id] = b.sizeQty ?? {};
+      for (const b of groupBatches) {
+        const base = { ...(b.sizeQty ?? {}) };
+        for (const sh of b.sizeShifts ?? []) {
+          base[sh.to] = (base[sh.to] ?? 0) - sh.qty;
+          if (base[sh.to] <= 0) delete base[sh.to];
+        }
+        next[b.id] = base;
+      }
+      return next;
+    });
+    setCuttingShiftDraft((prev) => {
+      const next = { ...prev };
+      for (const b of groupBatches) next[b.id] = Object.fromEntries((b.sizeShifts ?? []).map((sh) => [sh.from, { to: sh.to, qty: sh.qty }]));
       return next;
     });
     setCuttingGroupEditAll(editAll);
@@ -1352,7 +1370,20 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
           const canSaveGroup = incompleteIds.length === 0;
           const modalDetail = mrpDetails.find((d) => d.mrp.id === session.mrpId);
           const grandTarget = groupBatches.reduce((sum, b) => sum + Object.values(targetSizesForBatch(b, modalDetail?.aduanRows ?? [])).reduce((a, c) => a + c, 0), 0);
-          const grandActual = groupBatches.reduce((sum, b) => sum + Object.values(cuttingSizeDraft[b.id] ?? {}).reduce((a, c) => a + c, 0), 0);
+          // Alih size sisa kain: qty efektif dibatasi KEKURANGAN size asal terhadap target (kain sisa, bukan tambahan).
+          const effectiveShifts = (b: ProductionBatch) => {
+            const target = targetSizesForBatch(b, modalDetail?.aduanRows ?? []);
+            const base = cuttingSizeDraft[b.id] ?? {};
+            return Object.entries(cuttingShiftDraft[b.id] ?? {})
+              .map(([from, v]) => ({ from, to: v.to, qty: Math.min(v.qty, Math.max(0, (target[from] ?? 0) - (base[from] ?? 0))) }))
+              .filter((x) => x.to && x.qty > 0 && sizeIndex(x.to) !== -1 && sizeIndex(x.to) < sizeIndex(x.from));
+          };
+          const mergedSizeQty = (b: ProductionBatch) => {
+            const out: Record<string, number> = { ...(cuttingSizeDraft[b.id] ?? {}) };
+            for (const sh of effectiveShifts(b)) out[sh.to] = (out[sh.to] ?? 0) + sh.qty;
+            return out;
+          };
+          const grandActual = groupBatches.reduce((sum, b) => sum + Object.values(mergedSizeQty(b)).reduce((a, c) => a + c, 0), 0);
           async function saveGroup() {
             if (!canSaveGroup) return;
             setCuttingGroupError(null);
@@ -1364,14 +1395,16 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               const existing = groupBatches.map((b) => b.cuttingAt).filter((c): c is string => !!c);
               const effectiveCuttingAt =
                 existing.length === groupBatches.length ? existing.reduce((min, c) => (Date.parse(c) < Date.parse(min) ? c : min)) : new Date().toISOString();
-              const sizeQtyByBatchId = Object.fromEntries(groupBatches.map((b) => [b.id, cuttingSizeDraft[b.id] ?? {}]));
+              const sizeQtyByBatchId = Object.fromEntries(groupBatches.map((b) => [b.id, mergedSizeQty(b)]));
+              const sizeShiftsByBatchId = Object.fromEntries(groupBatches.map((b) => [b.id, effectiveShifts(b)]));
               // Opsi A ("tidak ada loading, kerja di belakang layar"): updateBatchesToCutting SENGAJA
               // TIDAK di-`await` -- sudah optimistic penuh & meng-alert/revert sendiri kalau server
               // menolak (lihat store.ts), jadi `.catch()` di sini cuma bikin alert dobel.
               updateBatchesToCutting(
                 groupBatches.map((b) => b.id),
                 effectiveCuttingAt,
-                sizeQtyByBatchId
+                sizeQtyByBatchId,
+                sizeShiftsByBatchId
               );
               closeCuttingGroupModal();
             } catch (err) {
@@ -1401,9 +1434,10 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         {batches.map((b) => {
                           const targetSizes = targetSizesForBatch(b, modalDetail?.aduanRows ?? []);
                           const sizeDraft = cuttingSizeDraft[b.id] ?? {};
-                          const sizes = Array.from(new Set([...Object.keys(targetSizes), ...Object.keys(b.sizeQty ?? {})]));
+                          const sizes = Array.from(new Set([...Object.keys(targetSizes), ...Object.keys(sizeDraft)]));
                           const targetTotal = Object.values(targetSizes).reduce((a, c) => a + c, 0);
-                          const actualTotal = Object.values(sizeDraft).reduce((a, c) => a + c, 0);
+                          const shiftsNow = effectiveShifts(b);
+                          const actualTotal = Object.values(sizeDraft).reduce((a, c) => a + c, 0) + shiftsNow.reduce((a, c) => a + c.qty, 0);
                           const isIncomplete = incompleteIds.some((x) => x.id === b.id);
                           return (
                             <div key={b.id} className="rounded-md border border-[#E4E8EE] bg-[#FAFBFC] px-3 py-2.5">
@@ -1431,6 +1465,43 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                                   ))}
                                 </div>
                               )}
+                              {sizes
+                                .filter((from) => (targetSizes[from] ?? 0) - (sizeDraft[from] ?? 0) > 0 && (sizeDraft[from] ?? 0) > 0)
+                                .map((from) => {
+                                  const shortfall = (targetSizes[from] ?? 0) - (sizeDraft[from] ?? 0);
+                                  const smaller = SIZE_ORDER.filter((x) => sizeIndex(from) !== -1 && sizeIndex(x) < sizeIndex(from));
+                                  if (smaller.length === 0) return null;
+                                  const cur = cuttingShiftDraft[b.id]?.[from] ?? { to: "", qty: 0 };
+                                  const setCur = (next: { to: string; qty: number }) =>
+                                    setCuttingShiftDraft((prev) => ({ ...prev, [b.id]: { ...(prev[b.id] ?? {}), [from]: next } }));
+                                  return (
+                                    <div key={from} className="mt-2 rounded-md border border-dashed border-[#CFE0EF] bg-white px-2.5 py-2">
+                                      <div className="mb-1.5 font-sans text-[10.5px] text-text-muted">
+                                        Sisa kain {from} kurang <span className="font-mono font-semibold text-[#31414F]">{shortfall}</span> pcs — opsional: alihkan ke size lebih kecil
+                                      </div>
+                                      <div className="flex flex-wrap items-end gap-2.5">
+                                        <select
+                                          value={cur.to}
+                                          onChange={(e) => setCur({ to: e.target.value, qty: e.target.value ? cur.qty : 0 })}
+                                          className="rounded-md border border-[#DDE4EB] bg-white px-2 py-1.5 font-sans text-[11.5px]"
+                                          aria-label={`Alihkan sisa kain ${from} ke size`}
+                                        >
+                                          <option value="">Tidak dialihkan</option>
+                                          {smaller.map((x) => (
+                                            <option key={x} value={x}>
+                                              Alihkan ke {x}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        {cur.to && (
+                                          <div className="w-[178px]">
+                                            <SizeQtyControl size={cur.to} max={shortfall} value={Math.min(cur.qty, shortfall)} onChange={(v) => setCur({ to: cur.to, qty: v })} />
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
                               {isIncomplete && <div className="mt-1.5 font-sans text-[10.5px] text-danger-fg">Isi minimal satu size</div>}
                               {!isIncomplete && targetTotal > 0 && actualTotal / targetTotal < YIELD_ALERT_THRESHOLD_PCT / 100 && (
                                 <div className="mt-1.5 font-sans text-[10.5px] text-danger-fg">

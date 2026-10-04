@@ -2183,6 +2183,39 @@ export async function updateBatchToCuttingAction(batchId: string, cuttingAt: str
   return { cuttingAt, sizeQty: rows.length > 0 ? Object.fromEntries(rows) : undefined };
 }
 
+type SizeShift = { from: string; to: string; qty: number };
+
+/** Validasi alih size sisa kain (owner 2026-10-04): hanya ke size LEBIH KECIL, qty bulat positif, pcs hasil
+ *  alih harus benar-benar ada di hasil cutting size tujuan, dan total yang dialihkan dari satu size
+ *  tidak boleh melebihi KEKURANGAN hasil cutting size itu terhadap targetnya (kain sisa, bukan tambahan). */
+async function validateSizeShifts(db: ReturnType<typeof supabaseServer>, batchId: string, sizeQty: Record<string, number>, shifts: SizeShift[]): Promise<void> {
+  const { data: batch } = await db.from("production_batches").select("aduan_row_id,qty_roll,code_roll").eq("id", batchId).single();
+  if (!batch) throw new Error("Roll tidak ditemukan.");
+  const label = batch.code_roll ?? batchId;
+  const [{ data: row }, { data: rowSizes }] = await Promise.all([
+    db.from("aduan_pola_rows").select("qty_roll").eq("id", batch.aduan_row_id).maybeSingle(),
+    db.from("aduan_pola_sizes").select("size,qty").eq("aduan_row_id", batch.aduan_row_id),
+  ]);
+  const ratio = row && Number(row.qty_roll) > 0 ? Number(batch.qty_roll) / Number(row.qty_roll) : 0;
+  const target: Record<string, number> = {};
+  for (const s of rowSizes ?? []) target[s.size] = Math.round(Number(s.qty) * ratio);
+  const shiftedFrom: Record<string, number> = {};
+  const shiftedTo: Record<string, number> = {};
+  for (const x of shifts) {
+    if (!Number.isInteger(x.qty) || x.qty <= 0) throw new Error(`Roll ${label}: qty alih size harus bilangan bulat positif.`);
+    if (x.from === x.to || !reworkSizeAllowed(x.from, x.to)) throw new Error(`Roll ${label}: sisa kain size ${x.from} hanya boleh dialihkan ke size yang lebih kecil, bukan ${x.to}.`);
+    shiftedFrom[x.from] = (shiftedFrom[x.from] ?? 0) + x.qty;
+    shiftedTo[x.to] = (shiftedTo[x.to] ?? 0) + x.qty;
+  }
+  for (const [size, qty] of Object.entries(shiftedFrom)) {
+    const shortfall = (target[size] ?? 0) - (sizeQty[size] ?? 0);
+    if (qty > shortfall) throw new Error(`Roll ${label}: alih size dari ${size} (${qty} pcs) melebihi kekurangan hasil cutting ${size} (${Math.max(0, shortfall)} pcs).`);
+  }
+  for (const [size, qty] of Object.entries(shiftedTo)) {
+    if ((sizeQty[size] ?? 0) < qty) throw new Error(`Roll ${label}: hasil cutting size ${size} (${sizeQty[size] ?? 0} pcs) lebih kecil dari yang dialihkan ke sana (${qty} pcs).`);
+  }
+}
+
 /** Versi BATCHED dari updateBatchToCuttingAction di atas (JANGAN ubah yang lama, fungsi ini
  *  tambahan paralel) -- root cause flicker & lambat tombol "Simpan" di modal Hasil Cutting adalah
  *  saveGroup yang LOOP client memanggil versi single N kali (N round-trip berurutan, tiap panggilan
@@ -2194,14 +2227,15 @@ export async function updateBatchToCuttingAction(batchId: string, cuttingAt: str
 export async function updateBatchesToCuttingAction(
   batchIds: string[],
   cuttingAt: string,
-  sizeQtyByBatchId: Record<string, Record<string, number>>
+  sizeQtyByBatchId: Record<string, Record<string, number>>,
+  sizeShiftsByBatchId: Record<string, SizeShift[]> = {}
 ): Promise<ActionResult<{ batchId: string; cuttingAt: string; sizeQty?: Record<string, number> }[]>> {
   // Revisi 2026-09-19: di production Next.js MENYEMBUNYIKAN pesan Error yang di-throw Server Action
   // (klien hanya menerima "Minified React error #441" -- alasan sebenarnya, mis. 'grup sudah Selesai
   // Produksi', tidak pernah sampai ke user). Makanya alasan penolakan dikembalikan sebagai nilai
   // ({ ok: false, error }) dan store yang melempar ulang di sisi klien.
   try {
-    return { ok: true, data: await updateBatchesToCuttingImpl(batchIds, cuttingAt, sizeQtyByBatchId) };
+    return { ok: true, data: await updateBatchesToCuttingImpl(batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId) };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -2210,7 +2244,8 @@ export async function updateBatchesToCuttingAction(
 async function updateBatchesToCuttingImpl(
   batchIds: string[],
   cuttingAt: string,
-  sizeQtyByBatchId: Record<string, Record<string, number>>
+  sizeQtyByBatchId: Record<string, Record<string, number>>,
+  sizeShiftsByBatchId: Record<string, SizeShift[]> = {}
 ): Promise<{ batchId: string; cuttingAt: string; sizeQty?: Record<string, number> }[]> {
   await requireVendorSession();
   if (batchIds.length === 0) return [];
@@ -2243,6 +2278,12 @@ async function updateBatchesToCuttingImpl(
     if (meta) metaByGroup.set(groupKey, meta);
   }
 
+  // Validasi alih size SEBELUM ada yang ditulis, supaya penolakan tidak meninggalkan data setengah jadi.
+  for (const batchId of batchIds) {
+    const shifts = (sizeShiftsByBatchId[batchId] ?? []).filter((x) => x.qty > 0);
+    if (shifts.length > 0) await validateSizeShifts(db, batchId, sizeQtyByBatchId[batchId] ?? {}, shifts);
+  }
+
   // 1 UPDATE untuk SEMUA batchId sekaligus (cuttingAt seragam untuk 1 grup, lihat komentar
   // saveGroup di production-cutting-tab.tsx) -- bukan N update terpisah seperti versi single.
   const { error } = await db.from("production_batches").update({ cutting_at: cuttingAt }).in("id", batchIds);
@@ -2263,6 +2304,18 @@ async function updateBatchesToCuttingImpl(
   if (allRows.length > 0) {
     const { error: sizeErr } = await db.from("production_batch_sizes").insert(allRows);
     if (sizeErr) console.error("updateBatchesToCuttingAction: gagal simpan hasil aduan (migration 0006 sudah jalan?)", sizeErr.message);
+  }
+
+  // Alih size sisa kain (migration 0062): validasi ketat di server lalu simpan penandanya per roll.
+  // Roll tanpa alih size menimpa kolom jadi null (edit ulang "Perbaiki Hasil Cutting" membersihkan
+  // penanda lama) -- error pada jalur null DIABAIKAN supaya aman kalau migration 0062 belum jalan.
+  for (const batchId of batchIds) {
+    const shifts = (sizeShiftsByBatchId[batchId] ?? []).filter((x) => x.qty > 0);
+    const { error: shiftErr } = await db.from("production_batches").update({ size_shifts: shifts.length > 0 ? shifts : null }).eq("id", batchId);
+    if (shiftErr) {
+      if (shifts.length > 0) throw new Error("Gagal menyimpan alih size -- jalankan migration 0062 (production_batches.size_shifts) di Supabase dulu. " + shiftErr.message);
+      console.error("updateBatchesToCuttingAction: gagal mengosongkan size_shifts (migration 0062 sudah jalan?)", shiftErr.message);
+    }
   }
 
   // recomputeAutoRejectForGroup 1x untuk groupKey ini (bukan N kali seperti kalau ini dipanggil

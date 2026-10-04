@@ -1,5 +1,18 @@
 # Migrasi Project — Status & Riwayat
 
+## Alih size sisa kain saat Cutting -- migration 0062 (2026-10-04)
+Owner: kalau roll target L 100 hanya jadi 99 L tapi sisa kain muat 1 pcs size lebih kecil, operator boleh
+mengalihkannya (99 L + 1 M, tanpa waste). BUKAN rework (tidak ada reject, tidak lewat alur Rework FG); opsional --
+kalau tidak diisi, flow lama persis (selisih tidak jadi apa-apa). Tidak perlu approval; infonya tampil di Monitoring
+Produksi internal. `supabase/migrations/0062_production_batch_size_shifts.sql`: kolom `production_batches.size_shifts`
+(jsonb, `[{from,to,qty}]`) -- HANYA penanda; qty resmi tetap di `production_batch_sizes` (sizeQty), jadi FG/Tutup Roll/
+HPP/yield tidak berubah. **Owner menjalankan migration manual.** Kode aman kalau terlambat (kolom hanya ditulis saat
+alih size dipakai; error jelas "jalankan migration 0062"). Aturan (UI `production-cutting-tab.tsx` + server
+`validateSizeShifts` di actions.ts): hanya ke size LEBIH KECIL (`SIZE_ORDER`), qty <= kekurangan hasil size asal terhadap
+target, pcs tujuan harus ada di hasil cutting. Monitoring (`vendorItemSizeProgress`) kini juga menampilkan size di luar
+rencana (target 0) + info `sizeShiftsForGroup`. Sysadmin "Batalkan cutting" ikut mengosongkan penanda.
+
+
 ## Input Hasil Cutting boleh melebihi target MRP (2026-09-30, tanpa migration)
 Owner: "di lapangan bisa input cutting lebih dari target yang diberikan, jangan set maks, tapi fungsi tombol Maks
 dan naik-turun satu angka tetap dipertahankan". `SizeQtyControl` (`components/mrp/size-qty-control.tsx`) dapat prop

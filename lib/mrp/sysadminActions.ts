@@ -890,6 +890,8 @@ export async function sysadminUndoCuttingAction(batchId: string, reason: string)
     const { error: sizeErr } = await db.from("production_batch_sizes").delete().eq("production_batch_id", batchId);
     if (sizeErr) throw new Error(sizeErr.message);
     const { error: updErr } = await db.from("production_batches").update({ cutting_at: null }).eq("id", batchId);
+    // Penanda alih size sisa kain (migration 0062) ikut dibersihkan; errornya diabaikan kalau migration belum jalan.
+    await db.from("production_batches").update({ size_shifts: null }).eq("id", batchId);
     if (updErr) {
       // Pulihkan hasil per size yang sudah terhapus supaya roll tidak tertinggal setengah.
       if ((sizes ?? []).length > 0) await db.from("production_batch_sizes").insert((sizes ?? []).map((s) => ({ ...s, production_batch_id: batchId })));

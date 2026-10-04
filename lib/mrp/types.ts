@@ -389,6 +389,10 @@ export type ProductionBatch = {
   /** Revisi 2026-09-19 (migration 0048): isian "Setting" kain per roll (mis. lebar / heat setting),
    *  diisi vendor di list roll sebelum Resting. Opsional. */
   setting?: string;
+  /** Revisi 2026-10-04 (migration 0062): sisa kain roll ini yang dialihkan ke size LEBIH KECIL saat
+   *  Input Hasil Cutting (mis. target L 100 -> 99 L + 1 M => [{from:"L",to:"M",qty:1}]). HANYA penanda --
+   *  qty resminya tetap di `sizeQty`. Kosong = tidak ada alih size. */
+  sizeShifts?: { from: string; to: string; qty: number }[];
   /** Hasil aduan AKTUAL (qty per size) dari roll ini, dicatat vendor saat "Update ke Cutting" —
    *  kosong kalau belum diisi (batch lama sebelum fitur ini ada, atau memang belum diinput).
    *  Dipakai untuk target/yield per roll (lihat productionYieldAlertsList di derive.ts), BUKAN
