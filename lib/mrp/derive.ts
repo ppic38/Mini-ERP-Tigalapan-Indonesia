@@ -1508,6 +1508,68 @@ function receivedRollCountWithCodeForColor(
   return count;
 }
 
+/** Roll lain yang SUDAH memakai code roll yang sama (owner 2026-10-05: code roll harus unik -- ada 2 roll fisik
+ *  dengan code sama yang membuat roll kedua tidak bisa di-resting). Dipakai klien (pengecekan instan sebelum
+ *  menyimpan) dan server (lib/mrp/rollCodeServer.ts memakai describeRollCodeConflict yang sama). */
+export type RollCodeConflict = {
+  codeRoll: string;
+  invoiceId: string;
+  poId?: string;
+  mrpId?: string;
+  warna: string;
+  lengan: Lengan;
+  rollNo: number;
+  grossKg?: number;
+  codeLot?: string;
+  receivedAt?: string;
+};
+
+export function describeRollCodeConflict(c: RollCodeConflict): string {
+  const date = c.receivedAt ? formatDate(c.receivedAt.slice(0, 10)) : null;
+  const parts = [
+    `roll ke-${c.rollNo} ${c.warna} · ${c.lengan} (invoice ${c.invoiceId}${c.mrpId ? `, ${c.mrpId}` : ""})`,
+    date ? `diterima pada ${date}` : "belum ditandai diterima",
+    c.grossKg != null ? `berat kotor ${formatDecimal(c.grossKg)} kg` : null,
+    `code lot ${c.codeLot || "—"}`,
+  ].filter(Boolean);
+  return `Code roll ${c.codeRoll} sudah terdaftar: ${parts.join(", ")}. Code roll tidak boleh sama dengan roll lain -- periksa lagi label fisik roll ini.`;
+}
+
+/** Cari roll LAIN (bukan `self`) yang sudah memakai `code` di data invoice yang dimuat klien. */
+export function findRollCodeConflict(
+  code: string,
+  invoices: RawMaterialInvoice[],
+  self?: { invoiceId: string; warna: string; lengan: Lengan; rollIndex: number }
+): RollCodeConflict | null {
+  const target = code.trim().toLowerCase();
+  if (!target) return null;
+  for (const inv of invoices) {
+    for (const c of inv.colorEntries) {
+      const key = c.warna + "|" + c.lengan;
+      const arrivals = inv.rollArrivals[key] ?? [];
+      const receipts = inv.rollReceipts[key] ?? [];
+      for (let idx = 0; idx < c.rolls.length; idx++) {
+        if (self && self.invoiceId === inv.id && self.warna === c.warna && self.lengan === c.lengan && self.rollIndex === idx) continue;
+        const existing = receipts[idx]?.codeRoll ?? arrivals[idx]?.codeRoll;
+        if (!existing || existing.trim().toLowerCase() !== target) continue;
+        return {
+          codeRoll: existing,
+          invoiceId: inv.id,
+          poId: inv.poId,
+          mrpId: inv.mrpId,
+          warna: c.warna,
+          lengan: c.lengan,
+          rollNo: idx + 1,
+          grossKg: c.rolls[idx],
+          codeLot: arrivals[idx]?.codeLot ?? receipts[idx]?.codeLot ?? c.lots?.[idx],
+          receivedAt: arrivals[idx]?.arrivedAt ?? receipts[idx]?.receivedAt,
+        };
+      }
+    }
+  }
+  return null;
+}
+
 /** Key klaim (`invoiceId|warna|lengan|rollIndex`) roll yang SEDANG TERKUNCI klaim -- klaim aktif
  *  (berat/fisik) yang belum "diterima roll penggantinya" (RETUR_DITERIMA, boleh dipakai lagi setelah
  *  ditimbang ulang) DAN klaim yang sudah SELESAI (roll lama digantikan invoice baru). Roll di set ini

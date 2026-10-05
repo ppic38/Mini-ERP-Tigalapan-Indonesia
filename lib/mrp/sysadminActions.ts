@@ -9,6 +9,7 @@ import { nextReadableId } from "./repo/ids";
 import type { NotificationAudience } from "./types";
 import { weightVariance } from "./derive";
 import { loadWeightTolerancePct } from "./weightToleranceServer";
+import { assertRollCodesUnique } from "./rollCodeServer";
 
 /** Bungkus aksi supaya alasan gagalnya sampai ke user di production (sama pola dengan lib/mrp/actions.ts). */
 async function toActionResult<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
@@ -1208,6 +1209,7 @@ export async function sysadminSetRollCodeAction(
       if (code !== (roll.code_roll ?? "")) {
         if (!roll.received_at) throw new Error("Roll ini belum diterima vendor -- code roll baru ada saat Good Receive.");
         if (roll.net_kg != null) throw new Error("Roll ini sudah ditimbang di Cutting -- code roll tidak bisa diubah lagi dari sini.");
+        await assertRollCodesUnique(db, [{ invoiceId, warna, lengan, rollIndex, codeRoll: code }]);
         update.code_roll = code;
       }
     }

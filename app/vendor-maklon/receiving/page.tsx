@@ -8,6 +8,8 @@ import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { useMrpStore } from "@/lib/mrp/store";
 import {
   addDays,
+  describeRollCodeConflict,
+  findRollCodeConflict,
   formatDate,
   formatDecimal,
   formatPcs,
@@ -260,11 +262,25 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     setRollPage(0);
   }
 
+  // Code roll harus unik (owner 2026-10-05): cek ke semua roll yang sudah terdaftar DAN ke isian roll lain di
+  // layar ini. Mengembalikan keterangan roll yang sudah memakainya (berat kotor, code lot, tanggal diterima).
+  function codeConflictFor(lengan: Lengan, idx: number, codeRoll: string): string | null {
+    if (!selectedInvoice || !codeRoll.trim()) return null;
+    const found = findRollCodeConflict(codeRoll, invoices, { invoiceId: selectedInvoice.id, warna: selectedWarna, lengan, rollIndex: idx });
+    if (found) return describeRollCodeConflict(found);
+    const norm = codeRoll.trim().toLowerCase();
+    const other = combinedRolls.find(
+      (r) => !arrivalFor(r.lengan, r.idx) && !(r.lengan === lengan && r.idx === idx) && (draftCode[rollKey(r.lengan, r.idx)]?.codeRoll ?? "").trim().toLowerCase() === norm
+    );
+    return other ? `Code roll ${codeRoll.trim()} juga diisi untuk Roll ${other.idx + 1} (${other.lengan}) di layar ini -- code roll tidak boleh sama.` : null;
+  }
+
   function markArrived(lengan: Lengan, idx: number) {
     if (!selectedInvoice) return;
     const key = rollKey(lengan, idx);
     const code = draftCode[key] ?? { codeRoll: "" };
     if (!code.codeRoll.trim()) return;
+    if (codeConflictFor(lengan, idx, code.codeRoll)) return;
     markRollArrived(selectedInvoice.id, selectedWarna, lengan, idx, code.codeRoll.trim(), code.codeLot?.trim() || undefined);
   }
 
@@ -311,8 +327,9 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   const pendingAddBuyIds = selectedInvoice ? selectedWarnaItems.filter((b) => !selectedInvoice.addBuyReceipts[b.id]).map((b) => b.id) : [];
   // Code roll WAJIB terisi sebelum roll boleh diterima (Terima / Terima semua roll).
   const rollsMissingCode = pendingRolls.filter((r) => !draftCode[rollKey(r.lengan, r.idx)]?.codeRoll?.trim());
+  const rollsWithCodeConflict = pendingRolls.filter((r) => codeConflictFor(r.lengan, r.idx, draftCode[rollKey(r.lengan, r.idx)]?.codeRoll ?? ""));
   function receiveAllRolls() {
-    if (!selectedInvoice || pendingRolls.length === 0 || rollsMissingCode.length > 0) return;
+    if (!selectedInvoice || pendingRolls.length === 0 || rollsMissingCode.length > 0 || rollsWithCodeConflict.length > 0) return;
     // Pendek & Panjang sekarang digabung 1 list -- receiveMaterialBatch tetap per LENGAN (kontrak
     // server tidak berubah), jadi dikelompokkan dulu lalu dikirim per grup.
     for (const c of warnaColorEntries) {
@@ -637,7 +654,8 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                         {pendingRolls.length > 0 && (
                           <span className="flex items-center gap-3">
                             {rollsMissingCode.length > 0 && <span className="font-sans text-[11px] text-warning-fg">{rollsMissingCode.length} roll belum diisi code roll</span>}
-                            <Button onClick={receiveAllRolls} disabled={rollsMissingCode.length > 0} variant="primary" size="sm" className="min-w-[170px]">
+                            {rollsWithCodeConflict.length > 0 && <span className="font-sans text-[11px] text-danger-fg">{rollsWithCodeConflict.length} roll code roll-nya sudah terdaftar</span>}
+                            <Button onClick={receiveAllRolls} disabled={rollsMissingCode.length > 0 || rollsWithCodeConflict.length > 0} variant="primary" size="sm" className="min-w-[170px]">
                               Terima semua roll ({pendingRolls.length})
                             </Button>
                           </span>
@@ -657,6 +675,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                         const key = rollKey(r.lengan, r.idx);
                         const arrival = arrivalFor(r.lengan, r.idx);
                         const code = draftCode[key] ?? { codeRoll: arrival?.codeRoll ?? "" };
+                        const conflictMsg = !arrival ? codeConflictFor(r.lengan, r.idx, code.codeRoll) : null;
                         return (
                           <div
                             key={key}
@@ -720,7 +739,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                                     <StatusPill tone="success">Diterima</StatusPill>
                                   </>
                                 ) : (
-                                  <Button onClick={() => markArrived(r.lengan, r.idx)} disabled={!code.codeRoll.trim()} variant="accent" size="sm" className="w-[96px]">
+                                  <Button onClick={() => markArrived(r.lengan, r.idx)} disabled={!code.codeRoll.trim() || !!conflictMsg} variant="accent" size="sm" className="w-[96px]">
                                     Terima
                                   </Button>
                                 )}
@@ -732,6 +751,11 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                                 />
                               )}
                             </span>
+                            {conflictMsg && (
+                              <div style={{ gridColumn: "1 / -1" }} className="rounded-md border border-[#F0C9C9] bg-danger-bg px-3 py-1.5 font-sans text-[11px] leading-[1.5] text-danger-fg">
+                                {conflictMsg}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -882,7 +906,14 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                                 placeholder="Code roll"
                               />
                               <Button
-                                onClick={() => markRollArrived(r.invoiceId, r.warna, r.lengan, r.idx, legacyCodeDraft[k]?.trim())}
+                                onClick={() => {
+                                  const legacyFound = findRollCodeConflict(legacyCodeDraft[k] ?? "", invoices, { invoiceId: r.invoiceId, warna: r.warna, lengan: r.lengan, rollIndex: r.idx });
+                                  if (legacyFound) {
+                                    window.alert(describeRollCodeConflict(legacyFound));
+                                    return;
+                                  }
+                                  markRollArrived(r.invoiceId, r.warna, r.lengan, r.idx, legacyCodeDraft[k]?.trim());
+                                }}
                                 disabled={!legacyCodeDraft[k]?.trim()}
                                 variant="primary"
                                 size="xs"

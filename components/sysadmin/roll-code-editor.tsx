@@ -4,7 +4,8 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { CorrectionDialog } from "@/components/sysadmin/correction-dialog";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
-import { formatDecimal } from "@/lib/mrp/derive";
+import { describeRollCodeConflict, findRollCodeConflict, formatDecimal } from "@/lib/mrp/derive";
+import { useMrpStore } from "@/lib/mrp/store";
 import { sysadminSetRollCodeAction, type SysadminRollCodePatch } from "@/lib/mrp/sysadminActions";
 import type { Lengan, RawMaterialInvoice } from "@/lib/mrp/types";
 
@@ -48,6 +49,9 @@ function EditRollDialog({ invoice, row, onClose }: { invoice: RawMaterialInvoice
   const rollEditable = row.arrived && !row.weighed;
   const lotChanged = lot.trim() !== row.codeLot;
   const rollChanged = rollEditable && roll.trim() !== row.codeRoll;
+  // Code roll harus unik (owner 2026-10-05): cek instan ke semua roll yang dimuat; server mengecek ulang.
+  const allInvoices = useMrpStore((s) => s.invoices);
+  const conflict = rollChanged ? findRollCodeConflict(roll, allInvoices, { invoiceId: invoice.id, warna: row.warna, lengan: row.lengan, rollIndex: row.idx }) : null;
   const patch: SysadminRollCodePatch = {};
   if (lotChanged) patch.codeLot = lot;
   if (rollChanged) patch.codeRoll = roll;
@@ -61,7 +65,7 @@ function EditRollDialog({ invoice, row, onClose }: { invoice: RawMaterialInvoice
         "Procurement dan vendor tujuan menerima notifikasi perubahan ini.",
       ]}
       confirmLabel="Simpan koreksi"
-      extraValid={(lotChanged || rollChanged) && (!rollChanged || roll.trim().length > 0)}
+      extraValid={(lotChanged || rollChanged) && (!rollChanged || roll.trim().length > 0) && !conflict}
       onRun={(reason) => sysadminSetRollCodeAction({ invoiceId: invoice.id, warna: row.warna, lengan: row.lengan, rollIndex: row.idx, patch }, reason)}
       onClose={onClose}
     >
@@ -82,6 +86,9 @@ function EditRollDialog({ invoice, row, onClose }: { invoice: RawMaterialInvoice
           />
         </div>
       </div>
+      {conflict && (
+        <div className="mt-2 rounded-md border border-[#F0C9C9] bg-danger-bg px-3 py-2 font-sans text-[11px] leading-[1.5] text-danger-fg">{describeRollCodeConflict(conflict)}</div>
+      )}
     </CorrectionDialog>
   );
 }

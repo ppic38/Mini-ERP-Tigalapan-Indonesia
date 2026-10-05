@@ -33,6 +33,7 @@ import { supabaseServer } from "../supabase/server";
 import { nextReadableId, nextPoDisplayId } from "./repo/ids";
 import { getFlowSnapshot, getFlowSnapshotWithMeta } from "./repo/snapshot";
 import { loadWeightTolerancePct, WEIGHT_TOLERANCE_KEY } from "./weightToleranceServer";
+import { assertRollCodesUnique } from "./rollCodeServer";
 import {
   localDateString,
   maklonAmountForLenganBuckets,
@@ -1493,6 +1494,7 @@ export async function markRollArrivedAction(invoiceId: string, warna: string, le
   const colorId = `${invoiceId}-${warna}-${lengan}`;
   // Revisi 2026-09-19: code roll WAJIB terisi (jaring pengaman selain tombol UI yang sudah disabled).
   if (!codeRoll?.trim()) throw new Error("Code roll wajib diisi sebelum roll diterima.");
+  await assertRollCodesUnique(db, [{ invoiceId, warna, lengan, rollIndex, codeRoll }]);
   // Item revisi 2026-09-08: code_lot awalnya CUMA diinput Procurement saat Paying Voucher
   // (bookInvoiceAction) -- di sini SENGAJA TIDAK menyentuhnya kalau vendor tidak kirim apa pun,
   // supaya tidak MENIMPA nilai yang sudah benar dengan `null`.
@@ -1536,6 +1538,7 @@ export async function receiveMaterialBatchAction(
   const colorId = `${invoiceId}-${warna}-${lengan}`;
   const receivedAt = today();
   if (rolls.some((r) => !r.codeRoll?.trim())) throw new Error("Code roll wajib diisi untuk semua roll yang diterima.");
+  await assertRollCodesUnique(db, rolls.map((r) => ({ invoiceId, warna, lengan, rollIndex: r.rollIndex, codeRoll: r.codeRoll! })));
   // codeLot: sama aturan dengan markRollArrivedAction -- cuma disentuh kalau vendor mengisinya
   // (rollnya belum punya code_lot dari Procurement), TIDAK PERNAH ditimpa jadi null.
   const results = await Promise.all(
@@ -1664,7 +1667,10 @@ export async function receiveRawMaterialRollAction(
   // claimable tetap null (alur klaim/retur tidak berubah). confirmRollWeighAction dibiarkan ada
   // (tidak dipakai UI lagi).
   const update: Record<string, unknown> = { net_kg: netKg, weigh_confirmed_at: claim ? null : nowIso() };
-  if (codeRoll && codeRoll.trim()) update.code_roll = codeRoll.trim();
+  if (codeRoll && codeRoll.trim()) {
+    await assertRollCodesUnique(db, [{ invoiceId, warna, lengan, rollIndex, codeRoll }]);
+    update.code_roll = codeRoll.trim();
+  }
   const claimKey = `${invoiceId}|${warna}|${lengan}|${rollIndex}`;
   if (!claim) {
     // Ditimbang & hasilnya sekarang sesuai toleransi (atau lebih BERAT dari invoice, item 4 --
