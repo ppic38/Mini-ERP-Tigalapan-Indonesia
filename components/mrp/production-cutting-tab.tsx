@@ -161,7 +161,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   const [lines, setLines] = useState<RollLine[]>([]);
   // Popup form "Tambah roll": langkah 1 pilih warna (hanya yang bahannya sudah diterima), langkah 2 tentukan jumlah roll.
   const [pickOpen, setPickOpen] = useState(false);
-  const [pickWarna, setPickWarna] = useState("");
+  // Revisi 2026-10-05 (owner): popup "Tambah roll" boleh memilih LEBIH DARI SATU warna sekaligus (satu aduan pola
+  // bisa mencakup beberapa warna) -- urutan = prioritas pengisian saat jumlah roll < total.
+  const [pickWarnas, setPickWarnas] = useState<string[]>([]);
   const [pickChecked, setPickChecked] = useState<Set<string>>(new Set());
   const [fillGramasi, setFillGramasi] = useState(0);
   const [fillSetting, setFillSetting] = useState("");
@@ -339,23 +341,31 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
         .map((r) => ({ warna: r.warna, free: r.available - visibleLines.filter((l) => l.roll.warna === r.warna).length }))
         .filter((o) => o.free > 0)
     : [];
-  const pickRow = selectedGroup && pickWarna ? selectedGroup.rows.find((r) => r.warna === pickWarna) : undefined;
-  const pickCandidates =
-    selectedGroup && pickWarna ? candidates.filter((c) => c.warna === pickWarna && c.lengan === selectedGroup.lengan && !visibleLines.some((l) => l.id === c.claimKey)) : [];
-  const pickMax = pickRow ? Math.max(0, Math.min(pickCandidates.length, pickRow.available - visibleLines.filter((l) => l.roll.warna === pickWarna).length)) : 0;
+  // Kandidat roll per warna (dibatasi kuota aduan pola warna itu), digabung berurutan sesuai urutan warna dipilih.
+  const pickCandidates = selectedGroup
+    ? pickWarnas.flatMap((w) => {
+        const row = selectedGroup.rows.find((r) => r.warna === w);
+        if (!row) return [];
+        const cands = candidates.filter((c) => c.warna === w && c.lengan === selectedGroup.lengan && !visibleLines.some((l) => l.id === c.claimKey));
+        const quota = Math.max(0, row.available - visibleLines.filter((l) => l.roll.warna === w).length);
+        return cands.slice(0, quota);
+      })
+    : [];
+  const pickMax = pickCandidates.length;
 
   function openPick() {
     setPickOpen(true);
-    setPickWarna(warnaOptions.length === 1 ? warnaOptions[0].warna : "");
+    // Default: semua warna yang tersedia terpilih, yang rollnya paling banyak diprioritaskan dulu.
+    setPickWarnas([...warnaOptions].sort((a, b) => b.free - a.free).map((o) => o.warna));
     setPickChecked(new Set());
   }
   function closePick() {
     setPickOpen(false);
-    setPickWarna("");
+    setPickWarnas([]);
     setPickChecked(new Set());
   }
   function choosePickWarna(warna: string) {
-    setPickWarna(warna);
+    setPickWarnas((prev) => (prev.includes(warna) ? prev.filter((w) => w !== warna) : [...prev, warna]));
     setPickChecked(new Set());
   }
   function setPickCount(n: number) {
@@ -395,7 +405,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
     setLines([]);
     setRestingError(null);
     setPickOpen(true);
-    setPickWarna(warna);
+    setPickWarnas([warna]);
     setPickChecked(new Set());
   }
 
@@ -1173,7 +1183,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               </div>
             </div>
             <div className="flex-1 overflow-y-auto px-5 py-4">
-              <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">1. Pilih warna</div>
+              <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">1. Pilih warna (boleh lebih dari satu)</div>
               <div className="mt-1.5 flex flex-wrap gap-2">
                 {warnaOptions.map((o) => (
                   <button
@@ -1181,7 +1191,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                     onClick={() => choosePickWarna(o.warna)}
                     className={
                       "rounded-md border px-3 py-[7px] font-sans text-[11.5px] font-semibold " +
-                      (pickWarna === o.warna ? "border-action-primary bg-action-primary text-white" : "border-[#CBD5DF] bg-white text-action-primary")
+                      (pickWarnas.includes(o.warna) ? "border-action-primary bg-action-primary text-white" : "border-[#CBD5DF] bg-white text-action-primary")
                     }
                   >
                     {o.warna} <span className="font-mono text-[10.5px] font-normal opacity-80">({o.free} roll)</span>
@@ -1189,7 +1199,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 ))}
               </div>
 
-              {pickWarna && (
+              {pickWarnas.length > 0 && (
                 <>
                   <div className="mt-4 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">2. Jumlah roll yang dimasukkan</div>
                   <div className="mt-1.5 flex items-center gap-2">
@@ -1228,7 +1238,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   <div className="mt-1.5 flex flex-col gap-1.5">
                     {/* Hanya roll yang dialokasikan ke aduan pola ini (sebanyak kuota/pickMax) -- roll
                         sisa warna yang sama untuk aduan pola lain tidak ditampilkan di sini. */}
-                    {pickCandidates.slice(0, pickMax).map((c) => {
+                    {pickCandidates.map((c) => {
                       const checked = pickChecked.has(c.claimKey);
                       const disabled = !checked && pickChecked.size >= pickMax;
                       return (
@@ -1242,6 +1252,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         >
                           <input type="checkbox" checked={checked} disabled={disabled} onChange={() => togglePick(c.claimKey)} className="h-3.5 w-3.5" />
                           <span className="font-mono font-medium">{c.codeRoll}</span>
+                          <span className="rounded bg-[#EEF3F8] px-1.5 py-px font-sans text-[10.5px] font-semibold text-info-fg">{c.warna}</span>
                           <span className="ml-auto font-mono text-[10.5px] text-text-muted">
                             {formatDecimal(c.grossKg)} kg{c.isReplacement ? " · pengganti" : ""}
                           </span>
