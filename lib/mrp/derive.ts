@@ -3259,6 +3259,11 @@ export function vendorItemSizeProgress(mrpId: string, vendorProduksi: string, mr
   return rows.sort((a, b) => a.warna.localeCompare(b.warna) || a.lengan.localeCompare(b.lengan) || a.size.localeCompare(b.size));
 }
 
+/** Teks ringkas alih size sisa kain 1 roll, mis. "1 pcs L → S" (kosong kalau tidak ada) -- dipakai tab Cutting & Finish Good vendor. */
+export function sizeShiftLabel(batch: ProductionBatch): string {
+  return (batch.sizeShifts ?? []).map((sh) => `${sh.qty} pcs ${sh.from} → ${sh.to}`).join(" · ");
+}
+
 /** Alih size sisa kain per roll (migration 0062) untuk 1 grup warna·lengan -- dipakai Monitoring Produksi
  *  sebagai tempat info "hasil cutting roll ini berubah dari rencana". Bukan rework: tidak ada reject. */
 export function sizeShiftsForGroup(mrpId: string, vendorProduksi: string, warna: string, lengan: Lengan, batches: ProductionBatch[]): { codeRoll: string; from: string; to: string; qty: number }[] {

@@ -24,6 +24,7 @@ import {
   restingSessionGroups,
   SIZE_ORDER,
   sizeIndex,
+  sizeShiftLabel,
   targetSizesForBatch,
   weightVariance,
   getWeightTolerancePct,
@@ -1080,6 +1081,11 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                                     {sizesForDetail.length > 0 && (
                                       <span className="text-[10px] text-text-muted">
                                         {sizesForDetail.map((size) => `${size} ${b.sizeQty?.[size] ?? 0}/${targetSizes[size] ?? 0}`).join(" · ")}
+                                      </span>
+                                    )}
+                                    {sizeShiftLabel(b) && (
+                                      <span className="text-[10px] font-semibold text-info-fg" title="Sisa kain roll ini dialihkan ke size lain saat Input Hasil Cutting">
+                                        Alih size (sisa kain): {sizeShiftLabel(b)}
                                       </span>
                                     )}
                                   </>

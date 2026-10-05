@@ -27,6 +27,7 @@ import {
   targetDoneProduksiForGroup,
   cuttingSizesForGroup,
   warnaLenganGroupsWithFg,
+  sizeShiftLabel,
 } from "@/lib/mrp/derive";
 import { countFgShortfallGroupsForMrp, countRejectActionableGroupsForMrp, pendingMarker } from "@/lib/shell/badges";
 import type { Lengan, ProductionResult } from "@/lib/mrp/types";
@@ -785,7 +786,10 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                               const closeKey = "close-" + b.id;
                               return (
                                 <div key={b.id} className="grid grid-cols-4 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-                                  <span className="font-mono">{b.codeRoll || b.id}</span>
+                                  <span className="flex flex-col">
+                                    <span className="font-mono">{b.codeRoll || b.id}</span>
+                                    {sizeShiftLabel(b) && <span className="font-sans text-[9.5px] font-semibold text-info-fg">Alih size (sisa kain): {sizeShiftLabel(b)}</span>}
+                                  </span>
                                   <span className="text-right font-mono">
                                     {totalFg} / {totalTarget}
                                   </span>
