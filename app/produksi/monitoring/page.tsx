@@ -15,6 +15,8 @@ import {
   maklonPoInvoiceLockedBy,
   sizeShiftsForGroup,
   completedRollCountForColor,
+  cuttingYieldForGroup,
+  YIELD_ALERT_THRESHOLD_PCT,
   targetDoneProduksiForGroup,
   totalRollCountForColor,
   vendorItemSizeProgress,
@@ -96,8 +98,10 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
               <th className="w-full px-2 py-1.5 text-left">Progres FG (dari hasil cutting aktual)</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-right">Qty</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-right">Material (Roll)</th>
+              <th className="whitespace-nowrap px-2 py-1.5 text-right">Hasil Cutting</th>
+              <th className="whitespace-nowrap px-2 py-1.5 text-right">Yield Cutting</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-left">Reject / Rework</th>
-              <th className="whitespace-nowrap px-2 py-1.5 text-right">%</th>
+              <th className="whitespace-nowrap px-2 py-1.5 text-right">Yield FG</th>
               <th className="whitespace-nowrap px-2 py-1.5 pr-3 text-left">Status</th>
             </tr>
           </thead>
@@ -114,6 +118,7 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
               const rollReceived = completedRollCountForColor(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, productionBatches);
               const rollTotal = totalRollCountForColor(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, invoices);
               const shifts = sizeShiftsForGroup(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, productionBatches);
+              const cut = cuttingYieldForGroup(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, mrpDetails, productionBatches);
               const info = deadlineInfoFor(po.mrpId, po.vendorProduksi, g.warna, invoices);
               const status = statusFor(s.finishGood, denom, s.cutting > 0, info);
               return (
@@ -143,6 +148,15 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
                     <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] text-text-muted">
                       {rollTotal > 0 ? `${rollReceived}/${rollTotal}` : "—"}
                     </td>
+                    <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] text-text-muted" title="Hasil cutting aktual / target rencana (qty PO)">
+                      {formatPcs(s.cutting)}/{formatPcs(s.target)}
+                    </td>
+                    <td
+                      className={"whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] font-semibold " + (cut.yieldPct == null ? "text-text-muted" : cut.yieldPct < YIELD_ALERT_THRESHOLD_PCT ? "text-warning-fg" : "text-success-fg")}
+                      title="Yield cutting = hasil aktual / target rencana, hanya dari roll yang sudah dicutting & diisi hasilnya (sama dengan Yield Alert)"
+                    >
+                      {cut.yieldPct == null ? "—" : `${cut.yieldPct.toFixed(1)}%`}
+                    </td>
                     <td className="whitespace-nowrap px-2 py-2 font-sans text-[10px]">
                       {s.reject > 0 && <span className="text-danger-fg">−{formatPcs(s.reject)} reject</span>}
                       {s.reject > 0 && s.rework > 0 && " · "}
@@ -157,7 +171,7 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
                   </tr>
                   {open && (
                     <tr className="border-t border-[#F1F4F7] bg-[#FAFBFC]">
-                      <td colSpan={10} className="px-3 py-2 pl-9">
+                      <td colSpan={12} className="px-3 py-2 pl-9">
                         {shifts.length > 0 && (
                           <div className="mb-2 flex flex-col gap-0.5 font-sans text-[11px] text-[#31414F]">
                             <span className="text-[10px] font-medium uppercase tracking-wider text-text-muted">Alih size (sisa kain)</span>

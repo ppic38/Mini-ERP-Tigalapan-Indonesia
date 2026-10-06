@@ -2202,6 +2202,30 @@ export function targetSizesForBatch(batch: ProductionBatch, aduanRows: AduanPola
   return out;
 }
 
+/** Yield CUTTING 1 warna·lengan satu vendor di 1 MRP (owner 2026-10-06: "hasil cutting juga
+ *  ditampilkan dan yieldnya") -- definisi SAMA dengan Yield Alert (productionYieldAlertsList): hasil
+ *  aduan aktual / target rencana, tapi dijumlah hanya dari roll yang SUDAH dicutting & diisi hasilnya
+ *  (target dihitung per roll lewat targetSizesForBatch). Dengan begitu grup yang baru separuh
+ *  dicutting tidak kelihatan yield-nya rendah hanya karena roll lainnya belum jalan. */
+export function cuttingYieldForGroup(
+  mrpId: string,
+  vendorProduksi: string,
+  warna: string,
+  lengan: Lengan,
+  mrpDetails: MrpDetail[],
+  batches: ProductionBatch[]
+): { actual: number; target: number; yieldPct: number | null } {
+  const aduanRows = mrpDetailFor(mrpId, mrpDetails)?.aduanRows ?? [];
+  let actual = 0;
+  let target = 0;
+  for (const b of batches) {
+    if (b.mrpId !== mrpId || b.vendorProduksi !== vendorProduksi || b.warna !== warna || b.lengan !== lengan || !b.cuttingAt || !b.sizeQty) continue;
+    actual += Object.values(b.sizeQty).reduce((a, c) => a + c, 0);
+    target += Object.values(targetSizesForBatch(b, aduanRows)).reduce((a, c) => a + c, 0);
+  }
+  return { actual, target, yieldPct: target > 0 ? (actual / target) * 100 : null };
+}
+
 /** Hasil aduan AKTUAL (bukan estimasi) per size untuk 1 grup warna/lengan — dijumlah dari
  *  ProductionBatch.sizeQty semua roll yang sudah dicutting DAN sudah diisi hasil aduannya.
  *  Kosong kalau belum ada batch yang diisi (batch lama sebelum fitur ini, atau migration 0006
