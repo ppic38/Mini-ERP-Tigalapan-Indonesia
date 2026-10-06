@@ -37,6 +37,7 @@ export default function ProduksiYieldAlertsPage() {
   }
 
   const columns: ColumnDef<ProductionYieldAlertRow>[] = [
+    { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (r) => (r.resolved ? <SysadminActionsBar compact actions={yieldAlertCorrections({ batchId: r.batchId, mrpId: r.mrpId, codeRoll: r.codeRoll })} /> : null) },
     { key: "vendor", label: "Vendor produksi", default: true, render: (r) => VENDOR_PRODUKSI[r.vendorProduksi]?.name ?? r.vendorProduksi },
     { key: "warna", label: "Warna / lengan", default: true, render: (r) => `${r.warna} · ${r.lengan}` },
     { key: "roll", label: "Code roll", default: true, render: (r) => <span className="font-mono">{r.codeRoll || "—"}</span> },
@@ -80,10 +81,8 @@ export default function ProduksiYieldAlertsPage() {
                 {resolution?.note}
                 {resolution?.resolvedAt && <span className="block font-mono text-[10px]">{formatDateTime(resolution.resolvedAt)}</span>}
               </span>
-              {/* Mode Sysadmin: "Buka lagi" milik Produksi (server menolak Sysadmin) diganti tombol Sysadmin. */}
-              {sysadmin ? (
-                <SysadminActionsBar compact actions={yieldAlertCorrections({ batchId: r.batchId, mrpId: r.mrpId, codeRoll: r.codeRoll })} />
-              ) : (
+              {/* Mode Sysadmin: "Buka lagi" milik Produksi (server menolak Sysadmin) diganti kolom Aksi Sysadmin. */}
+              {sysadmin ? null : (
                 <button onClick={() => unresolveProductionYield(r.batchId)} className="flex-none font-sans text-[11px] font-semibold text-action-primary underline">
                   Buka lagi
                 </button>

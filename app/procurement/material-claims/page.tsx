@@ -210,12 +210,17 @@ export default function MaterialClaimsPage() {
       default: true,
       render: (r) => {
         const s = stage(r.key);
-        return (
-          <div>
-            <StatusPill tone={stageLabel[s].tone}>{stageLabel[s].label}</StatusPill>
-            <SysadminActionsBar actions={claimStageCorrections(r.key, s, stageLabel[s].label)} />
-          </div>
-        );
+        return <StatusPill tone={stageLabel[s].tone}>{stageLabel[s].label}</StatusPill>;
+      },
+    },
+    {
+      key: "sysadmin",
+      label: "Aksi Sysadmin",
+      default: true,
+      sysadmin: true,
+      render: (r) => {
+        const s = stage(r.key);
+        return <SysadminActionsBar compact actions={claimStageCorrections(r.key, s, stageLabel[s].label)} />;
       },
     },
     {

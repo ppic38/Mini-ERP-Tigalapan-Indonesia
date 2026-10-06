@@ -17,7 +17,8 @@ import { getInvoicePaymentProofAction } from "@/lib/mrp/actions";
 // Revisi 2026-09-08 (bug fix popup blocked): openPreviewWindow/fillPreviewWindow -- lihat
 // catatan panjang di lib/mrp/clientFiles.ts.
 import { viewAndDownloadFile, openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
-import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { SysadminTd, SysadminTh } from "@/components/sysadmin/correction-dialog";
+import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { materialInvoiceVoidCorrections } from "@/components/sysadmin/procurement-corrections";
 
 async function viewPaymentProof(invoiceId: string) {
@@ -49,6 +50,7 @@ async function viewPaymentProof(invoiceId: string) {
  *  gaya visual (border, StatusPill, chevron ▸/▾) dengan tabel PO Material supaya kedua halaman
  *  terasa satu keluarga desain. */
 export function PayingVoucherMaterialPanel() {
+  const sysadminMode = useSysadminMode();
   const materialPOs = useMrpStore((s) => s.materialPOs);
   const invoices = useMrpStore((s) => s.invoices);
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
@@ -402,6 +404,7 @@ export function PayingVoucherMaterialPanel() {
                     <th className="px-3 py-[9px] text-left">Status</th>
                     <th className="px-3 py-[9px] text-left">Lampiran Invoice</th>
                     <th className="px-3 py-[9px] text-left">Bukti Pembayaran</th>
+                    <SysadminTh />
                   </tr>
                 </thead>
                 <tbody>
@@ -429,6 +432,7 @@ export function PayingVoucherMaterialPanel() {
                           </td>
                           <td className="px-3 py-[11px]" />
                           <td className="px-3 py-[11px]" />
+                          <SysadminTd className="py-[11px]" />
                         </tr>
                         {mrpActive &&
                           riwayatSupplierSummariesForMrp(m.invs).map((s) => {
@@ -455,6 +459,7 @@ export function PayingVoucherMaterialPanel() {
                                   </td>
                                   <td className="px-3 py-[10px]" />
                                   <td className="px-3 py-[10px]" />
+                                  <SysadminTd />
                                 </tr>
                                 {supplierActive &&
                                   s.invs.map((inv) => {
@@ -505,12 +510,12 @@ export function PayingVoucherMaterialPanel() {
                                               <span className="font-sans text-[11px] text-text-muted">—</span>
                                             )}
                                           </td>
+                                          <SysadminTd actions={materialInvoiceVoidCorrections(inv)} />
                                         </tr>
                                         {invActive && (
                                           <tr>
-                                            <td colSpan={5} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
+                                            <td colSpan={5 + (sysadminMode ? 1 : 0)} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
                                               {invoiceColorBreakdown(inv)}
-                                              <SysadminActionsBar actions={materialInvoiceVoidCorrections(inv)} />
                                             </td>
                                           </tr>
                                         )}

@@ -37,7 +37,7 @@ import {
 } from "@/lib/mrp/derive";
 import { countMaterialRowsWithoutSupplierForMrp, countPoPendingForRole, countPoRejected, pendingMarker } from "@/lib/shell/badges";
 import { PoApprovalQueue } from "@/components/mrp/po-approval-queue";
-import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { SysadminActionsBar, SysadminTd, SysadminTh } from "@/components/sysadmin/correction-dialog";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { sysadminSwitchAduanVendorAction } from "@/lib/mrp/sysadminActions";
 import { maklonPoCorrections, materialPoCorrections } from "@/components/sysadmin/procurement-corrections";
@@ -880,6 +880,7 @@ export default function PoApprovalPage() {
               {visibleMaterialCols.has("sumber") && <th className="px-3 py-[9px] text-left">Sumber</th>}
               {visibleMaterialCols.has("status") && <th className="px-3 py-[9px] text-left">Status</th>}
               {visibleMaterialCols.has("aksi") && <th className="px-3 py-[9px] text-left">Aksi</th>}
+              <SysadminTh />
             </tr>
           </thead>
           <tbody>
@@ -925,6 +926,7 @@ export default function PoApprovalPage() {
                     </Button>
                   </td>
                 )}
+                <SysadminTd className="py-[11px]" />
               </tr>
               {mrpActive &&
                 supplierSummariesForMrp(m.pos).map((s) => {
@@ -969,6 +971,7 @@ export default function PoApprovalPage() {
                             </Button>
                           </td>
                         )}
+                        <SysadminTd />
                       </tr>
                       {supplierActive &&
                         s.pos.map((p) => {
@@ -1014,13 +1017,13 @@ export default function PoApprovalPage() {
                                     >
                                       Download PO
                                     </Button>
-                                    <SysadminActionsBar actions={materialPoCorrections(p)} />
                                   </td>
                                 )}
+                                <SysadminTd actions={materialPoCorrections(p)} />
                               </tr>
                               {vendorActive && (
                                 <tr>
-                                  <td colSpan={1 + visibleMaterialCols.size} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
+                                  <td colSpan={1 + visibleMaterialCols.size + (sysadminMode ? 1 : 0)} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
                                     {materialPoColorBreakdown(p)}
                                   </td>
                                 </tr>
@@ -1080,6 +1083,7 @@ export default function PoApprovalPage() {
               {visibleMaklonCols.has("progress") && <th className="px-3 py-[9px] text-left">Progress kirim/tagih</th>}
               {visibleMaklonCols.has("status") && <th className="px-3 py-[9px] text-left">Status</th>}
               {visibleMaklonCols.has("aksi") && <th className="px-3 py-[9px] text-left">Aksi</th>}
+              <SysadminTh />
             </tr>
           </thead>
           <tbody>
@@ -1123,6 +1127,7 @@ export default function PoApprovalPage() {
                         </Button>
                       </td>
                     )}
+                    <SysadminTd className="py-[11px]" />
                   </tr>
                   {mrpActive &&
                     [...m.pos]
@@ -1161,13 +1166,13 @@ export default function PoApprovalPage() {
                                   </Button>
                                 </td>
                               )}
+                              <SysadminTd actions={maklonPoCorrections(p)} />
                             </tr>
                             {poActive && (
                               // Rincian per warna x lengan (qty PDK/PJG, harga maklon per tipe, total) -- komponen yang
                               // sama dengan Finance > PO Approval > PO Maklon (MaklonPoWarnaLenganTable).
                               <tr>
-                                <td colSpan={1 + visibleMaklonCols.size} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
-                                  <SysadminActionsBar actions={maklonPoCorrections(p)} />
+                                <td colSpan={1 + visibleMaklonCols.size + (sysadminMode ? 1 : 0)} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
                                   <MaklonPoWarnaLenganTable
                                     vendorProduksi={p.vendorProduksi}
                                     amount={p.amount}

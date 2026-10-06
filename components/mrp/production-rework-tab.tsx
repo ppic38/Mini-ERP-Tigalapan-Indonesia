@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useMrpStore } from "@/lib/mrp/store";
 import { cumulativeSizeQtyForGroup, cutWarnaLenganGroups, formatDateTimeShort, mrpDetailFor, mrpIdsWithRemainingReject, productionGroupMetaFor, reworkSizeAllowed, sizeIndex } from "@/lib/mrp/derive";
 import { countRemainingRejectGroupsForMrp, pendingMarker } from "@/lib/shell/badges";
-import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { SysadminPanel } from "@/components/sysadmin/correction-dialog";
 import { reworkUndoCorrections } from "@/components/sysadmin/vendor-corrections";
 import type { Lengan, Usia } from "@/lib/mrp/types";
 
@@ -320,7 +320,7 @@ export function ProductionReworkTab({ vendorId }: { vendorId: string }) {
               {/* Koreksi Sysadmin (owner 2026-09-30): vendor tidak punya cara membatalkan rework yang
                   salah. `empty:hidden` -- wadah tidak makan ruang kalau bukan Sysadmin. */}
               <div className="px-4 pb-2 empty:hidden">
-                <SysadminActionsBar actions={reworkUndoCorrections(r, productionGroupMeta)} />
+                <SysadminPanel actions={reworkUndoCorrections(r, productionGroupMeta)} />
               </div>
             </div>
           );

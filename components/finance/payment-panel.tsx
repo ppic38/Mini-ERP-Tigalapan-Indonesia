@@ -311,6 +311,7 @@ export function PaymentPanel() {
   // -- badge-nya sekarang menyatu di kolom "Status" (lihat render "status" di bawah) supaya
   // langsung kelihatan baris mana yang jadi saldo deposit tanpa buka kolom tambahan.
   const columns: ColumnDef<RawMaterialInvoice>[] = [
+    { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (i) => <SysadminActionsBar compact actions={materialInvoicePaymentCorrections(i, vendorDeposits)} /> },
     { key: "noMrp", label: "No MRP", default: true, render: (i) => <span className="font-mono">{i.mrpId}</span> },
     { key: "noPo", label: "No PO", default: true, render: (i) => <span className="font-mono font-medium">{i.poId}</span> },
     // Revisi 2026-09-06 (v2): "PO Reference" ke invoice LAMA yang diretur (cuma terisi untuk PV
@@ -589,7 +590,6 @@ export function PaymentPanel() {
             <div className="border-t border-[#F1F4F7] px-3 py-2 font-sans text-[11.5px] text-text-muted">Belum ada PO Produksi terkait untuk MRP/vendor ini.</div>
           )}
         </div>
-        <SysadminActionsBar actions={materialInvoicePaymentCorrections(i, vendorDeposits)} />
       </div>
     );
   }

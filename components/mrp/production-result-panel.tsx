@@ -410,7 +410,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                         {kind === "FG" && isFgConfirmed && (sysadmin ? (
                           // Mode Sysadmin: tombol vendor diganti tombol Sysadmin (server menolak Sysadmin
                           // memakai tombol vendor) -- aturan pengaman sama, plus alasan wajib & Log Audit.
-                          <SysadminActionsBar compact actions={fgConfirmCorrections({ groupKey, warna: g.warna, lengan: g.lengan, isFinalDone })} />
+                          <SysadminActionsBar actions={fgConfirmCorrections({ groupKey, warna: g.warna, lengan: g.lengan, isFinalDone })} />
                         ) : (
                           !isFinalDone && (
                             // undoFgConfirm sudah optimistic penuh di store.ts -- isPending/teks
@@ -656,7 +656,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                       <span className="font-mono">{bt.codeRoll || bt.id}</span>
                                       <span className="font-mono font-semibold">{short.map(([sz, v]) => `${sz} ${v} pcs`).join(" · ")}</span>
                                       {sysadmin ? (
-                                        <SysadminActionsBar compact actions={rollReopenCorrections(bt, isFinalDone)} />
+                                        <SysadminActionsBar actions={rollReopenCorrections(bt, isFinalDone)} />
                                       ) : (
                                         <button onClick={() => runAction("reopen-" + bt.id, reopenProductionBatch(bt.id))} className="font-semibold text-action-primary underline">
                                           Buka lagi
@@ -811,7 +811,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                        "Menutup…" dilepas. */}
                                     {b.closedAt &&
                                       (sysadmin ? (
-                                        <SysadminActionsBar compact actions={rollReopenCorrections(b, isFinalDone)} />
+                                        <SysadminActionsBar actions={rollReopenCorrections(b, isFinalDone)} />
                                       ) : (
                                         <button
                                           onClick={() => runAction("reopen-" + b.id, reopenProductionBatch(b.id))}

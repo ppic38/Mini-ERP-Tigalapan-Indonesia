@@ -71,6 +71,7 @@ export default function WarehouseRiwayatPage() {
   const totalQtyKeseluruhan = rows.reduce((s, r) => s + r.items.reduce((s2, it) => s2 + it.qty, 0), 0);
 
   const columns: ColumnDef<WarehouseReceipt>[] = [
+    { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (r) => <SysadminActionsBar compact actions={warehouseReceiptCorrections(r)} /> },
     { key: "resi", label: "No Resi", default: true, render: (r) => <span className="font-mono">{r.resiGroupId}</span> },
     { key: "koli", label: "Jumlah Koli", default: true, align: "right", render: (r) => formatPcs(r.koliIds.length) },
     { key: "mrp", label: "No MRP", default: true, render: (r) => <span className="font-mono">{mrpMetaFor(r.mrpId, mrpDetails, staticMrps) ? `${r.mrpId} ${mrpMetaFor(r.mrpId, mrpDetails, staticMrps)?.kategori ?? ""}`.trim() : r.mrpId}</span> },
@@ -117,7 +118,6 @@ export default function WarehouseRiwayatPage() {
         renderExpanded={(r) => (
           <div>
             <ReceiptItemsTable receipt={r} />
-            <SysadminActionsBar actions={warehouseReceiptCorrections(r)} />
           </div>
         )}
         emptyText="Belum ada penerimaan yang dibongkar."

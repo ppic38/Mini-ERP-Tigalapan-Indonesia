@@ -1,5 +1,6 @@
 "use client";
 
+import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
@@ -9,6 +10,9 @@ export type ColumnDef<T> = {
   default: boolean;
   align?: "left" | "right";
   render: (row: T) => ReactNode;
+  /** Kolom "Aksi Sysadmin" (owner 2026-10-06): hanya tampil di mode Sysadmin, SELALU tampil (tidak ada di
+   *  menu Kolom), ditaruh paling kanan dan diwarnai ungu supaya jelas ini bagian Sysadmin. */
+  sysadmin?: boolean;
 };
 
 export type FilterDef<T> = {
@@ -131,7 +135,8 @@ export function DataTable<T>({
       ((filterDefs ?? []).every((f, i) => !filterValues[i] || f.test(r, filterValues[i])) &&
         (!search || !trimmedQuery || search.getText(r).toLowerCase().includes(trimmedQuery)))
   );
-  const visibleColumns = columns.filter((c) => visible.has(c.key));
+  const sysadminMode = useSysadminMode();
+  const visibleColumns = [...columns.filter((c) => !c.sysadmin && visible.has(c.key)), ...(sysadminMode ? columns.filter((c) => c.sysadmin) : [])];
 
   return (
     <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
@@ -148,7 +153,7 @@ export function DataTable<T>({
             </button>
             {colOpen && (
               <div className="absolute right-0 top-[110%] z-20 max-h-72 w-56 overflow-y-auto rounded-md border border-border-subtle bg-surface-card p-2 shadow-[0_8px_20px_rgba(11,19,27,.15)]">
-                {columns.map((c) => (
+                {columns.filter((c) => !c.sysadmin).map((c) => (
                   <label key={c.key} className="flex items-center gap-2 rounded px-2 py-1.5 font-sans text-xs text-[#31414F] hover:bg-[#F7F9FB]">
                     <input type="checkbox" checked={visible.has(c.key)} onChange={() => toggle(c.key)} className="h-3.5 w-3.5 accent-accent-blue" />
                     {c.label}
@@ -198,7 +203,7 @@ export function DataTable<T>({
             <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
               <th className={"px-5 py-[9px] " + (firstColumnAlign === "right" ? "text-right" : "text-left")}>{firstColumnLabel}</th>
               {visibleColumns.map((c) => (
-                <th key={c.key} className={"px-3 py-[9px] " + (c.align === "right" ? "text-right" : "text-left")}>
+                <th key={c.key} className={"px-3 py-[9px] " + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple bg-accent-purple-bg text-accent-purple" : "")}>
                   {c.label}
                 </th>
               ))}
@@ -221,7 +226,7 @@ export function DataTable<T>({
                   >
                     <td className={"px-5 py-[11px] " + (firstColumnAlign === "right" ? "text-right" : "text-left")}>{firstColumnRender(r)}</td>
                     {visibleColumns.map((c) => (
-                      <td key={c.key} className={"px-3 py-[11px] " + (c.align === "right" ? "text-right" : "text-left")}>
+                      <td key={c.key} onClick={c.sysadmin ? (e) => e.stopPropagation() : undefined} className={"px-3 py-[11px] " + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple/40 bg-accent-purple-bg" : "")}>
                         {c.render(r)}
                       </td>
                     ))}

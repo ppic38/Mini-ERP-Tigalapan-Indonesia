@@ -103,11 +103,11 @@ export function RollCodeEditor({ invoice }: { invoice: RawMaterialInvoice }) {
   if (rows.length === 0) return null;
   const editing = rows.find((r) => r.key === editKey);
   return (
-    <details onClick={(e) => e.stopPropagation()} className="mt-2 rounded-md border border-[#E9D9B0] bg-warning-bg/50">
-      <summary className="cursor-pointer px-3 py-2 font-sans text-[11.5px] font-semibold text-warning-fg">
-        Sysadmin · Koreksi code lot / code roll ({rows.length} roll)
+    <details onClick={(e) => e.stopPropagation()} className="mt-2 rounded-md border border-accent-purple/30 bg-accent-purple-bg">
+      <summary className="cursor-pointer px-3 py-2 font-sans text-[11.5px] font-semibold text-accent-purple">
+        Aksi Sysadmin · Koreksi code lot / code roll ({rows.length} roll)
       </summary>
-      <div className="max-h-[280px] overflow-y-auto border-t border-[#E9D9B0] bg-white">
+      <div className="max-h-[280px] overflow-y-auto border-t border-accent-purple/30 bg-white">
         <div className="grid grid-cols-[1.4fr_60px_90px_1fr_1fr_70px] gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
           <span>Warna · Lengan</span>
           <span className="text-right">Roll</span>

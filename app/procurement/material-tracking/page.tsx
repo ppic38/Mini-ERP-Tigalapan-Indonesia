@@ -9,7 +9,8 @@ import { FilterBar } from "@/components/mrp/filter-bar";
 import { TransferMaterialModal, type TransferCandidate } from "@/components/mrp/transfer-material-modal";
 import { SetDeliveryModal } from "@/components/mrp/set-delivery-modal";
 import { WithdrawVendorModal } from "@/components/mrp/withdraw-vendor-modal";
-import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { SysadminTd, SysadminTh } from "@/components/sysadmin/correction-dialog";
+import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { invoiceDeliveryCorrections } from "@/components/sysadmin/procurement-corrections";
 import { RollCodeEditor } from "@/components/sysadmin/roll-code-editor";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -57,6 +58,7 @@ type TrackingRow = {
 };
 
 export default function MaterialTrackingPage() {
+  const sysadminMode = useSysadminMode();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -552,6 +554,7 @@ export default function MaterialTrackingPage() {
               <th className="px-3 py-[9px] text-left">Progress</th>
               <th className="px-3 py-[9px] text-right">Nilai</th>
               <th className="px-3 py-[9px] text-left">Status</th>
+              <SysadminTh />
             </tr>
           </thead>
           <tbody>
@@ -591,6 +594,7 @@ export default function MaterialTrackingPage() {
                       <StatusPill tone={deliveryStatusBadge(m.rows).tone}>{deliveryStatusBadge(m.rows).label}</StatusPill>
                     </div>
                   </td>
+                  <SysadminTd className="py-[11px]" />
                 </tr>
                 {mrpActive &&
                   trackingSupplierSummariesForMrp(m.rows).map((s) => {
@@ -622,6 +626,7 @@ export default function MaterialTrackingPage() {
                               <StatusPill tone={deliveryStatusBadge(s.rows).tone}>{deliveryStatusBadge(s.rows).label}</StatusPill>
                             </div>
                           </td>
+                          <SysadminTd />
                         </tr>
                         {supplierActive &&
                   trackingVendorSummariesForSupplier(s.rows).map((v) => {
@@ -651,6 +656,7 @@ export default function MaterialTrackingPage() {
                               <StatusPill tone={deliveryStatusBadge(v.rows).tone}>{deliveryStatusBadge(v.rows).label}</StatusPill>
                             </div>
                           </td>
+                          <SysadminTd />
                         </tr>
                         {vendorActive &&
                           v.rows.map((r) => {
@@ -694,10 +700,11 @@ export default function MaterialTrackingPage() {
                                   <td className="px-3 py-[10px]">
                                     <StatusPill tone={statusBadge.tone}>{statusBadge.label}</StatusPill>
                                   </td>
+                                  <SysadminTd actions={r.invoice ? invoiceDeliveryCorrections(r.invoice) : undefined} />
                                 </tr>
                                 {expanded && r.invoice && (
                                   <tr>
-                                    <td colSpan={6} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-[88px]">
+                                    <td colSpan={6 + (sysadminMode ? 1 : 0)} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-[88px]">
                                       <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
                                         <div className="grid grid-cols-3 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                                           <span>Warna / Lengan</span>
@@ -714,7 +721,6 @@ export default function MaterialTrackingPage() {
                                           </div>
                                         ))}
                                       </div>
-                                      <SysadminActionsBar actions={invoiceDeliveryCorrections(r.invoice)} />
                                       <RollCodeEditor invoice={r.invoice} />
                                     </td>
                                   </tr>

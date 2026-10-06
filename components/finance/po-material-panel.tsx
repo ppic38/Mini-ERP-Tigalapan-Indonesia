@@ -18,7 +18,8 @@ import {
 } from "@/lib/mrp/derive";
 import { countPendingMaterialPoForMrp, pendingMarker } from "@/lib/shell/badges";
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "@/lib/mrp/seed";
-import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { SysadminTd, SysadminTh } from "@/components/sysadmin/correction-dialog";
+import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { materialPoCorrections } from "@/components/sysadmin/procurement-corrections";
 import type { ColorBreakdown, MaterialPO } from "@/lib/mrp/types";
 import type { MrpDetail } from "@/lib/mrp/store";
@@ -66,6 +67,7 @@ function hargaPerKgForColor(supplier: string, c: ColorBreakdown, hargaKain: Para
 /** Panel "PO Material" — konten diekstrak dari halaman lama /finance/po-material,
  *  sekarang dipakai sebagai satu sub-tab di halaman gabungan /finance/po-approval. */
 export function PoMaterialPanel() {
+  const sysadminMode = useSysadminMode();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -587,6 +589,7 @@ export function PoMaterialPanel() {
                   <th className="px-3 py-[9px] text-right">Roll</th>
                   <th className="px-3 py-[9px] text-right">Nilai</th>
                   <th className="px-3 py-[9px] text-left">Status</th>
+                  <SysadminTh />
                 </tr>
               </thead>
               <tbody>
@@ -613,6 +616,7 @@ export function PoMaterialPanel() {
                         <td className="px-3 py-[11px]">
                           <StatusPill tone="neutral">{m.pos.length} PO</StatusPill>
                         </td>
+                      <SysadminTd className="py-[11px]" />
                       </tr>
                       {mrpActive &&
                         approvedSupplierSummariesForMrp(m.pos).map((s) => {
@@ -638,6 +642,7 @@ export function PoMaterialPanel() {
                                 <td className="px-3 py-[10px]">
                                   <StatusPill tone="neutral">{s.pos.length} PO</StatusPill>
                                 </td>
+                                <SysadminTd />
                               </tr>
                               {supplierActive &&
                                 s.pos.map((p) => {
@@ -666,13 +671,13 @@ export function PoMaterialPanel() {
                                                disaring), sekarang jelas kelihatan sampai level mana & siapa yang
                                                approve, bukan cuma label "disetujui" polos. */}
                                             <ApprovalChain state={poApprovalState(p)} />
-                                            <SysadminActionsBar actions={materialPoCorrections(p)} />
                                           </div>
                                         </td>
+                                        <SysadminTd actions={materialPoCorrections(p)} />
                                       </tr>
                                       {poActive && (
                                         <tr>
-                                          <td colSpan={4} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
+                                          <td colSpan={4 + (sysadminMode ? 1 : 0)} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
                                             <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
                                               <div className={`grid ${gridColsClass} gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted`}>
                                                 <span>Warna / lengan</span>

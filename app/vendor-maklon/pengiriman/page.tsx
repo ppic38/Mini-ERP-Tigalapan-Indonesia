@@ -1,5 +1,6 @@
 "use client";
 
+import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
@@ -123,6 +124,7 @@ function resiKeyFor(k: DeliveryKoli): string {
 }
 
 function PengirimanContent({ vendorId }: { vendorId: string }) {
+  const sysadminMode = useSysadminMode();
   const productionResults = useMrpStore((s) => s.productionResults);
   const productionBatches = useMrpStore((s) => s.productionBatches);
   const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
@@ -673,18 +675,19 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
           ) : (
             <>
               <div className="mt-2 overflow-hidden rounded-md border border-border-subtle bg-white">
-                <div className="grid grid-cols-5 gap-x-2 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                <div className="grid grid-cols-5 gap-x-2 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted" style={sysadminMode ? { gridTemplateColumns: "repeat(5,minmax(0,1fr)) 130px" } : undefined}>
                   <span />
                   <span>No MRP</span>
                   <span>No Koli</span>
                   <span>Isi</span>
                   <span className="text-right">Edit</span>
+                  {sysadminMode && <span className="-my-1.5 flex items-center border-l-2 border-accent-purple bg-accent-purple-bg px-2 text-accent-purple">Aksi Sysadmin</span>}
                 </div>
                 {pendingWithoutEkspedisi.map((k) => {
                   const isExpanded = expandedKoli.has(k.id);
                   return (
                     <Fragment key={k.id}>
-                      <div className="grid grid-cols-5 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0">
+                      <div className="grid grid-cols-5 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0" style={sysadminMode ? { gridTemplateColumns: "repeat(5,minmax(0,1fr)) 130px" } : undefined}>
                         <input type="checkbox" checked={selectedForEkspedisi.has(k.id)} onChange={() => toggleSelectedForEkspedisi(k.id)} disabled={k.id.startsWith("tmp-")} className="h-3.5 w-3.5 disabled:opacity-40" />
                         <span className="font-mono">{k.mrpId}</span>
                         <span className="font-mono font-medium">{k.noKoli}</span>
@@ -700,8 +703,12 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                           <Button onClick={() => editKoli(k)} disabled={k.id.startsWith("tmp-")} variant="ghost" size="xs">
                             Edit
                           </Button>
-                          {!k.id.startsWith("tmp-") && <SysadminActionsBar compact actions={koliDeleteCorrections(k)} />}
                         </span>
+                        {sysadminMode && (
+                          <span className="-my-1.5 flex items-center border-l-2 border-accent-purple/40 bg-accent-purple-bg px-2 py-1.5">
+                            {!k.id.startsWith("tmp-") && <SysadminActionsBar compact actions={koliDeleteCorrections(k)} />}
+                          </span>
+                        )}
                       </div>
                       {isExpanded && (
                         <div className="border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-3 last:border-b-0">
@@ -849,7 +856,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     {/* Revisi 2026-09-23 (owner): tombol "Submit Invoice" pindah ke halaman Invoice & Payment
                         (tab Invoice Vendor) -- di sini cukup status ringkas. */}
                     <span className="ml-auto flex items-center gap-2">
-                      <SysadminActionsBar compact actions={koliShipmentCorrections(kolis, warehouseReceipts)} />
+                      <SysadminActionsBar actions={koliShipmentCorrections(kolis, warehouseReceipts)} />
                       {alreadyInvoiced ? (
                         <span className="rounded-full bg-success-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-success-fg">Sudah diinvoice</span>
                       ) : (

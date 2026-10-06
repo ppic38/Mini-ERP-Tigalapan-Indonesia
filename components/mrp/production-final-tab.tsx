@@ -281,6 +281,13 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
 
           const num = (n: number, cls = "") => <span className={"font-mono " + cls}>{n}</span>;
           const columns: ColumnDef<FinalRow>[] = [
+            {
+              key: "sysadmin",
+              label: "Aksi Sysadmin",
+              default: true,
+              sysadmin: true,
+              render: (r) => (!isPoClosed && r.isDone ? <SysadminActionsBar compact actions={finalUndoCorrections({ groupKey: r.groupKey, warna: r.warna, lengan: r.lengan })} /> : null),
+            },
             { key: "plan", label: "Rencana MRP (pcs)", default: true, align: "right", render: (r) => (r.plannedPcs > 0 ? num(r.plannedPcs) : <span className="text-text-muted">—</span>) },
             { key: "fg", label: "Finish Good / Hasil cutting", default: true, align: "right", render: (r) => (
               <span className="font-mono">
@@ -313,9 +320,7 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
                 // stopPropagation: klik tombol tidak ikut membuka/menutup rincian baris.
                 <span className="flex flex-col items-end gap-1" onClick={(e) => e.stopPropagation()}>
                   {isPoClosed ? null : r.isDone ? (
-                    sysadmin ? (
-                      <SysadminActionsBar compact actions={finalUndoCorrections({ groupKey: r.groupKey, warna: r.warna, lengan: r.lengan })} />
-                    ) : (
+                    sysadmin ? null : (
                       <button
                         onClick={() => runAction(r.groupKey, undoProductionGroupDone(r.groupKey))}
                         title="Buka kunci grup ini supaya Finish Good/Reject/Rework bisa dibuka lagi (mulai dari tab Finish Good)"

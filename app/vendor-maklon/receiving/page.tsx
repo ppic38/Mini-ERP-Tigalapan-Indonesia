@@ -1,5 +1,6 @@
 "use client";
 
+import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
@@ -67,6 +68,7 @@ function generateCodeRoll(taken: Set<string>): string {
 }
 
 function ReceivingContent({ vendorId }: { vendorId: string }) {
+  const sysadminMode = useSysadminMode();
   const invoices = useMrpStore((s) => s.invoices);
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
@@ -663,13 +665,14 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                       </div>
                       <div
                         className="grid items-center gap-x-4 border-b-2 border-accent-blue bg-info-bg px-4 py-[8px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
-                        style={{ gridTemplateColumns: RECEIVE_GRID }}
+                        style={{ gridTemplateColumns: RECEIVE_GRID + (sysadminMode ? " 150px" : "") }}
                       >
                         <span>Roll</span>
                         <span>Code roll</span>
                         <span>Code lot</span>
                         <span className="text-right">Berat kotor (kg)</span>
                         <span className="text-right">Status</span>
+                        {sysadminMode && <span className="-my-[8px] flex items-center border-l-2 border-accent-purple bg-accent-purple-bg px-2 text-accent-purple">Aksi Sysadmin</span>}
                       </div>
                       {pageRolls.map((r) => {
                         const key = rollKey(r.lengan, r.idx);
@@ -680,7 +683,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                           <div
                             key={key}
                             className="grid items-center gap-x-4 border-b border-[#F1F4F7] px-4 py-2 font-sans text-xs text-[#31414F]"
-                            style={{ gridTemplateColumns: RECEIVE_GRID }}
+                            style={{ gridTemplateColumns: RECEIVE_GRID + (sysadminMode ? " 150px" : "") }}
                           >
                             <span className="font-mono font-medium">Roll {r.idx + 1}</span>
                             {arrival ? (
@@ -744,13 +747,17 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                                   </Button>
                                 )}
                               </span>
-                              {arrival && selectedInvoice && (
-                                <SysadminActionsBar
-                                  compact
-                                  actions={rollArrivalCorrections({ invoice: selectedInvoice, warna: selectedWarna, lengan: r.lengan, rollIndex: r.idx, vendorId, maklonPOs })}
-                                />
-                              )}
                             </span>
+                            {sysadminMode && (
+                              <span className="-my-2 flex items-center border-l-2 border-accent-purple/40 bg-accent-purple-bg px-2 py-2">
+                                {arrival && selectedInvoice && (
+                                  <SysadminActionsBar
+                                    compact
+                                    actions={rollArrivalCorrections({ invoice: selectedInvoice, warna: selectedWarna, lengan: r.lengan, rollIndex: r.idx, vendorId, maklonPOs })}
+                                  />
+                                )}
+                              </span>
+                            )}
                             {conflictMsg && (
                               <div style={{ gridColumn: "1 / -1" }} className="rounded-md border border-[#F0C9C9] bg-danger-bg px-3 py-1.5 font-sans text-[11px] leading-[1.5] text-danger-fg">
                                 {conflictMsg}

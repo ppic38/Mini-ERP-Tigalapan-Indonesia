@@ -8,7 +8,7 @@ import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
 import { ImportDropzone } from "@/components/mrp/import-dropzone";
 import { MrpWarnaBreakdownTable } from "@/components/mrp/mrp-warna-breakdown-table";
-import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { SysadminTd, SysadminTh } from "@/components/sysadmin/correction-dialog";
 import { mrpCorrections } from "@/components/sysadmin/ppic-corrections";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -222,7 +222,7 @@ export default function MrpListPage() {
                 {visibleCols.has("statusPO") && <th className="px-3 py-[9px] text-left">Status PO</th>}
                 {visibleCols.has("statusRM") && <th className="px-3 py-[9px] text-left">Status Raw Material</th>}
                 {visibleCols.has("statusProduksi") && <th className="px-5 py-[9px] text-left">Status Produksi</th>}
-                <th className="px-3 py-[9px] text-left">Aksi</th>
+                {sysadmin ? <SysadminTh /> : <th className="px-3 py-[9px] text-left">Aksi</th>}
                 <th className="w-8 px-3 py-[9px]" />
               </tr>
             </thead>
@@ -274,15 +274,12 @@ export default function MrpListPage() {
                           <StatusPill tone={badgeTone(badges.statusProduksi)}>{badges.statusProduksi}</StatusPill>
                         </td>
                       )}
-                      <td className="px-3 py-[13px]">
-                        {/* Mode Sysadmin: "Reset MRP" milik PPIC disembunyikan (server menolak Sysadmin) --
-                            diganti tombol Sysadmin yang punya pengaman jejak uang/fisik. */}
-                        {sysadmin ? (
-                          <SysadminActionsBar
-                            compact
-                            actions={mrpCorrections(mrp.id, { detail, materialPOs, maklonPOs, invoices, vendorInvoices, maklonInvoices, productionBatches, deliveryKolis })}
-                          />
-                        ) : (
+                      {sysadmin ? (
+                        // Mode Sysadmin: "Reset MRP" milik PPIC disembunyikan (server menolak Sysadmin) -- diganti kolom
+                        // "Aksi Sysadmin" yang punya pengaman jejak uang/fisik.
+                        <SysadminTd className="py-[13px]" actions={mrpCorrections(mrp.id, { detail, materialPOs, maklonPOs, invoices, vendorInvoices, maklonInvoices, productionBatches, deliveryKolis })} />
+                      ) : (
+                        <td className="px-3 py-[13px]">
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -294,8 +291,8 @@ export default function MrpListPage() {
                           >
                             {resettingId === mrp.id ? "Menghapus…" : "Reset MRP"}
                           </button>
-                        )}
-                      </td>
+                        </td>
+                      )}
                       <td className="px-3 py-[13px]">
                         {isExpanded ? (
                           <ChevronDown className="h-3.5 w-3.5 flex-none text-text-muted" />

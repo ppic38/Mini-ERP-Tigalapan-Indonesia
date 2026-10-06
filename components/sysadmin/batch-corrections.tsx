@@ -114,7 +114,8 @@ export function SysadminBatchActions({ batch, invoices }: { batch: ProductionBat
   if (!sysadmin) return null;
   const roll = findRoll(batch, invoices);
   return (
-    <div onClick={(e) => e.stopPropagation()} className="flex flex-wrap items-center gap-1">
+    <div onClick={(e) => e.stopPropagation()} className="inline-flex flex-wrap items-center gap-1.5 rounded-md border border-accent-purple/30 bg-accent-purple-bg px-2 py-1.5">
+      <span className="font-sans text-[9.5px] font-semibold uppercase tracking-wider text-accent-purple">Aksi Sysadmin</span>
       <SysadminActionsBar compact actions={batchActions(batch)} />
       {roll && (
         <Button onClick={() => setWeightOpen(true)} disabled={!!batchBlock(batch)} title={batchBlock(batch)} variant="ghost" size="xs">

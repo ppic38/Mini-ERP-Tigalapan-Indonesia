@@ -355,6 +355,7 @@ export function PaymentMaklonPanel() {
   }
 
   const readyColumns: ColumnDef<VendorInvoice>[] = [
+    { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (inv) => <SysadminActionsBar compact actions={vendorInvoicePaymentCorrections(inv)} /> },
     { key: "vendor", label: "Vendor", default: true, render: (inv) => VENDOR_PRODUKSI[inv.vendorProduksi]?.name ?? inv.vendorProduksi },
     { key: "noPo", label: "No PO", default: true, render: (inv) => <span className="font-mono">{Array.from(new Set(inv.lines.map((l) => l.mrpId))).join(", ")}</span> },
     {
@@ -428,6 +429,7 @@ export function PaymentMaklonPanel() {
   ];
 
   const paidColumns: ColumnDef<VendorInvoice>[] = [
+    { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (inv) => <SysadminActionsBar compact actions={vendorInvoicePaymentCorrections(inv)} /> },
     { key: "vendor", label: "Vendor", default: true, render: (inv) => VENDOR_PRODUKSI[inv.vendorProduksi]?.name ?? inv.vendorProduksi },
     { key: "mrp", label: "MRP", default: true, render: (inv) => Array.from(new Set(inv.lines.map((l) => l.mrpId))).join(", ") },
     { key: "totalQty", label: "Total qty", default: true, align: "right", render: (inv) => formatPcs(inv.lines.reduce((s, l) => s + l.qty, 0)) },
@@ -480,7 +482,6 @@ export function PaymentMaklonPanel() {
           ekspedisiRates={ekspedisiRates}
           itemSellingPrices={itemSellingPrices}
         />
-        <SysadminActionsBar actions={vendorInvoicePaymentCorrections(inv)} />
       </div>
     );
   }

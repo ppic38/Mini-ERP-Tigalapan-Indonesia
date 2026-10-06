@@ -51,6 +51,7 @@ export default function ScmApprovalMrpPage() {
   ];
 
   const historyColumns: ColumnDef<MrpDetail>[] = [
+    { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (d) => <SysadminActionsBar compact actions={mrpApprovalCorrections(d.mrp.id, { detail: d, materialPOs, maklonPOs })} /> },
     { key: "qty", label: "Qty", default: true, align: "right", render: (d) => formatPcs(effectiveMrpQty(d.mrp.id, d.mrp.qty, maklonPOs)) },
     { key: "vendor", label: "Jumlah Vendor", default: true, render: (d) => `${vendorsForMrp(d).length} vendor` },
     { key: "tglSubmit", label: "Tanggal Diajukan", default: true, render: (d) => formatDate(d.dates.ppicSubmitted) },
@@ -124,7 +125,6 @@ export default function ScmApprovalMrpPage() {
         renderExpanded={(d) => (
           <div>
             <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(d)} />
-            <SysadminActionsBar actions={mrpApprovalCorrections(d.mrp.id, { detail: d, materialPOs, maklonPOs })} />
           </div>
         )}
         filterDefs={[

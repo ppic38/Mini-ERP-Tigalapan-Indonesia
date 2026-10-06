@@ -152,8 +152,13 @@ export function SysadminActionsBar({ actions, compact }: { actions: CorrectionAc
   const open = actions.find((a) => a.key === openKey);
   return (
     // onClick stopPropagation: tombol berada di dalam baris tabel yang bisa di-klik (buka rincian).
-    <div onClick={(e) => e.stopPropagation()} className={"flex flex-wrap items-center gap-1 " + (compact ? "" : "mt-1")}>
-      {!compact && <span className="font-sans text-[9.5px] font-semibold uppercase tracking-wider text-warning-fg">Sysadmin</span>}
+    // Tampilan non-compact = panel ungu berlabel "AKSI SYSADMIN" (owner 2026-10-06: bagian Sysadmin harus
+    // kelihatan beda warna); compact = tombol saja, dipakai di dalam SysadminCell/sel yang sudah berwarna.
+    <div
+      onClick={(e) => e.stopPropagation()}
+      className={compact ? "flex flex-wrap items-center gap-1" : "mt-1 inline-flex flex-wrap items-center gap-1.5 rounded-md border border-accent-purple/30 bg-accent-purple-bg px-2 py-1.5"}
+    >
+      {!compact && <span className="font-sans text-[9.5px] font-semibold uppercase tracking-wider text-accent-purple">Aksi Sysadmin</span>}
       {actions.map((a) => (
         <Button key={a.key} onClick={() => setOpenKey(a.key)} disabled={!!a.disabledReason} title={a.disabledReason} variant={a.danger ? "danger" : "ghost"} size="xs">
           {a.label}
@@ -170,6 +175,38 @@ export function SysadminActionsBar({ actions, compact }: { actions: CorrectionAc
           onClose={() => setOpenKey(null)}
         />
       )}
+    </div>
+  );
+}
+
+/** Kolom "AKSI SYSADMIN" di tabel modul (owner 2026-10-06: kolom khusus di sisi kanan, warna beda supaya
+ *  jelas ini bagian Sysadmin). Semua komponen di bawah TIDAK merender apa pun kalau bukan mode Sysadmin,
+ *  jadi tabel operator tidak berubah. Pakai bareng: <SysadminTh/> di header, <SysadminTd actions=.../> di
+ *  baris yang punya koreksi, <SysadminTd/> (kosong) di baris lain supaya kolomnya tetap utuh, dan tambah
+ *  `useSysadminMode() ? 1 : 0` ke colSpan baris rincian. */
+export function SysadminTh({ className = "" }: { className?: string }) {
+  const sysadmin = useSysadminMode();
+  if (!sysadmin) return null;
+  return <th className={"border-l-2 border-accent-purple bg-accent-purple-bg px-3 py-[9px] text-left text-accent-purple " + className}>Aksi Sysadmin</th>;
+}
+
+export function SysadminTd({ actions, className = "py-[10px]" }: { actions?: CorrectionAction[]; className?: string }) {
+  const sysadmin = useSysadminMode();
+  if (!sysadmin) return null;
+  return (
+    <td onClick={(e) => e.stopPropagation()} className={"border-l-2 border-accent-purple/40 bg-accent-purple-bg px-3 " + className}>
+      {actions && actions.length > 0 ? <SysadminActionsBar compact actions={actions} /> : null}
+    </td>
+  );
+}
+
+/** Versi blok untuk tempat yang bukan kolom (mis. di dalam rincian baris yang dibuka): panel ungu rata kanan. */
+export function SysadminPanel({ actions }: { actions: CorrectionAction[] }) {
+  const sysadmin = useSysadminMode();
+  if (!sysadmin || actions.length === 0) return null;
+  return (
+    <div className="flex justify-end">
+      <SysadminActionsBar actions={actions} />
     </div>
   );
 }

@@ -43,6 +43,7 @@ export default function InvoiceMaklonPage() {
     { key: "entitas", label: "Entitas", default: false, render: (i) => i.entity },
     { key: "note", label: "Catatan vendor", default: false, render: (i) => i.note || "—" },
     { key: "status", label: "Status", default: true, render: (i) => <StatusPill tone={maklonInvoiceBadge(i.status).tone}>{maklonInvoiceBadge(i.status).label}</StatusPill> },
+    { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (i) => <SysadminActionsBar compact actions={fobInvoiceCorrections(i, maklonPOs.find((p) => p.id === i.maklonPoId))} /> },
     {
       key: "aksi",
       label: "Aksi",
@@ -60,7 +61,6 @@ export default function InvoiceMaklonPage() {
           ) : (
             <span className="font-sans text-[11.5px] font-medium text-[#94A3B0]">Dibayar</span>
           )}
-          <SysadminActionsBar actions={fobInvoiceCorrections(i, maklonPOs.find((p) => p.id === i.maklonPoId))} />
         </div>
       ),
     },

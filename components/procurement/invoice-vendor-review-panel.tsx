@@ -18,7 +18,8 @@ import {
   vendorInvoiceFinalAmount,
 } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
-import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { SysadminActionsBar, SysadminTd, SysadminTh } from "@/components/sysadmin/correction-dialog";
+import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { invoiceAdjustmentCorrections, vendorInvoiceStatusCorrections, vendorInvoiceVoidCorrections } from "@/components/sysadmin/vendor-corrections";
 import type { VendorInvoice, VendorInvoiceAdjustmentKind } from "@/lib/mrp/types";
 
@@ -33,6 +34,7 @@ import type { VendorInvoice, VendorInvoiceAdjustmentKind } from "@/lib/mrp/types
  *  dead code. */
 
 export function InvoiceVendorReviewPanel() {
+  const sysadminMode = useSysadminMode();
   const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const staticMrps = useMrpStore((s) => s.staticMrps);
@@ -151,6 +153,7 @@ export function InvoiceVendorReviewPanel() {
                   <th className="px-3 py-[9px] text-right">Total Tagihan</th>
                   <th className="px-3 py-[9px] text-left">Status</th>
                   <th className="px-3 py-[9px] text-left">Tanggal</th>
+                  <SysadminTh />
                 </tr>
               </thead>
               <tbody>
@@ -177,6 +180,7 @@ export function InvoiceVendorReviewPanel() {
                           <StatusPill tone="neutral">{m.invoiceCount} invoice</StatusPill>
                         </td>
                         <td className="px-3 py-[11px]" />
+                        <SysadminTd className="py-[11px]" />
                       </tr>
                       {mrpActive &&
                         vendorSummariesForMrp(m.mrpId).map((v) => {
@@ -201,6 +205,7 @@ export function InvoiceVendorReviewPanel() {
                                   <StatusPill tone="neutral">{v.invs.length} invoice</StatusPill>
                                 </td>
                                 <td className="px-3 py-[10px]" />
+                                <SysadminTd />
                               </tr>
                               {vendorActive &&
                                 v.invs.map((inv) => {
@@ -260,10 +265,11 @@ export function InvoiceVendorReviewPanel() {
                                           <StatusPill tone={vendorInvoiceBadge(inv.status).tone}>{vendorInvoiceBadge(inv.status).label}</StatusPill>
                                         </td>
                                         <td className="px-3 py-[10px] font-mono text-[11px] text-text-muted">{inv.submittedAt}</td>
+                                        <SysadminTd actions={[...vendorInvoiceStatusCorrections(inv), ...vendorInvoiceVoidCorrections(inv)]} />
                                       </tr>
                                       {invExpanded && (
                                         <tr>
-                                          <td colSpan={4} className="border-b border-[#F1F4F7] bg-[#FAFBFC] px-6 py-3">
+                                          <td colSpan={4 + (sysadminMode ? 1 : 0)} className="border-b border-[#F1F4F7] bg-[#FAFBFC] px-6 py-3">
                   <div className="rounded-md border border-[#E4E9EE] bg-white p-3">
                     <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Denda / reward sesuai kontrak</div>
                     {(inv.adjustments?.length ?? 0) > 0 && (
@@ -279,7 +285,7 @@ export function InvoiceVendorReviewPanel() {
                               {a.note && <span className="text-text-muted"> ({a.note})</span>}
                             </span>
                             <span className="flex items-center gap-2 font-mono">
-                              <SysadminActionsBar compact actions={invoiceAdjustmentCorrections(inv, a)} />
+                              <SysadminActionsBar actions={invoiceAdjustmentCorrections(inv, a)} />
                               {a.kind === "TIDAK_ADA" ? "—" : (a.kind === "DENDA" ? "−" : "+") + formatRupiah(a.amount)}
                             </span>
                           </div>
@@ -345,8 +351,6 @@ export function InvoiceVendorReviewPanel() {
                         </button>
                       </div>
                     )}
-                    {/* Koreksi Sysadmin (owner 2026-09-30): mundurkan invoice yang salah disetujui. */}
-                    <SysadminActionsBar actions={[...vendorInvoiceStatusCorrections(inv), ...vendorInvoiceVoidCorrections(inv)]} />
                   </div>
 
                   {/* Item 2026-09-10 (feedback: "Tambahkan informasi mengenai lampiran ekspedisi

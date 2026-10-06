@@ -14,6 +14,7 @@ import { getInvoicePaymentProofAction, getMaterialClaimPhotoAction } from "@/lib
 // catatan panjang di lib/mrp/clientFiles.ts.
 import { viewAndDownloadFile, openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
 import type { RawMaterialInvoice, VendorDepositEntry } from "@/lib/mrp/types";
+import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { depositEntryCorrections } from "@/components/sysadmin/finance-corrections";
 
@@ -96,6 +97,7 @@ export default function VendorDepositPage() {
   useEffect(() => setMounted(true), []);
 
   const vendorDeposits = useMrpStore((s) => s.vendorDeposits);
+  const sysadminMode = useSysadminMode();
   const invoices = useMrpStore((s) => s.invoices);
 
   if (!mounted) return null;
@@ -145,7 +147,7 @@ export default function VendorDepositPage() {
         emptyText="Belum ada saldo deposit vendor tercatat."
         renderExpanded={(r) => {
           const entries = vendorDepositEntriesFor(r.supplier, vendorDeposits);
-          const gridCols = "minmax(90px,0.8fr) minmax(90px,0.8fr) minmax(70px,0.6fr) minmax(70px,0.6fr) minmax(100px,0.9fr) minmax(90px,0.8fr) minmax(160px,1.4fr)";
+          const gridCols = "minmax(90px,0.8fr) minmax(90px,0.8fr) minmax(70px,0.6fr) minmax(70px,0.6fr) minmax(100px,0.9fr) minmax(90px,0.8fr) minmax(160px,1.4fr)" + (sysadminMode ? " 130px" : "");
           return (
             <div className="overflow-x-auto rounded-md border border-[#E4E8EE] bg-white">
               <div
@@ -159,6 +161,7 @@ export default function VendorDepositPage() {
                 <span>Kode Roll</span>
                 <span className="text-right">Nilai</span>
                 <span>Bukti</span>
+                {sysadminMode && <span className="-my-1.5 flex items-center border-l-2 border-accent-purple bg-accent-purple-bg px-2 text-accent-purple">Aksi Sysadmin</span>}
               </div>
               {entries.map((e) => {
                 const label = e.kind === "CREDIT" ? "Kredit masuk" : "Dipakai bayar";
@@ -204,8 +207,12 @@ export default function VendorDepositPage() {
                       ) : (
                         <span className="font-sans text-[10.5px] text-text-muted">Foto klaim —</span>
                       )}
-                      <SysadminActionsBar actions={depositEntryCorrections(e)} compact />
                     </span>
+                    {sysadminMode && (
+                      <span className="-my-1.5 flex items-center border-l-2 border-accent-purple/40 bg-accent-purple-bg px-2 py-1.5">
+                        <SysadminActionsBar actions={depositEntryCorrections(e)} compact />
+                      </span>
+                    )}
                   </div>
                 );
               })}
