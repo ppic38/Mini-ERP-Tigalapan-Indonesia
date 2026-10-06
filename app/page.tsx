@@ -10,15 +10,17 @@ import { useVendorAuthStore } from "@/lib/mrp/vendor-auth-store";
 
 // Urutan kartu (owner 2026-09-27): ppic, procurement, finance, produksi, warehouse, scm, general
 // manager, sysadmin, lalu Vendor Produksi (kartu terpisah, selalu paling akhir -- lihat di bawah).
-const MODULES: { role: InternalRole; label: string; desc: string; icon: typeof ClipboardList }[] = [
-  { role: "ppic", label: "PPIC", desc: "Planning, MRP, monitoring produksi", icon: ClipboardList },
-  { role: "procurement", label: "Procurement", desc: "Purchase order, material, invoice vendor", icon: Package },
-  { role: "finance", label: "Finance", desc: "Approval PO, payment, ledger", icon: Wallet },
-  { role: "produksi", label: "Produksi", desc: "Monitoring progres semua vendor produksi", icon: Factory },
-  { role: "warehouse", label: "Warehouse", desc: "Penerimaan & bongkar koli dari vendor produksi", icon: Warehouse },
-  { role: "scm", label: "SCM", desc: "Approval MRP dari PPIC, monitoring lintas modul", icon: ShieldCheck },
-  { role: "gm", label: "General Manager", desc: "Approval PO Level 4, dashboard ringkasan", icon: Crown },
-  { role: "sysadmin", label: "Sysadmin", desc: "Kelola akun & password, batalkan PO/data salah input", icon: ShieldAlert },
+// Revisi 2026-10-06 (owner: deskripsi kartu dipersingkat, kartu dibuat berwarna beranimasi): `color` =
+// warna aksen tiap kartu (dipakai lewat CSS variable --c di .mod-card, app/globals.css).
+const MODULES: { role: InternalRole; label: string; desc: string; icon: typeof ClipboardList; color: string }[] = [
+  { role: "ppic", label: "PPIC", desc: "Planning & MRP", icon: ClipboardList, color: "#3B82F6" },
+  { role: "procurement", label: "Procurement", desc: "PO & invoice", icon: Package, color: "#F59E0B" },
+  { role: "finance", label: "Finance", desc: "Approval & bayar", icon: Wallet, color: "#10B981" },
+  { role: "produksi", label: "Produksi", desc: "Monitoring vendor", icon: Factory, color: "#06B6D4" },
+  { role: "warehouse", label: "Warehouse", desc: "Penerimaan koli", icon: Warehouse, color: "#EC4899" },
+  { role: "scm", label: "SCM", desc: "Approval MRP & PO", icon: ShieldCheck, color: "#6366F1" },
+  { role: "gm", label: "General Manager", desc: "Approval PO L4", icon: Crown, color: "#EAB308" },
+  { role: "sysadmin", label: "Sysadmin", desc: "Akun & koreksi", icon: ShieldAlert, color: "#8B5CF6" },
 ];
 
 const WELCOME_TITLE = "Mini ERP Tigalapan";
@@ -59,8 +61,8 @@ function WelcomePanel() {
         {typed}
         <span className={done ? "welcome-cursor welcome-cursor-idle" : "welcome-cursor"} />
       </h1>
-      <p className="welcome-fade-up mt-5 max-w-[460px] font-sans text-[14px] leading-[1.6] text-white/70 lg:max-w-[480px]" style={{ animationDelay: "1.6s" }}>
-        Satu tempat untuk mencatat dan memantau pekerjaan internal dan vendor produksi, dari MRP sampai pembayaran.
+      <p className="welcome-fade-up mt-5 font-heading text-[20px] font-semibold leading-[1.3] text-white/85 sm:text-[22px]" style={{ animationDelay: "1.6s" }}>
+        Satu sistem. <span className="text-[#7DB2FF]">Dari MRP sampai bayar.</span>
       </p>
       <div className="welcome-fade-up mt-4 flex items-center justify-center gap-2 font-sans text-[13px] text-white/60 lg:justify-start" style={{ animationDelay: "1.9s" }}>
         <span>Untuk tim</span>
@@ -152,45 +154,22 @@ export default function ModuleSelectPage() {
       {/* Kartu SELALU punya tinggi tetap (tidak pernah berubah bentuk saat diklik) — form
          password ditampilkan di modal terpisah (lihat di bawah), bukan ditempel di dalam kartu. */}
       <div className="grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">
-        {MODULES.map((m) => {
+        {MODULES.map((m, i) => {
           const Icon = m.icon;
           const active = selectedRole === m.role;
-          // Sysadmin ditandai khusus (ungu, bukan biru seperti modul lain) -- pola sama dengan
-          // kartu Vendor Produksi (ikon di kotak warna solid saat hover/aktif) supaya keduanya
-          // sama-sama "menonjol beda" dari modul kerja biasa, tapi tidak memakai warna yang sama
-          // (oranye = Vendor Produksi, ungu = Sysadmin).
-          const isSysadmin = m.role === "sysadmin";
           return (
             <button
               key={m.role}
               onClick={() => pickRole(m.role)}
-              className={cn(
-                "group flex items-center gap-3 rounded-xl border bg-surface-card p-3 text-left font-sans shadow-[0_8px_22px_rgba(0,0,0,.22)] transition-all duration-200",
-                active
-                  ? isSysadmin
-                    ? "border-accent-purple shadow-[0_12px_28px_rgba(124,58,237,.32)]"
-                    : "border-accent-blue shadow-[0_12px_28px_rgba(37,99,235,.32)]"
-                  : "border-white/10 hover:-translate-y-0.5 hover:border-white/25 hover:shadow-[0_12px_28px_rgba(0,0,0,.32)]"
-              )}
+              className={cn("mod-card group flex items-center gap-3 rounded-xl p-3 text-left font-sans", active && "mod-card-active")}
+              style={{ "--c": m.color, "--d": `${0.35 + i * 0.07}s` } as React.CSSProperties}
             >
-              <span
-                className={cn(
-                  "flex h-11 w-11 flex-none items-center justify-center rounded-lg transition-colors duration-200",
-                  isSysadmin ? (active ? "bg-accent-purple" : "bg-accent-purple-bg group-hover:bg-accent-purple") : active ? "bg-accent-blue" : "bg-info-bg group-hover:bg-accent-blue"
-                )}
-              >
-                <Icon
-                  size={22}
-                  strokeWidth={1.75}
-                  className={cn(
-                    "transition-colors duration-200",
-                    isSysadmin ? (active ? "text-white" : "text-accent-purple group-hover:text-white") : active ? "text-white" : "text-action-primary group-hover:text-white"
-                  )}
-                />
+              <span className="mod-icon flex h-11 w-11 flex-none items-center justify-center rounded-lg">
+                <Icon size={22} strokeWidth={1.9} className="text-white" />
               </span>
               <span className="min-w-0">
-                <span className="block text-[13px] font-semibold text-text-primary">{m.label}</span>
-                <span className="mt-0.5 line-clamp-2 block text-[10.5px] leading-[1.35] text-text-muted">{m.desc}</span>
+                <span className="block text-[13.5px] font-semibold text-white">{m.label}</span>
+                <span className="mt-0.5 line-clamp-2 block text-[11px] leading-[1.35] text-white/65">{m.desc}</span>
               </span>
             </button>
           );
@@ -203,14 +182,15 @@ export default function ModuleSelectPage() {
             logoutVendor();
             router.push("/vendor-maklon/login");
           }}
-          className="group flex items-center gap-3 rounded-xl border border-white/10 bg-surface-card p-3 text-left font-sans shadow-[0_8px_22px_rgba(0,0,0,.22)] transition-all duration-200 hover:-translate-y-0.5 hover:border-white/25 hover:shadow-[0_12px_28px_rgba(0,0,0,.32)] sm:col-span-2"
+          className="mod-card group flex items-center gap-3 rounded-xl p-3 text-left font-sans sm:col-span-2"
+          style={{ "--c": "#F97316", "--d": `${0.35 + MODULES.length * 0.07}s` } as React.CSSProperties}
         >
-          <span className="flex h-11 w-11 flex-none items-center justify-center rounded-lg bg-accent-orange-bg transition-colors duration-200 group-hover:bg-accent-orange">
-            <Building2 size={22} strokeWidth={1.75} className="text-accent-orange transition-colors duration-200 group-hover:text-white" />
+          <span className="mod-icon flex h-11 w-11 flex-none items-center justify-center rounded-lg">
+            <Building2 size={22} strokeWidth={1.9} className="text-white" />
           </span>
           <span className="min-w-0">
-            <span className="block text-[13px] font-semibold text-text-primary">Vendor Produksi</span>
-            <span className="mt-0.5 block text-[10.5px] leading-[1.35] text-text-muted">Pilih nama vendor Anda &amp; masukkan password</span>
+            <span className="block text-[13.5px] font-semibold text-white">Vendor Produksi</span>
+            <span className="mt-0.5 block text-[11px] leading-[1.35] text-white/65">Portal vendor</span>
           </span>
         </button>
       </div>

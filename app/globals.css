@@ -295,3 +295,46 @@
   .welcome-fade-up, .welcome-word { animation: none; opacity: 1; }
   .welcome-cursor, .welcome-glow { animation: none; }
 }
+
+
+/* Kartu modul di halaman pilih modul -- berwarna per modul lewat CSS variable --c (warna aksen) dan
+   --d (delay animasi masuk berurutan). */
+.mod-card {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--c) 34%, #0b1226), color-mix(in srgb, var(--c) 8%, #0b1226));
+  border: 1px solid color-mix(in srgb, var(--c) 50%, transparent);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.25);
+  animation: welcome-fade-up 0.6s ease-out both;
+  animation-delay: var(--d, 0s);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.mod-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.22) 50%, transparent 65%);
+  transform: translateX(-120%);
+  transition: transform 0.7s ease;
+  pointer-events: none;
+}
+.mod-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--c);
+  box-shadow: 0 14px 32px color-mix(in srgb, var(--c) 45%, transparent);
+}
+.mod-card:hover::after { transform: translateX(120%); }
+.mod-card-active {
+  border-color: var(--c);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) 70%, transparent), 0 14px 32px color-mix(in srgb, var(--c) 45%, transparent);
+}
+.mod-icon {
+  background: linear-gradient(135deg, var(--c), color-mix(in srgb, var(--c) 65%, #000));
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--c) 55%, transparent);
+  transition: transform 0.25s ease;
+}
+.mod-card:hover .mod-icon { transform: scale(1.12) rotate(-6deg); }
+@media (prefers-reduced-motion: reduce) {
+  .mod-card { animation: none; transition: none; }
+  .mod-card::after, .mod-card:hover .mod-icon { transition: none; transform: none; }
+}
