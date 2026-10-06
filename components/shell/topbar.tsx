@@ -17,9 +17,14 @@ function formatNotifTime(time: string) {
 /** "PPIC" -> "PP", "Maklon BAYU" -> "MB", "Procurement" -> "PR" — dipakai buat avatar profil,
  *  karena app ini belum punya sistem akun per-nama sungguhan (cuma login per-role/per-vendor). */
 function initialsFor(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
+  // Label topbar bisa "Produksi · Gusti Zulkarnain" (modul · nama akun bernama). Dulu dipecah per
+  // spasi sehingga kata ke-2 = "·" dan avatar jadi "P·". Sekarang pakai bagian SETELAH "·" (orangnya)
+  // dan buang token yang bukan huruf/angka.
+  const label = name.includes("·") ? name.split("·").slice(1).join(" ") : name;
+  const parts = label.trim().split(/\s+/).filter((p) => /[\p{L}\p{N}]/u.test(p));
+  if (parts.length === 0) return name.trim().slice(0, 2).toUpperCase();
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-  return name.slice(0, 2).toUpperCase();
+  return parts[0].slice(0, 2).toUpperCase();
 }
 
 export function Topbar({

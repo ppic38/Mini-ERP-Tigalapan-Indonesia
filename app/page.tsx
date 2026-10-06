@@ -173,19 +173,23 @@ export default function ModuleSelectPage() {
                   </button>
                 </div>
                 <form onSubmit={handleSubmit} className="flex flex-col gap-2.5 px-4 py-3.5">
-                  <div>
-                    <div className="flex items-center gap-1 font-sans text-[9.5px] font-medium uppercase tracking-wider text-text-muted">
-                      <Users size={10} />
-                      Username <span className="normal-case tracking-normal text-text-muted/70">(opsional)</span>
+                  {/* Sysadmin cuma punya SATU akun (owner 2026-10-06: "langsung pass saja") -- tanpa
+                      kolom username, submit otomatis lewat jalur password modul (username kosong). */}
+                  {selectedRole !== "sysadmin" && (
+                    <div>
+                      <div className="flex items-center gap-1 font-sans text-[9.5px] font-medium uppercase tracking-wider text-text-muted">
+                        <Users size={10} />
+                        Username <span className="normal-case tracking-normal text-text-muted/70">(opsional)</span>
+                      </div>
+                      <input
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        className="input mt-1 !py-1.5 !text-[11.5px]"
+                        autoFocus
+                        placeholder="Kosongkan jika belum punya akun sendiri"
+                      />
                     </div>
-                    <input
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      className="input mt-1 !py-1.5 !text-[11.5px]"
-                      autoFocus
-                      placeholder="Kosongkan jika belum punya akun sendiri"
-                    />
-                  </div>
+                  )}
                   <div>
                     <div className="flex items-center gap-1 font-sans text-[9.5px] font-medium uppercase tracking-wider text-text-muted">
                       <Lock size={10} />
@@ -197,6 +201,7 @@ export default function ModuleSelectPage() {
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         className="input !py-1.5 !pr-8 !text-[11.5px]"
+                        autoFocus={selectedRole === "sysadmin"}
                         placeholder="••••••••"
                       />
                       <button
