@@ -322,14 +322,26 @@ export function InvoiceUploadPanel({
       return a.warna.localeCompare(b.warna, "id-ID");
     });
     return (
-      <select value={warna} onChange={(e) => chooseTarget(m, ai, e.target.value)} className="input min-w-0 flex-1 !py-1 text-[12px]">
+      <select value={warna} onChange={(e) => chooseTarget(m, ai, e.target.value)} className="input min-w-0 flex-1 !py-1.5 text-[12px] font-medium">
         {!warna && <option value="">— pilih warna di PO —</option>}
-        {sorted.map((p) => (
-          <option key={p.warna} value={p.warna}>
-            {m.candidates.some((c) => c.warna === p.warna) ? "★ " : ""}
-            {p.warna} · sisa {p.remaining}
-          </option>
-        ))}
+        {(() => {
+          const isCand = (w: string) => m.candidates.some((c) => c.warna === w);
+          const sug = sorted.filter((p) => isCand(p.warna));
+          const rest = sorted.filter((p) => !isCand(p.warna));
+          const opt = (p: (typeof sorted)[number]) => (
+            <option key={p.warna} value={p.warna}>
+              {p.warna} · sisa {p.remaining}
+            </option>
+          );
+          return sug.length > 0 ? (
+            <>
+              <optgroup label="Saran">{sug.map(opt)}</optgroup>
+              <optgroup label="Warna lain di PO">{rest.map(opt)}</optgroup>
+            </>
+          ) : (
+            sorted.map(opt)
+          );
+        })()}
       </select>
     );
   };
@@ -348,15 +360,24 @@ export function InvoiceUploadPanel({
     const targetText = main.alloc.map((a) => (main.kind === "roll" && main.alloc.length > 1 ? `${a.warna} (${a.qty})` : a.warna)).join(" + ");
     const unconfirmed = [r.roll, r.rib].some((m) => m && m.alloc.length > 0 && !m.confirmed);
     return (
-      <div key={r.key} className={"px-4 py-2.5 " + (attention ? "bg-warning-bg/40" : "")}>
+      <div key={r.key} className={"border-l-[3px] px-4 py-3 " + (attention ? "border-warning bg-[#FFFCF5]" : "border-transparent")}>
         <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_200px] items-start gap-x-4">
           <div className="min-w-0">
-            <div className="truncate font-sans text-[12.5px] font-semibold text-text-primary">
+            <div className="truncate font-sans text-[13px] font-semibold text-text-primary">
               {main.invoiceWarna} <span className="font-normal text-text-muted">{main.benang}</span>
-              {main.kind === "rib" && <span className="ml-1.5 rounded bg-warning-bg px-1 py-[1px] font-mono text-[9px] font-semibold text-warning-fg">RIB</span>}
+              {main.kind === "rib" && <span className="ml-1.5 rounded bg-warning-bg px-1.5 py-[1px] font-mono text-[9px] font-semibold text-warning-fg">RIB</span>}
             </div>
-            <div className="font-mono text-[10.5px] text-text-muted">
-              {g.lines.length} {main.kind === "rib" ? "baris" : "roll"} · {fmt(kg)} kg{ribG ? ` · rib ${fmt(ribKg)} kg` : ""} · {prices.length === 1 ? `@${fmt(prices[0])}` : "harga berbeda!"}
+            <div className="mt-1 flex flex-wrap gap-1">
+              {[
+                `${g.lines.length} ${main.kind === "rib" ? "baris" : "roll"}`,
+                `${fmt(kg)} kg`,
+                ...(ribG ? [`rib ${fmt(ribKg)} kg`] : []),
+                prices.length === 1 ? `Rp ${fmt(prices[0])}/kg` : "harga berbeda!",
+              ].map((t) => (
+                <span key={t} className={"rounded-md px-1.5 py-[2px] font-mono text-[10.5px] " + (t === "harga berbeda!" ? "bg-danger-bg text-danger-fg" : "bg-[#F1F5F9] text-[#475569]")}>
+                  {t}
+                </span>
+              ))}
             </div>
           </div>
           <div className="min-w-0 font-sans text-xs">
@@ -373,7 +394,7 @@ export function InvoiceUploadPanel({
               <div className="space-y-1">
                 {(main.alloc.length ? main.alloc : [{ warna: "", qty: 0 }]).map((a, ai) => (
                   <div key={ai} className="flex items-center gap-1.5">
-                    {r.roll && r.rib && <span className="w-9 shrink-0 text-[10.5px] font-semibold text-text-muted">Kain</span>}
+                    {r.roll && r.rib && <span className="w-11 shrink-0 rounded-md bg-info-bg py-1 text-center text-[10.5px] font-semibold text-info-fg">Kain</span>}
                     {selectFor(main, ai, a.warna)}
                     {main.kind === "roll" && main.alloc.length > 1 && (
                       <>
@@ -388,7 +409,7 @@ export function InvoiceUploadPanel({
                 ))}
                 {r.roll && r.rib && (
                   <div className="flex items-center gap-1.5">
-                    <span className="w-9 shrink-0 text-[10.5px] font-semibold text-warning-fg">Rib</span>
+                    <span className="w-11 shrink-0 rounded-md bg-warning-bg py-1 text-center text-[10.5px] font-semibold text-warning-fg">Rib</span>
                     {selectFor(r.rib, 0, r.rib.alloc[0]?.warna ?? "")}
                   </div>
                 )}
@@ -406,7 +427,7 @@ export function InvoiceUploadPanel({
           <div className="flex items-center justify-end gap-2 whitespace-nowrap">
             {unconfirmed ? (
               <>
-                <span className="font-sans text-[11px] text-warning-fg">{main.how === "fuzzy" ? "mirip, cek" : main.how === "variant" ? "varian, cek" : "perlu konfirmasi"}</span>
+                <span className="rounded-full bg-warning-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-warning-fg">{main.how === "fuzzy" ? "Mirip, cek dulu" : main.how === "variant" ? "Varian, cek dulu" : "Perlu konfirmasi"}</span>
                 <Button onClick={() => [r.roll, r.rib].forEach((m) => m && !m.confirmed && m.alloc.length > 0 && confirmMapping(m))} variant="primary" size="xs">
                   Konfirmasi
                 </Button>
@@ -415,7 +436,7 @@ export function InvoiceUploadPanel({
               <span className="font-sans text-[11px] font-medium text-danger-fg">belum dipetakan</span>
             ) : (
               <>
-                <span className="font-sans text-[11px] text-success-fg">✓ {main.how === "alias" ? "tersimpan" : main.how === "exact" ? "persis" : "dikonfirmasi"}</span>
+                <span className="rounded-full bg-success-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-success-fg">✓ {main.how === "alias" ? "Tersimpan" : main.how === "exact" ? "Persis" : "Dikonfirmasi"}</span>
                 <button onClick={() => setEditingKey(editingKey === r.key ? null : r.key)} className="font-sans text-[11px] text-text-muted hover:text-accent-blue hover:underline">
                   {editingKey === r.key ? "Tutup" : "Ubah"}
                 </button>
