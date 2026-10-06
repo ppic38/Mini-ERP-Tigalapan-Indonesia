@@ -363,11 +363,17 @@ export function InvoiceUploadPanel({
             {!editing ? (
               <span className="text-[#31414F]">
                 <span className="text-text-muted">→</span> <b className="font-semibold">{targetText}</b>
+                {r.roll && r.rib && r.rib.alloc[0] && r.rib.alloc[0].warna !== main.alloc[0]?.warna && (
+                  <span className="ml-2 text-warning-fg">
+                    · rib → <b className="font-semibold">{r.rib.alloc[0].warna}</b>
+                  </span>
+                )}
               </span>
             ) : (
               <div className="space-y-1">
                 {(main.alloc.length ? main.alloc : [{ warna: "", qty: 0 }]).map((a, ai) => (
                   <div key={ai} className="flex items-center gap-1.5">
+                    {r.roll && r.rib && <span className="w-9 shrink-0 text-[10.5px] font-semibold text-text-muted">Kain</span>}
                     {selectFor(main, ai, a.warna)}
                     {main.kind === "roll" && main.alloc.length > 1 && (
                       <>
@@ -382,8 +388,8 @@ export function InvoiceUploadPanel({
                 ))}
                 {r.roll && r.rib && (
                   <div className="flex items-center gap-1.5">
+                    <span className="w-9 shrink-0 text-[10.5px] font-semibold text-warning-fg">Rib</span>
                     {selectFor(r.rib, 0, r.rib.alloc[0]?.warna ?? "")}
-                    <span className="w-8 text-[10px] font-semibold text-warning-fg">rib</span>
                   </div>
                 )}
                 <div className="flex items-center gap-3 text-[10.5px]">
