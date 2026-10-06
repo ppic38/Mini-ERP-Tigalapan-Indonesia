@@ -268,7 +268,7 @@
 }
 @keyframes welcome-float {
   0%, 100% { transform: translate3d(0, 0, 0); }
-  50% { transform: translate3d(24px, -18px, 0); }
+  50% { transform: translate3d(-120px, -90px, 0) scale(1.2); }
 }
 .welcome-fade-up { opacity: 0; animation: welcome-fade-up 0.7s ease-out forwards; }
 .welcome-word { display: inline-block; animation: welcome-fade-up 0.45s ease-out both; }
@@ -289,9 +289,17 @@
   pointer-events: none;
   animation: welcome-float 14s ease-in-out infinite;
 }
-.welcome-glow-a { top: -140px; left: -120px; width: 420px; height: 420px; background: rgba(37, 99, 235, 0.35); }
-.welcome-glow-b { bottom: -160px; right: 20%; width: 380px; height: 380px; background: rgba(124, 58, 237, 0.22); animation-delay: -6s; }
+.welcome-glow-a { top: -140px; left: -120px; width: 420px; height: 420px; background: rgba(37, 99, 235, 0.5); animation-duration: 16s; }
+.welcome-glow-b { bottom: -160px; right: 20%; width: 380px; height: 380px; background: rgba(124, 58, 237, 0.3); animation-delay: -6s; animation-duration: 20s; }
 @media (prefers-reduced-motion: reduce) {
   .welcome-fade-up, .welcome-word { animation: none; opacity: 1; }
   .welcome-cursor, .welcome-glow { animation: none; }
 }
+
+/* Latar halaman pilih modul: gradasi tetap, cahaya biru (welcome-glow-*) yang bergerak (owner 2026-10-06: background biru jangan statis). */
+.welcome-bg {
+  background: linear-gradient(160deg, #000000 0%, #050912 30%, #0A1B3D 62%, var(--accent-blue) 100%);
+}
+.welcome-glow-c { bottom: -120px; right: -100px; width: 640px; height: 640px; background: rgba(59, 130, 246, 0.55); animation-duration: 12s; animation-delay: -3s; }
+.welcome-glow-d { bottom: -80px; left: 30%; width: 520px; height: 520px; background: rgba(37, 99, 235, 0.5); animation-duration: 15s; animation-delay: -9s; }
+

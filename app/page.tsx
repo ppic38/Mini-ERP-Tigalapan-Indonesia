@@ -136,10 +136,11 @@ export default function ModuleSelectPage() {
     // kartu modul dibuat ringkas horizontal (ikon di kiri) supaya 9 kartu tidak lagi memanjang ke bawah.
     // Di layar sempit tersusun vertikal (welcome di atas, modul di bawah) dan halaman bisa discroll.
     <div
-      className="relative min-h-screen overflow-hidden lg:h-screen"
-      style={{ background: "linear-gradient(160deg, #000000 0%, #050912 30%, #0A1B3D 62%, var(--accent-blue) 100%)" }}
+      className="welcome-bg relative min-h-screen overflow-hidden lg:h-screen"
     >
       <div className="welcome-glow welcome-glow-a" />
+      <div className="welcome-glow welcome-glow-c" />
+      <div className="welcome-glow welcome-glow-d" />
       <div className="welcome-glow welcome-glow-b" />
       <div className="relative mx-auto grid min-h-screen w-full max-w-[1240px] grid-cols-1 items-center gap-10 px-6 py-10 lg:h-screen lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:gap-16 lg:px-10 lg:py-6">
         <WelcomePanel />
