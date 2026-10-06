@@ -62,7 +62,7 @@ function WelcomePanel() {
         <span className={done ? "welcome-cursor welcome-cursor-idle" : "welcome-cursor"} />
       </h1>
       <p className="welcome-fade-up mt-5 font-heading text-[20px] font-semibold leading-[1.3] text-white/85 sm:text-[22px]" style={{ animationDelay: "1.6s" }}>
-        Satu sistem. <span className="text-[#7DB2FF]">Dari MRP sampai bayar.</span>
+        Satu sistem terpadu untuk <span className="text-[#7DB2FF]">operasional produksi.</span>
       </p>
       <div className="welcome-fade-up mt-4 flex items-center justify-center gap-2 font-sans text-[13px] text-white/60 lg:justify-start" style={{ animationDelay: "1.9s" }}>
         <span>Untuk tim</span>
@@ -154,22 +154,45 @@ export default function ModuleSelectPage() {
       {/* Kartu SELALU punya tinggi tetap (tidak pernah berubah bentuk saat diklik) — form
          password ditampilkan di modal terpisah (lihat di bawah), bukan ditempel di dalam kartu. */}
       <div className="grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">
-        {MODULES.map((m, i) => {
+        {MODULES.map((m) => {
           const Icon = m.icon;
           const active = selectedRole === m.role;
+          // Sysadmin ditandai khusus (ungu, bukan biru seperti modul lain) -- pola sama dengan
+          // kartu Vendor Produksi (ikon di kotak warna solid saat hover/aktif) supaya keduanya
+          // sama-sama "menonjol beda" dari modul kerja biasa, tapi tidak memakai warna yang sama
+          // (oranye = Vendor Produksi, ungu = Sysadmin).
+          const isSysadmin = m.role === "sysadmin";
           return (
             <button
               key={m.role}
               onClick={() => pickRole(m.role)}
-              className={cn("mod-card group flex items-center gap-3 rounded-xl p-3 text-left font-sans", active && "mod-card-active")}
-              style={{ "--c": m.color, "--d": `${0.35 + i * 0.07}s` } as React.CSSProperties}
+              className={cn(
+                "group flex items-center gap-3 rounded-xl border bg-surface-card p-3 text-left font-sans shadow-[0_8px_22px_rgba(0,0,0,.22)] transition-all duration-200",
+                active
+                  ? isSysadmin
+                    ? "border-accent-purple shadow-[0_12px_28px_rgba(124,58,237,.32)]"
+                    : "border-accent-blue shadow-[0_12px_28px_rgba(37,99,235,.32)]"
+                  : "border-white/10 hover:-translate-y-0.5 hover:border-white/25 hover:shadow-[0_12px_28px_rgba(0,0,0,.32)]"
+              )}
             >
-              <span className="mod-icon flex h-11 w-11 flex-none items-center justify-center rounded-lg">
-                <Icon size={22} strokeWidth={1.9} className="text-white" />
+              <span
+                className={cn(
+                  "flex h-11 w-11 flex-none items-center justify-center rounded-lg transition-colors duration-200",
+                  isSysadmin ? (active ? "bg-accent-purple" : "bg-accent-purple-bg group-hover:bg-accent-purple") : active ? "bg-accent-blue" : "bg-info-bg group-hover:bg-accent-blue"
+                )}
+              >
+                <Icon
+                  size={22}
+                  strokeWidth={1.75}
+                  className={cn(
+                    "transition-colors duration-200",
+                    isSysadmin ? (active ? "text-white" : "text-accent-purple group-hover:text-white") : active ? "text-white" : "text-action-primary group-hover:text-white"
+                  )}
+                />
               </span>
               <span className="min-w-0">
-                <span className="block text-[13.5px] font-semibold text-white">{m.label}</span>
-                <span className="mt-0.5 line-clamp-2 block text-[11px] leading-[1.35] text-white/65">{m.desc}</span>
+                <span className="block text-[13px] font-semibold text-text-primary">{m.label}</span>
+                <span className="mt-0.5 line-clamp-2 block text-[10.5px] leading-[1.35] text-text-muted">{m.desc}</span>
               </span>
             </button>
           );
@@ -182,15 +205,14 @@ export default function ModuleSelectPage() {
             logoutVendor();
             router.push("/vendor-maklon/login");
           }}
-          className="mod-card group flex items-center gap-3 rounded-xl p-3 text-left font-sans sm:col-span-2"
-          style={{ "--c": "#F97316", "--d": `${0.35 + MODULES.length * 0.07}s` } as React.CSSProperties}
+          className="group flex items-center gap-3 rounded-xl border border-white/10 bg-surface-card p-3 text-left font-sans shadow-[0_8px_22px_rgba(0,0,0,.22)] transition-all duration-200 hover:-translate-y-0.5 hover:border-white/25 hover:shadow-[0_12px_28px_rgba(0,0,0,.32)] sm:col-span-2"
         >
-          <span className="mod-icon flex h-11 w-11 flex-none items-center justify-center rounded-lg">
-            <Building2 size={22} strokeWidth={1.9} className="text-white" />
+          <span className="flex h-11 w-11 flex-none items-center justify-center rounded-lg bg-accent-orange-bg transition-colors duration-200 group-hover:bg-accent-orange">
+            <Building2 size={22} strokeWidth={1.75} className="text-accent-orange transition-colors duration-200 group-hover:text-white" />
           </span>
           <span className="min-w-0">
-            <span className="block text-[13.5px] font-semibold text-white">Vendor Produksi</span>
-            <span className="mt-0.5 block text-[11px] leading-[1.35] text-white/65">Portal vendor</span>
+            <span className="block text-[13px] font-semibold text-text-primary">Vendor Produksi</span>
+            <span className="mt-0.5 block text-[10.5px] leading-[1.35] text-text-muted">Portal vendor</span>
           </span>
         </button>
       </div>
