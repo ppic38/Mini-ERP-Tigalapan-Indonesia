@@ -30,8 +30,6 @@ export const NAV: Record<RoleKey, RoleNav> = {
       { label: "Material Tracking", href: "/procurement/material-tracking" },
       { label: "Klaim Material", href: "/procurement/material-claims" },
       { label: "Master Data", href: "/procurement/master-data" },
-      // Panduan modul (owner 2026-10-06) -- penjelasan tiap halaman + contoh data dummy untuk user baru.
-      { label: "Panduan", href: "/procurement/panduan" },
     ],
   },
   finance: {
