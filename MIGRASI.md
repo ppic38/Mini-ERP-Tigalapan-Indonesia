@@ -1,5 +1,20 @@
 # Migrasi Project — Status & Riwayat
 
+## Upload Invoice Supplier di Paying Voucher -- migration 0064 (2026-10-06)
+Owner: "upload invoice dari supplier ... nama warna di invoice beda dengan di MRP ... tidak ingin ada selisih".
+Di wizard Buat PV (Procurement) muncul pilihan **Upload invoice KNITTO** / **Input manual** (hanya untuk supplier
+yang punya adapter, `lib/invoice-import/adapters.ts`; supplier lain tetap manual). Alur: PDF dibaca DI BROWSER
+(text layer / OCR Tesseract -- aset di `public/invoice-ocr/`, publik di proxy.ts) -> parser KNITTO
+(`lib/invoice-import/parser-knitto.ts`, port converter mandiri) -> **pemetaan warna** invoice -> warna MRP
+(`mapping.ts`; cocok persis/alias tersimpan = otomatis, nama mirip = wajib klik Konfirmasi, tak dikenal = diblokir) ->
+rekonsiliasi per warna (Total PO / Sudah PV / Invoice ini / Sisa) -> isi form PV (tetap bisa diedit, submit =
+`bookInvoiceAction` yang sama). Invoice bertahap didukung (roll tiap warna dibatasi sisa PO; sisa menunggu invoice
+berikutnya). Cek silang: Total PV = Total Bayar invoice, jumlah/berat roll & rib = Total Roll-an/KG-an, tujuan di nama
+file (NOPENJUALAN.TUJUAN.KODETRANSFER.pdf) = vendor PO, nomor invoice ganda. File invoice jadi lampiran PV (maks ~1,4 MB).
+**Migration 0064** (`supplier_color_aliases`): ingatan pemetaan nama warna per supplier -- OPSIONAL, fitur tetap jalan
+tanpanya (hanya tidak teringat untuk invoice berikutnya). Jalankan MANUAL di SQL Editor. Tes logika:
+`node scripts/invoice-import-test/run.mjs` (fixture dummy, tanpa data invoice asli).
+
 ## Koreksi Sysadmin tambahan (2026-10-06, tanpa migration baru)
 Owner: "apa semua proses sudah bisa dikoreksi Sysadmin? mis. Procurement salah input invoice ... kerjakan semua".
 Semua pakai pola yang sama (registry components/sysadmin/*-corrections.ts + SysadminActionsBar, alasan wajib,

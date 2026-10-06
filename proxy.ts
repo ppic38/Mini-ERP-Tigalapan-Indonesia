@@ -41,7 +41,9 @@ const PUBLIC_PATHS = ["/", "/vendor-maklon/login", "/gate-to-gate", "/tigalapan-
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (PUBLIC_PATHS.includes(pathname)) return NextResponse.next();
+  // /invoice-ocr/ = pustaka statis OCR/PDF (pdf.js, Tesseract) untuk fitur Upload Invoice Supplier;
+  // dimuat web worker yang tidak selalu membawa cookie sesi, dan isinya bukan data (hanya kode pustaka).
+  if (PUBLIC_PATHS.includes(pathname) || pathname.startsWith("/invoice-ocr/")) return NextResponse.next();
 
   const session = await readSession(request.cookies);
 

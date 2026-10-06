@@ -1,8 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { InvoiceUploadPanel, type UploadApplyPayload } from "@/components/mrp/invoice-upload-pv";
 import { NumberInput } from "@/components/mrp/number-input";
 import { Button } from "@/components/ui/button";
+import { adapterForSupplier } from "@/lib/invoice-import/adapters";
+import { compareApplied } from "@/lib/invoice-import/mapping";
+import type { AppliedImport } from "@/lib/invoice-import/types";
+import { saveSupplierColorAliasesAction } from "@/lib/mrp/supplierColorAliasActions";
 import {
   aduanMaterialAllocationPreview,
   formatDecimal,
@@ -12,7 +17,7 @@ import {
   MATERIAL_KATEGORI_URUTAN,
   type AduanMaterialKind,
 } from "@/lib/mrp/derive";
-import { ROLL_KG_ESTIMATE } from "@/lib/mrp/seed";
+import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { useMrpStore, type MrpDetail } from "@/lib/mrp/store";
 import type { AddBuyItem, ColorEntry, Lengan, MaterialPO } from "@/lib/mrp/types";
 
@@ -128,6 +133,15 @@ export function PayingVoucherWizard({
   const [buktiPvDataUrl, setBuktiPvDataUrl] = useState<string | undefined>(undefined);
   const [buktiPvFileName, setBuktiPvFileName] = useState<string | undefined>(undefined);
   const [buktiPvError, setBuktiPvError] = useState("");
+  // Upload invoice supplier (opsi 2 selain input manual): adapter ada hanya untuk supplier yang template
+  // invoicenya sudah didaftarkan (lib/invoice-import/adapters.ts). Hasil upload DITERAPKAN ke form manual di
+  // bawah (tetap bisa diedit), jadi submit & validasi server sama persis seperti input manual.
+  const invoiceAdapter = adapterForSupplier(po.supplier);
+  const existingInvoices = useMrpStore((s) => s.invoices);
+  const [inputMode, setInputMode] = useState<"upload" | "manual">(invoiceAdapter ? "upload" : "manual");
+  const [applied, setApplied] = useState<AppliedImport | null>(null);
+  const [ackDiff, setAckDiff] = useState(false);
+  const [uploadNote, setUploadNote] = useState("");
 
   function handleBuktiPvChange(file: File | null) {
     setBuktiPvError("");
@@ -301,13 +315,76 @@ export function PayingVoucherWizard({
     setAddBuys((prev) => prev.filter((b) => b.id !== id));
   }
 
-  const canSubmit = (entries.length > 0 || addBuys.length > 0) && kodeTransaksi.trim() && !!buktiPvDataUrl && !submitting;
+  // Terapkan hasil upload invoice supplier ke form: menggantikan isian sebelumnya. Rib dari invoice dipakai
+  // apa adanya (TIDAK ditambah rib otomatis Aduan Pola supaya tidak dobel); Kerah/Manset otomatis tetap
+  // mengikuti Aduan Pola karena tidak ada di invoice KNITTO.
+  function applyUpload(p: UploadApplyPayload) {
+    setEntries(p.colorEntries);
+    let ab = p.addBuys;
+    const warnaSet = Array.from(new Set(p.colorEntries.map((c) => c.warna)));
+    for (const w of warnaSet) {
+      for (const itemDef of AUTO_ADD_ITEMS.filter((d) => d.item !== "Rib")) ab = autoAddMaterialForWarna(itemDef, w, p.colorEntries, ab);
+    }
+    setAddBuys(ab);
+    setDiskon(p.diskon);
+    setNoInvoiceVendor(p.noInvoiceVendor);
+    setKodeTransaksi(p.kodeTransaksi);
+    setApplied(p.info);
+    setAckDiff(false);
+    setActiveKey(null);
+    setDraftRolls(null);
+    setDraftLots(null);
+    // Invoice asli = lampiran Paying Voucher. Batas upload server action ~2 MB (base64 +33%), jadi file yang
+    // terlalu besar tidak dilampirkan otomatis -- Procurement upload versi yang lebih kecil di kolom Bukti PV.
+    setBuktiPvError("");
+    setUploadNote("");
+    if (p.file.size > 1_400_000) {
+      setBuktiPvDataUrl(undefined);
+      setBuktiPvFileName(undefined);
+      setUploadNote(`File invoice ${(p.file.size / 1_048_576).toFixed(1)} MB terlalu besar untuk dilampirkan otomatis (maks ±1,4 MB) — kompres PDF-nya lalu upload di kolom "Bukti Paying Voucher" di bawah.`);
+    } else {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setBuktiPvDataUrl(reader.result as string);
+        setBuktiPvFileName(p.file.name);
+      };
+      reader.onerror = () => setUploadNote("Gagal melampirkan file invoice otomatis — upload manual di kolom Bukti Paying Voucher.");
+      reader.readAsDataURL(p.file);
+    }
+    setInputMode("manual");
+  }
+
+  const appliedChecks = applied
+    ? compareApplied(applied, {
+        pvTotal: total,
+        rolls: entries.reduce((a, e) => a + e.rolls.length, 0),
+        rollKg: entries.reduce((a, e) => a + e.rolls.reduce((s, w) => s + w, 0), 0),
+        ribKg: addBuys.filter((b) => b.item === "Rib").reduce((a, b) => a + b.beratKg, 0),
+        diskon,
+      })
+    : [];
+  const appliedMismatch = appliedChecks.some((c) => !c.ok);
+  // Rib rencana Aduan Pola vs rib di invoice -- catatan saja (bukan pemblokir): selisihnya bisa sah (rib beli lebih/kurang).
+  const ribNotes = applied
+    ? Array.from(new Set(entries.map((e) => e.warna)))
+        .map((w) => {
+          const qty = entries.filter((e) => e.warna === w).reduce((s, e) => s + e.rolls.length, 0);
+          const planned = aduanMaterialAllocationPreview("rib", po.mrpId, w, qty, mrpDetails).totalKg;
+          const actual = addBuys.filter((b) => b.item === "Rib" && b.warna === w).reduce((s, b) => s + b.beratKg, 0);
+          return { warna: w, planned, actual };
+        })
+        .filter((r) => Math.abs(r.planned - r.actual) > 0.05)
+    : [];
+
+  const canSubmit = (entries.length > 0 || addBuys.length > 0) && kodeTransaksi.trim() && !!buktiPvDataUrl && !submitting && (!appliedMismatch || ackDiff);
 
   async function handleSubmit() {
     setSubmitError("");
     setSubmitting(true);
     try {
       await onSubmit({ colorEntries: entries, addBuys, diskon, kodeTransaksi, noInvoiceVendor, buktiPvDataUrl, buktiPvFileName });
+      // PV tersimpan -> ingat pemetaan warna invoice yang tadi dikonfirmasi (best-effort, tidak menggagalkan PV).
+      if (applied && applied.aliases.length > 0) void saveSupplierColorAliasesAction(po.supplier, applied.aliases).catch(() => {});
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Gagal membuat Paying Voucher, coba lagi.");
     } finally {
@@ -317,7 +394,72 @@ export function PayingVoucherWizard({
 
   return (
     <div className="border-t border-border-subtle bg-[#F7F9FB] px-5 py-4">
-      <div className="font-sans text-[12.5px] font-semibold text-text-primary">Paying Voucher — {po.id}</div>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="font-sans text-[12.5px] font-semibold text-text-primary">Paying Voucher — {po.id}</div>
+        {invoiceAdapter && (
+          <div className="ml-auto inline-flex overflow-hidden rounded-md border border-[#CFE0EF] bg-white font-sans text-[11.5px] font-semibold">
+            <button type="button" onClick={() => setInputMode("upload")} className={"px-3 py-1.5 " + (inputMode === "upload" ? "bg-accent-blue text-white" : "text-info-fg hover:bg-info-bg")}>
+              Upload invoice {invoiceAdapter.label}
+            </button>
+            <button type="button" onClick={() => setInputMode("manual")} className={"border-l border-[#CFE0EF] px-3 py-1.5 " + (inputMode === "manual" ? "bg-accent-blue text-white" : "text-info-fg hover:bg-info-bg")}>
+              Input manual
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Panel upload tetap ter-mount (cuma disembunyikan) saat pindah ke tab "Input manual", supaya hasil baca
+          & pemetaan yang sedang dicek tidak hilang kalau tab diklik tidak sengaja. */}
+      {invoiceAdapter && (
+        <div className={inputMode === "upload" ? undefined : "hidden"}>
+          <InvoiceUploadPanel
+            po={po}
+            adapter={invoiceAdapter}
+            existingInvoices={existingInvoices}
+            vendor={{ key: po.vendorProduksi, name: VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi }}
+            hasExistingEntries={entries.length > 0 || addBuys.length > 0}
+            onApply={applyUpload}
+          />
+        </div>
+      )}
+
+      {applied && inputMode === "manual" && (
+        <div className="mt-3 rounded-md border border-[#CFE0EF] bg-white p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="font-sans text-xs font-semibold text-text-primary">
+              Terisi dari invoice {applied.adapterLabel} <span className="font-mono">{applied.noInvoice}</span>
+            </div>
+            <span className="font-mono text-[10.5px] text-text-muted">{applied.fileName}</span>
+            <button type="button" onClick={() => setInputMode("upload")} className="ml-auto font-sans text-[11px] font-semibold text-action-primary underline">
+              Upload ulang
+            </button>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {appliedChecks.map((c) => (
+              <span key={c.id} className={"inline-flex flex-wrap items-center gap-1 rounded-md border px-2 py-[3px] font-sans text-[11px] " + (c.ok ? "border-[#BFE3CF] bg-success-bg text-success-fg" : "border-[#F0C4C4] bg-danger-bg text-danger-fg")}>
+                <b>{c.ok ? "✓" : "⚠"}</b>
+                <span className="font-medium">{c.label}</span>
+                <span className="font-mono text-[10px] opacity-80">{c.detail}</span>
+              </span>
+            ))}
+          </div>
+          {appliedMismatch && (
+            <label className="mt-2 flex items-center gap-2 font-sans text-[11.5px] text-danger-fg">
+              <input type="checkbox" checked={ackDiff} onChange={(e) => setAckDiff(e.target.checked)} />
+              Ada selisih terhadap invoice supplier — saya sudah memeriksanya dan tetap ingin mengajukan.
+            </label>
+          )}
+          {ribNotes.length > 0 && (
+            <div className="mt-2 font-sans text-[11px] text-warning-fg">
+              Catatan rib (rencana Aduan Pola vs invoice):{" "}
+              {ribNotes.map((r) => `${r.warna}: rencana ${formatDecimal(r.planned)} kg, invoice ${formatDecimal(r.actual)} kg`).join(" · ")}
+            </div>
+          )}
+          {uploadNote && <div className="mt-2 font-sans text-[11px] font-medium text-danger-fg">{uploadNote}</div>}
+        </div>
+      )}
+
+      <div className={invoiceAdapter && inputMode === "upload" ? "hidden" : undefined}>
 
       {!activeKey && warnaGroups.some((g) => g.totalRemaining > 0) && (() => {
         // Picker warna ringkas: pill kategori bahan + pencarian + daftar 1 baris per warna.
@@ -664,13 +806,15 @@ export function PayingVoucherWizard({
         {buktiPvError && <div className="mt-1 font-sans text-[11px] text-danger-fg">{buktiPvError}</div>}
       </div>
 
+      </div>
+
       {submitError && <div className="mt-2 font-sans text-[11.5px] font-medium text-danger-fg">{submitError}</div>}
       <div className="mt-3 flex gap-2">
         <button
           onClick={() => canSubmit && handleSubmit()}
           disabled={!canSubmit}
           title={!buktiPvDataUrl ? "Upload bukti Paying Voucher (PDF) dulu" : undefined}
-          className="rounded-md bg-action-primary px-3.5 py-2 font-sans text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+          className={"rounded-md bg-action-primary px-3.5 py-2 font-sans text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 " + (invoiceAdapter && inputMode === "upload" ? "hidden" : "")}
         >
           {/* Item revisi 2026-09-05: tidak lagi menampilkan status "Memproses..." -- canSubmit
              (sudah memasukkan `!submitting`) tetap mencegah dobel klik, cuma tidak lagi terlihat
