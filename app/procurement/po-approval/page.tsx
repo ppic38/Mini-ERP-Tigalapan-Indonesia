@@ -38,6 +38,8 @@ import {
 import { countMaterialRowsWithoutSupplierForMrp, countPoPendingForRole, countPoRejected, pendingMarker } from "@/lib/shell/badges";
 import { PoApprovalQueue } from "@/components/mrp/po-approval-queue";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
+import { sysadminSwitchAduanVendorAction } from "@/lib/mrp/sysadminActions";
 import { maklonPoCorrections, materialPoCorrections } from "@/components/sysadmin/procurement-corrections";
 import { PoDownloadModal, type PoDownloadRequest } from "@/components/procurement/po-download-modal";
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -77,6 +79,8 @@ export default function PoApprovalPage() {
   const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
   const maklonInvoices = useMrpStore((s) => s.maklonInvoices);
   const switchAduanVendorByRoll = useMrpStore((s) => s.switchAduanVendorByRoll);
+  const sysadminMode = useSysadminMode();
+  const refreshStore = useMrpStore((s) => s.refresh);
   const assignMaterialSupplier = useMrpStore((s) => s.assignMaterialSupplier);
   const sendPoToFinance = useMrpStore((s) => s.sendPoToFinance);
   const roundMaterialPoRollCounts = useMrpStore((s) => s.roundMaterialPoRollCounts);
@@ -1205,7 +1209,17 @@ export default function PoApprovalPage() {
           otherVendors={Object.keys(VENDOR_PRODUKSI)
             .filter((v) => v !== drillVendor)
             .map((v) => ({ id: v, name: VENDOR_PRODUKSI[v].name }))}
-          onSwitch={(warna, lengan, toVendor, rollCount) => switchAduanVendorByRoll(detail.mrp.id, warna, lengan, drillVendor, toVendor, rollCount)}
+          requireReason={sysadminMode}
+          onSwitch={async (warna, lengan, toVendor, rollCount, reason) => {
+            // Mode Sysadmin: aksi Sysadmin (alasan wajib, log audit, penolakan kalau data turunan sudah ada).
+            if (sysadminMode) {
+              const res = await sysadminSwitchAduanVendorAction(detail.mrp.id, warna, lengan, drillVendor, toVendor, rollCount, reason ?? "");
+              if (!res.ok) throw new Error(res.error);
+              await refreshStore();
+              return;
+            }
+            await switchAduanVendorByRoll(detail.mrp.id, warna, lengan, drillVendor, toVendor, rollCount);
+          }}
           onClose={() => setDrillVendor(null)}
         />
       )}

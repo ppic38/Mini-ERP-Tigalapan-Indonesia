@@ -23,12 +23,15 @@ export function VendorSwitchModal({
   otherVendors,
   onSwitch,
   onClose,
+  requireReason,
 }: {
   vendorName: string;
   rows: AduanPolaRow[];
   otherVendors: { id: string; name: string }[];
-  onSwitch: (warna: string, lengan: Lengan, toVendor: string, rollCount: number) => Promise<void>;
+  onSwitch: (warna: string, lengan: Lengan, toVendor: string, rollCount: number, reason?: string) => Promise<void>;
   onClose: () => void;
+  /** Mode Sysadmin (owner 2026-10-06): alasan WAJIB, diteruskan ke onSwitch (log audit). */
+  requireReason?: boolean;
 }) {
   const groups = useMemo(() => {
     const map = new Map<string, WarnaGroup>();
@@ -44,6 +47,8 @@ export function VendorSwitchModal({
   const [target, setTarget] = useState(otherVendors[0]?.id ?? "");
   const [rollByKey, setRollByKey] = useState<Record<string, number>>({});
   const [saving, setSaving] = useState(false);
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   const keyOf = (g: WarnaGroup) => g.warna + "|" + g.lengan;
   const rollFor = (g: WarnaGroup) => rollByKey[keyOf(g)] ?? 0;
@@ -55,14 +60,18 @@ export function VendorSwitchModal({
 
   async function handleSubmit() {
     if (!target || totalToMove <= 0) return;
+    if (requireReason && !reason.trim()) return setError("Alasan wajib diisi.");
+    setError(null);
     setSaving(true);
     try {
       for (const g of groups) {
         const rollCount = rollFor(g);
-        if (rollCount > 0) await onSwitch(g.warna, g.lengan, target, rollCount);
+        if (rollCount > 0) await onSwitch(g.warna, g.lengan, target, rollCount, requireReason ? reason.trim() : undefined);
       }
       setRollByKey({});
       onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
@@ -118,6 +127,13 @@ export function VendorSwitchModal({
           ))}
           {groups.length === 0 && <div className="px-5 py-6 text-center font-sans text-xs text-text-muted">Tidak ada aduan pola di vendor ini.</div>}
         </div>
+        {requireReason && (
+          <div className="border-t border-border-subtle px-5 py-3">
+            <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-warning-fg">Sysadmin · alasan (wajib, tercatat ke log audit)</div>
+            <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} className="input mt-1 w-full" placeholder="mis. salah pilih vendor produksi" />
+          </div>
+        )}
+        {error && <div className="mx-5 mb-2 rounded-md border border-danger bg-danger-bg px-3 py-2 font-sans text-[11.5px] text-danger-fg">{error}</div>}
         <div className="flex items-center gap-2 border-t border-border-subtle px-5 py-4">
           <span className="font-sans text-[11px] text-text-muted">Total {formatPcs(totalToMove)} roll akan dipindahkan ke {otherVendors.find((v) => v.id === target)?.name ?? "—"}.</span>
           <button

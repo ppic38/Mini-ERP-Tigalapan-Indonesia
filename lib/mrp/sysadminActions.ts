@@ -7,8 +7,8 @@ import type { ActionResult } from "./action-result";
 import { INTERNAL_ACCOUNTS, type InternalRole } from "../internal-auth";
 import { nextReadableId } from "./repo/ids";
 import { readPasswordCopy, savePasswordCopy } from "../auth/password-vault";
-import type { NotificationAudience } from "./types";
-import { resiGroupInvoiceLines, weightVariance } from "./derive";
+import type { AduanPolaRow, Lengan, NotificationAudience } from "./types";
+import { reassignAduanRowsVendor, resiGroupInvoiceLines, weightVariance } from "./derive";
 import { getFlowSnapshot } from "./repo/snapshot";
 import { loadWeightTolerancePct } from "./weightToleranceServer";
 import { assertRollCodesUnique } from "./rollCodeServer";
@@ -1804,5 +1804,86 @@ export async function sysadminRevertMaklonProductionStepAction(poId: string, rea
     }
     await notifyAffected(`Status PO Produksi ${poId} (${po.mrp_id}) dimundurkan Sysadmin dari ${po.status} ke ${to} — alasan: ${reason.trim()}.`, ["procurement"]);
     return { from: po.status, to };
+  });
+}
+
+// =========================================================================
+// Pindah vendor Aduan Pola (owner 2026-10-06) -- versi Sysadmin dari switchAduanVendorByRollAction
+// (Procurement, lib/mrp/actions.ts): memindahkan N roll aduan pola 1 warna·lengan dari vendor asal ke
+// vendor tujuan di 1 MRP, memakai reassignAduanRowsVendor yang SAMA (baris dipecah proporsional kalau
+// roll yang dipindah lebih sedikit dari baris aduan). Beda dari versi Procurement: alasan wajib, tercatat
+// di Log Audit, dan DITOLAK kalau pemindahan akan merusak data turunannya -- ada batch produksi untuk
+// warna·lengan itu di vendor asal, sudah ada PO Material aktif vendor asal untuk warna·lengan itu, atau
+// sudah ada PO Produksi untuk MRP ini di vendor asal/tujuan (qty & nilai PO itu tidak ikut berubah).
+// =========================================================================
+
+export async function sysadminSwitchAduanVendorAction(
+  mrpId: string,
+  warna: string,
+  lengan: Lengan,
+  fromVendor: string,
+  toVendor: string,
+  rollCount: number,
+  reason: string
+): Promise<ActionResult<{ moved: number }>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    if (fromVendor === toVendor) throw new Error("Vendor tujuan harus berbeda dari vendor asal.");
+    if (!Number.isInteger(rollCount) || rollCount <= 0) throw new Error("Jumlah roll harus bilangan bulat positif.");
+    const db = supabaseServer();
+
+    const { count: batchCount, error: bErr } = await db.from("production_batches").select("id", { count: "exact", head: true }).eq("mrp_id", mrpId).eq("vendor_produksi", fromVendor).eq("warna", warna).eq("lengan", lengan);
+    if (bErr) throw new Error(bErr.message);
+    if ((batchCount ?? 0) > 0) throw new Error("Vendor asal sudah punya roll produksi (Resting/Cutting) untuk warna ini -- batalkan dulu sebelum aduan pola dipindah.");
+
+    const { data: poRows, error: poErr } = await db.from("material_pos").select("id,status").eq("mrp_id", mrpId).eq("vendor_produksi", fromVendor).eq("warna", warna).eq("lengan", lengan).neq("status", "CANCELLED");
+    if (poErr) throw new Error(poErr.message);
+    if ((poRows?.length ?? 0) > 0) throw new Error(`Sudah ada PO Material aktif (${poRows![0].id}) untuk warna ini di vendor asal -- tarik kembali/batalkan PO itu dulu.`);
+
+    const { data: mpo, error: mErr } = await db.from("maklon_pos").select("id,vendor_produksi").eq("mrp_id", mrpId).in("vendor_produksi", [fromVendor, toVendor]);
+    if (mErr) throw new Error(mErr.message);
+    if ((mpo?.length ?? 0) > 0) throw new Error(`Sudah ada PO Produksi (${mpo![0].id}) untuk MRP ini di vendor asal/tujuan -- qty & nilainya tidak ikut berubah, batalkan PO itu dulu.`);
+
+    const { data: raw, error: aErr } = await db.from("aduan_pola_rows").select("*, aduan_pola_sizes(size,qty)").eq("mrp_id", mrpId);
+    if (aErr) throw new Error(aErr.message);
+    const aduanRows: AduanPolaRow[] = (raw ?? []).map((a) => ({
+      id: a.id,
+      lenganGroupId: a.lengan_group_id,
+      warna: a.warna,
+      lengan: a.lengan,
+      kode: a.kode,
+      qtyRoll: Number(a.qty_roll),
+      sizes: (a.aduan_pola_sizes ?? []).map((s: { size: string; qty: number }) => ({ size: s.size, qty: s.qty })),
+      qty: a.qty,
+      vendor: a.vendor,
+      ribAllocatedRoll: a.rib_allocated_roll == null ? undefined : Number(a.rib_allocated_roll),
+    }));
+    const scoped = aduanRows.filter((a) => a.vendor === fromVendor && a.warna === warna && a.lengan === lengan);
+    const available = scoped.reduce((s, a) => s + a.qtyRoll, 0);
+    if (rollCount > available) throw new Error(`Roll yang diminta (${rollCount}) melebihi roll tersedia (${available}) untuk warna ini di vendor asal.`);
+
+    const newIds = await Promise.all(scoped.map(() => nextReadableId("AD")));
+    const nextRows = reassignAduanRowsVendor(aduanRows, fromVendor, toVendor, warna, lengan, rollCount, newIds);
+    const before = new Map(aduanRows.map((a) => [a.id, a]));
+    for (const a of nextRows) {
+      const prev = before.get(a.id);
+      if (!prev) {
+        const { error } = await db
+          .from("aduan_pola_rows")
+          .insert({ id: a.id, lengan_group_id: a.lenganGroupId, mrp_id: mrpId, warna: a.warna, lengan: a.lengan, kode: a.kode, qty_roll: a.qtyRoll, qty: a.qty, vendor: a.vendor, rib_allocated_roll: a.ribAllocatedRoll ?? null });
+        if (error) throw new Error(error.message);
+        if (a.sizes.length > 0) {
+          const { error: sizeErr } = await db.from("aduan_pola_sizes").insert(a.sizes.map((s) => ({ aduan_row_id: a.id, size: s.size, qty: s.qty })));
+          if (sizeErr) throw new Error(sizeErr.message);
+        }
+      } else if (prev.vendor !== a.vendor || prev.qtyRoll !== a.qtyRoll || prev.qty !== a.qty) {
+        const { error } = await db.from("aduan_pola_rows").update({ vendor: a.vendor, qty_roll: a.qtyRoll, qty: a.qty }).eq("id", a.id);
+        if (error) throw new Error(error.message);
+      }
+    }
+    await writeAuditLog("SWITCH_ADUAN_VENDOR", "aduan_pola_rows", `${mrpId}|${warna}|${lengan}`, reason.trim(), { fromVendor, available }, { toVendor, rolls: rollCount });
+    await notifyAffected(`Aduan pola ${mrpId} · ${warna} · ${lengan}: ${rollCount} roll dipindah Sysadmin dari ${fromVendor} ke ${toVendor} — alasan: ${reason.trim()}.`, ["procurement", "ppic"]);
+    return { moved: rollCount };
   });
 }
