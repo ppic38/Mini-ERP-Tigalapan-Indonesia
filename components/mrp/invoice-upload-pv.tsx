@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { aliasesToSave, autoMap, buildPvDraft, evaluateMapping, findDuplicateInvoices, poColorsFromPo, type AliasMap, type GroupMapping, aliasKey } from "@/lib/invoice-import/mapping";
 import { lineOk, parseMoney, parseWeight, round2 } from "@/lib/invoice-import/parser-knitto";
@@ -50,6 +50,7 @@ export function InvoiceUploadPanel({
   const [mappings, setMappings] = useState<GroupMapping[]>([]);
   const [ackDup, setAckDup] = useState(false);
   const [showOk, setShowOk] = useState(false);
+  const [detailGroup, setDetailGroup] = useState<number | null>(null);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -346,50 +347,48 @@ export function InvoiceUploadPanel({
     );
   };
 
+  const priceCell = (g: ParsedInvoice["groups"][number] | null) => {
+    if (!g) return <span className="text-text-muted">—</span>;
+    const prices = Array.from(new Set(g.lines.map((l) => l.price)));
+    return prices.length === 1 ? <span>{fmt(prices[0])}</span> : <span className="rounded bg-danger-bg px-1 text-danger-fg">beragam</span>;
+  };
+
   const renderRow = (r: (typeof rows)[number]) => {
     const main = r.roll ?? r.rib!;
-    const g = parsed.groups[main.groupIndex];
-    const kg = round2(g.lines.reduce((a, l) => a + l.w, 0));
-    const prices = Array.from(new Set(g.lines.map((l) => l.price)));
-    const ribG = r.roll && r.rib ? parsed.groups[r.rib.groupIndex] : null;
-    const ribKg = ribG ? round2(ribG.lines.reduce((a, l) => a + l.w, 0)) : 0;
+    const rollG = r.roll ? parsed.groups[r.roll.groupIndex] : null;
+    const ribG = r.rib ? parsed.groups[r.rib.groupIndex] : null;
+    const kgOf = (g: ParsedInvoice["groups"][number] | null) => (g ? round2(g.lines.reduce((a, l) => a + l.w, 0)) : 0);
     const attention = rowNeedsAttention(r);
     const editing = editingKey === r.key || attention;
     const issues = rowIssues(r);
     const sum = main.alloc.reduce((a, x) => a + x.qty, 0);
     const targetText = main.alloc.map((a) => (main.kind === "roll" && main.alloc.length > 1 ? `${a.warna} (${a.qty})` : a.warna)).join(" + ");
     const unconfirmed = [r.roll, r.rib].some((m) => m && m.alloc.length > 0 && !m.confirmed);
+    const num = "px-2 py-3 text-right align-top font-mono text-[11.5px] text-[#31414F]";
     return (
-      <div key={r.key} className={"border-l-[3px] px-4 py-3 " + (attention ? "border-warning bg-[#FFFCF5]" : "border-transparent")}>
-        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_200px] items-start gap-x-4">
-          <div className="min-w-0">
-            <div className="truncate font-sans text-[13px] font-semibold text-text-primary">
+      <Fragment key={r.key}>
+        <tr className={"border-t border-[#F1F4F7] " + (attention ? "bg-[#FFFCF5]" : "")}>
+          <td className={"border-l-[3px] px-4 py-3 align-top " + (attention ? "border-warning" : "border-transparent")}>
+            <div className="font-sans text-[13px] font-semibold text-text-primary">
               {main.invoiceWarna} <span className="font-normal text-text-muted">{main.benang}</span>
-              {main.kind === "rib" && <span className="ml-1.5 rounded bg-warning-bg px-1.5 py-[1px] font-mono text-[9px] font-semibold text-warning-fg">RIB</span>}
+              {!r.roll && <span className="ml-1.5 rounded bg-warning-bg px-1.5 py-[1px] font-mono text-[9px] font-semibold text-warning-fg">RIB SAJA</span>}
             </div>
-            <div className="mt-1 flex flex-wrap gap-1">
-              {[
-                `${g.lines.length} ${main.kind === "rib" ? "baris" : "roll"}`,
-                `${fmt(kg)} kg`,
-                ...(ribG ? [`rib ${fmt(ribKg)} kg`] : []),
-                prices.length === 1 ? `Rp ${fmt(prices[0])}/kg` : "harga berbeda!",
-              ].map((t) => (
-                <span key={t} className={"rounded-md px-1.5 py-[2px] font-mono text-[10.5px] " + (t === "harga berbeda!" ? "bg-danger-bg text-danger-fg" : "bg-[#F1F5F9] text-[#475569]")}>
-                  {t}
-                </span>
-              ))}
-            </div>
-          </div>
-          <div className="min-w-0 font-sans text-xs">
+          </td>
+          <td className={num}>{rollG ? rollG.lines.length : "—"}</td>
+          <td className={num}>{rollG ? fmt(kgOf(rollG)) : "—"}</td>
+          <td className={num}>{priceCell(rollG)}</td>
+          <td className={num}>{ribG ? fmt(kgOf(ribG)) : "—"}</td>
+          <td className={num}>{priceCell(ribG)}</td>
+          <td className="min-w-[250px] px-3 py-2.5 align-top font-sans text-xs">
             {!editing ? (
-              <span className="text-[#31414F]">
-                <span className="text-text-muted">→</span> <b className="font-semibold">{targetText}</b>
+              <div className="pt-0.5 text-[#31414F]">
+                <b className="font-semibold">{targetText}</b>
                 {r.roll && r.rib && r.rib.alloc[0] && r.rib.alloc[0].warna !== main.alloc[0]?.warna && (
-                  <span className="ml-2 text-warning-fg">
-                    · rib → <b className="font-semibold">{r.rib.alloc[0].warna}</b>
-                  </span>
+                  <div className="mt-0.5 text-warning-fg">
+                    rib → <b className="font-semibold">{r.rib.alloc[0].warna}</b>
+                  </div>
                 )}
-              </span>
+              </div>
             ) : (
               <div className="space-y-1">
                 {(main.alloc.length ? main.alloc : [{ warna: "", qty: 0 }]).map((a, ai) => (
@@ -414,7 +413,7 @@ export function InvoiceUploadPanel({
                   </div>
                 )}
                 <div className="flex items-center gap-3 text-[10.5px]">
-                  {main.kind === "roll" && main.alloc.length > 1 && <span className={sum === g.lines.length ? "text-success-fg" : "font-semibold text-danger-fg"}>{sum}/{g.lines.length} roll</span>}
+                  {r.roll && main.alloc.length > 1 && rollG && <span className={sum === rollG.lines.length ? "text-success-fg" : "font-semibold text-danger-fg"}>{sum}/{rollG.lines.length} roll</span>}
                   {main.kind === "roll" && (
                     <button onClick={() => splitMore(main)} className="text-accent-blue hover:underline">
                       + pecah ke warna lain
@@ -423,35 +422,45 @@ export function InvoiceUploadPanel({
                 </div>
               </div>
             )}
-          </div>
-          <div className="flex items-center justify-end gap-2 whitespace-nowrap">
-            {unconfirmed ? (
-              <>
-                <span className="rounded-full bg-warning-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-warning-fg">{main.how === "fuzzy" ? "Mirip, cek dulu" : main.how === "variant" ? "Varian, cek dulu" : "Perlu konfirmasi"}</span>
-                <Button onClick={() => [r.roll, r.rib].forEach((m) => m && !m.confirmed && m.alloc.length > 0 && confirmMapping(m))} variant="primary" size="xs">
-                  Konfirmasi
-                </Button>
-              </>
-            ) : main.alloc.length === 0 ? (
-              <span className="font-sans text-[11px] font-medium text-danger-fg">belum dipetakan</span>
-            ) : (
-              <>
-                <span className="rounded-full bg-success-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-success-fg">✓ {main.how === "alias" ? "Tersimpan" : main.how === "exact" ? "Persis" : "Dikonfirmasi"}</span>
-                <button onClick={() => setEditingKey(editingKey === r.key ? null : r.key)} className="font-sans text-[11px] text-text-muted hover:text-accent-blue hover:underline">
-                  {editingKey === r.key ? "Tutup" : "Ubah"}
-                </button>
-              </>
-            )}
-          </div>
-        </div>
+          </td>
+          <td className="whitespace-nowrap px-4 py-2.5 text-right align-top">
+            <div className="flex items-center justify-end gap-2">
+              {unconfirmed ? (
+                <>
+                  <span className="rounded-full bg-warning-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-warning-fg">{main.how === "fuzzy" ? "Mirip, cek dulu" : main.how === "variant" ? "Varian, cek dulu" : "Perlu konfirmasi"}</span>
+                  <Button onClick={() => [r.roll, r.rib].forEach((m) => m && !m.confirmed && m.alloc.length > 0 && confirmMapping(m))} variant="primary" size="xs">
+                    Konfirmasi
+                  </Button>
+                </>
+              ) : main.alloc.length === 0 ? (
+                <span className="rounded-full bg-danger-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-danger-fg">Belum dipetakan</span>
+              ) : (
+                <>
+                  <span className="rounded-full bg-success-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-success-fg">✓ {main.how === "alias" ? "Tersimpan" : main.how === "exact" ? "Persis" : "Dikonfirmasi"}</span>
+                  <button onClick={() => setEditingKey(editingKey === r.key ? null : r.key)} className="font-sans text-[11px] text-text-muted hover:text-accent-blue hover:underline">
+                    {editingKey === r.key ? "Tutup" : "Ubah"}
+                  </button>
+                </>
+              )}
+            </div>
+          </td>
+        </tr>
         {issues.map((i, k) => (
-          <div key={k} className="mt-1 font-sans text-[11px] text-danger-fg">
-            {i.message}
-          </div>
+          <tr key={k} className="bg-[#FFFCF5]">
+            <td colSpan={8} className="border-l-[3px] border-warning px-4 pb-2 font-sans text-[11px] text-danger-fg">
+              {i.message}
+            </td>
+          </tr>
         ))}
-      </div>
+      </Fragment>
     );
   };
+
+  // Hanya pemeriksaan hasil BACA invoice (pemetaan/total sudah tampil di kotak status atas).
+  const failedChecks = checks.filter((c) => !c.ok);
+  const groupHasBad = (gi: number) => parsed.groups[gi].lines.some((l) => !lineOk(l));
+  const firstBad = parsed.groups.findIndex((_, gi) => groupHasBad(gi));
+  const activeGroup = detailGroup ?? (firstBad >= 0 ? firstBad : null);
 
   const blockers: string[] = [
     ...evalResult.issues.filter((i) => !/saran|belum dipetakan/i.test(i.message) && i.where !== "Total").map((i) => `${i.where}: ${i.message}`),
@@ -532,15 +541,35 @@ export function InvoiceUploadPanel({
             {attentionRows.length ? `${attentionRows.length} perlu perhatian` : `✓ ${rows.length} warna sudah cocok`}
           </span>
         </div>
-        <div className="divide-y divide-[#F1F4F7]">{attentionRows.map(renderRow)}</div>
-        {okRows.length > 0 && (
-          <>
-            <button onClick={() => setShowOk((v) => !v)} className="w-full border-t border-[#F1F4F7] px-4 py-2 text-left text-[11.5px] text-text-muted hover:bg-[#F7F9FB]">
-              {showOk ? "▾" : "▸"} {attentionRows.length ? `${okRows.length} warna lain sudah cocok` : "Lihat pemetaan"}
-            </button>
-            {showOk && <div className="divide-y divide-[#F1F4F7] border-t border-[#F1F4F7]">{okRows.map(renderRow)}</div>}
-          </>
-        )}
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr className="bg-[#F7F9FB] font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                <th className="px-4 py-2 text-left">Warna invoice</th>
+                <th className="px-2 py-2 text-right">Roll</th>
+                <th className="px-2 py-2 text-right">Berat (kg)</th>
+                <th className="px-2 py-2 text-right">Harga roll/kg</th>
+                <th className="px-2 py-2 text-right">Rib (kg)</th>
+                <th className="px-2 py-2 text-right">Harga rib/kg</th>
+                <th className="px-3 py-2 text-left">Warna MRP</th>
+                <th className="px-4 py-2 text-right">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {attentionRows.map(renderRow)}
+              {okRows.length > 0 && (
+                <tr className="border-t border-[#F1F4F7]">
+                  <td colSpan={8} className="p-0">
+                    <button onClick={() => setShowOk((v) => !v)} className="w-full px-4 py-2 text-left font-sans text-[11.5px] text-text-muted hover:bg-[#F7F9FB]">
+                      {showOk ? "▾" : "▸"} {attentionRows.length ? `${okRows.length} warna lain sudah cocok` : "Lihat pemetaan"}
+                    </button>
+                  </td>
+                </tr>
+              )}
+              {(showOk || okRows.length === 0) && okRows.map(renderRow)}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Rekonsiliasi */}
@@ -568,39 +597,49 @@ export function InvoiceUploadPanel({
         </div>
       </details>
 
-      {/* Detail: pemeriksaan, hasil baca, teks mentah */}
-      <details open={blockingChecks.length > 0} className="rounded-lg border border-[#CFE0EF] bg-white">
+      {/* Hasil baca: hanya yang gagal + pilih warna untuk melihat/mengedit baris */}
+      <details open={failedChecks.length > 0} className="rounded-lg border border-[#CFE0EF] bg-white">
         <summary className="cursor-pointer px-4 py-2.5 text-[12px] font-semibold text-text-primary">
-          Detail pemeriksaan &amp; hasil baca <span className="ml-1 font-normal text-text-muted">· {passed.length}/{allChecks.length} lulus · bisa diedit jika ada angka salah baca</span>
+          Hasil baca invoice{" "}
+          <span className={"ml-1 font-normal " + (failedChecks.length ? "text-danger-fg" : "text-text-muted")}>
+            · {failedChecks.length ? `${failedChecks.length} pemeriksaan gagal` : "semua pemeriksaan lulus"} · pilih warna untuk melihat atau mengedit angka
+          </span>
         </summary>
         <div className="border-t border-[#E8EEF4] px-4 py-3">
-          <ul className="space-y-0.5 text-[11.5px]">
-            {allChecks.map((c, k) => (
-              <li key={k} className={c.ok ? "text-success-fg" : "text-danger-fg"}>
-                {c.ok ? "✓" : "⚠"} <span className="font-medium">{c.label}</span> <span className="font-mono text-[10.5px] opacity-80">{c.detail}</span>
-              </li>
-            ))}
-          </ul>
-          <div className="mt-3 max-h-80 overflow-auto">
-            <table className="w-full border-collapse text-xs">
-              <thead>
-                <tr className="text-left text-[10px] uppercase tracking-wider text-text-muted">
-                  <th className="py-1">Warna / roll</th>
-                  <th className="py-1 text-right">Berat (kg)</th>
-                  <th className="py-1 text-right">Harga/kg</th>
-                  <th className="py-1 text-right">Jumlah</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {parsed.groups.map((g, gi) => (
-                  <GroupRows key={gi} g={g} gi={gi} editParsed={editParsed} />
-                ))}
-              </tbody>
-            </table>
+          {failedChecks.length > 0 && (
+            <ul className="mb-3 space-y-0.5 text-[11.5px] text-danger-fg">
+              {failedChecks.map((c, k) => (
+                <li key={k}>
+                  ⚠ <span className="font-medium">{c.label}</span> <span className="font-mono text-[10.5px]">{c.detail}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-text-muted">Warna</span>
+            <select
+              value={activeGroup ?? ""}
+              onChange={(e) => setDetailGroup(e.target.value === "" ? null : Number(e.target.value))}
+              className="input !py-1.5 text-[12px] font-medium"
+            >
+              <option value="">— pilih warna —</option>
+              {parsed.groups.map((g, gi) => (
+                <option key={gi} value={gi}>
+                  {g.kind === "rib" ? "RIB " : ""}
+                  {g.warna} {g.benang} · {g.lines.length} {g.kind === "rib" ? "baris" : "roll"}
+                  {groupHasBad(gi) ? " · ada yang tidak cocok" : ""}
+                </option>
+              ))}
+            </select>
+            {activeGroup != null && (
+              <button onClick={() => editParsed((d) => d.groups[activeGroup].lines.push({ w: 0, price: parsed.groups[activeGroup].lines[0]?.price ?? 0, amount: 0 }), true)} className="text-[11.5px] font-semibold text-accent-blue hover:underline">
+                + baris
+              </button>
+            )}
           </div>
+          {activeGroup != null && parsed.groups[activeGroup] && <GroupLines g={parsed.groups[activeGroup]} gi={activeGroup} editParsed={editParsed} />}
           {parsed.rawText && (
-            <details className="mt-2">
+            <details className="mt-3">
               <summary className="cursor-pointer text-[11px] text-text-muted">Teks mentah hasil baca</summary>
               <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap font-mono text-[10.5px] text-[#31414F]">{parsed.rawText}</pre>
             </details>
@@ -611,79 +650,94 @@ export function InvoiceUploadPanel({
   );
 }
 
-function GroupRows({ g, gi, editParsed }: { g: ParsedInvoice["groups"][number]; gi: number; editParsed: (fn: (d: ParsedInvoice) => void, structural?: boolean) => void }) {
+function GroupLines({ g, gi, editParsed }: { g: ParsedInvoice["groups"][number]; gi: number; editParsed: (fn: (d: ParsedInvoice) => void, structural?: boolean) => void }) {
+  const totalKg = round2(g.lines.reduce((a, l) => a + (Number.isFinite(l.w) ? l.w : 0), 0));
+  const totalAmt = g.lines.reduce((a, l) => a + (Number.isFinite(l.amount) ? l.amount : 0), 0);
   return (
-    <>
-      <tr>
-        <td colSpan={5} className="pt-2">
-          <span className={"mr-1.5 rounded px-1.5 py-[1px] font-mono text-[9.5px] font-semibold " + (g.kind === "rib" ? "bg-warning-bg text-warning-fg" : "bg-info-bg text-info-fg")}>{g.kind === "rib" ? "RIB" : "ROLL"}</span>
-          <span className="font-semibold text-text-primary">
-            {g.warna} {g.benang}
-          </span>
-          <button onClick={() => editParsed((d) => d.groups[gi].lines.push({ w: 0, price: g.lines[0]?.price ?? 0, amount: 0 }), true)} className="ml-3 text-[11px] font-semibold text-accent-blue underline">
-            + baris
-          </button>
-        </td>
-      </tr>
-      {g.lines.map((l, li) => {
-        const bad = !lineOk(l);
-        return (
-          <tr key={`${gi}-${li}-${l.w}-${l.price}-${l.amount}`} className={bad ? "bg-danger-bg/60" : l.fixed ? "bg-warning-bg/60" : ""}>
-            <td className="py-0.5 pl-3 font-mono text-[10.5px] text-text-muted">{li + 1}</td>
-            <td className="py-0.5 text-right">
-              <input
-                defaultValue={Number.isFinite(l.w) ? String(l.w).replace(".", ",") : ""}
-                onBlur={(e) => {
-                  const w = parseWeight(e.target.value);
-                  editParsed((d) => {
-                    const t = d.groups[gi].lines[li];
-                    t.w = w;
-                    t.amount = Math.round(w * t.price);
-                    delete t.fixed;
-                  });
-                }}
-                className="input w-24 !py-0.5 text-right font-mono text-[11.5px]"
-                inputMode="decimal"
-              />
-            </td>
-            <td className="py-0.5 text-right">
-              <input
-                defaultValue={Number.isFinite(l.price) ? String(l.price) : ""}
-                onBlur={(e) => {
-                  const p = parseMoney(e.target.value);
-                  editParsed((d) => {
-                    const t = d.groups[gi].lines[li];
-                    t.price = p;
-                    t.amount = Math.round(t.w * p);
-                    delete t.fixed;
-                  });
-                }}
-                className="input w-24 !py-0.5 text-right font-mono text-[11.5px]"
-                inputMode="numeric"
-              />
-            </td>
-            <td className="py-0.5 text-right">
-              <input
-                defaultValue={Number.isFinite(l.amount) ? String(l.amount) : ""}
-                onBlur={(e) =>
-                  editParsed((d) => {
-                    const t = d.groups[gi].lines[li];
-                    t.amount = parseMoney(e.target.value);
-                    delete t.fixed;
-                  })
-                }
-                className="input w-28 !py-0.5 text-right font-mono text-[11.5px]"
-                inputMode="numeric"
-              />
-            </td>
-            <td className="py-0.5 pl-2">
-              <button onClick={() => editParsed((d) => d.groups[gi].lines.splice(li, 1), true)} className="px-1 text-[13px] font-semibold text-danger-fg" title="Hapus baris" aria-label="Hapus baris">
-                ×
-              </button>
-            </td>
+    <div className="mt-3 max-h-80 overflow-auto rounded-md border border-[#E8EEF4]">
+      <table className="w-full border-collapse text-xs">
+        <thead className="sticky top-0 bg-[#F7F9FB]">
+          <tr className="text-[10px] font-medium uppercase tracking-wider text-text-muted">
+            <th className="w-10 px-3 py-1.5 text-left">{g.kind === "rib" ? "Baris" : "Roll"}</th>
+            <th className="px-2 py-1.5 text-right">Berat (kg)</th>
+            <th className="px-2 py-1.5 text-right">Harga/kg</th>
+            <th className="px-2 py-1.5 text-right">Jumlah (Rp)</th>
+            <th className="w-24 px-2 py-1.5 text-left">Status</th>
+            <th className="w-8" />
           </tr>
-        );
-      })}
-    </>
+        </thead>
+        <tbody>
+          {g.lines.map((l, li) => {
+            const bad = !lineOk(l);
+            return (
+              <tr key={`${gi}-${li}-${l.w}-${l.price}-${l.amount}`} className={"border-t border-[#F1F4F7] " + (bad ? "bg-danger-bg/50" : l.fixed ? "bg-warning-bg/50" : "")}>
+                <td className="px-3 py-1 font-mono text-[10.5px] text-text-muted">{li + 1}</td>
+                <td className="px-2 py-1 text-right">
+                  <input
+                    defaultValue={Number.isFinite(l.w) ? String(l.w).replace(".", ",") : ""}
+                    onBlur={(e) => {
+                      const w = parseWeight(e.target.value);
+                      editParsed((d) => {
+                        const t = d.groups[gi].lines[li];
+                        t.w = w;
+                        t.amount = Math.round(w * t.price);
+                        delete t.fixed;
+                      });
+                    }}
+                    className="input w-24 !py-0.5 text-right font-mono text-[11.5px]"
+                    inputMode="decimal"
+                  />
+                </td>
+                <td className="px-2 py-1 text-right">
+                  <input
+                    defaultValue={Number.isFinite(l.price) ? String(l.price) : ""}
+                    onBlur={(e) => {
+                      const pr = parseMoney(e.target.value);
+                      editParsed((d) => {
+                        const t = d.groups[gi].lines[li];
+                        t.price = pr;
+                        t.amount = Math.round(t.w * pr);
+                        delete t.fixed;
+                      });
+                    }}
+                    className="input w-24 !py-0.5 text-right font-mono text-[11.5px]"
+                    inputMode="numeric"
+                  />
+                </td>
+                <td className="px-2 py-1 text-right">
+                  <input
+                    defaultValue={Number.isFinite(l.amount) ? String(l.amount) : ""}
+                    onBlur={(e) =>
+                      editParsed((d) => {
+                        const t = d.groups[gi].lines[li];
+                        t.amount = parseMoney(e.target.value);
+                        delete t.fixed;
+                      })
+                    }
+                    className="input w-28 !py-0.5 text-right font-mono text-[11.5px]"
+                    inputMode="numeric"
+                  />
+                </td>
+                <td className="px-2 py-1 text-[10.5px]">{bad ? <span className="font-semibold text-danger-fg">Tidak cocok</span> : l.fixed ? <span className="text-warning-fg">Dikoreksi</span> : <span className="text-text-muted">—</span>}</td>
+                <td className="px-1 py-1">
+                  <button onClick={() => editParsed((d) => d.groups[gi].lines.splice(li, 1), true)} className="px-1 text-[14px] leading-none text-danger-fg" title="Hapus baris" aria-label="Hapus baris">
+                    ×
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr className="border-t-2 border-accent-blue bg-info-bg font-semibold text-info-fg">
+            <td className="px-3 py-1.5 font-mono text-[11px]">{g.lines.length}</td>
+            <td className="px-2 py-1.5 text-right font-mono text-[11.5px]">{fmt(totalKg)}</td>
+            <td />
+            <td className="px-2 py-1.5 text-right font-mono text-[11.5px]">{totalAmt.toLocaleString("id-ID")}</td>
+            <td colSpan={2} />
+          </tr>
+        </tfoot>
+      </table>
+    </div>
   );
 }
