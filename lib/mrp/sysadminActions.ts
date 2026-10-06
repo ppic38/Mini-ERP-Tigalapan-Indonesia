@@ -8,7 +8,8 @@ import { INTERNAL_ACCOUNTS, type InternalRole } from "../internal-auth";
 import { nextReadableId } from "./repo/ids";
 import { readPasswordCopy, savePasswordCopy } from "../auth/password-vault";
 import type { NotificationAudience } from "./types";
-import { weightVariance } from "./derive";
+import { resiGroupInvoiceLines, weightVariance } from "./derive";
+import { getFlowSnapshot } from "./repo/snapshot";
 import { loadWeightTolerancePct } from "./weightToleranceServer";
 import { assertRollCodesUnique } from "./rollCodeServer";
 
@@ -1434,5 +1435,374 @@ export async function sysadminRevertPoApprovalStepAction(type: SysadminApprovalP
       `Approval PO ${po.id} (${po.mrp_id}) dikembalikan satu langkah oleh Sysadmin (persetujuan ${last.role} dibatalkan) — alasan: ${reason.trim()}. PO kembali menunggu approval.`,
       Array.from(affected)
     );
+  });
+}
+
+
+// =========================================================================
+// Batalkan invoice material (Paying Voucher) yang SALAH INPUT -- owner 2026-10-06: "di proc itu proc
+// salah input invoice maka bisa dicancel jadi bentuk semula dan lakukan hal yang ulang lagi untuk
+// koreksi". Kebalikan PERSIS bookInvoiceAction (lib/mrp/actions.ts): invoice + warna + roll + item
+// tambahan dihapus (cascade), hitungan roll yang sudah ditagih di PO diturunkan lagi, alokasi roll
+// Aduan Pola (rib_allocated_roll) dikembalikan, dan "invoice pertama MRP" dikosongkan kalau ini
+// satu-satunya. Hasilnya PO kembali bisa diinvoice ulang oleh Procurement dengan data yang benar.
+//
+// HANYA untuk invoice berstatus INVOICED (belum dibayar Finance). Sudah dibayar/Delivery dst -> mundurkan
+// dulu langkah itu (Batalkan pembayaran di Finance, Kembalikan Delivery di Material Tracking).
+// =========================================================================
+
+export async function sysadminVoidMaterialInvoiceAction(invoiceId: string, reason: string): Promise<ActionResult<{ rollsReleased: number }>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: inv, error } = await db
+      .from("raw_material_invoices")
+      .select("id,po_id,mrp_id,status,qty_ready,total_biaya,kode_transaksi,no_invoice_vendor,supplier,vendor_produksi,source_claim_id")
+      .eq("id", invoiceId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!inv) throw new Error("Invoice tidak ditemukan.");
+    if (inv.status !== "INVOICED") {
+      throw new Error(`Invoice berstatus ${inv.status} -- hanya invoice yang BELUM dibayar (Invoiced) yang bisa dibatalkan. Mundurkan dulu langkah setelahnya (Batalkan pembayaran di Finance / Kembalikan Delivery di Material Tracking).`);
+    }
+    if (inv.source_claim_id) throw new Error("Invoice ini PV pengganti klaim material -- terikat ledger klaim/deposit, tidak bisa dibatalkan dari sini.");
+
+    const { data: deposits, error: depErr } = await db.from("vendor_deposits").select("id").eq("source_invoice_id", invoiceId).limit(1);
+    if (depErr) throw new Error(depErr.message);
+    if ((deposits?.length ?? 0) > 0) throw new Error("Invoice ini sudah punya entri deposit vendor -- hapus entri deposit itu dulu sebelum membatalkan invoice.");
+
+    const { data: po, error: poErr } = await db.from("material_pos").select("id,status,roll_count,invoiced_rolls").eq("id", inv.po_id).maybeSingle();
+    if (poErr) throw new Error(poErr.message);
+    if (!po) throw new Error("PO material invoice ini tidak ditemukan.");
+
+    const { data: colors, error: colorErr } = await db.from("raw_material_invoice_colors").select("id,warna,lengan").eq("invoice_id", invoiceId);
+    if (colorErr) throw new Error(colorErr.message);
+    const colorIds = (colors ?? []).map((c) => c.id);
+    const rollsByColorId = new Map<string, number>();
+    let touchedRolls = 0;
+    if (colorIds.length > 0) {
+      const { data: rolls, error: rollErr } = await db.from("raw_material_invoice_rolls").select("invoice_color_id,received_at,net_kg,code_roll").in("invoice_color_id", colorIds);
+      if (rollErr) throw new Error(rollErr.message);
+      for (const r of rolls ?? []) {
+        rollsByColorId.set(r.invoice_color_id, (rollsByColorId.get(r.invoice_color_id) ?? 0) + 1);
+        if (r.received_at || r.net_kg != null || r.code_roll) touchedRolls++;
+      }
+    }
+    if (touchedRolls > 0) throw new Error("Sudah ada roll yang diterima/ditimbang/diberi code roll di invoice ini -- tidak bisa dibatalkan dari sini.");
+
+    // 1) Turunkan hitungan roll yang sudah ditagih per warna·lengan di PO (kebalikan upsert di bookInvoiceAction).
+    const rollsByColorKey = new Map<string, number>();
+    const rollsByWarna = new Map<string, number>();
+    for (const c of colors ?? []) {
+      const n = rollsByColorId.get(c.id) ?? 0;
+      const key = `${c.warna}|${c.lengan}`;
+      rollsByColorKey.set(key, (rollsByColorKey.get(key) ?? 0) + n);
+      rollsByWarna.set(c.warna, (rollsByWarna.get(c.warna) ?? 0) + n);
+    }
+    const { data: invoicedRows, error: ibcErr } = await db.from("material_po_invoiced_by_color").select("color_key,invoiced_rolls").eq("material_po_id", po.id);
+    if (ibcErr) throw new Error(ibcErr.message);
+    for (const [colorKey, n] of rollsByColorKey) {
+      const prior = Number(invoicedRows?.find((r) => r.color_key === colorKey)?.invoiced_rolls ?? 0);
+      const next = Math.max(0, prior - n);
+      if (next === 0) await db.from("material_po_invoiced_by_color").delete().eq("material_po_id", po.id).eq("color_key", colorKey);
+      else await db.from("material_po_invoiced_by_color").update({ invoiced_rolls: next }).eq("material_po_id", po.id).eq("color_key", colorKey);
+    }
+
+    // 2) Turunkan invoiced_rolls PO; status "INVOICE" (lengkap) kembali "WAITING_INVOICE" kalau sekarang belum lengkap.
+    const qtyReady = Number(inv.qty_ready ?? 0);
+    const newInvoiced = Math.max(0, Number(po.invoiced_rolls ?? 0) - qtyReady);
+    const poPatch: Record<string, unknown> = { invoiced_rolls: newInvoiced };
+    if (po.status === "INVOICE" && newInvoiced < Number(po.roll_count)) poPatch.status = "WAITING_INVOICE";
+    const { error: poUpdErr } = await db.from("material_pos").update(poPatch).eq("id", po.id);
+    if (poUpdErr) throw new Error(poUpdErr.message);
+
+    // 3) Kembalikan alokasi roll Aduan Pola (rib_allocated_roll) -- bookInvoiceAction mengisinya berurutan
+    //    per baris, jadi dikurangi dari baris terakhir yang terisi supaya baris awal tetap penuh.
+    const { data: aduanRows } = await db.from("aduan_pola_rows").select("id,warna,rib_allocated_roll").eq("mrp_id", inv.mrp_id);
+    if (aduanRows) {
+      for (const [warna, n] of rollsByWarna) {
+        let remaining = n;
+        for (const a of [...aduanRows].reverse()) {
+          if (remaining <= 0) break;
+          if (a.warna !== warna) continue;
+          const allocated = Number(a.rib_allocated_roll ?? 0);
+          if (allocated <= 0) continue;
+          const take = Math.min(allocated, remaining);
+          remaining -= take;
+          await db.from("aduan_pola_rows").update({ rib_allocated_roll: allocated - take }).eq("id", a.id);
+          a.rib_allocated_roll = allocated - take;
+        }
+      }
+    }
+
+    // 4) Hapus invoice (warna, roll, item tambahan ikut terhapus -- on delete cascade).
+    const { error: delErr } = await db.from("raw_material_invoices").delete().eq("id", invoiceId);
+    if (delErr) throw new Error(delErr.message);
+
+    // 5) "Invoice pertama MRP" dikosongkan kalau ini satu-satunya invoice MRP tsb.
+    const { data: others } = await db.from("raw_material_invoices").select("id").eq("mrp_id", inv.mrp_id).limit(1);
+    if ((others?.length ?? 0) === 0) await db.from("mrp").update({ first_invoice_at: null }).eq("id", inv.mrp_id);
+
+    await writeAuditLog(
+      "VOID_MATERIAL_INVOICE",
+      "raw_material_invoices",
+      invoiceId,
+      reason.trim(),
+      { poId: inv.po_id, mrpId: inv.mrp_id, kodeTransaksi: inv.kode_transaksi, noInvoiceVendor: inv.no_invoice_vendor, supplier: inv.supplier, vendorProduksi: inv.vendor_produksi, qtyReady, totalBiaya: Number(inv.total_biaya ?? 0), colors: colors?.length ?? 0 },
+      { invoicedRollsPo: newInvoiced, poStatus: (poPatch.status as string | undefined) ?? po.status }
+    );
+    await notifyAffected(
+      `Invoice ${inv.kode_transaksi || invoiceId} (PO ${inv.po_id}, ${inv.mrp_id}) dibatalkan Sysadmin — alasan: ${reason.trim()}. ${qtyReady} roll kembali belum diinvoice; Procurement silakan buat Paying Voucher ulang dengan data yang benar.`,
+      ["procurement", "finance"]
+    );
+    return { rollsReleased: qtyReady };
+  });
+}
+
+
+// =========================================================================
+// Klaim material (Procurement > Klaim Material) -- mundurkan SATU tahap, owner 2026-10-06 ("kerjakan
+// semua"). Tahap klaim diturunkan dari kolom di raw_material_invoice_rolls (urutan prioritas SAMA
+// dengan materialClaimStage di lib/mrp/derive.ts): selesai > retur diterima > retur dikirim > retur
+// diminta > PV pengganti dibuat > klaim diterima. Yang dimundurkan = tahap TERTINGGI yang sedang aktif.
+//
+// TIDAK didukung (ditolak dengan pesan jelas): tahap "PV pengganti dibuat" ke atas yang memakai PV
+// pengganti -- itu terikat invoice pengganti + ledger deposit supplier (kredit/debit uang), dibongkar
+// terpisah dengan hati-hati, bukan lewat tombol mundur sederhana ini.
+// =========================================================================
+
+export type SysadminClaimStageResult = { revertedFrom: string };
+
+export async function sysadminRevertClaimStageAction(claimKey: string, reason: string): Promise<ActionResult<SysadminClaimStageResult>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const parts = claimKey.split("|");
+    if (parts.length !== 4) throw new Error("Kunci klaim tidak valid.");
+    const [invoiceId, warna, lengan, rollIndexStr] = parts;
+    const rollIndex = parseInt(rollIndexStr, 10);
+    const colorId = `${invoiceId}-${warna}-${lengan}`;
+    const db = supabaseServer();
+
+    const { data: roll, error } = await db
+      .from("raw_material_invoice_rolls")
+      .select("claim_resolved_at,claim_resolved_note,claim_retur_requested_at,claim_retur_note,claim_retur_delivered_at,claim_retur_delivered_note,claim_retur_received_at,claim_accepted_at,claim_replacement_invoice_id")
+      .eq("invoice_color_id", colorId)
+      .eq("roll_index", rollIndex)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!roll) throw new Error("Roll klaim tidak ditemukan.");
+
+    // Riwayat klaim (arsip) ikut dimundurkan, BEST-EFFORT -- gagal di sini tidak boleh menutupi koreksinya.
+    const historyPatch = async (resolved: boolean, patch: Record<string, unknown>) => {
+      try {
+        let q = db.from("material_claim_history").select("id").eq("invoice_id", invoiceId).eq("warna", warna).eq("lengan", lengan).eq("roll_index", rollIndex);
+        q = resolved ? q.not("resolved_at", "is", null) : q.is("resolved_at", null);
+        const { data } = await q.order("claimed_at", { ascending: false }).limit(1).maybeSingle();
+        if (data?.id) await db.from("material_claim_history").update(patch).eq("id", data.id);
+      } catch {
+        // arsip opsional.
+      }
+    };
+    const rollWrite = async (patch: Record<string, unknown>) => {
+      const { error: updErr } = await db.from("raw_material_invoice_rolls").update(patch).eq("invoice_color_id", colorId).eq("roll_index", rollIndex);
+      if (updErr) throw new Error(updErr.message);
+    };
+
+    let from: string;
+    if (roll.claim_resolved_at) {
+      if (roll.claim_replacement_invoice_id) throw new Error("Klaim ini diselesaikan lewat PV pengganti (terikat invoice pengganti & ledger deposit) -- tidak bisa dimundurkan dari sini.");
+      from = "Sudah ditindak";
+      await rollWrite({ claim_resolved_note: null, claim_resolved_at: null });
+      await historyPatch(true, { resolved_at: null, resolved_note: null, resolution_kind: null });
+    } else if (roll.claim_retur_received_at) {
+      from = "Retur diterima vendor";
+      await rollWrite({ claim_retur_received_at: null });
+      await historyPatch(false, { retur_received_at: null });
+    } else if (roll.claim_retur_delivered_at) {
+      from = "Retur dikirim";
+      await rollWrite({ claim_retur_delivered_note: null, claim_retur_delivered_at: null });
+      await historyPatch(false, { retur_delivered_note: null, retur_delivered_at: null });
+    } else if (roll.claim_retur_requested_at) {
+      from = "Retur diminta";
+      await rollWrite({ claim_retur_note: null, claim_retur_requested_at: null });
+      await historyPatch(false, { retur_note: null, retur_requested_at: null });
+    } else if (roll.claim_replacement_invoice_id) {
+      throw new Error("PV pengganti sudah dibuat untuk klaim ini (terikat invoice pengganti & ledger deposit) -- tidak bisa dimundurkan dari sini.");
+    } else if (roll.claim_accepted_at) {
+      from = "Klaim diterima";
+      await rollWrite({ claim_accepted_at: null });
+      await historyPatch(false, { accepted_at: null });
+    } else {
+      throw new Error("Klaim ini belum punya tahap yang bisa dimundurkan (masih Belum ditindak).");
+    }
+
+    await writeAuditLog("REVERT_CLAIM_STAGE", "raw_material_invoice_rolls", claimKey, reason.trim(), { stage: from }, { stage: "mundur 1 tahap" });
+    await notifyAffected(`Klaim material ${invoiceId} · ${warna} · ${lengan} roll #${rollIndex + 1} dimundurkan Sysadmin dari tahap "${from}" — alasan: ${reason.trim()}. Silakan proses ulang tahapnya.`, ["procurement"]);
+    return { revertedFrom: from };
+  });
+}
+
+// =========================================================================
+// Saldo deposit vendor (Finance > Saldo Deposit Vendor) -- hapus 1 entri ledger yang keliru, owner
+// 2026-10-06. Saldo selalu dihitung live dari SUM baris ledger (vendorDepositBalance), jadi menghapus
+// 1 baris langsung mengoreksi saldo. Dicatat penuh di log audit (isi baris sebelum dihapus).
+// =========================================================================
+
+export async function sysadminDeleteDepositEntryAction(entryId: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: row, error } = await db.from("vendor_deposits").select("id,supplier,kind,amount,source_claim_id,source_invoice_id,note").eq("id", entryId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!row) throw new Error("Entri deposit tidak ditemukan.");
+    const { error: delErr } = await db.from("vendor_deposits").delete().eq("id", entryId);
+    if (delErr) throw new Error(delErr.message);
+    await writeAuditLog("DELETE_DEPOSIT_ENTRY", "vendor_deposits", entryId, reason.trim(), row, null);
+    await notifyAffected(
+      `Entri saldo deposit ${row.supplier} (${row.kind === "CREDIT" ? "kredit masuk" : "dipakai bayar"} Rp ${Math.round(Number(row.amount)).toLocaleString("id-ID")}) dihapus Sysadmin — alasan: ${reason.trim()}. Saldo supplier dihitung ulang.`,
+      ["finance", "procurement"]
+    );
+  });
+}
+
+// =========================================================================
+// Batalkan invoice vendor produksi (per pcs) yang salah dibuat -- owner 2026-10-06. Invoice vendor
+// dibuat otomatis dari 1 grup resi (submitResiGroupInvoiceAction) dan TIDAK menyimpan tautan langsung
+// ke grup itu (cuma kolis.resi_invoiced_at yang ditandai), jadi grup asalnya DICARI lewat kecocokan
+// baris invoice (mrp·warna·lengan·usia·qty) dengan isi tiap grup resi vendor itu. Kalau grup asal tidak
+// bisa ditentukan PERSIS 1, aksi ditolak (supaya tidak salah mereset grup lain). Hanya untuk invoice yang
+// belum disetujui (SUBMITTED/REVISION), belum difinalkan HPP-nya, dan grupnya belum dibongkar Warehouse.
+// Hasilnya: invoice dihapus + grup resi bisa disubmit invoice-nya lagi oleh vendor.
+// =========================================================================
+
+export async function sysadminVoidVendorInvoiceAction(invoiceId: string, reason: string): Promise<ActionResult<{ kolisReset: number }>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: inv, error } = await db.from("vendor_invoices").select("id,vendor_produksi,status,total_tagihan,hpp_finalized_at").eq("id", invoiceId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!inv) throw new Error("Invoice vendor tidak ditemukan.");
+    if (inv.status !== "SUBMITTED" && inv.status !== "REVISION") {
+      throw new Error(`Invoice berstatus ${inv.status} -- hanya invoice yang belum disetujui (menunggu review/revisi) yang bisa dibatalkan. Kembalikan statusnya dulu (Kembalikan ke menunggu review / Batalkan pembayaran).`);
+    }
+    if (inv.hpp_finalized_at) throw new Error("HPP invoice ini sudah difinalkan -- tidak bisa dibatalkan.");
+
+    const { data: lineRows, error: lineErr } = await db.from("vendor_invoice_lines").select("mrp_id,warna,lengan,usia,qty").eq("vendor_invoice_id", invoiceId);
+    if (lineErr) throw new Error(lineErr.message);
+    const lineKey = (mrpId: string, warna: string, lengan: string, usia: string | null | undefined) => `${mrpId}|${warna}|${lengan}|${usia ?? ""}`;
+    const invoiceSig = new Map<string, number>();
+    for (const l of lineRows ?? []) invoiceSig.set(lineKey(l.mrp_id, l.warna, l.lengan, l.usia), (invoiceSig.get(lineKey(l.mrp_id, l.warna, l.lengan, l.usia)) ?? 0) + Number(l.qty));
+
+    const snapshot = await getFlowSnapshot();
+    const groups = new Map<string, string[]>();
+    for (const k of snapshot.deliveryKolis) {
+      if (k.vendorProduksi !== inv.vendor_produksi || !k.resiInvoicedAt) continue;
+      const gid = k.resiGroupId ?? k.id;
+      groups.set(gid, [...(groups.get(gid) ?? []), k.id]);
+    }
+    const matches: string[] = [];
+    for (const [gid, koliIds] of groups) {
+      const sig = new Map<string, number>();
+      for (const l of resiGroupInvoiceLines(koliIds, snapshot.deliveryKolis)) sig.set(lineKey(l.mrpId, l.warna, l.lengan, l.usia), l.qty);
+      if (sig.size !== invoiceSig.size) continue;
+      let same = true;
+      for (const [k, q] of invoiceSig) if (sig.get(k) !== q) same = false;
+      if (same) matches.push(gid);
+    }
+    if (matches.length !== 1) {
+      throw new Error(matches.length === 0 ? "Grup pengiriman asal invoice ini tidak ditemukan (isi invoice tidak cocok dengan grup resi manapun) -- tidak aman dibatalkan otomatis." : "Lebih dari satu grup pengiriman cocok dengan isi invoice ini -- tidak bisa dipastikan grup mana yang harus direset.");
+    }
+    const koliIds = groups.get(matches[0])!;
+
+    const { data: receipt } = await db.from("warehouse_receipts").select("id").eq("resi_group_id", matches[0]).maybeSingle();
+    if (receipt) throw new Error("Grup pengiriman asal invoice ini sudah dibongkar Warehouse -- batalkan bongkar koli dulu.");
+
+    const { error: resetErr } = await db.from("delivery_kolis").update({ resi_invoiced_at: null }).in("id", koliIds);
+    if (resetErr) throw new Error(resetErr.message);
+    const { error: delErr } = await db.from("vendor_invoices").delete().eq("id", invoiceId);
+    if (delErr) throw new Error(`Koli sudah direset tapi gagal menghapus invoice: ${delErr.message}`);
+
+    await writeAuditLog("VOID_VENDOR_INVOICE", "vendor_invoices", invoiceId, reason.trim(), { status: inv.status, totalTagihan: Number(inv.total_tagihan ?? 0), lines: lineRows?.length ?? 0, resiGroup: matches[0] }, { kolisReset: koliIds.length });
+    await notifyAffected(`Invoice vendor ${invoiceId} dibatalkan Sysadmin — alasan: ${reason.trim()}. Grup pengiriman bisa diajukan invoice-nya lagi.`, ["procurement"]);
+    await notifyAffected(`Invoice ${invoiceId} dibatalkan Sysadmin (alasan: ${reason.trim()}). Silakan submit ulang invoice dari halaman Pengiriman.`, ["vendorMaklon"], inv.vendor_produksi);
+    return { kolisReset: koliIds.length };
+  });
+}
+
+// =========================================================================
+// PO Produksi: buka lagi PO yang ditutup/dibatalkan, dan mundurkan "Mulai Produksi" (owner 2026-10-06).
+// =========================================================================
+
+/** Buka lagi PO Produksi yang sudah ditutup -- baik ditutup vendor ("Tutup PO") maupun dibatalkan Sysadmin
+ *  (kebalikan sysadminCancelMaklonPoAction). Hanya mengosongkan closed_at/close_reason; progres produksi
+ *  yang sudah ada tidak disentuh. */
+export async function sysadminReopenMaklonPoAction(poId: string, reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: po, error } = await db.from("maklon_pos").select("id,mrp_id,vendor_produksi,approved,closed_at,close_reason").eq("id", poId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!po) throw new Error("PO Produksi tidak ditemukan.");
+    if (!po.closed_at) throw new Error("PO ini tidak sedang ditutup.");
+    const { error: updErr } = await db.from("maklon_pos").update({ closed_at: null, close_reason: null }).eq("id", poId);
+    if (updErr) throw new Error(updErr.message);
+    await writeAuditLog("REOPEN_MAKLON_PO", "maklon_pos", poId, reason.trim(), { closedAt: po.closed_at, closeReason: po.close_reason }, { closedAt: null });
+    await notifyAffected(`PO Produksi ${poId} (${po.mrp_id}) dibuka lagi oleh Sysadmin — alasan: ${reason.trim()}.`, ["procurement", "finance"]);
+    if (po.approved && po.vendor_produksi) {
+      await notifyAffected(`PO Produksi ${poId} (${po.mrp_id}) dibuka lagi oleh Sysadmin (alasan: ${reason.trim()}). Produksi/pengiriman bisa dilanjutkan.`, ["vendorMaklon"], po.vendor_produksi);
+    }
+  });
+}
+
+/** Mundurkan SATU langkah status PO Produksi yang digerakkan vendor lewat advanceMaklonProductionAction:
+ *  PRODUCTION -> menunggu material ("Mulai Produksi" dibatalkan), DELIVERY -> PRODUCTION. Ditolak kalau
+ *  langkah sesudahnya sudah terjadi (ada roll di Resting/Cutting; ada koli yang sudah dikirim). */
+export async function sysadminRevertMaklonProductionStepAction(poId: string, reason: string): Promise<ActionResult<{ from: string; to: string }>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    const db = supabaseServer();
+    const { data: po, error } = await db.from("maklon_pos").select("id,mrp_id,vendor_produksi,status,approved,closed_at").eq("id", poId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!po) throw new Error("PO Produksi tidak ditemukan.");
+    if (po.closed_at) throw new Error("PO ini sudah ditutup/dibatalkan -- buka lagi dulu.");
+    let to: string;
+    if (po.status === "PRODUCTION") {
+      const { count, error: bErr } = await db.from("production_batches").select("id", { count: "exact", head: true }).eq("mrp_id", po.mrp_id).eq("vendor_produksi", po.vendor_produksi);
+      if (bErr) throw new Error(bErr.message);
+      if ((count ?? 0) > 0) throw new Error("Sudah ada roll yang masuk Resting/Cutting untuk PO ini -- batalkan dulu (Undo Resting/Cutting) sebelum Mulai Produksi dimundurkan.");
+      const { data: invs } = await db.from("raw_material_invoices").select("id").eq("mrp_id", po.mrp_id).eq("destination_vendor", po.vendor_produksi);
+      const invIds = (invs ?? []).map((i) => i.id);
+      let received = 0;
+      if (invIds.length > 0) {
+        const { data: colors } = await db.from("raw_material_invoice_colors").select("id").in("invoice_id", invIds);
+        const colorIds = (colors ?? []).map((c) => c.id);
+        if (colorIds.length > 0) {
+          const { count: rc } = await db.from("raw_material_invoice_rolls").select("id", { count: "exact", head: true }).in("invoice_color_id", colorIds).not("received_at", "is", null);
+          received = rc ?? 0;
+        }
+      }
+      to = received === 0 ? "FULL_WAITING_MATERIAL" : "PARTIAL_WAITING_MATERIAL";
+    } else if (po.status === "DELIVERY") {
+      const { count, error: kErr } = await db.from("delivery_kolis").select("id", { count: "exact", head: true }).eq("mrp_id", po.mrp_id).eq("vendor_produksi", po.vendor_produksi).not("delivered_at", "is", null);
+      if (kErr) throw new Error(kErr.message);
+      if ((count ?? 0) > 0) throw new Error("Sudah ada koli yang dikirim untuk PO ini -- batalkan pengirimannya dulu sebelum status dimundurkan.");
+      to = "PRODUCTION";
+    } else {
+      throw new Error(`Status ${po.status} tidak punya langkah Mulai Produksi/Kirim yang bisa dimundurkan dari sini.`);
+    }
+    const { error: updErr } = await db.from("maklon_pos").update({ status: to }).eq("id", poId);
+    if (updErr) throw new Error(updErr.message);
+    await writeAuditLog("REVERT_MAKLON_PRODUCTION_STEP", "maklon_pos", poId, reason.trim(), { status: po.status }, { status: to });
+    if (po.vendor_produksi) {
+      await notifyAffected(`Status PO Produksi ${poId} (${po.mrp_id}) dimundurkan Sysadmin dari ${po.status} ke ${to} — alasan: ${reason.trim()}.`, ["vendorMaklon"], po.vendor_produksi);
+    }
+    await notifyAffected(`Status PO Produksi ${poId} (${po.mrp_id}) dimundurkan Sysadmin dari ${po.status} ke ${to} — alasan: ${reason.trim()}.`, ["procurement"]);
+    return { from: po.status, to };
   });
 }

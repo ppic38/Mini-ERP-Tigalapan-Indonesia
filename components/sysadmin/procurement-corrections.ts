@@ -4,9 +4,13 @@ import type { MaklonPO, MaterialPO, RawMaterialInvoice } from "@/lib/mrp/types";
 import {
   sysadminCancelMaklonPoAction,
   sysadminCancelMaterialPoAction,
+  sysadminReopenMaklonPoAction,
+  sysadminRevertMaklonProductionStepAction,
   sysadminRecallMaterialPoAction,
+  sysadminRevertClaimStageAction,
   sysadminRevertInvoiceDeliveryAction,
   sysadminRevertPoApprovalStepAction,
+  sysadminVoidMaterialInvoiceAction,
 } from "@/lib/mrp/sysadminActions";
 
 // Daftar koreksi Sysadmin untuk modul Procurement (owner 2026-09-29: "mulai dari modul Procurement
@@ -101,6 +105,31 @@ export function maklonPoCorrections(p: MaklonPO): CorrectionAction[] {
       confirmText: p.id,
       run: (reason) => sysadminCancelMaklonPoAction(p.id, reason),
     },
+    {
+      key: "reopen",
+      label: "Buka lagi",
+      disabledReason: closed ? undefined : "PO tidak sedang ditutup",
+      title: `Buka lagi ${p.id}`,
+      impact: [
+        "PO yang ditutup (oleh vendor atau dibatalkan Sysadmin) dibuka kembali; produksi/pengiriman bisa dilanjutkan.",
+        "Progres produksi yang sudah ada tidak diubah. Procurement, Finance, dan vendor menerima notifikasi.",
+      ],
+      confirmLabel: "Buka lagi PO",
+      run: (reason) => sysadminReopenMaklonPoAction(p.id, reason),
+    },
+    {
+      key: "revert-production-step",
+      label: "Mundurkan status produksi",
+      disabledReason: closed ? "PO ditutup — buka lagi dulu" : p.status !== "PRODUCTION" && p.status !== "DELIVERY" ? "Hanya untuk PO berstatus Production/Delivery" : undefined,
+      title: `Mundurkan status produksi ${p.id}`,
+      impact: [
+        p.status === "DELIVERY" ? "Status DELIVERY kembali ke PRODUCTION." : "\"Mulai Produksi\" dibatalkan: status kembali ke menunggu material.",
+        "Ditolak kalau langkah sesudahnya sudah terjadi (ada roll di Resting/Cutting, atau koli sudah dikirim).",
+        "Vendor dan Procurement menerima notifikasi.",
+      ],
+      confirmLabel: "Mundurkan status",
+      run: (reason) => sysadminRevertMaklonProductionStepAction(p.id, reason),
+    },
   ];
 }
 
@@ -123,6 +152,51 @@ export function invoiceDeliveryCorrections(inv: RawMaterialInvoice): CorrectionA
       ],
       confirmLabel: "Kembalikan ke Paid",
       run: (reason) => sysadminRevertInvoiceDeliveryAction([inv.id], reason),
+    },
+  ];
+}
+
+/** "Batalkan invoice" untuk 1 Paying Voucher material yang salah input (owner 2026-10-06). Hanya invoice
+ *  yang BELUM dibayar (INVOICED); sesudahnya mundurkan dulu langkahnya. Server memeriksa ulang. */
+export function materialInvoiceVoidCorrections(inv: RawMaterialInvoice): CorrectionAction[] {
+  return [
+    {
+      key: "void-invoice",
+      label: "Batalkan invoice",
+      danger: true,
+      disabledReason: inv.status !== "INVOICED" ? "Sudah dibayar/lanjut — mundurkan dulu pembayarannya (Finance) atau Delivery-nya (Material Tracking)" : undefined,
+      title: `Batalkan invoice ${inv.kodeTransaksi || inv.id}`,
+      impact: [
+        "Invoice (beserta warna, roll, dan item tambahannya) dihapus. Roll-nya kembali berstatus belum diinvoice di PO.",
+        "Procurement bisa membuat Paying Voucher baru untuk PO yang sama dengan data yang benar.",
+        "Hanya untuk invoice yang belum dibayar Finance dan belum ada roll yang diterima. Procurement & Finance menerima notifikasi.",
+      ],
+      confirmLabel: "Batalkan invoice",
+      confirmText: inv.kodeTransaksi || inv.id,
+      run: (reason) => sysadminVoidMaterialInvoiceAction(inv.id, reason),
+    },
+  ];
+}
+
+/** "Mundurkan tahap" klaim material (owner 2026-10-06). `stageLabel` = label tahap saat ini di halaman Klaim
+ *  Material. Tahap PV pengganti ke atas tidak didukung (terikat invoice pengganti & ledger deposit). */
+export function claimStageCorrections(claimKey: string, stage: string, stageLabel: string): CorrectionAction[] {
+  let block: string | undefined;
+  if (stage === "BELUM") block = "Belum ada tahap yang bisa dimundurkan";
+  else if (stage === "PV_DIBUAT") block = "PV pengganti sudah dibuat — terikat invoice pengganti & ledger deposit, tidak bisa dimundurkan dari sini";
+  return [
+    {
+      key: "revert-claim",
+      label: "Mundurkan tahap",
+      disabledReason: block,
+      title: `Mundurkan tahap klaim (${stageLabel})`,
+      impact: [
+        "Tahap klaim yang sedang aktif dibatalkan satu langkah, sehingga Procurement bisa memprosesnya ulang.",
+        "Catatan/tanggal tahap itu dikosongkan; riwayat klaim (arsip) ikut dimundurkan.",
+        "Tidak menyentuh invoice pengganti atau saldo deposit. Procurement menerima notifikasi.",
+      ],
+      confirmLabel: "Mundurkan tahap",
+      run: (reason) => sysadminRevertClaimStageAction(claimKey, reason),
     },
   ];
 }

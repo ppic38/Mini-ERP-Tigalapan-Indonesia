@@ -2,6 +2,7 @@ import type { CorrectionAction } from "@/components/sysadmin/correction-dialog";
 import { formatRupiah } from "@/lib/mrp/derive";
 import type { MaklonInvoice, MaklonPO, RawMaterialInvoice, VendorDepositEntry, VendorInvoice } from "@/lib/mrp/types";
 import {
+  sysadminDeleteDepositEntryAction,
   sysadminRevertMaklonInvoiceAction,
   sysadminRevertMaterialInvoicePaidAction,
   sysadminRevertVendorInvoicePaidAction,
@@ -104,4 +105,24 @@ export function fobInvoiceCorrections(inv: MaklonInvoice, po: MaklonPO | undefin
     ];
   }
   return [];
+}
+
+/** Hapus 1 entri ledger saldo deposit vendor yang keliru (owner 2026-10-06). */
+export function depositEntryCorrections(entry: { id: string; kind: "CREDIT" | "DEBIT"; amount: number; supplier: string }): CorrectionAction[] {
+  return [
+    {
+      key: "delete-deposit",
+      label: "Hapus entri",
+      danger: true,
+      title: `Hapus entri deposit ${entry.supplier}`,
+      impact: [
+        `Entri ${entry.kind === "CREDIT" ? "kredit masuk" : "dipakai bayar"} ${formatRupiah(entry.amount)} dihapus PERMANEN dari ledger.`,
+        "Saldo supplier langsung terhitung ulang (saldo selalu dijumlah dari semua entri).",
+        "Isi entri yang dihapus tersimpan di Log Audit. Finance & Procurement menerima notifikasi.",
+      ],
+      confirmLabel: "Hapus entri",
+      confirmText: entry.id,
+      run: (reason) => sysadminDeleteDepositEntryAction(entry.id, reason),
+    },
+  ];
 }

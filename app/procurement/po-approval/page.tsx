@@ -1163,6 +1163,7 @@ export default function PoApprovalPage() {
                               // sama dengan Finance > PO Approval > PO Maklon (MaklonPoWarnaLenganTable).
                               <tr>
                                 <td colSpan={1 + visibleMaklonCols.size} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
+                                  <SysadminActionsBar actions={maklonPoCorrections(p)} />
                                   <MaklonPoWarnaLenganTable
                                     vendorProduksi={p.vendorProduksi}
                                     amount={p.amount}

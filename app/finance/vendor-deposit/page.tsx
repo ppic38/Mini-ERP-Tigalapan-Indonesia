@@ -14,6 +14,8 @@ import { getInvoicePaymentProofAction, getMaterialClaimPhotoAction } from "@/lib
 // catatan panjang di lib/mrp/clientFiles.ts.
 import { viewAndDownloadFile, openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
 import type { RawMaterialInvoice, VendorDepositEntry } from "@/lib/mrp/types";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { depositEntryCorrections } from "@/components/sysadmin/finance-corrections";
 
 /** `sourceClaimId` disimpan dgn format yang sama seperti key klaim di seluruh app
  *  ("invoiceId|warna|lengan|rollIndex", lihat parseClaimKey di lib/mrp/actions.ts -- tidak bisa
@@ -202,6 +204,7 @@ export default function VendorDepositPage() {
                       ) : (
                         <span className="font-sans text-[10.5px] text-text-muted">Foto klaim —</span>
                       )}
+                      <SysadminActionsBar actions={depositEntryCorrections(e)} compact />
                     </span>
                   </div>
                 );

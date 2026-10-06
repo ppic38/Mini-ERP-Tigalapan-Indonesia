@@ -19,7 +19,7 @@ import {
 } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
-import { invoiceAdjustmentCorrections, vendorInvoiceStatusCorrections } from "@/components/sysadmin/vendor-corrections";
+import { invoiceAdjustmentCorrections, vendorInvoiceStatusCorrections, vendorInvoiceVoidCorrections } from "@/components/sysadmin/vendor-corrections";
 import type { VendorInvoice, VendorInvoiceAdjustmentKind } from "@/lib/mrp/types";
 
 /** Panel "Invoice Vendor" — konten dipindah dari halaman standalone /procurement/invoice-vendor
@@ -346,7 +346,7 @@ export function InvoiceVendorReviewPanel() {
                       </div>
                     )}
                     {/* Koreksi Sysadmin (owner 2026-09-30): mundurkan invoice yang salah disetujui. */}
-                    <SysadminActionsBar actions={vendorInvoiceStatusCorrections(inv)} />
+                    <SysadminActionsBar actions={[...vendorInvoiceStatusCorrections(inv), ...vendorInvoiceVoidCorrections(inv)]} />
                   </div>
 
                   {/* Item 2026-09-10 (feedback: "Tambahkan informasi mengenai lampiran ekspedisi

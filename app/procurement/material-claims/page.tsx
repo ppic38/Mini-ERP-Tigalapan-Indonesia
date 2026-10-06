@@ -21,6 +21,8 @@ import { getMaterialClaimPhotoAction } from "@/lib/mrp/actions";
 // Revisi 2026-09-08 (bug fix popup blocked): openPreviewWindow/fillPreviewWindow -- lihat
 // catatan panjang di lib/mrp/clientFiles.ts.
 import { openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { claimStageCorrections } from "@/components/sysadmin/procurement-corrections";
 
 async function viewClaimPhoto(claimKey: string) {
   const win = openPreviewWindow();
@@ -208,7 +210,12 @@ export default function MaterialClaimsPage() {
       default: true,
       render: (r) => {
         const s = stage(r.key);
-        return <StatusPill tone={stageLabel[s].tone}>{stageLabel[s].label}</StatusPill>;
+        return (
+          <div>
+            <StatusPill tone={stageLabel[s].tone}>{stageLabel[s].label}</StatusPill>
+            <SysadminActionsBar actions={claimStageCorrections(r.key, s, stageLabel[s].label)} />
+          </div>
+        );
       },
     },
     {

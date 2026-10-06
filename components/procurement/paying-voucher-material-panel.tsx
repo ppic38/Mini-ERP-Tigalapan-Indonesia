@@ -17,6 +17,8 @@ import { getInvoicePaymentProofAction } from "@/lib/mrp/actions";
 // Revisi 2026-09-08 (bug fix popup blocked): openPreviewWindow/fillPreviewWindow -- lihat
 // catatan panjang di lib/mrp/clientFiles.ts.
 import { viewAndDownloadFile, openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { materialInvoiceVoidCorrections } from "@/components/sysadmin/procurement-corrections";
 
 async function viewPaymentProof(invoiceId: string) {
   const win = openPreviewWindow();
@@ -508,6 +510,7 @@ export function PayingVoucherMaterialPanel() {
                                           <tr>
                                             <td colSpan={5} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
                                               {invoiceColorBreakdown(inv)}
+                                              <SysadminActionsBar actions={materialInvoiceVoidCorrections(inv)} />
                                             </td>
                                           </tr>
                                         )}

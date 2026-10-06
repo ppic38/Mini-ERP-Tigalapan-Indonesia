@@ -7,6 +7,7 @@ import {
   sysadminUndoKoliShipmentAction,
   sysadminUndoReworkAction,
   sysadminUndoRollArrivalAction,
+  sysadminVoidVendorInvoiceAction,
 } from "@/lib/mrp/sysadminActions";
 import { sysadminReopenRollAction, sysadminUndoFgConfirmAction, sysadminUndoFinalAction } from "@/lib/mrp/actions";
 
@@ -241,6 +242,29 @@ export function invoiceAdjustmentCorrections(inv: VendorInvoice, adj: VendorInvo
       ],
       confirmLabel: "Hapus item",
       run: (reason) => sysadminDeleteVendorInvoiceAdjustmentAction(adj.id, reason),
+    },
+  ];
+}
+
+/** Batalkan invoice vendor yang salah dibuat (owner 2026-10-06) -- grup pengiriman asal direset supaya
+ *  vendor bisa submit ulang. Hanya sebelum disetujui; server memeriksa ulang (termasuk kecocokan grup). */
+export function vendorInvoiceVoidCorrections(inv: VendorInvoice): CorrectionAction[] {
+  const block = inv.status !== "SUBMITTED" && inv.status !== "REVISION" ? "Sudah disetujui/dibayar — kembalikan statusnya dulu" : undefined;
+  return [
+    {
+      key: "void-vendor-invoice",
+      label: "Batalkan invoice",
+      danger: true,
+      disabledReason: block,
+      title: `Batalkan invoice vendor ${inv.id}`,
+      impact: [
+        "Invoice dihapus, dan grup pengiriman asalnya bisa diajukan invoice-nya lagi oleh vendor dari halaman Pengiriman.",
+        "Hanya kalau grup asal bisa ditentukan pasti dan belum dibongkar Warehouse.",
+        "Procurement dan vendor menerima notifikasi.",
+      ],
+      confirmLabel: "Batalkan invoice",
+      confirmText: inv.id,
+      run: (reason) => sysadminVoidVendorInvoiceAction(inv.id, reason),
     },
   ];
 }

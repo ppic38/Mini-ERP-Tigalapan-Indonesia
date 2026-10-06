@@ -1,5 +1,18 @@
 # Migrasi Project — Status & Riwayat
 
+## Koreksi Sysadmin tambahan (2026-10-06, tanpa migration baru)
+Owner: "apa semua proses sudah bisa dikoreksi Sysadmin? mis. Procurement salah input invoice ... kerjakan semua".
+Semua pakai pola yang sama (registry components/sysadmin/*-corrections.ts + SysadminActionsBar, alasan wajib,
+log audit, notifikasi). Baru: **Batalkan invoice material** (sysadminVoidMaterialInvoiceAction -- kebalikan
+bookInvoiceAction, hanya status INVOICED & belum ada roll diterima), **Mundurkan tahap klaim material**
+(sysadminRevertClaimStageAction -- TIDAK mencakup tahap PV pengganti ke atas, terikat ledger deposit),
+**Hapus entri saldo deposit** (sysadminDeleteDepositEntryAction), **Batalkan invoice vendor produksi**
+(sysadminVoidVendorInvoiceAction -- grup resi asal dicari lewat kecocokan isi invoice, ditolak kalau tidak
+pasti 1), **Buka lagi PO Produksi** dan **Mundurkan status produksi** (sysadminReopenMaklonPoAction,
+sysadminRevertMaklonProductionStepAction). Belum ada: pindah vendor Aduan Pola, pilihan supplier/entitas
+per warna (Procurement masih bisa membalik sendiri / Tarik kembali PO).
+
+
 ## Sysadmin "Lihat Password" -- migration 0063 (2026-10-06)
 `supabase/migrations/0063_password_enc.sql`: kolom `password_enc` (salinan password TERENKRIPSI
 AES-256-GCM, kunci dari `SESSION_SECRET`, lihat `lib/auth/password-vault.ts`) di `internal_accounts`,
