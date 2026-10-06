@@ -19,12 +19,11 @@ const M = require(path.join(out, "mapping.js"));
 const A = require(path.join(out, "adapters.js"));
 
 const src = fs.readFileSync(path.join(here, "OH300726111.knitto.txt"), "utf8");
-const FILE = "OH300726111.YOGI01.MANUAL.pdf";
+const FILE = "OH300726111.MANUAL.pdf";
 const inv = P.parseKnittoInvoice(src, FILE);
 
 // ---------- 1. Parser: kriteria penerimaan invoice OH300726111 ----------
 assert.equal(inv.noPenjualan, "OH300726111");
-assert.equal(inv.tujuan, "YOGI01");
 assert.equal(inv.kodeTransfer, "MANUAL");
 assert.deepEqual(inv.tanggal, { d: 30, m: 7, y: 2026 });
 const rolls = inv.groups.filter((g) => g.kind === "roll");
@@ -60,8 +59,10 @@ assert.equal(P.normalizeNoPenjualan("OHO10826001"), "OH010826001");
 assert.equal(P.normalizeNoPenjualan("0H300726111"), "OH300726111");
 assert.equal(P.parseKnittoInvoice(src.replace("0H300726111", "OH3OO726111"), FILE).noPenjualan, "OH300726111");
 // nama file
-assert.deepEqual(P.parseFileName("C:\\x\\OH300726111.yogi01.7295 (1).pdf"), { noPenjualan: "OH300726111", tujuan: "YOGI01", kodeTransfer: "7295" });
-assert.deepEqual(P.parseFileName("scan-001.pdf"), { noPenjualan: "", tujuan: "", kodeTransfer: "" });
+assert.deepEqual(P.parseFileName("C:\\x\\OH300726111.7295 (1).pdf"), { noPenjualan: "OH300726111", kodeTransfer: "7295" });
+assert.deepEqual(P.parseFileName("OH300726111.YOGI01.7295.pdf"), { noPenjualan: "OH300726111", kodeTransfer: "7295" });
+assert.deepEqual(P.parseFileName("OH300726111.pdf"), { noPenjualan: "OH300726111", kodeTransfer: "" });
+assert.deepEqual(P.parseFileName("scan-001.pdf"), { noPenjualan: "", kodeTransfer: "" });
 console.log("nama file: OK");
 
 // ---------- 2. Adapter ----------
@@ -111,7 +112,7 @@ console.log("pemetaan persis + susunan PV: OK");
 const invHitam = P.parseKnittoInvoice(
   ["No Penjualan :OH300726222", "Tanggal :30-07-2026", "COMBED 24S - HITAM REAKTIF", "25 KG    100,000   2,500,000", "24 KG    100,000   2,400,000",
    "SUBTOTAL: Rp 4,900,000", "Total Bayar Rp. 4,900,000", "Total Berat", "Total Roll-an:   49 Kg (2)"].join("\n"),
-  "OH300726222.YOGI01.MANUAL.pdf"
+  "OH300726222.MANUAL.pdf"
 );
 maps = M.autoMap(invHitam, colors, {});
 assert.equal(maps[0].confirmed, false, "tanpa alias, nama beda tidak otomatis terkonfirmasi");
@@ -142,7 +143,7 @@ function mkInvoice(no, from, to) {
     for (let r = 0; r < 2; r++) { lines.push(`25 KG    100,000   2,500,000`); sub += 2500000; n++; }
   }
   lines.push(`SUBTOTAL: Rp ${sub.toLocaleString("en-US")}`, `Total Bayar Rp. ${sub.toLocaleString("en-US")}`, `Total Roll-an:   ${n * 25}.00 Kg (${n})`);
-  return P.parseKnittoInvoice(lines.join("\n"), `${no}.YOGI01.MANUAL.pdf`);
+  return P.parseKnittoInvoice(lines.join("\n"), `${no}.MANUAL.pdf`);
 }
 const batches = [mkInvoice("OH010826001", 1, 13), mkInvoice("OH010826002", 14, 26), mkInvoice("OH010826003", 27, 39)];
 for (const bi of batches) {
@@ -170,20 +171,17 @@ assert.ok(!eD.ok && eD.issues.some((i) => /sisa|teralokasi|dipetakan/i.test(i.me
 console.log("warna sudah penuh ditolak: OK");
 
 // warna di invoice yang tidak ada di PO -> tidak boleh hilang diam-diam
-const alien = P.parseKnittoInvoice(["No Penjualan :OH010826005", "COMBED 24S - UNGU LANGKA", "25 KG    100,000   2,500,000", "SUBTOTAL: Rp 2,500,000", "Total Bayar Rp. 2,500,000", "Total Roll-an:   25 Kg (1)"].join("\n"), "OH010826005.YOGI01.MANUAL.pdf");
+const alien = P.parseKnittoInvoice(["No Penjualan :OH010826005", "COMBED 24S - UNGU LANGKA", "25 KG    100,000   2,500,000", "SUBTOTAL: Rp 2,500,000", "Total Bayar Rp. 2,500,000", "Total Roll-an:   25 Kg (1)"].join("\n"), "OH010826005.MANUAL.pdf");
 const mA = M.autoMap(alien, csD, {});
 assert.equal(mA[0].alloc.length, 0);
 assert.ok(!M.evaluateMapping(alien, mA, csD).ok);
 console.log("warna tak dikenal diblokir: OK");
 
 // ---------- 5. Cek silang konteks ----------
-assert.ok(M.tujuanMatchesVendor("YOGI01", { key: "GI-01", name: "YOGI 01" }));
-assert.ok(M.tujuanMatchesVendor("gi-01", { key: "GI-01", name: "YOGI 01" }));
-assert.ok(!M.tujuanMatchesVendor("BAYU", { key: "GI-01", name: "YOGI 01" }));
 const existing = [{ id: "INV-1", poId: "PO-1", supplier: "KNITTO", noInvoiceVendor: "OH300726111" }];
 assert.equal(M.findDuplicateInvoices("oh300726111", "KNITTO", existing).length, 1);
 assert.equal(M.findDuplicateInvoices("OH300726999", "KNITTO", existing).length, 0);
-console.log("cek silang tujuan & duplikat: OK");
+console.log("cek duplikat: OK");
 
 fs.rmSync(out, { recursive: true, force: true });
 console.log("\nSEMUA UJI LULUS");

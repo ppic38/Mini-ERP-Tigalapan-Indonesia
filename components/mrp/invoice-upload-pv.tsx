@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { aliasesToSave, autoMap, buildPvDraft, evaluateMapping, findDuplicateInvoices, poColorsFromPo, tujuanMatchesVendor, type AliasMap, type GroupMapping, aliasKey } from "@/lib/invoice-import/mapping";
+import { aliasesToSave, autoMap, buildPvDraft, evaluateMapping, findDuplicateInvoices, poColorsFromPo, type AliasMap, type GroupMapping, aliasKey } from "@/lib/invoice-import/mapping";
 import { lineOk, parseMoney, parseWeight, round2 } from "@/lib/invoice-import/parser-knitto";
 import { pdfToText, terminateOcr } from "@/lib/invoice-import/pdf-text";
 import type { AppliedImport, InvoiceAdapter, ParsedInvoice } from "@/lib/invoice-import/types";
@@ -32,14 +32,12 @@ export function InvoiceUploadPanel({
   po,
   adapter,
   existingInvoices,
-  vendor,
   hasExistingEntries,
   onApply,
 }: {
   po: MaterialPO;
   adapter: InvoiceAdapter;
   existingInvoices: RawMaterialInvoice[];
-  vendor: { key: string; name: string };
   hasExistingEntries: boolean;
   onApply: (payload: UploadApplyPayload) => void;
 }) {
@@ -50,7 +48,6 @@ export function InvoiceUploadPanel({
   const [file, setFile] = useState<File | null>(null);
   const [parsed, setParsed] = useState<ParsedInvoice | null>(null);
   const [mappings, setMappings] = useState<GroupMapping[]>([]);
-  const [ackTujuan, setAckTujuan] = useState(false);
   const [ackDup, setAckDup] = useState(false);
   const [showOk, setShowOk] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
@@ -102,7 +99,6 @@ export function InvoiceUploadPanel({
       setFile(f);
       setParsed(inv);
       setMappings(autoMap(inv, poColors, aliases));
-      setAckTujuan(false);
       setAckDup(false);
       setPhase("review");
     } catch (err) {
@@ -193,13 +189,12 @@ export function InvoiceUploadPanel({
   // ---------- evaluasi ----------
   const evalResult = useMemo(() => (parsed ? evaluateMapping(parsed, mappings, poColors) : null), [parsed, mappings, poColors]);
   const checks = useMemo(() => (parsed ? adapter.validate(parsed) : []), [parsed, adapter]);
-  const tujuanState: "none" | "ok" | "mismatch" = !parsed?.tujuan ? "none" : tujuanMatchesVendor(parsed.tujuan, vendor) ? "ok" : "mismatch";
   const duplicates = useMemo(
     () => (parsed ? findDuplicateInvoices(parsed.noPenjualan, po.supplier, existingInvoices.map((i) => ({ id: i.id, poId: i.poId, supplier: i.supplier, noInvoiceVendor: i.noInvoiceVendor }))) : []),
     [parsed, po.supplier, existingInvoices]
   );
   const blockingChecks = checks.filter((c) => c.blocking && !c.ok);
-  const canApply = !!parsed && !!evalResult?.ok && blockingChecks.length === 0 && (tujuanState !== "mismatch" || ackTujuan) && (duplicates.length === 0 || ackDup) && !applying;
+  const canApply = !!parsed && !!evalResult?.ok && blockingChecks.length === 0 && (duplicates.length === 0 || ackDup) && !applying;
 
   async function handleApply() {
     if (!parsed || !file || !evalResult) return;
@@ -273,7 +268,7 @@ export function InvoiceUploadPanel({
             <>
               <div className="text-[13px] font-semibold text-text-primary">Tarik &amp; lepas PDF invoice {adapter.label} di sini, atau klik untuk memilih file</div>
               <div className="mt-1.5 text-[11.5px] text-text-muted">
-                Nama file: <span className="font-mono">NOPENJUALAN.TUJUAN.KODETRANSFER.pdf</span> — mis. <span className="font-mono">OH300726111.YOGI01.1234.pdf</span>
+                Nama file: <span className="font-mono">NOINVOICE.KODETRANSAKSI.pdf</span> — mis. <span className="font-mono">OH300726111.1234.pdf</span>
               </div>
               <div className="mt-1 text-[11px] text-text-muted">PDF dibaca langsung di browser Anda (tidak dikirim ke server). Hasil bisa dicek &amp; diedit sebelum dipakai.</div>
             </>
@@ -316,7 +311,6 @@ export function InvoiceUploadPanel({
       ok: evalResult.totalDiff === 0,
       detail: Number.isFinite(evalResult.totalDiff) ? `${formatRupiah(evalResult.pvTotal)} vs ${formatRupiah(evalResult.invoiceTotalBayar)}` : "Total Bayar tidak terbaca",
     },
-    ...(tujuanState === "ok" ? [{ label: "Tujuan nama file sesuai vendor PO", ok: true, detail: parsed.tujuan }] : []),
   ];
   const passed = allChecks.filter((c) => c.ok);
 
@@ -469,7 +463,7 @@ export function InvoiceUploadPanel({
           ))}
         </div>
 
-        {uniqueBlockers.length > 0 || tujuanState === "mismatch" || duplicates.length > 0 ? (
+        {uniqueBlockers.length > 0 || duplicates.length > 0 ? (
           <div className="border-t border-[#F0C4C4] bg-danger-bg/60 px-4 py-2.5">
             <div className="text-[11.5px] font-semibold text-danger-fg">Perlu diselesaikan sebelum dipakai</div>
             <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11.5px] text-danger-fg">
@@ -477,14 +471,6 @@ export function InvoiceUploadPanel({
                 <li key={k}>{b}</li>
               ))}
             </ul>
-            {tujuanState === "mismatch" && (
-              <label className="mt-2 flex items-start gap-2 text-[11.5px] text-danger-fg">
-                <input type="checkbox" className="mt-0.5" checked={ackTujuan} onChange={(e) => setAckTujuan(e.target.checked)} />
-                <span>
-                  Tujuan di nama file <b>{parsed.tujuan}</b> berbeda dengan vendor PO <b>{vendor.name}</b>. Invoice ini memang untuk {vendor.name} (nama file salah ketik) — lanjutkan.
-                </span>
-              </label>
-            )}
             {duplicates.length > 0 && (
               <label className="mt-2 flex items-start gap-2 text-[11.5px] text-danger-fg">
                 <input type="checkbox" className="mt-0.5" checked={ackDup} onChange={(e) => setAckDup(e.target.checked)} />
@@ -495,7 +481,6 @@ export function InvoiceUploadPanel({
         ) : (
           <div className="flex items-center gap-3 border-t border-[#BFE3CF] bg-success-bg/60 px-4 py-2.5">
             <span className="text-[12px] font-semibold text-success-fg">✓ Siap dipakai — {passed.length} pemeriksaan lulus, tidak ada selisih</span>
-            {tujuanState === "none" && <span className="text-[11px] text-text-muted">· nama file tanpa tujuan, mengikuti vendor PO</span>}
           </div>
         )}
         <div className="flex items-center gap-3 border-t border-[#E8EEF4] px-4 py-2.5">

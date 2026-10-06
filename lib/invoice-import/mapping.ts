@@ -307,14 +307,6 @@ export function evaluateMapping(inv: ParsedInvoice, mappings: GroupMapping[], po
 
 // ---------- Cek silang konteks PO ----------
 
-export type VendorNameInfo = { key: string; name: string };
-
-/** Tujuan di nama file (mis. YOGI01) cocok dengan vendor produksi PO ini (kunci atau nama)? */
-export function tujuanMatchesVendor(tujuan: string, vendor: VendorNameInfo): boolean {
-  const t = compact(tujuan);
-  return !!t && (t === compact(vendor.key) || t === compact(vendor.name));
-}
-
 export type DuplicateInvoice = { id: string; poId: string };
 
 /** Invoice supplier dengan nomor yang sama sudah pernah dibuat PV-nya (supplier yang sama)? */

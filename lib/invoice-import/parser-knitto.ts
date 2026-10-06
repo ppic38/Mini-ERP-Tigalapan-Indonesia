@@ -43,19 +43,23 @@ export function normalizeNoPenjualan(raw: string): string {
 export const normColor = (s: string) => String(s).toUpperCase().replace(/\s+/g, " ").trim();
 
 /**
- * "OH300726111.YOGI01.MANUAL.pdf" -> {noPenjualan:'OH300726111', tujuan:'YOGI01', kodeTransfer:'MANUAL'}.
+ * "OH300726111.1234.pdf" -> {noPenjualan:'OH300726111', kodeTransfer:'1234'} (format NOINVOICE.KODETRANSAKSI.pdf).
+ * Nama file lama dengan bagian tengah ("OH300726111.YOGI01.1234.pdf") tetap terbaca: bagian terakhir = kode,
+ * bagian tengah diabaikan (tujuan tidak lagi dipakai -- vendor tujuan ditentukan oleh PO yang dibuka).
  * Nama file yang bukan format ini (bagian pertama bukan No Penjualan) dibiarkan kosong, bukan ditebak.
  */
-export function parseFileName(name: string): { noPenjualan: string; tujuan: string; kodeTransfer: string } {
+export function parseFileName(name: string): { noPenjualan: string; kodeTransfer: string } {
   const base = String(name || "")
     .replace(/^.*[\\/]/, "")
     .replace(/\.pdf$/i, "")
     .replace(/(\s*-\s*copy)?(\s*\(\d+\))?\s*$/i, "") // akhiran salinan Windows/browser: " - Copy", " (1)"
     .trim();
-  const [no = "", tujuan = "", ...rest] = base.split(".");
+  const parts = base.split(".");
+  const no = parts[0] ?? "";
+  const kode = parts.length > 1 ? parts[parts.length - 1] : "";
   const noPenjualan = no.trim().toUpperCase();
-  if (!/^[A-Z]{2}\d{6,}$/.test(noPenjualan)) return { noPenjualan: "", tujuan: "", kodeTransfer: "" };
-  return { noPenjualan, tujuan: tujuan.trim().toUpperCase(), kodeTransfer: rest.join(".").trim().toUpperCase() };
+  if (!/^[A-Z]{2}\d{6,}$/.test(noPenjualan)) return { noPenjualan: "", kodeTransfer: "" };
+  return { noPenjualan, kodeTransfer: kode.trim().toUpperCase() };
 }
 
 function parseDate(text: string) {
@@ -74,7 +78,6 @@ export function parseKnittoInvoice(text: string, fileName = ""): ParsedInvoice {
     noPenjualan: "",
     tanggal: parseDate(text),
     customer: "",
-    tujuan: "",
     kodeTransfer: "",
     groups: [],
     totals: { subtotal: NaN, diskon: NaN, totalBayar: NaN, kgan: null, rollan: null },
@@ -85,9 +88,8 @@ export function parseKnittoInvoice(text: string, fileName = ""): ParsedInvoice {
   const mNo = text.match(/No\s*Penjualan\s*[:;]?\s*([A-Z0-9]{8,})/i);
   if (mNo) inv.noPenjualan = normalizeNoPenjualan(mNo[1]);
 
-  // Nama file NOPENJUALAN.TUJUAN.KODETRANSFER.pdf -> tujuan (vendor produksi) & kode transfer
+  // Nama file NOINVOICE.KODETRANSAKSI.pdf -> kode transaksi
   const fn = parseFileName(fileName);
-  inv.tujuan = fn.tujuan;
   inv.kodeTransfer = fn.kodeTransfer;
   if (!inv.noPenjualan) inv.noPenjualan = fn.noPenjualan;
   else if (fn.noPenjualan && fn.noPenjualan !== inv.noPenjualan) {

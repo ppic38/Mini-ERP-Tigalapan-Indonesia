@@ -17,7 +17,7 @@ import {
   MATERIAL_KATEGORI_URUTAN,
   type AduanMaterialKind,
 } from "@/lib/mrp/derive";
-import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import { ROLL_KG_ESTIMATE } from "@/lib/mrp/seed";
 import { useMrpStore, type MrpDetail } from "@/lib/mrp/store";
 import type { AddBuyItem, ColorEntry, Lengan, MaterialPO } from "@/lib/mrp/types";
 
@@ -416,7 +416,6 @@ export function PayingVoucherWizard({
             po={po}
             adapter={invoiceAdapter}
             existingInvoices={existingInvoices}
-            vendor={{ key: po.vendorProduksi, name: VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi }}
             hasExistingEntries={entries.length > 0 || addBuys.length > 0}
             onApply={applyUpload}
           />

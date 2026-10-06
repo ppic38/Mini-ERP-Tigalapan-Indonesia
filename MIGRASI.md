@@ -9,8 +9,8 @@ yang punya adapter, `lib/invoice-import/adapters.ts`; supplier lain tetap manual
 (`mapping.ts`; cocok persis/alias tersimpan = otomatis, nama mirip = wajib klik Konfirmasi, tak dikenal = diblokir) ->
 rekonsiliasi per warna (Total PO / Sudah PV / Invoice ini / Sisa) -> isi form PV (tetap bisa diedit, submit =
 `bookInvoiceAction` yang sama). Invoice bertahap didukung (roll tiap warna dibatasi sisa PO; sisa menunggu invoice
-berikutnya). Cek silang: Total PV = Total Bayar invoice, jumlah/berat roll & rib = Total Roll-an/KG-an, tujuan di nama
-file (NOPENJUALAN.TUJUAN.KODETRANSFER.pdf) = vendor PO, nomor invoice ganda. File invoice jadi lampiran PV (maks ~1,4 MB).
+berikutnya). Cek silang: Total PV = Total Bayar invoice, jumlah/berat roll & rib = Total Roll-an/KG-an, nomor invoice ganda (nama file
+NOINVOICE.KODETRANSAKSI.pdf; vendor tujuan mengikuti PO yang dibuka, tidak dibaca dari nama file). File invoice jadi lampiran PV (maks ~1,4 MB).
 **Migration 0064** (`supplier_color_aliases`): ingatan pemetaan nama warna per supplier -- OPSIONAL, fitur tetap jalan
 tanpanya (hanya tidak teringat untuk invoice berikutnya). Jalankan MANUAL di SQL Editor. Tes logika:
 `node scripts/invoice-import-test/run.mjs` (fixture dummy, tanpa data invoice asli).

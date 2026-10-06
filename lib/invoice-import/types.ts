@@ -19,8 +19,7 @@ export type ParsedInvoice = {
   noPenjualan: string;
   tanggal: { d: number; m: number; y: number } | null;
   customer: string;
-  /** Dari NAMA FILE (NOPENJUALAN.TUJUAN.KODETRANSFER.pdf) -- tidak ada di isi invoice. */
-  tujuan: string;
+  /** Dari NAMA FILE (NOINVOICE.KODETRANSAKSI.pdf) -- tidak ada di isi invoice. */
   kodeTransfer: string;
   groups: ParsedInvoiceGroup[];
   totals: {
