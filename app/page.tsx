@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
 import { INTERNAL_ACCOUNTS, type InternalRole } from "@/lib/internal-auth";
 import { useVendorAuthStore } from "@/lib/mrp/vendor-auth-store";
+import { internalRoleRequiresUsernameAction } from "@/lib/auth/actions";
 
 // Urutan kartu (owner 2026-09-27): ppic, procurement, finance, produksi, warehouse, scm, general
 // manager, sysadmin, lalu Vendor Produksi (kartu terpisah, selalu paling akhir -- lihat di bawah).
@@ -126,7 +127,8 @@ export default function ModuleSelectPage() {
     if (ok) {
       router.push(account.homeHref);
     } else {
-      setError(trimmedUsername ? "Username atau password salah." : "Password salah.");
+      if (trimmedUsername) setError("Username atau password salah.");
+      else setError((await internalRoleRequiresUsernameAction(selectedRole)) ? "Modul ini memakai akun masing-masing. Masukkan username Anda." : "Password salah.");
     }
   }
 

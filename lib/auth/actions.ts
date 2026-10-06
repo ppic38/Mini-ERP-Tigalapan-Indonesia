@@ -26,9 +26,29 @@ const INTERNAL_ROLE_ENV_VAR: Record<InternalRole, string> = {
  *  Role yang baru login DITAMBAHKAN ke daftar role yang sudah aktif (kalau ada), bukan
  *  menggantikannya -- supaya login ke modul lain di tab lain tidak melogout-kan modul yang
  *  sedang aktif di tab sebelumnya (lihat catatan desain di lib/auth/session.ts). */
+/** Modul ini sudah punya akun bernama AKTIF (internal_role_users, migration 0060)? Sysadmin selalu
+ *  dikecualikan (akunnya cuma satu, memang tanpa username). Error query (mis. migration belum
+ *  jalan) dianggap "belum ada" supaya login tidak ikut terkunci. */
+async function roleUsesNamedAccounts(role: InternalRole): Promise<boolean> {
+  if (role === "sysadmin") return false;
+  const { data, error } = await supabaseServer().from("internal_role_users").select("id").eq("role", role).eq("active", true).limit(1);
+  return !error && (data?.length ?? 0) > 0;
+}
+
+/** Dipakai halaman login untuk memilih pesan error yang tepat saat username kosong. */
+export async function internalRoleRequiresUsernameAction(role: InternalRole): Promise<boolean> {
+  return roleUsesNamedAccounts(role);
+}
+
 export async function loginInternalAction(role: InternalRole, password: string): Promise<LoginResult> {
   const account = INTERNAL_ACCOUNTS.find((a) => a.role === role);
   if (!account) return { ok: false, error: "Modul tidak dikenali." };
+
+  // Revisi 2026-10-06 (owner: password bersama modul tidak dipakai lagi kalau sudah ada akun masing-
+  // masing, supaya tiap aksi tercatat atas nama orangnya): selama modul punya MINIMAL 1 akun bernama
+  // aktif, login lewat password bersama (tanpa username) DITOLAK -- kecuali Sysadmin. Kalau semua akun
+  // bernama dinonaktifkan/dihapus, otomatis kembali boleh (jalur darurat).
+  if (await roleUsesNamedAccounts(role)) return { ok: false, error: "Modul ini memakai akun masing-masing. Masukkan username Anda." };
 
   // Migrasi password modul internal dari env var ke database (migration 0056, Sysadmin) -- kalau
   // Sysadmin SUDAH pernah set password lewat portalnya, baris `internal_accounts` untuk role ini
