@@ -53,8 +53,7 @@ function WelcomePanel() {
 
   return (
     <div className="text-center lg:text-left">
-      <div className="welcome-fade-up font-sans text-[13px] font-semibold uppercase tracking-[0.2em] text-white/55">Tigalapan Indonesia</div>
-      <div className="welcome-fade-up mt-4 font-heading text-[22px] font-medium text-white/80 sm:text-[26px]" style={{ animationDelay: "0.15s" }}>
+      <div className="welcome-fade-up font-heading text-[22px] font-medium text-white/80 sm:text-[26px]" style={{ animationDelay: "0.15s" }}>
         Selamat Datang di
       </div>
       <h1 className="mt-1 min-h-[1.15em] font-heading text-[40px] font-bold leading-[1.1] text-white sm:text-[52px] lg:text-[58px]">
