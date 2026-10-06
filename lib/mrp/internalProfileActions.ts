@@ -6,6 +6,7 @@ import { supabaseServer } from "../supabase/server";
 import type { ActionResult } from "./action-result";
 import type { InternalRole } from "../internal-auth";
 import { nextReadableId } from "./repo/ids";
+import { savePasswordCopy } from "../auth/password-vault";
 
 /** Profil Saya (self-service) -- owner 2026-09-29: "buat untuk akun dari tiap modul itu bisa
  *  lihat akun profile ... username, Full Name, Password. Dan bisa edit itu". BEDA dari Sysadmin
@@ -73,6 +74,8 @@ export async function updateMyInternalProfileAction(
 
     const { error: updErr } = await db.from("internal_role_users").update(updates).eq("id", actor.internalUserId);
     if (updErr) throw new Error(updErr.message);
+    // Salinan terenkripsi supaya Sysadmin bisa melihat password terbaru (lib/auth/password-vault.ts).
+    if (patch.newPassword) await savePasswordCopy("internal_role_users", actor.internalUserId, patch.newPassword);
 
     // Best-effort, sama pola logInternalAction di lib/mrp/actions.ts -- tidak melempar error kalau gagal.
     try {

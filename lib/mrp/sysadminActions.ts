@@ -6,6 +6,7 @@ import { supabaseServer } from "../supabase/server";
 import type { ActionResult } from "./action-result";
 import { INTERNAL_ACCOUNTS, type InternalRole } from "../internal-auth";
 import { nextReadableId } from "./repo/ids";
+import { readPasswordCopy, savePasswordCopy } from "../auth/password-vault";
 import type { NotificationAudience } from "./types";
 import { weightVariance } from "./derive";
 import { loadWeightTolerancePct } from "./weightToleranceServer";
@@ -82,6 +83,7 @@ export async function setInternalAccountPasswordAction(role: InternalRole, newPa
     const hash = await bcrypt.hash(newPassword, 10);
     const { error } = await db.from("internal_accounts").upsert({ role, password_hash: hash, updated_at: new Date().toISOString() });
     if (error) throw new Error(error.message);
+    await savePasswordCopy("internal_accounts", role, newPassword);
     await writeAuditLog("SET_INTERNAL_PASSWORD", "internal_accounts", role, reason.trim(), { hadDbPassword: !!before }, { hadDbPassword: true });
   });
 }
@@ -108,6 +110,7 @@ export async function resetVendorPasswordAction(vendorId: string, newPassword: s
     const hash = await bcrypt.hash(newPassword, 10);
     const { error } = await db.from("vendors_produksi").update({ password_hash: hash }).eq("id", vendorId);
     if (error) throw new Error(error.message);
+    await savePasswordCopy("vendors_produksi", vendorId, newPassword);
     await writeAuditLog("RESET_VENDOR_PASSWORD", "vendors_produksi", vendorId, reason.trim(), null, { vendorName: vendor.name });
   });
 }
@@ -242,6 +245,7 @@ export async function sysadminAddInternalRoleUserAction(input: { role: InternalR
     const hash = await bcrypt.hash(input.password, 10);
     const { error } = await db.from("internal_role_users").insert({ id, role: input.role, username, name: input.name.trim(), password_hash: hash, active: true });
     if (error) throw new Error(error.message);
+    await savePasswordCopy("internal_role_users", id, input.password);
     await writeAuditLog("ADD_INTERNAL_ROLE_USER", "internal_role_users", id, reason.trim(), null, { role: input.role, username, name: input.name.trim() });
   });
 }
@@ -277,7 +281,23 @@ export async function sysadminResetInternalRoleUserPasswordAction(id: string, ne
     const hash = await bcrypt.hash(newPassword, 10);
     const { error } = await db.from("internal_role_users").update({ password_hash: hash }).eq("id", id);
     if (error) throw new Error(error.message);
+    await savePasswordCopy("internal_role_users", id, newPassword);
     await writeAuditLog("RESET_INTERNAL_ROLE_USER_PASSWORD", "internal_role_users", id, reason.trim(), null, { username: row.username });
+  });
+}
+
+/** "Lihat Password" -- owner 2026-10-06 (lihat lib/auth/password-vault.ts). `password` null =
+ *  salinan belum tersimpan (password di-set SEBELUM fitur ini, atau masih dari env var) -- cukup
+ *  di-set/di-reset sekali supaya bisa dilihat. Tiap tampil tercatat di sysadmin_audit_log (siapa
+ *  yang melihat, akun mana -- passwordnya sendiri TIDAK ikut dicatat). */
+export async function sysadminRevealPasswordAction(kind: "internal_account" | "internal_user" | "vendor", id: string): Promise<ActionResult<{ password: string | null }>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    const table = kind === "internal_account" ? "internal_accounts" : kind === "internal_user" ? "internal_role_users" : "vendors_produksi";
+    const res = await readPasswordCopy(table, id);
+    if (!res.found && kind !== "internal_account") throw new Error("Akun tidak ditemukan.");
+    await writeAuditLog("REVEAL_PASSWORD", table, id, "Lihat password", null, { shown: res.password != null });
+    return { password: res.password };
   });
 }
 

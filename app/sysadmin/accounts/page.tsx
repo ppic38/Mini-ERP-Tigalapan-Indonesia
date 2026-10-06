@@ -14,6 +14,7 @@ import {
   sysadminAddInternalRoleUserAction,
   sysadminDeleteInternalRoleUserAction,
   sysadminResetInternalRoleUserPasswordAction,
+  sysadminRevealPasswordAction,
   sysadminUpdateInternalRoleUserAction,
   type InternalAccountRow,
   type InternalRoleUserRow,
@@ -67,6 +68,66 @@ function PasswordModal({ title, onSave, onClose }: { title: string; onSave: (pas
           </button>
           <Button onClick={handleSave} disabled={saving} variant="primary" size="sm">
             {saving ? "Menyimpan…" : "Simpan Password"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type RevealTarget = { kind: "internal_account" | "internal_user" | "vendor"; id: string; title: string };
+
+/** "Lihat Password" (owner 2026-10-06: "sysadmin bisa melihat password terbaru dari semua modul
+ *  akun ... ada user yang tanya apa passnya ini ke saya"). Password diambil dari salinan terenkripsi
+ *  (lib/auth/password-vault.ts) baru saat modal ini dibuka, tidak disimpan di state halaman, dan
+ *  tiap tampil tercatat di Log Audit. */
+function RevealPasswordModal({ target, onClose }: { target: RevealTarget; onClose: () => void }) {
+  const [state, setState] = useState<{ loading: boolean; password: string | null; error: string | null }>({ loading: true, password: null, error: null });
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void sysadminRevealPasswordAction(target.kind, target.id).then((res) => {
+      if (cancelled) return;
+      setState(res.ok ? { loading: false, password: res.data.password, error: null } : { loading: false, password: null, error: res.error });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [target.kind, target.id]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={onClose}>
+      <div className="w-full max-w-[420px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
+        <div className="border-b border-border-subtle px-5 py-3.5 font-sans text-[13px] font-semibold text-text-primary">Password — {target.title}</div>
+        <div className="px-5 py-4">
+          {state.loading && <div className="font-sans text-xs text-text-muted">Memuat…</div>}
+          {state.error && <div className="rounded-md border border-danger bg-danger-bg px-3 py-2 font-sans text-[11.5px] text-danger-fg">{state.error}</div>}
+          {!state.loading && !state.error && state.password != null && (
+            <div className="flex items-center gap-2">
+              <input readOnly value={state.password} onFocus={(e) => e.currentTarget.select()} className="input w-full font-mono" />
+              <Button
+                onClick={() => {
+                  void navigator.clipboard?.writeText(state.password ?? "");
+                  setCopied(true);
+                }}
+                variant="ghost"
+                size="sm"
+              >
+                {copied ? "Tersalin" : "Salin"}
+              </Button>
+            </div>
+          )}
+          {!state.loading && !state.error && state.password == null && (
+            <div className="rounded-md border border-[#F0DDB0] bg-warning-bg px-3 py-2 font-sans text-[11.5px] leading-[1.5] text-warning-fg">
+              Password belum tersimpan untuk dilihat (di-set sebelum fitur ini ada, atau modul ini masih memakai password dari env var Vercel). Ganti/reset password akun ini sekali, setelah itu bisa dilihat di sini.
+            </div>
+          )}
+          <div className="mt-2 font-sans text-[10.5px] text-text-muted">Setiap kali dilihat tercatat di Log Audit.</div>
+        </div>
+        <div className="flex justify-end border-t border-border-subtle px-5 py-3.5">
+          <Button onClick={onClose} variant="primary" size="sm">
+            Tutup
           </Button>
         </div>
       </div>
@@ -272,6 +333,7 @@ export default function SysadminAccountsPage() {
   const [editingInternal, setEditingInternal] = useState<InternalAccountRow | null>(null);
   const [editingVendor, setEditingVendor] = useState<VendorAccountRow | null>(null);
   const [vendorSearch, setVendorSearch] = useState("");
+  const [revealing, setRevealing] = useState<RevealTarget | null>(null);
 
   // Akun login modul internal (migration 0060) -- lihat catatan panjang di
   // lib/mrp/sysadminActions.ts kenapa ini SATU-SATUNYA jalur kelola (tidak ada portal self-service
@@ -342,7 +404,10 @@ export default function SysadminAccountsPage() {
                 {selectedAccount?.hasDbPassword ? <span className="font-semibold text-success-fg">Database</span> : <span className="text-warning-fg">Env var (belum diatur)</span>}
                 {" · "}Terakhir diubah: {fmtTime(selectedAccount?.updatedAt)}
               </span>
-              <Button onClick={() => selectedAccount && setEditingInternal(selectedAccount)} variant="ghost" size="xs" className="ml-auto">
+              <Button onClick={() => setRevealing({ kind: "internal_account", id: selectedRole, title: `Password Modul ${selectedLabel}` })} variant="ghost" size="xs" className="ml-auto">
+                Lihat Password
+              </Button>
+              <Button onClick={() => selectedAccount && setEditingInternal(selectedAccount)} variant="ghost" size="xs">
                 Ganti Password
               </Button>
             </div>
@@ -359,7 +424,7 @@ export default function SysadminAccountsPage() {
                 + Tambah Akun
               </Button>
             </div>
-            <div className="grid grid-cols-[1fr_1fr_100px_260px] gap-x-4 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+            <div className="grid grid-cols-[1fr_1fr_100px_370px] gap-x-4 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
               <span>Username</span>
               <span>Nama</span>
               <span>Status</span>
@@ -370,11 +435,14 @@ export default function SysadminAccountsPage() {
               <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada akun login untuk modul {selectedLabel}.</div>
             )}
             {roleUsers.map((m) => (
-              <div key={m.id} className="grid grid-cols-[1fr_1fr_100px_260px] items-center gap-x-4 border-b border-[#F1F4F7] px-4 py-3 font-sans text-xs text-[#31414F] last:border-b-0">
+              <div key={m.id} className="grid grid-cols-[1fr_1fr_100px_370px] items-center gap-x-4 border-b border-[#F1F4F7] px-4 py-3 font-sans text-xs text-[#31414F] last:border-b-0">
                 <span className="font-mono">{m.username}</span>
                 <span>{m.name}</span>
                 <span className={m.active ? "font-semibold text-success-fg" : "text-text-muted"}>{m.active ? "Aktif" : "Nonaktif"}</span>
                 <span className="flex items-center justify-end gap-2">
+                  <Button onClick={() => setRevealing({ kind: "internal_user", id: m.id, title: `${m.username} (${m.name})` })} variant="ghost" size="xs">
+                    Lihat Password
+                  </Button>
                   <Button onClick={() => setEditingInternalUser(m)} variant="ghost" size="xs">
                     Edit
                   </Button>
@@ -398,7 +466,7 @@ export default function SysadminAccountsPage() {
               <span className="font-sans text-[13px] font-semibold text-text-primary">Akun Vendor Produksi</span>
               <input value={vendorSearch} onChange={(e) => setVendorSearch(e.target.value)} placeholder="Cari vendor…" className="input ml-auto w-[220px] !py-1 !text-[11.5px]" />
             </div>
-            <div className="grid grid-cols-[1fr_1fr_100px] gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+            <div className="grid grid-cols-[1fr_1fr_230px] gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
               <span>Kode</span>
               <span>Nama Vendor</span>
               <span className="text-right">Aksi</span>
@@ -406,10 +474,13 @@ export default function SysadminAccountsPage() {
             {vendorAccounts == null && <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Memuat…</div>}
             {vendorAccounts != null && filteredVendors.length === 0 && <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Tidak ada vendor yang cocok.</div>}
             {filteredVendors.map((v) => (
-              <div key={v.id} className="grid grid-cols-[1fr_1fr_100px] items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0">
+              <div key={v.id} className="grid grid-cols-[1fr_1fr_230px] items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0">
                 <span className="font-mono">{v.id}</span>
                 <span>{v.name}</span>
-                <span className="text-right">
+                <span className="flex items-center justify-end gap-2">
+                  <Button onClick={() => setRevealing({ kind: "vendor", id: v.id, title: v.name })} variant="ghost" size="xs">
+                    Lihat Password
+                  </Button>
                   <Button onClick={() => setEditingVendor(v)} variant="ghost" size="xs">
                     Reset Password
                   </Button>
@@ -420,6 +491,7 @@ export default function SysadminAccountsPage() {
         </div>
       )}
 
+      {revealing && <RevealPasswordModal target={revealing} onClose={() => setRevealing(null)} />}
       {editingInternal && (
         <PasswordModal
           title={`Ganti Password — ${editingInternal.label}`}

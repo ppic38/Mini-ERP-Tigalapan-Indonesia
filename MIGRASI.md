@@ -1,5 +1,19 @@
 # Migrasi Project — Status & Riwayat
 
+## Sysadmin "Lihat Password" -- migration 0063 (2026-10-06)
+`supabase/migrations/0063_password_enc.sql`: kolom `password_enc` (salinan password TERENKRIPSI
+AES-256-GCM, kunci dari `SESSION_SECRET`, lihat `lib/auth/password-vault.ts`) di `internal_accounts`,
+`internal_role_users`, `vendors_produksi`. Owner: "sysadmin bisa melihat password terbaru dari semua
+modul akun ... ada user yang tanya apa passnya". Login TETAP bcrypt (`password_hash`, tidak berubah).
+Salinan diisi di setiap jalur ganti password: Sysadmin (set/reset/tambah akun) dan Profil Saya
+(ganti sendiri). Tombol "Lihat Password" di Sysadmin > Akun & Password (modul, akun bernama, vendor),
+tiap tampil tercatat di `sysadmin_audit_log` (REVEAL_PASSWORD, tanpa isi password). Penyimpanan salinan
+BEST-EFFORT & terpisah dari update hash -- kode aman kalau migration belum jalan. Akun yang passwordnya
+di-set SEBELUM ini (dan password modul dari env var) tampil "belum tersimpan" sampai di-reset sekali.
+Mengganti `SESSION_SECRET` membuat salinan lama tidak terbuka lagi (reset password akunnya).
+Akun tim vendor (`vendor_users`) belum ikut -- tidak ditampilkan di Sysadmin.
+**Owner menjalankan migration manual di SQL Editor Supabase.**
+
 ## Alih size sisa kain saat Cutting -- migration 0062 (2026-10-04)
 Owner: kalau roll target L 100 hanya jadi 99 L tapi sisa kain muat 1 pcs size lebih kecil, operator boleh
 mengalihkannya (99 L + 1 M, tanpa waste). BUKAN rework (tidak ada reject, tidak lewat alur Rework FG); opsional --
