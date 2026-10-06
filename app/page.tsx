@@ -21,6 +21,57 @@ const MODULES: { role: InternalRole; label: string; desc: string; icon: typeof C
   { role: "sysadmin", label: "Sysadmin", desc: "Kelola akun & password, batalkan PO/data salah input", icon: ShieldAlert },
 ];
 
+const WELCOME_TITLE = "Mini ERP Tigalapan";
+const WELCOME_WORDS = ["Planning", "Procurement", "Produksi", "Finance", "Warehouse"];
+
+/** Panel kiri halaman pilih modul: "Selamat Datang di" + judul diketik satu-satu (typewriter) +
+ *  kata modul yang bergantian. Murni dekoratif (aria-hidden pada bagian animasi tidak perlu, teks
+ *  akhirnya tetap terbaca). Animasi CSS-nya ada di app/globals.css (welcome-*) dan otomatis mati
+ *  untuk pengguna yang memilih "kurangi gerakan" (prefers-reduced-motion). */
+function WelcomePanel() {
+  const [typed, setTyped] = useState("");
+  const [wordIdx, setWordIdx] = useState(0);
+
+  useEffect(() => {
+    let i = 0;
+    const t = setInterval(() => {
+      i += 1;
+      setTyped(WELCOME_TITLE.slice(0, i));
+      if (i >= WELCOME_TITLE.length) clearInterval(t);
+    }, 75);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    const t = setInterval(() => setWordIdx((v) => (v + 1) % WELCOME_WORDS.length), 2200);
+    return () => clearInterval(t);
+  }, []);
+
+  const done = typed.length >= WELCOME_TITLE.length;
+
+  return (
+    <div className="text-center lg:text-left">
+      <div className="welcome-fade-up font-sans text-[13px] font-semibold uppercase tracking-[0.2em] text-white/55">Tigalapan Indonesia</div>
+      <div className="welcome-fade-up mt-4 font-heading text-[22px] font-medium text-white/80 sm:text-[26px]" style={{ animationDelay: "0.15s" }}>
+        Selamat Datang di
+      </div>
+      <h1 className="mt-1 min-h-[1.15em] font-heading text-[40px] font-bold leading-[1.1] text-white sm:text-[52px] lg:text-[58px]">
+        {typed}
+        <span className={done ? "welcome-cursor welcome-cursor-idle" : "welcome-cursor"} />
+      </h1>
+      <p className="welcome-fade-up mt-5 max-w-[460px] font-sans text-[14px] leading-[1.6] text-white/70 lg:max-w-[480px]" style={{ animationDelay: "1.6s" }}>
+        Satu tempat untuk mencatat dan memantau pekerjaan internal dan vendor produksi, dari MRP sampai pembayaran.
+      </p>
+      <div className="welcome-fade-up mt-4 flex items-center justify-center gap-2 font-sans text-[13px] text-white/60 lg:justify-start" style={{ animationDelay: "1.9s" }}>
+        <span>Untuk tim</span>
+        <span key={wordIdx} className="welcome-word rounded-md border border-white/15 bg-white/10 px-2.5 py-1 font-semibold text-white">
+          {WELCOME_WORDS[wordIdx]}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export default function ModuleSelectPage() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -79,21 +130,28 @@ export default function ModuleSelectPage() {
   }
 
   return (
+    // Revisi 2026-10-06 (owner: tampilan 100% tercrop, minta "Selamat Datang di .." beranimasi di kiri
+    // dan container login modul di kanan): layout 2 kolom yang MUAT satu layar di desktop (lg:h-screen),
+    // kartu modul dibuat ringkas horizontal (ikon di kiri) supaya 9 kartu tidak lagi memanjang ke bawah.
+    // Di layar sempit tersusun vertikal (welcome di atas, modul di bawah) dan halaman bisa discroll.
     <div
-      className="relative flex min-h-screen flex-col items-center justify-center px-4 py-12"
+      className="relative min-h-screen overflow-hidden lg:h-screen"
       style={{ background: "linear-gradient(160deg, #000000 0%, #050912 30%, #0A1B3D 62%, var(--accent-blue) 100%)" }}
     >
-      <div className="mb-8 text-center">
-        <div className="font-sans text-[13px] font-semibold text-white/60">Tigalapan Indonesia</div>
-        <div className="mt-1.5 font-heading text-[26px] font-bold text-white">Pilih Modul</div>
-        <div className="mt-1 font-sans text-[12.5px] text-white/70">Pilih modul yang ingin Anda akses.</div>
-      </div>
+      <div className="welcome-glow welcome-glow-a" />
+      <div className="welcome-glow welcome-glow-b" />
+      <div className="relative mx-auto grid min-h-screen w-full max-w-[1240px] grid-cols-1 items-center gap-10 px-6 py-10 lg:h-screen lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:gap-16 lg:px-10 lg:py-6">
+        <WelcomePanel />
+
+        <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-5 shadow-[0_20px_60px_rgba(0,0,0,.35)] backdrop-blur-md sm:p-6">
+          <div className="mb-4">
+            <div className="font-heading text-[20px] font-bold text-white">Pilih Modul</div>
+            <div className="mt-0.5 font-sans text-[12px] text-white/65">Pilih modul yang ingin Anda akses.</div>
+          </div>
 
       {/* Kartu SELALU punya tinggi tetap (tidak pernah berubah bentuk saat diklik) — form
-         password ditampilkan di modal terpisah (lihat di bawah), bukan ditempel di dalam kartu.
-         Sebelumnya form nempel langsung di kartu yang diklik, jadi kartu itu jadi lebih tinggi
-         dari kartu lain di baris yang sama dan bikin grid-nya kelihatan berantakan/tidak rapi. */}
-      <div className="grid w-full max-w-[720px] grid-cols-2 items-start gap-4 sm:grid-cols-2 lg:grid-cols-3">
+         password ditampilkan di modal terpisah (lihat di bawah), bukan ditempel di dalam kartu. */}
+      <div className="grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">
         {MODULES.map((m) => {
           const Icon = m.icon;
           const active = selectedRole === m.role;
@@ -107,22 +165,22 @@ export default function ModuleSelectPage() {
               key={m.role}
               onClick={() => pickRole(m.role)}
               className={cn(
-                "group flex flex-col rounded-xl border bg-surface-card p-4 text-left font-sans shadow-[0_10px_30px_rgba(0,0,0,.25)] transition-all duration-200",
+                "group flex items-center gap-3 rounded-xl border bg-surface-card p-3 text-left font-sans shadow-[0_8px_22px_rgba(0,0,0,.22)] transition-all duration-200",
                 active
                   ? isSysadmin
-                    ? "border-accent-purple shadow-[0_16px_36px_rgba(124,58,237,.32)]"
-                    : "border-accent-blue shadow-[0_16px_36px_rgba(37,99,235,.32)]"
-                  : "border-white/10 hover:-translate-y-0.5 hover:border-white/25 hover:shadow-[0_16px_36px_rgba(0,0,0,.32)]"
+                    ? "border-accent-purple shadow-[0_12px_28px_rgba(124,58,237,.32)]"
+                    : "border-accent-blue shadow-[0_12px_28px_rgba(37,99,235,.32)]"
+                  : "border-white/10 hover:-translate-y-0.5 hover:border-white/25 hover:shadow-[0_12px_28px_rgba(0,0,0,.32)]"
               )}
             >
               <span
                 className={cn(
-                  "flex h-[92px] items-center justify-center rounded-lg transition-colors duration-200",
+                  "flex h-11 w-11 flex-none items-center justify-center rounded-lg transition-colors duration-200",
                   isSysadmin ? (active ? "bg-accent-purple" : "bg-accent-purple-bg group-hover:bg-accent-purple") : active ? "bg-accent-blue" : "bg-info-bg group-hover:bg-accent-blue"
                 )}
               >
                 <Icon
-                  size={30}
+                  size={22}
                   strokeWidth={1.75}
                   className={cn(
                     "transition-colors duration-200",
@@ -130,8 +188,10 @@ export default function ModuleSelectPage() {
                   )}
                 />
               </span>
-              <div className="mt-3.5 text-[13.5px] font-semibold text-text-primary">{m.label}</div>
-              <div className="mt-1 min-h-[31px] text-[11px] leading-[1.4] text-text-muted">{m.desc}</div>
+              <span className="min-w-0">
+                <span className="block text-[13px] font-semibold text-text-primary">{m.label}</span>
+                <span className="mt-0.5 line-clamp-2 block text-[10.5px] leading-[1.35] text-text-muted">{m.desc}</span>
+              </span>
             </button>
           );
         })}
@@ -143,14 +203,18 @@ export default function ModuleSelectPage() {
             logoutVendor();
             router.push("/vendor-maklon/login");
           }}
-          className="group flex flex-col rounded-xl border border-white/10 bg-surface-card p-4 text-left font-sans shadow-[0_10px_30px_rgba(0,0,0,.25)] transition-all duration-200 hover:-translate-y-0.5 hover:border-white/25 hover:shadow-[0_16px_36px_rgba(0,0,0,.32)]"
+          className="group flex items-center gap-3 rounded-xl border border-white/10 bg-surface-card p-3 text-left font-sans shadow-[0_8px_22px_rgba(0,0,0,.22)] transition-all duration-200 hover:-translate-y-0.5 hover:border-white/25 hover:shadow-[0_12px_28px_rgba(0,0,0,.32)] sm:col-span-2"
         >
-          <span className="flex h-[92px] items-center justify-center rounded-lg bg-accent-orange-bg transition-colors duration-200 group-hover:bg-accent-orange">
-            <Building2 size={30} strokeWidth={1.75} className="text-accent-orange transition-colors duration-200 group-hover:text-white" />
+          <span className="flex h-11 w-11 flex-none items-center justify-center rounded-lg bg-accent-orange-bg transition-colors duration-200 group-hover:bg-accent-orange">
+            <Building2 size={22} strokeWidth={1.75} className="text-accent-orange transition-colors duration-200 group-hover:text-white" />
           </span>
-          <div className="mt-3.5 text-[13.5px] font-semibold text-text-primary">Vendor Produksi</div>
-          <div className="mt-1 min-h-[31px] text-[11px] leading-[1.4] text-text-muted">Pilih nama vendor Anda &amp; masukkan password</div>
+          <span className="min-w-0">
+            <span className="block text-[13px] font-semibold text-text-primary">Vendor Produksi</span>
+            <span className="mt-0.5 block text-[10.5px] leading-[1.35] text-text-muted">Pilih nama vendor Anda &amp; masukkan password</span>
+          </span>
         </button>
+      </div>
+        </div>
       </div>
 
       {selectedRole &&

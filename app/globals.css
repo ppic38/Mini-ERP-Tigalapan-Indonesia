@@ -255,3 +255,43 @@
     @apply w-full rounded-md border border-[#DDE4EB] bg-white px-2.5 py-2 font-mono text-[12.5px] font-medium text-text-primary;
   }
 }
+
+/* Halaman pilih modul (app/page.tsx, WelcomePanel) -- animasi sambutan. Mati otomatis untuk pengguna
+   dengan prefers-reduced-motion. */
+@keyframes welcome-fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes welcome-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+@keyframes welcome-float {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(24px, -18px, 0); }
+}
+.welcome-fade-up { opacity: 0; animation: welcome-fade-up 0.7s ease-out forwards; }
+.welcome-word { display: inline-block; animation: welcome-fade-up 0.45s ease-out both; }
+.welcome-cursor {
+  display: inline-block;
+  width: 3px;
+  height: 0.9em;
+  margin-left: 4px;
+  vertical-align: -0.08em;
+  background: #fff;
+  animation: welcome-blink 0.9s steps(1) infinite;
+}
+.welcome-cursor-idle { animation-duration: 1.2s; }
+.welcome-glow {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(90px);
+  pointer-events: none;
+  animation: welcome-float 14s ease-in-out infinite;
+}
+.welcome-glow-a { top: -140px; left: -120px; width: 420px; height: 420px; background: rgba(37, 99, 235, 0.35); }
+.welcome-glow-b { bottom: -160px; right: 20%; width: 380px; height: 380px; background: rgba(124, 58, 237, 0.22); animation-delay: -6s; }
+@media (prefers-reduced-motion: reduce) {
+  .welcome-fade-up, .welcome-word { animation: none; opacity: 1; }
+  .welcome-cursor, .welcome-glow { animation: none; }
+}
