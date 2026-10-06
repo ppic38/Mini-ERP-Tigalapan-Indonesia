@@ -245,14 +245,13 @@ export default function ModuleSelectPage() {
                     <div>
                       <div className="flex items-center gap-1 font-sans text-[9.5px] font-medium uppercase tracking-wider text-text-muted">
                         <Users size={10} />
-                        Username <span className="normal-case tracking-normal text-text-muted/70">(opsional)</span>
+                        Username
                       </div>
                       <input
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}
                         className="input mt-1 !py-1.5 !text-[11.5px]"
                         autoFocus
-                        placeholder="Kosongkan jika belum punya akun sendiri"
                       />
                     </div>
                   )}
