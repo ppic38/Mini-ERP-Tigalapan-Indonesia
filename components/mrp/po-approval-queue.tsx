@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
 import { PoDownloadModal, type PoDownloadRequest } from "@/components/procurement/po-download-modal";
@@ -208,7 +209,12 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
 
   async function approveAll() {
     if (mine.length === 0) return;
-    if (!window.confirm(`Setujui ${mine.length} PO (total ${formatRupiah(totalMine)}) sebagai ${APPROVAL_ROLE_LABEL[role]}?`)) return;
+    const ok = await confirmDialog({
+      title: `Setujui ${mine.length} PO sekaligus?`,
+      message: `Total ${formatRupiah(totalMine)}, disetujui sebagai ${APPROVAL_ROLE_LABEL[role]}.`,
+      confirmLabel: "Setujui semua",
+    });
+    if (!ok) return;
     setError(null);
     for (const it of mine) {
       setBusyId(it.id);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { parseMigrationImportFile, type ParsedMigration } from "@/lib/mrp/parseMigrationImport";
 import { importMigrationAction, type MigrationImportResult } from "@/lib/mrp/actions";
@@ -44,9 +45,11 @@ export function MigrationImportPanel() {
 
   async function handleImport() {
     if (!parsed || errors.length > 0 || mrps.length === 0 || saving) return;
-    const ok = window.confirm(
-      `Impor ${mrps.length} MRP (${totalRolls} roll) ke ERP?\n\nData langsung masuk ke database dan terlihat di PPIC, SCM, Produksi, dan vendor Konveksi Makassar. Pastikan file sudah benar.`
-    );
+    const ok = await confirmDialog({
+      title: `Impor ${mrps.length} MRP (${totalRolls} roll) ke ERP?`,
+      message: 'Data langsung masuk ke database dan terlihat di PPIC, SCM, Produksi, dan vendor Konveksi Makassar. Pastikan file sudah benar.',
+      confirmLabel: "Impor sekarang",
+    });
     if (!ok) return;
     setSaving(true);
     setSaveError(null);

@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useState } from "react";
+import { alertDialog } from "@/components/ui/confirm-dialog";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/mrp/number-input";
@@ -127,7 +128,7 @@ export function InvoiceVendorReviewPanel() {
       await addVendorInvoiceAdjustment(invoiceId, { kind: adjKind, label: adjLabel.trim(), amount: adjKind === "TIDAK_ADA" ? 0 : adjAmount });
       resetAdjForm();
     } catch (err) {
-      window.alert("Gagal menyimpan denda/reward -- coba lagi. " + (err instanceof Error ? err.message : String(err)));
+      void alertDialog({ title: "Gagal menyimpan denda/reward", message: "Coba lagi. " + (err instanceof Error ? err.message : String(err)), tone: "danger" });
     } finally {
       setSubmittingAdj(false);
     }

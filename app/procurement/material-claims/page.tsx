@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Button } from "@/components/ui/button";
@@ -92,10 +93,14 @@ export default function MaterialClaimsPage() {
   // terhapus waktu resetAllAction menghapus mrp (sama kasusnya dengan vendor_deposits, sudah
   // dibetulkan di actions.ts) -- baris LAMA yang sudah terlanjur "yatim" dari sebelum perbaikan
   // itu butuh cara dibersihkan manual, sama pola dengan "Hapus" di Saldo Deposit Vendor.
-  function confirmDeleteHistory(id: string, label: string) {
-    if (window.confirm(`Hapus permanen arsip klaim "${label}"? Tindakan ini tidak bisa dibatalkan.`)) {
-      deleteMaterialClaimHistory(id);
-    }
+  async function confirmDeleteHistory(id: string, label: string) {
+    const ok = await confirmDialog({
+      title: "Hapus permanen arsip klaim?",
+      message: `Arsip klaim "${label}" akan dihapus permanen. Tindakan ini tidak bisa dibatalkan.`,
+      confirmLabel: "Hapus permanen",
+      tone: "danger",
+    });
+    if (ok) deleteMaterialClaimHistory(id);
   }
 
   const archivedHistory = materialClaimHistory.filter((h) => h.resolvedAt);

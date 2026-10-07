@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { alertDialog, confirmDialog } from "@/components/ui/confirm-dialog";
 import Link from "next/link";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -57,15 +58,18 @@ export default function MrpListPage() {
   const [resettingId, setResettingId] = useState<string | null>(null);
 
   async function handleResetMrp(mrpId: string) {
-    const ok = window.confirm(
-      `Yakin hapus SEMUA data MRP ${mrpId}? Ini akan menghapus PO, invoice, produksi, dan pengiriman yang terkait MRP ini SAJA (MRP lain tidak terpengaruh). Aksi ini tidak bisa dibatalkan.`
-    );
+    const ok = await confirmDialog({
+      title: `Hapus SEMUA data MRP ${mrpId}?`,
+      message: 'Ini akan menghapus PO, invoice, produksi, dan pengiriman yang terkait MRP ini SAJA (MRP lain tidak terpengaruh). Aksi ini tidak bisa dibatalkan.',
+      confirmLabel: "Hapus semua data",
+      tone: "danger",
+    });
     if (!ok) return;
     setResettingId(mrpId);
     try {
       await resetMrp(mrpId);
     } catch (err) {
-      window.alert(`Reset MRP gagal: ${err instanceof Error ? err.message : String(err)}`);
+      void alertDialog({ title: "Reset MRP gagal", message: err instanceof Error ? err.message : String(err), tone: "danger" });
     } finally {
       setResettingId(null);
     }
