@@ -331,7 +331,7 @@ export function InvoiceUploadPanel({
           const rest = sorted.filter((p) => !isCand(p.warna));
           const opt = (p: (typeof sorted)[number]) => (
             <option key={p.warna} value={p.warna}>
-              {p.warna} · sisa {p.remaining}
+              {p.warna}
             </option>
           );
           return sug.length > 0 ? (
