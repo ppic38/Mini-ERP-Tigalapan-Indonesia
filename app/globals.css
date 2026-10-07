@@ -335,6 +335,15 @@
   }
   .m-stack.m-grid2 > :first-child:not([data-label]),
   .m-stack.m-grid2 > :last-child:not([data-label]) { grid-column: 1 / -1; }
+  /* Sel yang berisi kolom isian selalu satu baris penuh (tidak berdampingan dengan kolom lain). */
+  .m-stack.m-grid2 > :has(input:not([type="checkbox"]):not([type="radio"]), select, textarea) { grid-column: 1 / -1; }
+  /* Kolom isian: label di atas, kolom isian selebar kartu. */
+  .m-stack > [data-label]:has(input:not([type="checkbox"]):not([type="radio"])) {
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 4px;
+  }
+  .m-stack > [data-label] input:not([type="checkbox"]):not([type="radio"]) { width: 100%; max-width: none; }
   .m-stack.m-grid2 > [data-label]::before { display: block; min-width: 0; margin: 0 0 1px; }
   input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
   select,

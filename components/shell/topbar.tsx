@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Menu } from "lucide-react";
+import { Bell, Menu } from "lucide-react";
 import type { Notification } from "@/lib/mrp/types";
 
 // Revisi 2026-09-19 (owner: "untuk sementara notifikasi di semua modul di-hide"): tombol
@@ -74,9 +74,11 @@ export function Topbar({
               setNotifOpen((v) => !v);
               setProfileOpen(false);
             }}
-            className="relative font-sans text-xs font-medium text-text-muted"
+            className="relative flex h-9 w-9 items-center justify-center font-sans text-xs font-medium text-text-muted sm:h-auto sm:w-auto"
+            aria-label="Notifikasi"
           >
-            Notifikasi
+            <Bell size={20} className="sm:hidden" />
+            <span className="hidden sm:inline">Notifikasi</span>
             {unreadCount > 0 && (
               <span className="absolute -right-3 -top-1.5 rounded-full bg-danger px-[5px] py-px font-mono text-[9px] font-semibold text-white">{unreadCount}</span>
             )}
@@ -132,18 +134,24 @@ export function Topbar({
               setProfileOpen((v) => !v);
               setNotifOpen(false);
             }}
-            className="flex items-center gap-2 rounded-md py-1 pl-1 pr-2 hover:bg-[#F7F9FB]"
+            className="flex items-center gap-2 rounded-md py-1 pl-1 hover:bg-[#F7F9FB] sm:pr-2"
+            aria-label="Menu profil"
           >
             <span className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full bg-action-primary font-sans text-[11px] font-semibold text-white">
               {initialsFor(role)}
             </span>
-            <span className="flex min-w-0 flex-col items-start leading-tight">
-              <span className="max-w-[120px] truncate font-sans text-[12.5px] font-semibold text-text-primary sm:max-w-none">{role}</span>
-              <span className="hidden font-sans text-[10.5px] text-text-muted sm:block">{entity}</span>
+            {/* HP: cukup ikon profil (nama ada di dalam menu-nya). */}
+            <span className="hidden min-w-0 flex-col items-start leading-tight sm:flex">
+              <span className="font-sans text-[12.5px] font-semibold text-text-primary">{role}</span>
+              <span className="font-sans text-[10.5px] text-text-muted">{entity}</span>
             </span>
           </button>
           {profileOpen && (
             <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-[190px] overflow-hidden rounded-lg border border-border-subtle bg-white py-1 shadow-lg">
+              <div className="border-b border-[#F1F4F7] px-3.5 py-2 sm:hidden">
+                <div className="font-sans text-xs font-semibold text-text-primary">{role}</div>
+                <div className="font-sans text-[10.5px] text-text-muted">{entity}</div>
+              </div>
               {onOpenProfile && (
                 <button
                   onClick={() => {

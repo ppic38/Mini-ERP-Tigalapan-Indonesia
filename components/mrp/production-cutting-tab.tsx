@@ -619,14 +619,14 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   {warnaOptions.length === 0 && <span className="font-sans text-[11px] text-text-muted">Tidak ada roll yang tersedia untuk aduan pola ini.</span>}
                 </div>
                 {visibleLines.length > 0 && (
-                  <div className="flex flex-wrap items-end gap-2">
+                  <div className="flex flex-wrap items-end gap-2 max-md:w-full max-md:flex-col max-md:items-stretch">
                     <div>
                       <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Gramasi semua</div>
-                      <NumberInput value={fillGramasi} onChange={setFillGramasi} decimals={2} commaOnly className="input mt-0.5 w-[90px] text-right" />
+                      <NumberInput value={fillGramasi} onChange={setFillGramasi} decimals={2} commaOnly className="input mt-0.5 w-[90px] text-right max-md:w-full" />
                     </div>
                     <div>
                       <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Setting semua</div>
-                      <input value={fillSetting} onChange={(e) => setFillSetting(e.target.value)} placeholder="mis. lebar / heat setting" className="input mt-0.5 w-[170px] max-md:w-[150px]" />
+                      <input value={fillSetting} onChange={(e) => setFillSetting(e.target.value)} placeholder="mis. lebar / heat setting" className="input mt-0.5 w-[170px] max-md:w-full" />
                     </div>
                     <Button onClick={applyFillToAll} variant="accent" size="sm">
                       Terapkan ke semua

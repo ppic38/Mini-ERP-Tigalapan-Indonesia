@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { PackageCheck, RotateCcw, Scissors, BadgeCheck, type LucideIcon } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { KeepAliveTab } from "@/components/ui/keep-alive-tab";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
@@ -61,11 +62,8 @@ function ProductionContent({ vendorId }: { vendorId: string }) {
   // po-maklon-panel.tsx) -- begitu tab yang lagi aktif ternyata tidak lagi diizinkan (mis. actor
   // baru login & TABS berubah), otomatis "jatuh" ke tab pertama yang diizinkan.
   const effectiveTab = TABS.some((t) => t.key === tab) ? tab : (TABS[0]?.key ?? tab);
-  // HP: deretan tab bisa lebih lebar dari layar -- tab aktif digeser ke tengah supaya selalu kelihatan.
-  const tabBarRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    tabBarRef.current?.querySelector<HTMLElement>('[data-active="true"]')?.scrollIntoView({ inline: "center", block: "nearest" });
-  }, [effectiveTab]);
+  // HP: sub-menu Produksi jadi bar ikon di bawah layar (seperti menu aplikasi) -- tab di atas disembunyikan.
+  const TAB_ICON: Record<Tab, LucideIcon> = { CUTTING: Scissors, FG: PackageCheck, REJECT: RotateCcw, FINAL: BadgeCheck };
 
   return (
     <AppShell
@@ -77,12 +75,10 @@ function ProductionContent({ vendorId }: { vendorId: string }) {
       roleOverride={VENDOR_PRODUKSI[vendorId]?.name ?? vendorId}
       entityOverride="Vendor Produksi"
     >
-      {/* Di HP tab digeser ke samping (tidak membungkus) supaya tetap satu baris. */}
-      <div ref={tabBarRef} className="flex gap-2 overflow-x-auto rounded-lg border border-border-subtle bg-surface-card p-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="flex gap-2 overflow-x-auto rounded-lg border border-border-subtle bg-surface-card p-1.5 max-md:hidden">
         {TABS.map((t) => (
           <button
             key={t.key}
-            data-active={effectiveTab === t.key}
             onClick={() => setTab(t.key)}
             className={
               "flex flex-none items-center gap-1.5 whitespace-nowrap rounded-md px-3.5 py-[7px] font-sans text-[12.5px] font-semibold " +
@@ -104,6 +100,35 @@ function ProductionContent({ vendorId }: { vendorId: string }) {
       {TABS.some((t) => t.key === "FG") && <KeepAliveTab active={effectiveTab === "FG"}><ProductionResultPanel vendorId={vendorId} kind="FG" title="Finish Good" /></KeepAliveTab>}
       {TABS.some((t) => t.key === "REJECT") && <KeepAliveTab active={effectiveTab === "REJECT"}><ProductionResultPanel vendorId={vendorId} kind="REJECT" title="Reject & Rework" canRework={canRework} /></KeepAliveTab>}
       {TABS.some((t) => t.key === "FINAL") && <KeepAliveTab active={effectiveTab === "FINAL"}><ProductionFinalTab vendorId={vendorId} /></KeepAliveTab>}
+      {/* Bar menu bawah (HP saja). Ruang kosong di bawah konten supaya isi terakhir tidak tertutup bar. */}
+      {TABS.length > 0 && (
+        <>
+          <div className="h-16 md:hidden" aria-hidden />
+          <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-border-subtle bg-white pb-[env(safe-area-inset-bottom)] shadow-[0_-2px_10px_rgba(11,19,27,.08)] md:hidden" aria-label="Menu Produksi">
+            {TABS.map((t) => {
+              const Icon = TAB_ICON[t.key];
+              const active = effectiveTab === t.key;
+              return (
+                <button
+                  key={t.key}
+                  onClick={() => setTab(t.key)}
+                  aria-current={active ? "page" : undefined}
+                  className={"relative flex flex-1 flex-col items-center gap-0.5 px-1 pb-2 pt-2.5 font-sans text-[10.5px] font-semibold " + (active ? "text-action-primary" : "text-text-muted")}
+                >
+                  {active && <span className="absolute inset-x-5 top-0 h-[3px] rounded-b-full bg-action-primary" />}
+                  <span className="relative">
+                    <Icon size={22} strokeWidth={active ? 2.4 : 2} />
+                    {t.badge > 0 && (
+                      <span className="absolute -right-3 -top-1.5 rounded-full bg-danger px-[5px] py-px font-mono text-[9px] font-semibold leading-none text-white">{t.badge}</span>
+                    )}
+                  </span>
+                  <span className="max-w-full truncate">{t.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </>
+      )}
     </AppShell>
   );
 }
