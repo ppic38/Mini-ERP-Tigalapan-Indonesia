@@ -2379,7 +2379,10 @@ export function mrpIdsWithRemainingReject(
     const groups = cutWarnaLenganGroups(mrpId, vendorProduksi, batches);
     return groups.some((g) => {
       const groupKey = mrpId + "|" + g.warna + "|" + g.lengan;
-      if (productionGroupMetaFor(groupKey, productionGroupMeta)?.doneAt) return false;
+      const meta = productionGroupMetaFor(groupKey, productionGroupMeta);
+      if (meta?.doneAt) return false;
+      // Remark sisa reject sudah dikonfirmasi vendor (2026-10-07) = sisa reject warna ini dianggap sudah ditangani.
+      if (meta?.remarkSisaReject?.trim()) return false;
       return Object.values(cumulativeSizeQtyForGroup(groupKey, "REJECT", results)).some((v) => v > 0);
     });
   });

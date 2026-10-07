@@ -212,11 +212,83 @@ export function ReworkInlineForm({
   );
 }
 
+/** Remark sisa reject per warna/lengan dengan tombol KONFIRMASI. Remark terkonfirmasi = sisa reject warna ini dianggap sudah ditangani
+ *  vendor (badge "Reject & Rework" tidak lagi menghitungnya). "Batalkan" mengosongkan remark -> kembali dihitung. */
+export function GroupRemarkBox({ groupKey, fallback }: { groupKey: string; fallback?: string }) {
+  const meta = useMrpStore((s) => s.productionGroupMeta.find((m) => m.groupKey === groupKey));
+  const setGroupRejectRemark = useMrpStore((s) => s.setGroupRejectRemark);
+  const saved = meta?.remarkSisaReject?.trim() ?? "";
+  const [draft, setDraft] = useState<string | null>(null); // null = tidak sedang mengedit
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const editing = draft !== null || !saved;
+  const value = draft ?? saved ?? "";
+  const shown = draft !== null ? draft : saved || fallback || "";
+
+  async function save(text: string) {
+    setSaving(true);
+    setError(null);
+    try {
+      await setGroupRejectRemark(groupKey, text);
+      setDraft(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Gagal menyimpan remark.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-md border border-[#CFE0EF] bg-white px-4 py-3">
+      <div className="mb-1.5 font-sans text-[10.5px] font-semibold uppercase tracking-wider text-text-muted">Remark sisa reject</div>
+      {editing ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={shown}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Catatan sisa reject warna ini (mis. M tidak dirework, L dirework ke S)…"
+            className="input min-w-[260px] flex-1 text-[11.5px]"
+            disabled={saving}
+          />
+          <Button onClick={() => void save(shown)} disabled={!shown.trim() || saving} variant="primary" size="md">
+            {saving ? "Menyimpan…" : "Konfirmasi"}
+          </Button>
+          {saved && draft !== null && (
+            <Button onClick={() => setDraft(null)} disabled={saving} variant="ghost" size="md">
+              Batal
+            </Button>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="rounded-full bg-success-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-success-fg">✓ Dikonfirmasi</span>
+          <span className="min-w-0 flex-1 font-mono text-[11.5px] text-[#31414F]">{value || saved}</span>
+          <Button onClick={() => setDraft(saved)} variant="muted" size="xs">
+            Ubah
+          </Button>
+          <Button onClick={() => void save("")} disabled={saving} variant="danger" size="xs">
+            Batalkan
+          </Button>
+        </div>
+      )}
+      <div className="mt-1.5 font-sans text-[10.5px] leading-[1.5] text-text-muted">
+        {saved ? "Warna ini sudah ditandai ditangani — tidak lagi dihitung di badge." : "Setelah dikonfirmasi, sisa reject warna ini tidak lagi dihitung sebagai pekerjaan tertunda (badge padam)."}
+      </div>
+      {error && <div className="mt-1.5 font-sans text-[11px] text-danger-fg">{error}</div>}
+    </div>
+  );
+}
+
 /** fromSize TIDAK disimpan terstruktur -- cuma ikut di teks `note` baris FG ("Rework dari {lengan} size {fromSize} ({usia})"), jadi
  *  di-parse balik (lihat reworkRejectSizeAction di lib/mrp/actions.ts). toSize terstruktur: satu-satunya key `sizeQty` baris FG itu. */
 function parseFromSize(note: string): string | null {
   const m = note.match(/size\s+(\S+)/i);
   return m ? m[1] : null;
+}
+/** Lengan ASAL rework dari teks note ("Rework dari PENDEK size L (DEWASA)"). */
+function parseFromLengan(note: string): string | null {
+  const m = note.match(/dari\s+(PENDEK|PANJANG)/i);
+  return m ? m[1].toUpperCase() : null;
 }
 
 /** Riwayat rework vendor ini (terbaru di atas) + koreksi Sysadmin "Batalkan rework". */
@@ -224,42 +296,50 @@ export function ReworkHistoryCard({ vendorId }: { vendorId: string }) {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const productionResults = useMrpStore((s) => s.productionResults);
   const productionGroupMeta = useMrpStore((s) => s.productionGroupMeta);
+  const rejectRemarks = useMrpStore((s) => s.rejectRemarks);
   const reworkHistory = productionResults
     .filter((r) => r.vendorProduksi === vendorId && r.kind === "FG" && (r.note ?? "").startsWith("Rework"))
     .sort((a, b) => (a.recordedAt < b.recordedAt ? 1 : -1));
+  // Template tabel sama dengan tabel Reject & Rework di atas: header biru muda + garis biru tebal; semua kolom rata tengah.
+  const COLS = "grid-cols-[1.1fr_1fr_1.4fr_0.8fr_0.8fr_0.9fr_0.6fr_1.8fr_1.1fr]";
   return (
     <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
       <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Riwayat rework</div>
       <div className="overflow-x-auto">
-        <div className="min-w-[900px]">
-          <div className="grid grid-cols-8 gap-x-2 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+        <div className="min-w-[1050px]">
+          <div className={"grid items-center gap-x-3 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] text-center font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg " + COLS}>
             <span>MRP</span>
             <span>Kategori</span>
             <span>Warna / lengan</span>
             <span>Usia</span>
-            <span>Size (asal → baru)</span>
-            <span className="text-right">Qty</span>
+            <span>Size (Reject)</span>
+            <span>Size (Hasil Rework)</span>
+            <span>Qty</span>
             <span>Catatan</span>
             <span>Tanggal</span>
           </div>
           {reworkHistory.length === 0 && <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada rework.</div>}
           {reworkHistory.map((r) => {
-            const fromSize = parseFromSize(r.note ?? "");
+            const note = r.note ?? "";
+            const fromSize = parseFromSize(note);
+            const fromLengan = parseFromLengan(note);
             const toSize = Object.keys(r.sizeQty)[0] ?? "—";
+            // Catatan = remark sisa reject warna ASAL (group_key reject = mrp|warna|lengan asal); fallback remark lama per PO.
+            const sourceKey = fromLengan ? `${r.mrpId}|${r.warna}|${fromLengan}` : "";
+            const remark = (sourceKey && productionGroupMeta.find((m) => m.groupKey === sourceKey)?.remarkSisaReject?.trim()) || rejectRemarks[r.poId] || "";
             return (
               <div key={r.id} className="border-b border-[#F1F4F7] last:border-b-0">
-                <div className="grid grid-cols-8 items-center gap-x-2 px-4 py-[11px] font-sans text-xs text-[#31414F]">
+                <div className={"grid items-center gap-x-3 px-4 py-[11px] text-center font-sans text-xs text-[#31414F] " + COLS}>
                   <span className="font-mono">{r.mrpId}</span>
                   <span>{mrpDetailFor(r.mrpId, mrpDetails)?.mrp.kategori ?? "—"}</span>
                   <span>
                     {r.warna} · {r.lengan}
                   </span>
                   <span>{r.usia ?? "—"}</span>
-                  <span className="font-mono font-medium">
-                    {fromSize ?? "—"} <span className="text-text-muted">→</span> {toSize}
-                  </span>
-                  <span className="text-right font-mono font-medium">{Object.values(r.sizeQty).reduce((a, b) => a + b, 0)}</span>
-                  <span>{r.note}</span>
+                  <span className="font-mono font-medium">{fromSize ?? "—"}</span>
+                  <span className="font-mono font-medium">{toSize}</span>
+                  <span className="font-mono font-medium">{Object.values(r.sizeQty).reduce((a, b) => a + b, 0)}</span>
+                  <span className={remark ? "" : "text-text-muted"}>{remark || "—"}</span>
                   <span className="font-mono text-[11px] text-text-muted">{formatDateTimeShort(r.recordedAt)}</span>
                 </div>
                 {/* Koreksi Sysadmin: vendor tidak punya cara membatalkan rework yang salah. `empty:hidden` -- tidak makan ruang kalau bukan Sysadmin. */}

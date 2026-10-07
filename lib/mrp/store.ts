@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { alertDialog } from "@/components/ui/confirm-dialog";
 import type {
   AddBuyItem,
   AduanPolaRow,
@@ -28,6 +29,11 @@ import type {
 import type { ParsedMrpImport } from "./parseImport";
 import type { EkspedisiRateRow, EntitasRow, HargaFobRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, MaterialSupplierRow, SupplierRow, VendorProduksiMasterRow, WarnaAliasRow } from "./masterData";
 import { DEFAULT_WEIGHT_TOLERANCE_PCT, localDateString, setWeightTolerancePct } from "./derive";
+
+/** Pesan gagal aksi (dulu window.alert) -- dialog buatan sendiri, tidak memblokir alur kode. */
+function notifyError(message: string): void {
+  void alertDialog({ title: "Perhatian", message, tone: "danger" });
+}
 import * as rawActions from "./actions";
 import type { ApprovalRole } from "./poApproval";
 import type { SkuImportInputRow, SkuImportSummary, WarnaAliasImportInputRow, HargaKainImportInputRow } from "./actions";
@@ -134,7 +140,7 @@ function guardAction<Args extends unknown[], R>(
         // redirect kedua. Cukup sekali per navigasi.
         if (!redirectingForAuthError) {
           redirectingForAuthError = true;
-          window.alert("Sesi login Anda sudah tidak valid/kedaluwarsa. Anda akan diarahkan ke halaman login ulang.");
+          await alertDialog({ title: "Sesi berakhir", message: "Sesi login Anda sudah tidak valid/kedaluwarsa. Anda akan diarahkan ke halaman login ulang.", tone: "danger" });
           window.location.href = "/";
         }
         return undefined as R;
@@ -499,6 +505,8 @@ type FlowActions = {
    *  reopenProductionPoAction, lib/mrp/actions.ts). */
   reopenProductionPo: (maklonPoId: string) => Promise<void>;
   setRejectRemark: (poId: string, remark: string) => Promise<void>;
+  /** Remark sisa reject per warna/lengan (konfirmasi: terisi = dianggap sudah ditangani, badge padam). */
+  setGroupRejectRemark: (groupKey: string, remark: string) => Promise<void>;
   resolveMaterialClaim: (key: string, note: string) => Promise<void>;
   unresolveMaterialClaim: (key: string) => Promise<void>;
   /** Step 1 flow bertahap (2026-09-11) -- Procurement "Terima Klaim". Lihat acceptMaterialClaimAction. */
@@ -872,7 +880,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.assignMaterialSupplierAction(mrpId, materialRowIds, supplier);
     } catch (err) {
       set({ mrpDetails: previous });
-      window.alert("Gagal menyimpan pilihan vendor material -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan pilihan vendor material -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -888,7 +896,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.assignMaterialEntitasAction(mrpId, materialRowId, entitas);
     } catch (err) {
       set({ mrpDetails: previous });
-      window.alert("Gagal menyimpan entitas material -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan entitas material -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -900,7 +908,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     try {
       await actions.switchAduanVendorByRollAction(mrpId, warna, lengan, fromVendor, toVendor, rollCount);
     } catch (err) {
-      window.alert("Gagal memindahkan roll -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal memindahkan roll -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -916,7 +924,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.approvePpicMrpAction(mrpId);
     } catch (err) {
       set({ mrpDetails: previous });
-      window.alert("Gagal menyetujui MRP -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyetujui MRP -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -928,7 +936,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.rejectPpicMrpAction(mrpId, reason);
     } catch (err) {
       set({ mrpDetails: previous });
-      window.alert("Gagal menolak MRP -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menolak MRP -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -976,7 +984,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     try {
       await actions.approveMaklonPoAction(id);
     } catch (err) {
-      window.alert("Gagal menyetujui PO Produksi. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyetujui PO Produksi. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1016,7 +1024,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.setInvoicesPaidAction(invoiceIds, paid, proof);
     } catch (err) {
       set({ invoices: previous });
-      window.alert("Gagal mengubah status pembayaran -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal mengubah status pembayaran -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1035,7 +1043,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.setInvoicesDeliveryAction(invoiceIds, deliveryDate);
     } catch (err) {
       set({ invoices: previous });
-      window.alert("Gagal mengatur tanggal delivery -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal mengatur tanggal delivery -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1071,7 +1079,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.markRollArrivedAction(invoiceId, warna, lengan, rollIndex, codeRoll, codeLot);
     } catch (err) {
       set({ invoices: previous });
-      window.alert("Gagal menandai roll diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menandai roll diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1101,7 +1109,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.receiveMaterialBatchAction(invoiceId, warna, lengan, rolls, addBuyIds);
     } catch (err) {
       set({ invoices: previous });
-      window.alert("Gagal menandai material diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menandai material diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1131,7 +1139,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.setRollCodeLotAction(invoiceId, warna, lengan, rollIndex, lot);
     } catch (err) {
       set({ invoices: previous });
-      window.alert("Gagal menyimpan code lot -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan code lot -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1202,7 +1210,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
           materialClaimReturReceipts: previousClaimReturReceipts,
         });
       }
-      window.alert("Gagal menyimpan hasil timbang -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan hasil timbang -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1246,7 +1254,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       result = await actions.confirmRollWeighAction(items);
     } catch (err) {
       set({ invoices: previous }); // gagal total -- revert semua patch optimistic di atas
-      window.alert("Gagal mengonfirmasi timbang -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal mengonfirmasi timbang -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       // Fix (review 2026-09-14): confirmRollWeighAction sendiri LOOP per item di server (tidak
       // atomik) -- kalau throw-nya terjadi di TENGAH loop itu (mis. query ownership utk item ke-3
       // gagal jaringan), sebagian item SEBELUMNYA bisa saja sudah benar-benar ter-`weigh_confirmed_at`
@@ -1316,7 +1324,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     } catch (err) {
       set({ productionBatches: previous });
       dropOptimisticResult(tmpResultId);
-      window.alert("Gagal menutup roll -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menutup roll -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1333,7 +1341,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     } catch (err) {
       set({ productionBatches: previous });
       dropOptimisticResult(tmpResultId);
-      window.alert("Gagal menyimpan koreksi FG -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan koreksi FG -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1345,7 +1353,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       unwrapAction(await actions.reopenProductionBatchAction(batchId));
     } catch (err) {
       set({ productionBatches: previous });
-      window.alert("Gagal membuka roll -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal membuka roll -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1361,7 +1369,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     } catch (err) {
       set({ productionBatches: previous });
       dropOptimisticResult(tmpResultId);
-      window.alert("Gagal menyimpan progres FG -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan progres FG -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1383,7 +1391,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       created = await actions.createDeliveryKoliAction(input);
     } catch (err) {
       set({ deliveryKolis: get().deliveryKolis.filter((k) => k.id !== tmpId) });
-      window.alert("Gagal menyimpan koli -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan koli -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     // filter dulu (kalau snapshot sudah keburu membawa koli asli, jangan sampai dobel).
@@ -1440,7 +1448,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.deliverKoliResiGroupAction(items);
     } catch (err) {
       set({ deliveryKolis: previous });
-      window.alert("Gagal delivery koli -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal delivery koli -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1459,7 +1467,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.submitResiGroupInvoiceAction(koliIds);
     } catch (err) {
       set({ deliveryKolis: previous });
-      window.alert("Gagal submit invoice -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal submit invoice -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1480,7 +1488,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.setVendorInvoiceStatusAction(invoiceId, status);
     } catch (err) {
       set({ vendorInvoices: previous });
-      window.alert("Gagal mengubah status invoice vendor -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal mengubah status invoice vendor -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1498,7 +1506,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.payVendorInvoiceAction(invoiceId);
     } catch (err) {
       set({ vendorInvoices: previous });
-      window.alert("Gagal membayar invoice vendor -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal membayar invoice vendor -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1525,7 +1533,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.markNotificationReadAction(id);
     } catch (err) {
       set({ notifications: previous });
-      window.alert("Gagal menandai notifikasi dibaca -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menandai notifikasi dibaca -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1538,7 +1546,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.markAllNotificationsReadAction(ids);
     } catch (err) {
       set({ notifications: previous });
-      window.alert("Gagal menandai semua notifikasi dibaca -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menandai semua notifikasi dibaca -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1550,7 +1558,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.dismissNotificationAction(id);
     } catch (err) {
       set({ notifications: previous });
-      window.alert("Gagal menghapus notifikasi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menghapus notifikasi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1567,7 +1575,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.updateHargaMaklonRowAction(id, patch);
     } catch (err) {
       set({ hargaMaklon: previous });
-      window.alert("Gagal menyimpan harga maklon -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan harga maklon -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1579,7 +1587,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.deleteHargaMaklonRowAction(id);
     } catch (err) {
       set({ hargaMaklon: previous });
-      window.alert("Gagal menghapus baris harga maklon -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menghapus baris harga maklon -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1599,7 +1607,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.updateHargaKainRowAction(id, patch);
     } catch (err) {
       set({ hargaKain: previous });
-      window.alert("Gagal menyimpan harga kain -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan harga kain -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1611,7 +1619,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.deleteHargaKainRowAction(id);
     } catch (err) {
       set({ hargaKain: previous });
-      window.alert("Gagal menghapus baris harga kain -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menghapus baris harga kain -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1631,7 +1639,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.updateHargaRibRowAction(id, patch);
     } catch (err) {
       set({ hargaRib: previous });
-      window.alert("Gagal menyimpan harga RIB -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan harga RIB -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1643,7 +1651,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.deleteHargaRibRowAction(id);
     } catch (err) {
       set({ hargaRib: previous });
-      window.alert("Gagal menghapus baris harga RIB -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menghapus baris harga RIB -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1659,7 +1667,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.updateHargaKerahMansetRowAction(id, patch);
     } catch (err) {
       set({ hargaKerahManset: previous });
-      window.alert("Gagal menyimpan harga Kerah/Manset -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan harga Kerah/Manset -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1671,7 +1679,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.deleteHargaKerahMansetRowAction(id);
     } catch (err) {
       set({ hargaKerahManset: previous });
-      window.alert("Gagal menghapus baris harga Kerah/Manset -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menghapus baris harga Kerah/Manset -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1687,7 +1695,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.updateHargaFobRowAction(id, patch);
     } catch (err) {
       set({ hargaFob: previous });
-      window.alert("Gagal menyimpan harga FOB -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan harga FOB -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1699,7 +1707,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.deleteHargaFobRowAction(id);
     } catch (err) {
       set({ hargaFob: previous });
-      window.alert("Gagal menghapus baris harga FOB -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menghapus baris harga FOB -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1715,7 +1723,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.deleteMaterialSupplierAction(id);
     } catch (err) {
       set({ materialSuppliers: previous });
-      window.alert("Gagal menghapus supplier -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menghapus supplier -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1727,7 +1735,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.updateVendorProduksiMasterAction(id, patch);
     } catch (err) {
       set({ vendorProduksiList: previous });
-      window.alert("Gagal menyimpan vendor produksi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan vendor produksi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1739,7 +1747,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.deleteVendorProduksiMasterAction(id);
     } catch (err) {
       set({ vendorProduksiList: previous });
-      window.alert("Gagal menghapus vendor produksi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menghapus vendor produksi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1755,7 +1763,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.updateItemSellingPriceRowAction(id, patch);
     } catch (err) {
       set({ itemSellingPrices: previous });
-      window.alert("Gagal menyimpan SKU -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan SKU -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1767,7 +1775,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.deleteItemSellingPriceRowAction(id);
     } catch (err) {
       set({ itemSellingPrices: previous });
-      window.alert("Gagal menghapus SKU -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menghapus SKU -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1790,7 +1798,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.updateWarnaAliasAction(id, patch);
     } catch (err) {
       set({ warnaAliases: previous });
-      window.alert("Gagal menyimpan alias warna -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan alias warna -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1802,7 +1810,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.deleteWarnaAliasAction(id);
     } catch (err) {
       set({ warnaAliases: previous });
-      window.alert("Gagal menghapus alias warna -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menghapus alias warna -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1828,7 +1836,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.updateHargaKainPksRowAction(id, patch);
     } catch (err) {
       set({ hargaKainPks: previous });
-      window.alert("Gagal menyimpan harga kain PKS -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan harga kain PKS -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1840,7 +1848,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.deleteHargaKainPksRowAction(id);
     } catch (err) {
       set({ hargaKainPks: previous });
-      window.alert("Gagal menghapus baris harga kain PKS -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menghapus baris harga kain PKS -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1860,7 +1868,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.updateEntitasAction(id, nama);
     } catch (err) {
       set({ entitasList: previous });
-      window.alert("Gagal menyimpan nama entitas -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan nama entitas -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1872,7 +1880,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.deleteEntitasAction(id);
     } catch (err) {
       set({ entitasList: previous });
-      window.alert("Gagal menghapus entitas -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menghapus entitas -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1892,7 +1900,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.updateSupplierAction(id, nama);
     } catch (err) {
       set({ supplierList: previous });
-      window.alert("Gagal menyimpan nama supplier -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan nama supplier -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1904,7 +1912,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.deleteSupplierAction(id);
     } catch (err) {
       set({ supplierList: previous });
-      window.alert("Gagal menghapus supplier -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menghapus supplier -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1924,7 +1932,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.updateEkspedisiRateAction(id, patch);
     } catch (err) {
       set({ ekspedisiRates: previous });
-      window.alert("Gagal menyimpan tarif ekspedisi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan tarif ekspedisi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1936,7 +1944,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.deleteEkspedisiRateAction(id);
     } catch (err) {
       set({ ekspedisiRates: previous });
-      window.alert("Gagal menghapus baris ekspedisi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menghapus baris ekspedisi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1948,7 +1956,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.updateKerahMansetSettingAction(kind, patch);
     } catch (err) {
       set({ kerahMansetSettings: previous });
-      window.alert("Gagal menyimpan Master Data Kerah/Manset -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan Master Data Kerah/Manset -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1963,7 +1971,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.setMaterialPoEntityAction(poId, entitas);
     } catch (err) {
       set({ materialPOs: previous });
-      window.alert("Gagal menyimpan entitas -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan entitas -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -1979,7 +1987,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.setMaterialPoColorEntityAction(poId, warna, lengan, entitas);
     } catch (err) {
       set({ materialPOs: previous });
-      window.alert("Gagal menyimpan entitas warna -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan entitas warna -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2026,7 +2034,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.advanceMaklonProductionAction(id);
     } catch (err) {
       set({ maklonPOs: previous });
-      window.alert("Gagal memajukan status PO Produksi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal memajukan status PO Produksi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2043,7 +2051,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.approveMaklonInvoiceAction(invoiceId);
     } catch (err) {
       set({ maklonInvoices: previous });
-      window.alert("Gagal menyetujui invoice maklon -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyetujui invoice maklon -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2060,7 +2068,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.payMaklonInvoiceAction(invoiceId);
     } catch (err) {
       set({ maklonInvoices: previousInvoices, maklonPOs: previousPOs });
-      window.alert("Gagal membayar invoice maklon -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal membayar invoice maklon -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2084,7 +2092,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.receiveRawMaterialAddBuyAction(invoiceId, addBuyId);
     } catch (err) {
       set({ invoices: previous });
-      window.alert("Gagal menandai add buy diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menandai add buy diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2118,7 +2126,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       unwrapAction(await actions.updateBatchesToCuttingAction(batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId));
     } catch (err) {
       set({ productionBatches: previous });
-      window.alert("Gagal menyimpan hasil cutting -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan hasil cutting -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       // Fix (review 2026-09-14): dulu TIDAK ada backgroundRefresh() di jalur gagal ini -- kalau
       // updateBatchesToCuttingAction sempat menulis SEBAGIAN di server (mis. UPDATE cutting_at
       // untuk seluruh grup sudah commit, tapi recomputeAutoRejectForGroup di akhir yang gagal
@@ -2153,7 +2161,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.resolveProductionYieldAction(batchId, note);
     } catch (err) {
       set({ productionYieldResolutions: previous });
-      window.alert("Gagal menandai alert yield -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menandai alert yield -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2167,7 +2175,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.unresolveProductionYieldAction(batchId);
     } catch (err) {
       set({ productionYieldResolutions: previous });
-      window.alert("Gagal membuka lagi alert yield -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal membuka lagi alert yield -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2188,7 +2196,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.updateDeliveryKoliAction(koliId, patch);
     } catch (err) {
       set({ deliveryKolis: previous });
-      window.alert("Gagal menyimpan koli -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan koli -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2200,7 +2208,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.setVendorInvoiceDueDateAction(invoiceId, dueDate);
     } catch (err) {
       set({ vendorInvoices: previous });
-      window.alert("Gagal menyimpan jatuh tempo -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan jatuh tempo -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2213,7 +2221,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.setVendorInvoiceOngkirAction(invoiceId, ongkirTotal);
     } catch (err) {
       set({ vendorInvoices: previous });
-      window.alert("Gagal menyimpan ongkir -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan ongkir -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2238,7 +2246,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       unwrapAction(await actions.undoFgConfirmAction(groupKey));
     } catch (err) {
       set({ productionGroupMeta: previous });
-      window.alert("Gagal membuka kunci Finish Good -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal membuka kunci Finish Good -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2260,7 +2268,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.markProductionGroupDoneAction(groupKey, mrpId, vendorProduksi, warna, lengan);
     } catch (err) {
       set({ productionGroupMeta: previous });
-      window.alert("Gagal mengunci Selesai Produksi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal mengunci Selesai Produksi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2272,7 +2280,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.undoProductionGroupDoneAction(groupKey);
     } catch (err) {
       set({ productionGroupMeta: previous });
-      window.alert("Gagal membuka kunci -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal membuka kunci -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2291,7 +2299,19 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.reopenProductionPoAction(maklonPoId);
     } catch (err) {
       set({ maklonPOs: previous });
-      window.alert("Gagal membuka kembali PO -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal membuka kembali PO -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  setGroupRejectRemark: async (groupKey, remark) => {
+    const text = remark.trim();
+    const previous = get().productionGroupMeta;
+    set({ productionGroupMeta: previous.map((m) => (m.groupKey === groupKey ? { ...m, remarkSisaReject: text || undefined } : m)) });
+    try {
+      await actions.setGroupRejectRemarkAction(groupKey, text);
+    } catch (err) {
+      set({ productionGroupMeta: previous });
       throw err;
     }
     backgroundRefresh();
@@ -2303,7 +2323,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.setRejectRemarkAction(poId, remark);
     } catch (err) {
       set({ rejectRemarks: previous });
-      window.alert("Gagal menyimpan catatan -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menyimpan catatan -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2315,7 +2335,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.resolveMaterialClaimAction(key, note);
     } catch (err) {
       set({ materialClaimResolutions: previous });
-      window.alert("Gagal menandai klaim selesai -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menandai klaim selesai -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2329,7 +2349,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.unresolveMaterialClaimAction(key);
     } catch (err) {
       set({ materialClaimResolutions: previous });
-      window.alert("Gagal membuka lagi klaim -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal membuka lagi klaim -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2341,7 +2361,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.requestMaterialClaimReturAction(key, note);
     } catch (err) {
       set({ materialClaimReturRequests: previous });
-      window.alert("Gagal meminta retur -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal meminta retur -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2390,7 +2410,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
         materialClaimAcceptances: previousAcceptances,
         materialClaimReplacements: previousReplacements,
       });
-      window.alert("Gagal membatalkan klaim -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal membatalkan klaim -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2403,7 +2423,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.acceptMaterialClaimAction(key);
     } catch (err) {
       set({ materialClaimAcceptances: previous });
-      window.alert("Gagal menandai klaim diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menandai klaim diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2415,7 +2435,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     try {
       await actions.markClaimReplacementShippedAction(key);
     } catch (err) {
-      window.alert("Gagal menandai PV pengganti terkirim -- " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menandai PV pengganti terkirim -- " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2427,7 +2447,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.markMaterialClaimReturDeliveredAction(key, note);
     } catch (err) {
       set({ materialClaimReturDeliveries: previous });
-      window.alert("Gagal menandai retur terkirim -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menandai retur terkirim -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2439,7 +2459,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.confirmMaterialClaimReturReceivedAction(key);
     } catch (err) {
       set({ materialClaimReturReceipts: previous });
-      window.alert("Gagal menandai retur diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menandai retur diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2485,7 +2505,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.deleteVendorDepositEntryAction(id);
     } catch (err) {
       set({ vendorDeposits: previous });
-      window.alert("Gagal menghapus baris saldo deposit -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menghapus baris saldo deposit -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();
@@ -2497,7 +2517,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       await actions.deleteMaterialClaimHistoryAction(id);
     } catch (err) {
       set({ materialClaimHistory: previous });
-      window.alert("Gagal menghapus baris arsip klaim -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      notifyError("Gagal menghapus baris arsip klaim -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();

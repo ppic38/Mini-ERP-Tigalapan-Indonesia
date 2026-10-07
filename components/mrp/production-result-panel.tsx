@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { confirmDialog } from "@/components/ui/confirm-dialog";
-import { knownSizesForMrp, ReworkHistoryCard, ReworkInlineForm } from "@/components/mrp/rework-parts";
+import { GroupRemarkBox, knownSizesForMrp, ReworkHistoryCard, ReworkInlineForm } from "@/components/mrp/rework-parts";
 import { NumberInput } from "@/components/mrp/number-input";
 import { StatusPill } from "@/components/ui/status-pill";
 import { ProgressBar } from "@/components/ui/progress-bar";
@@ -508,23 +508,14 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                             });
                           })()}
                         </div>
-                        {(() => {
-                          // Remark sisa reject tersimpan per PO Produksi (rejectRemarks[poId]); tabel "Detail Reject -- by PO" yang
-                          // dulu jadi tempat isiannya disembunyikan (revisi 2026-09-22), jadi isiannya pindah ke sini.
-                          const remarkPoId = productionResults.find((r) => r.groupKey === groupKey && r.kind === "REJECT" && r.poId)?.poId;
-                          if (!remarkPoId) return null;
-                          return (
-                            <div className="mt-3">
-                              <div className="mb-1 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Remark sisa reject</div>
-                              <input
-                                value={rejectRemarks[remarkPoId] ?? ""}
-                                onChange={(e) => setRejectRemark(remarkPoId, e.target.value)}
-                                placeholder="Catatan sisa reject…"
-                                className="input w-full text-[11.5px]"
-                              />
-                            </div>
-                          );
-                        })()}
+                        <GroupRemarkBox
+                          groupKey={groupKey}
+                          fallback={(() => {
+                            // Remark LAMA per PO Produksi (sebelum remark per warna) dipakai sebagai isian awal supaya tinggal dikonfirmasi.
+                            const poId = productionResults.find((r) => r.groupKey === groupKey && r.kind === "REJECT" && r.poId)?.poId;
+                            return poId ? rejectRemarks[poId] : undefined;
+                          })()}
+                        />
                       </div>
                     )}
                     {expanded && kind === "FG" && (

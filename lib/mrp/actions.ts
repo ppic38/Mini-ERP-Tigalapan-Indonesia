@@ -2387,6 +2387,22 @@ export async function setVendorInvoiceOngkirAction(invoiceId: string, ongkirTota
   if (error) throw new Error(error.message);
 }
 
+/** Remark sisa reject PER WARNA/LENGAN (production_group_meta.remark_sisa_reject) -- direvisi 2026-10-07 (owner: "hilang ketika remark
+ *  sudah diinput, butuh tombol konfirmasi di remark suatu warna"). Remark terisi = sisa reject warna itu dianggap sudah ditangani vendor
+ *  (tidak lagi dihitung badge "perlu aksi"). Kosong = konfirmasi dibatalkan. Baris meta sudah ada begitu Finish Good grup ini diselesaikan
+ *  (reject baru ada sesudah itu). */
+export async function setGroupRejectRemarkAction(groupKey: string, remark: string): Promise<void> {
+  const vendorId = await requireVendorSession();
+  const db = supabaseServer();
+  const { data: meta, error: readErr } = await db.from("production_group_meta").select("group_key,vendor_produksi").eq("group_key", groupKey).maybeSingle();
+  if (readErr) throw new Error(readErr.message);
+  if (!meta) throw new Error("Reject warna ini belum dihitung — klik Selesai Produksi di tab Finish Good dulu.");
+  if (meta.vendor_produksi !== vendorId) throw new Error("Grup ini bukan milik vendor Anda.");
+  const text = remark.trim();
+  const { error } = await db.from("production_group_meta").update({ remark_sisa_reject: text || null }).eq("group_key", groupKey);
+  if (error) throw new Error(error.message);
+}
+
 export async function setRejectRemarkAction(poId: string, remark: string): Promise<void> {
   await requireVendorSession();
   const { error } = await supabaseServer().from("maklon_pos").update({ reject_remark: remark }).eq("id", poId);

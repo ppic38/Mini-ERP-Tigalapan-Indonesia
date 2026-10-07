@@ -197,7 +197,7 @@ export function countCuttingAwaitingUpdateForMrp(
 /** Warna/lengan yang sudah tercutting tapi belum ditandai "Done Produksi" — masih terbuka untuk
  *  input Finish Good/Reject. Dipakai badge tab Finish Good & Reject (sinyal sama: kedua tab itu
  *  aksinya sama-sama "input data produksi" selama grup belum ditutup). */
-type GroupGap = { groupKey: string; totalTarget: number; totalFg: number; sisaReject: number; fgConfirmed: boolean; done: boolean };
+type GroupGap = { groupKey: string; totalTarget: number; totalFg: number; sisaReject: number; fgConfirmed: boolean; done: boolean; remarked: boolean };
 
 function productionGroupGaps(
   vendorId: string,
@@ -224,7 +224,7 @@ function productionGroupGaps(
       const totalFg = Object.values(cumulativeSizeQtyForGroup(groupKey, "FG", productionResults)).reduce((a, b) => a + b, 0);
       const sisaReject = Object.values(cumulativeSizeQtyForGroup(groupKey, "REJECT", productionResults)).reduce((a, b) => a + b, 0);
       const meta = productionGroupMeta.find((m) => m.groupKey === groupKey);
-      out.push({ groupKey, totalTarget, totalFg, sisaReject, fgConfirmed: !!meta?.fgConfirmedAt, done: !!meta?.doneAt });
+      out.push({ groupKey, totalTarget, totalFg, sisaReject, fgConfirmed: !!meta?.fgConfirmedAt, done: !!meta?.doneAt, remarked: !!meta?.remarkSisaReject?.trim() });
     }
   }
   return out;
@@ -271,7 +271,7 @@ export function countRejectActionableGroups(
   productionGroupMeta: ProductionGroupMeta[],
   mrpDetails: MrpDetail[]
 ): number {
-  return productionGroupGaps(vendorId, productionBatches, productionResults, productionGroupMeta, mrpDetails).filter((g) => g.fgConfirmed && !g.done && g.sisaReject > 0).length;
+  return productionGroupGaps(vendorId, productionBatches, productionResults, productionGroupMeta, mrpDetails).filter((g) => g.fgConfirmed && !g.done && g.sisaReject > 0 && !g.remarked).length;
 }
 
 /** Item 3.2 — scoping 1 MRP dari countRejectActionableGroups di atas, dipakai marker dropdown
@@ -284,7 +284,7 @@ export function countRejectActionableGroupsForMrp(
   productionGroupMeta: ProductionGroupMeta[],
   mrpDetails: MrpDetail[]
 ): number {
-  return productionGroupGaps(vendorId, productionBatches, productionResults, productionGroupMeta, mrpDetails, mrpId).filter((g) => g.fgConfirmed && !g.done && g.sisaReject > 0).length;
+  return productionGroupGaps(vendorId, productionBatches, productionResults, productionGroupMeta, mrpDetails, mrpId).filter((g) => g.fgConfirmed && !g.done && g.sisaReject > 0 && !g.remarked).length;
 }
 
 /** Roll dengan alert yield <99% yang belum ditindaklanjuti — badge menu Yield Alert (portal
@@ -326,7 +326,9 @@ export function countRemainingRejectGroupsForMrp(
     // -- grup yang sudah dikunci Final Produksi tidak lagi dihitung "perlu aksi" di sini juga,
     // supaya marker dropdown ini tidak nyala sendirian sementara badge tab sudah padam (lihat
     // catatan "Post-Tester-round-1 fix" di countCuttingAwaitingUpdateForMrp untuk pola yang sama).
-    if (productionGroupMeta.find((m) => m.groupKey === groupKey)?.doneAt) return false;
+    const gm = productionGroupMeta.find((m) => m.groupKey === groupKey);
+    if (gm?.doneAt) return false;
+    if (gm?.remarkSisaReject?.trim()) return false; // remark sudah dikonfirmasi = sudah ditangani
     const sisaReject = Object.values(cumulativeSizeQtyForGroup(groupKey, "REJECT", productionResults)).reduce((a, b) => a + b, 0);
     return sisaReject > 0;
   }).length;
