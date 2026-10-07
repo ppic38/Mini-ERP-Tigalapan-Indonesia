@@ -170,13 +170,13 @@ export function DataTable<T>({
       </div>
 
       {((filterDefs && filterDefs.length > 0) || search) && (
-        <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle bg-[#FAFBFC] px-5 py-2.5">
+        <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle bg-[#FAFBFC] px-5 py-2.5 max-md:flex-col max-md:items-stretch max-md:px-4">
           {search && (
             <input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={search.placeholder ?? "Cari…"}
-              className="w-[220px] max-w-full rounded-md border border-border-subtle bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-medium text-[#31414F]"
+              className="w-[220px] max-w-full rounded-md max-md:w-full border border-border-subtle bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-medium text-[#31414F]"
             />
           )}
           {filterDefs?.map((f, i) => (
@@ -188,7 +188,7 @@ export function DataTable<T>({
                 next[i] = e.target.value;
                 setFilterValues(next);
               }}
-              className="max-w-full rounded-md border border-border-subtle bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-medium text-[#31414F]"
+              className="max-w-full rounded-md border border-border-subtle bg-white px-2.5 py-[6px] max-md:w-full font-sans text-[11.5px] font-medium text-[#31414F]"
             >
               <option value="">{f.label}: Semua</option>
               {f.options.map((o) => (

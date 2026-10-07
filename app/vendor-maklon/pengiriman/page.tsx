@@ -645,7 +645,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                             if (c.key === "size") return <span key={c.key} data-label="Size">{r.size}</span>;
                             if (c.key === "sumber")
                               return (
-                                <span key={c.key} data-label="Sumber roll" className="flex flex-wrap gap-1 max-md:col-span-full">
+                                <span key={c.key} data-label="Sumber roll" className="flex flex-wrap gap-1 max-md:order-4 max-md:col-span-full">
                                   {sources.length === 0 ? <span className="text-text-muted">—</span> : sources.map((x) => sourceChip(x.code, x.qty))}
                                 </span>
                               );
@@ -656,7 +656,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                                 </span>
                               );
                             return (
-                              <span key={c.key} data-label="Qty kirim" className="flex items-center justify-end">
+                              <span key={c.key} data-label="Qty kirim" className="flex items-center justify-end max-md:order-5">
                                 <NumberInput
                                   value={rollQtyDraft[r.key] ?? 0}
                                   decimals={0}
@@ -731,7 +731,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                               );
                             if (col.key === "sumber")
                               return (
-                                <span key={col.key} data-label="Sumber roll" className="flex flex-wrap gap-1 max-md:col-span-full">
+                                <span key={col.key} data-label="Sumber roll" className="flex flex-wrap gap-1 max-md:order-4 max-md:col-span-full">
                                   {sources.length === 0 ? <span className="text-text-muted">—</span> : sources.map((x) => sourceChip(x.code, x.qty, x.fromSize))}
                                 </span>
                               );
@@ -742,7 +742,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                                 </span>
                               );
                             return (
-                              <span key={col.key} data-label="Qty kirim" className="flex items-center justify-end">
+                              <span key={col.key} data-label="Qty kirim" className="flex items-center justify-end max-md:order-5">
                                 <NumberInput
                                   value={qty}
                                   decimals={0}
