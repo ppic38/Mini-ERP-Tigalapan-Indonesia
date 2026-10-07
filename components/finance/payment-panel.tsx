@@ -19,6 +19,7 @@ import {
   isSyntheticSupplier,
 } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import { mergeColorEntriesByWarna } from "@/lib/mrp/mergeColorEntries";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { materialInvoicePaymentCorrections } from "@/components/sysadmin/finance-corrections";
 import type { RawMaterialInvoice } from "@/lib/mrp/types";
@@ -487,26 +488,25 @@ export function PaymentPanel() {
               dikali jumlah roll. Sekarang jumlah roll & total berat (kg) ditampilkan sebagai
               2 kolom terpisah supaya kelihatan jelas subtotal = Total Berat x Harga/Kg. */}
           <div className="grid grid-cols-5 gap-x-2 border-t border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-            <span>Warna / lengan</span>
+            <span>Warna</span>
             <span className="text-right">Roll</span>
             <span className="text-right">Total Berat (kg)</span>
             <span className="text-right">Harga/Kg</span>
             <span className="text-right">Subtotal</span>
           </div>
-          {i.colorEntries.map((c, idx) => {
-            const totalKg = c.rolls.reduce((s, w) => s + w, 0);
-            return (
-              <div key={idx} className="grid grid-cols-5 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-                <span className="font-medium">
-                  {c.warna} · {c.lengan}
-                </span>
-                <span className="text-right font-mono">{c.rolls.length}</span>
-                <span className="text-right font-mono">{formatDecimal(totalKg)}</span>
-                <span className="text-right font-mono">{formatRupiah(c.hargaPerRoll)}</span>
-                <span className="text-right font-mono">{formatRupiah(c.hargaPerRoll * totalKg)}</span>
-              </div>
-            );
-          })}
+          {/* Revisi 2026-10-07 (owner: "gabung saja, tidak usah terbagi panjang dan pendek ... jangan
+              sampai ada miss kg, harga, subtotal"): PENDEK + PANJANG digabung per warna (roll, kg, subtotal
+              = penjumlahan persis; kalau harga/kg satu warna berbeda, barisnya tetap terpisah -- lihat
+              mergeColorEntriesByWarna). Nilai PV total di bawah tidak terpengaruh (dihitung dari entri asli). */}
+          {mergeColorEntriesByWarna(i.colorEntries).map((c, idx) => (
+            <div key={idx} className="grid grid-cols-5 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+              <span className="font-medium">{c.warna}</span>
+              <span className="text-right font-mono">{c.rollCount}</span>
+              <span className="text-right font-mono">{formatDecimal(c.totalKg)}</span>
+              <span className="text-right font-mono">{formatRupiah(c.hargaPerKg)}</span>
+              <span className="text-right font-mono">{formatRupiah(c.subtotal)}</span>
+            </div>
+          ))}
           {i.addBuys.length > 0 && (
             <>
               <div className="grid grid-cols-5 gap-x-2 border-t border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
