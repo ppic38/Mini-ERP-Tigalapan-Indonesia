@@ -24,8 +24,8 @@ export const VENDOR_MODULE_TREE: VendorModule[] = [
     permissions: [
       { key: "/vendor-maklon/production:CUTTING", label: "Cutting / Resting" },
       { key: "/vendor-maklon/production:FG", label: "Finish Good" },
-      { key: "/vendor-maklon/production:REJECT", label: "Reject" },
-      { key: "/vendor-maklon/production:REWORK", label: "Rework" },
+      { key: "/vendor-maklon/production:REJECT", label: "Reject & Rework (lihat)" },
+      { key: "/vendor-maklon/production:REWORK", label: "Reject & Rework (buat rework)" },
       { key: "/vendor-maklon/production:FINAL", label: "Final Produksi" },
     ],
   },

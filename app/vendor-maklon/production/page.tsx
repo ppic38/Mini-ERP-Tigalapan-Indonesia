@@ -6,15 +6,15 @@ import { KeepAliveTab } from "@/components/ui/keep-alive-tab";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { ProductionCuttingTab } from "@/components/mrp/production-cutting-tab";
 import { ProductionResultPanel } from "@/components/mrp/production-result-panel";
-import { ProductionReworkTab } from "@/components/mrp/production-rework-tab";
 import { ProductionFinalTab } from "@/components/mrp/production-final-tab";
 import { useMrpStore } from "@/lib/mrp/store";
 import { useVendorAuthStore } from "@/lib/mrp/vendor-auth-store";
 import { vendorAllowedSubTabs } from "@/lib/mrp/vendorPages";
-import { countCuttingAwaitingUpdate, countFgShortfallGroups, countProductionFinalReady, countRejectActionableGroups, countRemainingRework } from "@/lib/shell/badges";
+import { countCuttingAwaitingUpdate, countFgShortfallGroups, countProductionFinalReady, countRejectActionableGroups } from "@/lib/shell/badges";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 
-type Tab = "CUTTING" | "FG" | "REJECT" | "REWORK" | "FINAL";
+// "REJECT" = tab gabungan "Reject & Rework" (2026-10-07). Kode izin REWORK tetap ada (akun lama) -- lihat TABS di bawah.
+type Tab = "CUTTING" | "FG" | "REJECT" | "FINAL";
 
 function ProductionContent({ vendorId }: { vendorId: string }) {
   const [tab, setTab] = useState<Tab>("CUTTING");
@@ -46,17 +46,17 @@ function ProductionContent({ vendorId }: { vendorId: string }) {
   // Reject SENGAJA baru badge begitu Finish Good sudah mulai dilaporkan untuk grup itu — sebelum
   // ada input FG sama sekali, belum ada dasar bilang ada reject (lihat catatan di badges.ts).
   const rejectBadge = countRejectActionableGroups(vendorId, productionBatches, productionResults, productionGroupMeta, mrpDetails);
-  const reworkBadge = countRemainingRework(vendorId, productionBatches, productionResults, productionGroupMeta);
   const finalBadge = countProductionFinalReady(vendorId, productionBatches, productionResults, productionGroupMeta, mrpDetails);
 
   const ALL_TABS: { key: Tab; label: string; badge: number }[] = [
     { key: "CUTTING", label: "Cutting", badge: cuttingBadge },
     { key: "FG", label: "Finish Good", badge: fgBadge },
-    { key: "REJECT", label: "Reject", badge: rejectBadge },
-    { key: "REWORK", label: "Rework", badge: reworkBadge },
+    { key: "REJECT", label: "Reject & Rework", badge: rejectBadge },
     { key: "FINAL", label: "Final Produksi", badge: finalBadge },
   ];
-  const TABS = allowedSub === "ALL" ? ALL_TABS : ALL_TABS.filter((t) => allowedSub.includes(t.key));
+  // Tab gabungan tampil kalau akun punya izin REJECT ATAU REWORK; tombol rework di dalamnya hanya aktif kalau punya izin REWORK.
+  const TABS = allowedSub === "ALL" ? ALL_TABS : ALL_TABS.filter((t) => (t.key === "REJECT" ? allowedSub.includes("REJECT") || allowedSub.includes("REWORK") : allowedSub.includes(t.key)));
+  const canRework = allowedSub === "ALL" || allowedSub.includes("REWORK");
   // Dihitung langsung saat render (BUKAN lewat useEffect, sama pola dengan effectiveMrpId di
   // po-maklon-panel.tsx) -- begitu tab yang lagi aktif ternyata tidak lagi diizinkan (mis. actor
   // baru login & TABS berubah), otomatis "jatuh" ke tab pertama yang diizinkan.
@@ -95,8 +95,7 @@ function ProductionContent({ vendorId }: { vendorId: string }) {
       )}
       {TABS.some((t) => t.key === "CUTTING") && <KeepAliveTab active={effectiveTab === "CUTTING"}><ProductionCuttingTab vendorId={vendorId} /></KeepAliveTab>}
       {TABS.some((t) => t.key === "FG") && <KeepAliveTab active={effectiveTab === "FG"}><ProductionResultPanel vendorId={vendorId} kind="FG" title="Finish Good" /></KeepAliveTab>}
-      {TABS.some((t) => t.key === "REJECT") && <KeepAliveTab active={effectiveTab === "REJECT"}><ProductionResultPanel vendorId={vendorId} kind="REJECT" title="Reject" /></KeepAliveTab>}
-      {TABS.some((t) => t.key === "REWORK") && <KeepAliveTab active={effectiveTab === "REWORK"}><ProductionReworkTab vendorId={vendorId} /></KeepAliveTab>}
+      {TABS.some((t) => t.key === "REJECT") && <KeepAliveTab active={effectiveTab === "REJECT"}><ProductionResultPanel vendorId={vendorId} kind="REJECT" title="Reject & Rework" canRework={canRework} /></KeepAliveTab>}
       {TABS.some((t) => t.key === "FINAL") && <KeepAliveTab active={effectiveTab === "FINAL"}><ProductionFinalTab vendorId={vendorId} /></KeepAliveTab>}
     </AppShell>
   );

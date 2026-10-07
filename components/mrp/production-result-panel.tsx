@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { confirmDialog } from "@/components/ui/confirm-dialog";
+import { knownSizesForMrp, ReworkHistoryCard, ReworkInlineForm } from "@/components/mrp/rework-parts";
 import { NumberInput } from "@/components/mrp/number-input";
 import { StatusPill } from "@/components/ui/status-pill";
 import { ProgressBar } from "@/components/ui/progress-bar";
@@ -126,7 +127,7 @@ function FgProgressHistory({ poId, results }: { poId: string; results: Productio
   );
 }
 
-export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: string; kind: "FG" | "REJECT"; title: string }) {
+export function ProductionResultPanel({ vendorId, kind, title, canRework = false }: { vendorId: string; kind: "FG" | "REJECT"; title: string; canRework?: boolean }) {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const productionBatches = useMrpStore((s) => s.productionBatches);
   const productionResults = useMrpStore((s) => s.productionResults);
@@ -149,6 +150,8 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
 
   const [selectedMrpId, setSelectedMrpId] = useState("");
   const [expandedGroupKey, setExpandedGroupKey] = useState("");
+  // Tab gabungan Reject & Rework (2026-10-07): size yang form reworknya sedang terbuka (kosong = tidak ada).
+  const [reworkOpen, setReworkOpen] = useState<{ groupKey: string; size: string } | null>(null);
   // Item 15 (feedback batch 2026-09-10): input total per size di level grup -- MURNI client-side
   // (draft angka yang mau diisi), disimpan ke roll otomatis (roll pertama dulu, penuh -> ditutup)
   // begitu "Simpan" diklik. Sejak input per-roll dihapus, ini satu-satunya draft input FG yang
@@ -445,11 +448,12 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                     {expanded && isFgConfirmed && kind === "REJECT" && (
                       <div className="border-b border-[#CFE0EF] bg-info-bg p-4">
                         <div className="overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
-                          <div className="grid grid-cols-4 gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                          <div className="grid grid-cols-5 gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                             <span>Size</span>
                             <span className="text-right">Reject (otomatis)</span>
                             <span className="text-right">Rework</span>
                             <span className="text-right">Sisa reject</span>
+                            <span className="text-right">Aksi</span>
                           </div>
                           {(() => {
                             const grossPerSize = rejectGrossForGroup(groupKey, productionResults);
@@ -458,14 +462,50 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                             if (rejectSizes.length === 0) {
                               return <div className="px-3 py-3 text-center font-sans text-[11px] text-text-muted">Tidak ada reject — finish good sudah mencapai target.</div>;
                             }
-                            return rejectSizes.map((size) => (
-                              <div key={size} className="grid grid-cols-4 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F]">
-                                <span className="font-mono font-medium">{size}</span>
-                                <span className="text-right font-mono">{grossPerSize[size] ?? 0}</span>
-                                <span className="text-right font-mono text-success-fg">{reworkPerSize[size] ?? 0}</span>
-                                <span className="text-right font-mono text-danger-fg">{recorded[size] ?? 0}</span>
-                              </div>
-                            ));
+                            return rejectSizes.map((size) => {
+                              const sisa = recorded[size] ?? 0;
+                              const isOpen = reworkOpen?.groupKey === groupKey && reworkOpen.size === size;
+                              // Rework butuh izin REWORK & grup belum dikunci Final Produksi (server menolak kalau sudah).
+                              const canDoRework = canRework && !sysadmin && !isFinalDone && sisa > 0;
+                              return (
+                                <div key={size}>
+                                  <div className={"grid grid-cols-5 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-2 font-sans text-xs text-[#31414F] " + (isOpen ? "bg-info-bg" : "")}>
+                                    <span className="font-mono font-medium">{size}</span>
+                                    <span className="text-right font-mono">{grossPerSize[size] ?? 0}</span>
+                                    <span className="text-right font-mono text-success-fg">{reworkPerSize[size] ?? 0}</span>
+                                    <span className="text-right font-mono text-danger-fg">{sisa}</span>
+                                    <span className="text-right">
+                                      {canDoRework ? (
+                                        isOpen ? (
+                                          <Button onClick={() => setReworkOpen(null)} variant="accent" size="xs">
+                                            Tutup
+                                          </Button>
+                                        ) : (
+                                          <Button onClick={() => setReworkOpen({ groupKey, size })} variant="primary" size="xs">
+                                            Rework jadi baju →
+                                          </Button>
+                                        )
+                                      ) : sisa > 0 && isFinalDone ? (
+                                        <span className="font-sans text-[10px] text-text-muted">Final — buka kunci dulu</span>
+                                      ) : null}
+                                    </span>
+                                  </div>
+                                  {isOpen && (
+                                    <ReworkInlineForm
+                                      key={groupKey + size}
+                                      mrpId={selectedMrpId}
+                                      vendorId={vendorId}
+                                      warna={g.warna}
+                                      lengan={g.lengan as Lengan}
+                                      size={size}
+                                      max={sisa}
+                                      knownSizes={knownSizesForMrp(selectedMrpId, mrpDetails)}
+                                      onDone={() => setReworkOpen(null)}
+                                    />
+                                  )}
+                                </div>
+                              );
+                            });
                           })()}
                         </div>
                         {(() => {
@@ -843,6 +883,8 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
           </div>
         </div>
       )}
+
+      {kind === "REJECT" && <ReworkHistoryCard vendorId={vendorId} />}
 
       {/* Tabel "by PO" hanya untuk Finish Good; di tab Reject disembunyikan (revisi 2026-09-22) -- kolom Qty reject/rework/sisa
           sudah ada di tabel per warna/lengan di atas. `as string` menjaga cabang REJECT di bawah tetap valid secara tipe. */}
