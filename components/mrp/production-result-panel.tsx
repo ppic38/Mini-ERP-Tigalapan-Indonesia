@@ -671,7 +671,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                     return (
                                       <div key={size} className="flex flex-col gap-2.5 rounded-lg border-2 border-[#BCD3E8] bg-white px-3.5 py-3 shadow-[0_1px_3px_rgba(11,19,27,.08)]">
                                         <div className="flex items-center justify-between gap-2">
-                                          <span className="whitespace-nowrap rounded-md bg-info-bg px-2.5 py-1 font-sans text-[12.5px] font-bold text-info-fg">{size}</span>
+                                          <span className="whitespace-nowrap rounded-md border-[1.5px] border-[#8FB3D3] bg-info-bg px-2.5 py-1 font-sans text-[12.5px] font-bold text-info-fg">{size}</span>
                                           <span className="whitespace-nowrap font-mono text-[10px] text-text-muted">
                                             sisa maks <span className="font-semibold text-[#31414F]">{totalCapacity[size]}</span>
                                           </span>
