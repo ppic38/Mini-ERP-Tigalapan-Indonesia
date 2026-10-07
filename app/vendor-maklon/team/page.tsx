@@ -191,7 +191,7 @@ function TeamContent({ vendorId }: { vendorId: string }) {
         {error && <div className="rounded-md border border-danger bg-danger-bg px-4 py-2.5 font-sans text-[12px] text-danger-fg">{error}</div>}
 
         <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-          <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
+          <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-4 py-3">
             <span className="font-sans text-[13px] font-semibold text-text-primary">Anggota Tim</span>
             <div className="ml-auto flex items-center gap-1.5">
               <Button onClick={openLog} variant="ghost" size="sm">
@@ -202,7 +202,7 @@ function TeamContent({ vendorId }: { vendorId: string }) {
               </Button>
             </div>
           </div>
-          <div className="grid grid-cols-[1fr_1fr_1.4fr_90px_150px] gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+          <div className="m-hide grid grid-cols-[1fr_1fr_1.4fr_90px_150px] gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
             <span>Username</span>
             <span>Nama</span>
             <span>Halaman Diizinkan</span>
@@ -212,14 +212,14 @@ function TeamContent({ vendorId }: { vendorId: string }) {
           {members == null && <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Memuat…</div>}
           {members != null && members.length === 0 && <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada anggota tim — klik &quot;+ Tambah Anggota&quot;.</div>}
           {members?.map((m) => (
-            <div key={m.id} className="grid grid-cols-[1fr_1fr_1.4fr_90px_150px] items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0">
-              <span className="font-mono">{m.username}</span>
-              <span>{m.name}</span>
-              <span className="text-[10.5px] text-text-muted">
+            <div key={m.id} className="m-stack m-grid2 grid grid-cols-[1fr_1fr_1.4fr_90px_150px] items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-3">
+              <span className="font-mono max-md:text-[13px] max-md:font-semibold">{m.username}</span>
+              <span data-label="Nama">{m.name}</span>
+              <span data-label="Status" className={m.active ? "font-semibold text-success-fg" : "text-text-muted"}>{m.active ? "Aktif" : "Nonaktif"}</span>
+              <span data-label="Halaman diizinkan" className="text-[10.5px] text-text-muted max-md:col-span-full">
                 {describeVendorPermissions(m.allowedPages)}
               </span>
-              <span className={m.active ? "font-semibold text-success-fg" : "text-text-muted"}>{m.active ? "Aktif" : "Nonaktif"}</span>
-              <span className="flex items-center justify-end gap-1.5">
+              <span className="flex flex-wrap items-center justify-end gap-1.5">
                 <Button onClick={() => setEditing(m)} variant="ghost" size="xs">
                   Edit
                 </Button>
@@ -237,7 +237,7 @@ function TeamContent({ vendorId }: { vendorId: string }) {
         {showLog && (
           <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
             <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Riwayat Aksi Tim</div>
-            <div className="grid grid-cols-[150px_1fr_1fr] gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+            <div className="m-hide grid grid-cols-[150px_1fr_1fr] gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
               <span>Waktu</span>
               <span>Anggota</span>
               <span>Aksi</span>
@@ -245,10 +245,10 @@ function TeamContent({ vendorId }: { vendorId: string }) {
             {logs == null && <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Memuat…</div>}
             {logs != null && logs.length === 0 && <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada riwayat.</div>}
             {logs?.map((l) => (
-              <div key={l.id} className="grid grid-cols-[150px_1fr_1fr] items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[10px] font-sans text-xs text-[#31414F] last:border-b-0">
-                <span className="text-[11px] text-text-muted">{fmtTime(l.createdAt)}</span>
-                <span className="font-medium">{l.actorName}</span>
-                <span>{l.action}</span>
+              <div key={l.id} className="m-stack grid grid-cols-[150px_1fr_1fr] items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[10px] font-sans text-xs text-[#31414F] last:border-b-0 max-md:gap-y-1 max-md:py-3">
+                <span data-label="Waktu" className="text-[11px] text-text-muted">{fmtTime(l.createdAt)}</span>
+                <span data-label="Anggota" className="font-medium">{l.actorName}</span>
+                <span data-label="Aksi">{l.action}</span>
               </div>
             ))}
           </div>

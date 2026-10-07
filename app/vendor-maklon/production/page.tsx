@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/shell/app-shell";
 import { KeepAliveTab } from "@/components/ui/keep-alive-tab";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
@@ -61,6 +61,11 @@ function ProductionContent({ vendorId }: { vendorId: string }) {
   // po-maklon-panel.tsx) -- begitu tab yang lagi aktif ternyata tidak lagi diizinkan (mis. actor
   // baru login & TABS berubah), otomatis "jatuh" ke tab pertama yang diizinkan.
   const effectiveTab = TABS.some((t) => t.key === tab) ? tab : (TABS[0]?.key ?? tab);
+  // HP: deretan tab bisa lebih lebar dari layar -- tab aktif digeser ke tengah supaya selalu kelihatan.
+  const tabBarRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    tabBarRef.current?.querySelector<HTMLElement>('[data-active="true"]')?.scrollIntoView({ inline: "center", block: "nearest" });
+  }, [effectiveTab]);
 
   return (
     <AppShell
@@ -72,13 +77,15 @@ function ProductionContent({ vendorId }: { vendorId: string }) {
       roleOverride={VENDOR_PRODUKSI[vendorId]?.name ?? vendorId}
       entityOverride="Vendor Produksi"
     >
-      <div className="flex gap-2 rounded-lg border border-border-subtle bg-surface-card p-1.5">
+      {/* Di HP tab digeser ke samping (tidak membungkus) supaya tetap satu baris. */}
+      <div ref={tabBarRef} className="flex gap-2 overflow-x-auto rounded-lg border border-border-subtle bg-surface-card p-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {TABS.map((t) => (
           <button
             key={t.key}
+            data-active={effectiveTab === t.key}
             onClick={() => setTab(t.key)}
             className={
-              "flex items-center gap-1.5 rounded-md px-3.5 py-[7px] font-sans text-[12.5px] font-semibold " +
+              "flex flex-none items-center gap-1.5 whitespace-nowrap rounded-md px-3.5 py-[7px] font-sans text-[12.5px] font-semibold " +
               (effectiveTab === t.key ? "bg-action-primary text-white" : "text-text-muted hover:bg-[#F7F9FB]")
             }
           >

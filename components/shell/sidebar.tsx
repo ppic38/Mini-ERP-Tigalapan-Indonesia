@@ -21,6 +21,7 @@ import {
   Receipt,
   Lock,
   Database,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -70,7 +71,7 @@ function readOpenGroups(): string[] {
   }
 }
 
-function SidebarItem({ item, activeHref, badgeOverrides, nested }: { item: NavItem; activeHref?: string; badgeOverrides?: Record<string, number>; nested?: boolean }) {
+function SidebarItem({ item, activeHref, badgeOverrides, nested, onNavigate }: { item: NavItem; activeHref?: string; badgeOverrides?: Record<string, number>; nested?: boolean; onNavigate?: () => void }) {
   const active = !!item.href && item.href === activeHref;
   const badge = badgeFor(item, badgeOverrides);
   const className = cn(
@@ -93,7 +94,7 @@ function SidebarItem({ item, activeHref, badgeOverrides, nested }: { item: NavIt
     return <div className={className}>{content}</div>;
   }
   return (
-    <Link href={item.href} className={className}>
+    <Link href={item.href} className={className} onClick={onNavigate}>
       {content}
     </Link>
   );
@@ -105,7 +106,13 @@ export function Sidebar({
   activeGroupKey,
   activeHref,
   badgeOverrides,
+  mobileOpen = false,
+  onClose,
 }: {
+  /** Layar < lg: sidebar jadi laci (drawer) di atas konten; `mobileOpen` = sedang terbuka. Di layar
+   *  lg ke atas prop ini diabaikan (sidebar tetap tampil seperti biasa). */
+  mobileOpen?: boolean;
+  onClose?: () => void;
   items: NavItem[];
   /** Mode Sysadmin (owner 2026-09-29): sidebar BERTUMPUK -- tiap modul jadi grup yang bisa
    *  dibuka/ditutup. Kalau diisi, `items` diabaikan. */
@@ -144,9 +151,20 @@ export function Sidebar({
   }
 
   return (
-    <div className="flex w-[212px] flex-none flex-col bg-surface-nav">
-      <div className="flex h-[52px] items-center gap-[9px] border-b border-white/8 px-4">
+    <div
+      className={cn(
+        "flex w-[260px] max-w-[85vw] flex-none flex-col overflow-y-auto bg-surface-nav",
+        // < lg: laci tetap di kiri layar, geser masuk/keluar. >= lg: kolom biasa di samping konten.
+        "fixed inset-y-0 left-0 z-40 transition-transform duration-200 ease-out",
+        mobileOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full",
+        "lg:static lg:z-auto lg:w-[212px] lg:max-w-none lg:translate-x-0 lg:overflow-visible lg:shadow-none lg:transition-none"
+      )}
+    >
+      <div className="flex h-[52px] flex-none items-center gap-[9px] border-b border-white/8 px-4">
         <span className="font-heading text-[13px] font-bold leading-tight tracking-tight text-white">Tigalapan Indonesia</span>
+        <button type="button" onClick={onClose} aria-label="Tutup menu" className="ml-auto flex h-8 w-8 items-center justify-center rounded-md text-[#9AA4BE] hover:text-white lg:hidden">
+          <X size={18} />
+        </button>
       </div>
       <div className="flex flex-col gap-0.5 p-2.5">
         {groups
@@ -181,11 +199,11 @@ export function Sidebar({
                       <span className="flex-shrink-0 rounded-full bg-danger px-[5px] py-px font-mono text-[9px] font-semibold normal-case tracking-normal text-white">{groupBadge}</span>
                     )}
                   </button>
-                  {open && group.items.map((item) => <SidebarItem key={item.label} item={item} activeHref={activeHref} badgeOverrides={badgeOverrides} nested />)}
+                  {open && group.items.map((item) => <SidebarItem key={item.label} item={item} activeHref={activeHref} badgeOverrides={badgeOverrides} nested onNavigate={onClose} />)}
                 </div>
               );
             })
-          : items.map((item) => <SidebarItem key={item.label} item={item} activeHref={activeHref} badgeOverrides={badgeOverrides} />)}
+          : items.map((item) => <SidebarItem key={item.label} item={item} activeHref={activeHref} badgeOverrides={badgeOverrides} onNavigate={onClose} />)}
       </div>
       <div className="mt-auto border-t border-white/8 px-4 py-3.5 font-mono text-[10.5px] text-[#5E7288]">
         v1.0 · Tigalapan Indonesia

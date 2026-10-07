@@ -306,8 +306,8 @@ export function ReworkHistoryCard({ vendorId }: { vendorId: string }) {
     <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
       <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Riwayat rework</div>
       <div className="overflow-x-auto">
-        <div className="min-w-[1050px]">
-          <div className={"grid items-center gap-x-3 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] text-center font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg " + COLS}>
+        <div className="min-w-[1050px] m-fluid">
+          <div className={"m-hide grid items-center gap-x-3 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] text-center font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg " + COLS}>
             <span>MRP</span>
             <span>Kategori</span>
             <span>Warna / lengan</span>
@@ -329,18 +329,18 @@ export function ReworkHistoryCard({ vendorId }: { vendorId: string }) {
             const remark = (sourceKey && productionGroupMeta.find((m) => m.groupKey === sourceKey)?.remarkSisaReject?.trim()) || rejectRemarks[r.poId] || "";
             return (
               <div key={r.id} className="border-b border-[#F1F4F7] last:border-b-0">
-                <div className={"grid items-center gap-x-3 px-4 py-[11px] text-center font-sans text-xs text-[#31414F] " + COLS}>
-                  <span className="font-mono">{r.mrpId}</span>
-                  <span>{mrpDetailFor(r.mrpId, mrpDetails)?.mrp.kategori ?? "—"}</span>
-                  <span>
+                <div className={"m-stack grid items-center gap-x-3 px-4 py-[11px] text-center font-sans text-xs text-[#31414F] " + COLS}>
+                  <span data-label="MRP" className="font-mono">{r.mrpId}</span>
+                  <span data-label="Kategori">{mrpDetailFor(r.mrpId, mrpDetails)?.mrp.kategori ?? "—"}</span>
+                  <span data-label="Warna / lengan">
                     {r.warna} · {r.lengan}
                   </span>
-                  <span>{r.usia ?? "—"}</span>
-                  <span className="font-mono font-medium">{fromSize ?? "—"}</span>
-                  <span className="font-mono font-medium">{toSize}</span>
-                  <span className="font-mono font-medium">{Object.values(r.sizeQty).reduce((a, b) => a + b, 0)}</span>
-                  <span className={remark ? "" : "text-text-muted"}>{remark || "—"}</span>
-                  <span className="font-mono text-[11px] text-text-muted">{formatDateTimeShort(r.recordedAt)}</span>
+                  <span data-label="Usia">{r.usia ?? "—"}</span>
+                  <span data-label="Size (Reject)" className="font-mono font-medium">{fromSize ?? "—"}</span>
+                  <span data-label="Size (Hasil)" className="font-mono font-medium">{toSize}</span>
+                  <span data-label="Qty" className="font-mono font-medium">{Object.values(r.sizeQty).reduce((a, b) => a + b, 0)}</span>
+                  <span data-label="Catatan" className={remark ? "" : "text-text-muted"}>{remark || "—"}</span>
+                  <span data-label="Tanggal" className="font-mono text-[11px] text-text-muted">{formatDateTimeShort(r.recordedAt)}</span>
                 </div>
                 {/* Koreksi Sysadmin: vendor tidak punya cara membatalkan rework yang salah. `empty:hidden` -- tidak makan ruang kalau bukan Sysadmin. */}
                 <div className="px-4 pb-2 empty:hidden">

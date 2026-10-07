@@ -154,7 +154,7 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                     </Button>
                   </div>
                   {first.ekspedisiNote && <div className="border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-[10.5px] text-text-muted">Catatan: {first.ekspedisiNote}</div>}
-                  <div className="grid grid-cols-4 gap-x-2 border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                  <div className="m-hide grid grid-cols-4 gap-x-2 border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                     <span>No MRP</span>
                     <span>No Koli</span>
                     <span>Isi</span>
@@ -164,18 +164,18 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                     const isExpanded = expandedKoli.has(k.id);
                     return (
                       <Fragment key={k.id}>
-                        <div className="grid grid-cols-4 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0">
+                        <div className="m-wrap grid grid-cols-4 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5">
                           <span className="font-mono">{k.mrpId}</span>
                           <span className="font-mono font-medium">{k.noKoli}</span>
                           <button
                             onClick={() => toggleKoliExpanded(k.id)}
-                            className="flex items-center gap-1 text-left font-sans text-xs text-[#31414F] hover:text-action-primary"
+                            className="flex items-center gap-1 text-left font-sans text-xs text-[#31414F] hover:text-action-primary max-md:order-last max-md:basis-full"
                             title="Klik untuk lihat rincian isi koli per item"
                           >
                             {isExpanded ? <ChevronDown className="h-3.5 w-3.5 flex-none text-text-muted" /> : <ChevronRight className="h-3.5 w-3.5 flex-none text-text-muted" />}
                             {summarizeItems(k.items)}
                           </button>
-                          <span className="text-right font-mono">{formatDecimal(k.beratKoli ?? 0)}</span>
+                          <span data-label="Berat (kg)" className="text-right font-mono max-md:ml-auto">{formatDecimal(k.beratKoli ?? 0)}</span>
                         </div>
                         {isExpanded && (
                           <div className="border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-3 last:border-b-0">
@@ -195,9 +195,9 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
       <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
         <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Invoice yang telah dibuat</div>
         <div className="overflow-x-auto">
-          <div className="min-w-[1020px]">
+          <div className="m-fluid min-w-[1020px]">
             <div
-              className="grid items-center gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
+              className="m-hide grid items-center gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
               style={{ gridTemplateColumns: "110px 1fr 90px 110px 90px 120px 160px" }}
             >
               <span>No Invoice</span>
@@ -222,24 +222,24 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                 <div key={inv.id}>
                   <button
                     onClick={() => setExpandedInvoiceId(invExpanded ? "" : inv.id)}
-                    className="grid w-full items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] text-left font-sans text-xs text-[#31414F] hover:bg-[#F7F9FB]"
+                    className="m-stack m-grid2 grid w-full items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] text-left font-sans text-xs text-[#31414F] hover:bg-[#F7F9FB] max-md:py-3"
                     style={{ gridTemplateColumns: "110px 1fr 90px 110px 90px 120px 160px" }}
                   >
-                    <span className="font-mono font-medium">{inv.id}</span>
-                    <span>{inv.lines.map((l) => l.mrpId).join(", ")}</span>
-                    <span className="text-right font-mono">{formatPcs(totalQtyInv)}</span>
-                    <span>
+                    <span className="font-mono font-medium max-md:text-[13px]">{inv.id}</span>
+                    <span data-label="MRP" className="max-md:col-span-full">{inv.lines.map((l) => l.mrpId).join(", ")}</span>
+                    <span data-label="Total qty" className="text-right font-mono">{formatPcs(totalQtyInv)}</span>
+                    <span data-label="Status">
                       <StatusPill tone={vendorInvoiceBadge(inv.status).tone}>{vendorInvoiceBadge(inv.status).label}</StatusPill>
                     </span>
-                    <span className="font-mono text-[11px] text-text-muted">{inv.submittedAt}</span>
-                    <span className="text-right font-mono font-semibold text-[#31414F]">{formatRupiah(inv.totalTagihan)}</span>
-                    <span>
+                    <span data-label="Tanggal" className="font-mono text-[11px] text-text-muted">{inv.submittedAt}</span>
+                    <span data-label="Total" className="text-right font-mono font-semibold text-[#31414F]">{formatRupiah(inv.totalTagihan)}</span>
+                    <span data-label="Status payment" className="max-md:col-span-full">
                       <StatusPill tone={payment.tone}>{payment.label}</StatusPill>
                     </span>
                   </button>
                   {invExpanded && (
-                    <div className="border-b border-[#F1F4F7] bg-[#FAFBFC] px-6 py-3">
-                      <div className="mb-3 grid grid-cols-4 gap-3 rounded-md border border-[#E4E9EE] bg-white p-3">
+                    <div className="border-b border-[#F1F4F7] bg-[#FAFBFC] px-6 py-3 max-md:px-3">
+                      <div className="mb-3 grid grid-cols-4 gap-3 rounded-md max-md:grid-cols-2 border border-[#E4E9EE] bg-white p-3">
                         <div>
                           <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Total tagihan</div>
                           <div className="mt-0.5 font-mono text-[12.5px] font-semibold text-[#31414F]">{formatRupiah(inv.totalTagihan)}</div>
@@ -294,7 +294,7 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                     </div>
                   )}
                   <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Lampiran — detail per MRP</div>
-                  <div className="mt-2 grid grid-cols-3 gap-2 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+                  <div className="m-hide mt-2 grid grid-cols-3 gap-2 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
                     <span>MRP</span>
                     <span className="text-right">Qty diinvoice</span>
                     <span className="text-right">Nilai</span>
@@ -309,13 +309,13 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                             setExpandedMrpKey(mrpExpanded ? "" : mrpKey);
                             setExpandedWarnaKey("");
                           }}
-                          className="grid w-full grid-cols-3 items-center gap-2 border-t border-[#F1F4F7] py-1.5 text-left font-mono text-[11.5px] text-action-primary"
+                          className="m-stack m-grid2 grid w-full grid-cols-3 items-center gap-2 border-t border-[#F1F4F7] py-1.5 text-left font-mono text-[11.5px] text-action-primary max-md:py-2.5"
                         >
                           <span>
                             {line.mrpId} <span className="text-[#94A3B0]">({line.warna} · {line.lengan}{line.usia ? " · " + line.usia : ""})</span>
                           </span>
-                          <span className="text-right">{formatPcs(line.qty)}</span>
-                          <span className="text-right">{formatRupiah(line.amount)}</span>
+                          <span data-label="Qty diinvoice" className="text-right">{formatPcs(line.qty)}</span>
+                          <span data-label="Nilai" className="text-right">{formatRupiah(line.amount)}</span>
                         </button>
                         {mrpExpanded && (
                           <div className="ml-3 border-l border-[#DDE4EB] py-1.5 pl-3">
@@ -323,7 +323,7 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                                 (rencana MRP, targetSizesForGroup) vs "Hasil Cutting" (aktual,
                                 cuttingSizesForGroup) -- dulu disamakan/di-label seolah 1 angka yang
                                 sama, padahal keduanya legitim beda begitu hasil cutting sudah diisi. */}
-                            <div className="grid grid-cols-8 gap-2 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                            <div className="m-hide grid grid-cols-8 gap-2 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                               <span>Warna / lengan</span>
                               <span className="text-right">Qty PO</span>
                               <span className="text-right">Hasil Cutting</span>
@@ -348,22 +348,22 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                                 <div key={warnaKey}>
                                   <button
                                     onClick={() => setExpandedWarnaKey(warnaExpanded ? "" : warnaKey)}
-                                    className="grid w-full grid-cols-8 items-center gap-2 border-t border-[#F1F4F7] py-1.5 text-left font-sans text-[11px] text-[#31414F]"
+                                    className="m-stack m-grid2 grid w-full grid-cols-8 items-center gap-2 border-t border-[#F1F4F7] py-1.5 text-left font-sans text-[11px] text-[#31414F] max-md:py-2.5"
                                   >
-                                    <span>
+                                    <span className="font-medium">
                                       {r.warna} · {r.lengan}
                                     </span>
-                                    <span className="text-right font-mono">{r.target}</span>
-                                    <span className="text-right font-mono">{r.cutting}</span>
-                                    <span className="text-right font-mono">{r.finishGood}</span>
-                                    <span className="text-right font-mono text-danger-fg">{r.reject}</span>
-                                    <span className="text-right font-mono text-rework-fg">{r.rework}</span>
-                                    <span className="text-right font-mono">{r.yieldPct.toFixed(1)}%</span>
+                                    <span data-label="Qty PO" className="text-right font-mono">{r.target}</span>
+                                    <span data-label="Hasil cutting" className="text-right font-mono">{r.cutting}</span>
+                                    <span data-label="Finish good" className="text-right font-mono">{r.finishGood}</span>
+                                    <span data-label="Reject" className="text-right font-mono text-danger-fg">{r.reject}</span>
+                                    <span data-label="Rework" className="text-right font-mono text-rework-fg">{r.rework}</span>
+                                    <span data-label="Yield" className="text-right font-mono">{r.yieldPct.toFixed(1)}%</span>
                                     <span className="text-right font-semibold text-action-primary">{warnaExpanded ? "Sembunyikan" : "By size →"}</span>
                                   </button>
                                   {warnaExpanded && (
                                     <div className="ml-3 border-l border-[#DDE4EB] pl-3">
-                                      <div className="grid grid-cols-7 gap-2 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                                      <div className="m-hide grid grid-cols-7 gap-2 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                                         <span>Size</span>
                                         <span className="text-right">Qty PO</span>
                                         <span className="text-right">Hasil Cutting</span>
@@ -373,14 +373,14 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                                         <span className="text-right">Yield</span>
                                       </div>
                                       {productionYieldBySize(line.mrpId, r.warna, r.lengan as Lengan, mrpDetails, productionBatches, productionResults).map((s) => (
-                                        <div key={s.size} className="grid grid-cols-7 items-center gap-2 border-t border-[#F1F4F7] py-1 font-mono text-[11px] text-[#31414F]">
-                                          <span>{s.size}</span>
-                                          <span className="text-right">{s.target}</span>
-                                          <span className="text-right">{s.cutting}</span>
-                                          <span className="text-right">{s.finishGood}</span>
-                                          <span className="text-right text-danger-fg">{s.reject}</span>
-                                          <span className="text-right text-rework-fg">{s.rework}</span>
-                                          <span className="text-right">{s.yieldPct.toFixed(1)}%</span>
+                                        <div key={s.size} className="m-stack m-grid2 grid grid-cols-7 items-center gap-2 border-t border-[#F1F4F7] py-1 font-mono text-[11px] text-[#31414F] max-md:py-2">
+                                          <span className="font-semibold">Size {s.size}</span>
+                                          <span data-label="Qty PO" className="text-right">{s.target}</span>
+                                          <span data-label="Hasil cutting" className="text-right">{s.cutting}</span>
+                                          <span data-label="Finish good" className="text-right">{s.finishGood}</span>
+                                          <span data-label="Reject" className="text-right text-danger-fg">{s.reject}</span>
+                                          <span data-label="Rework" className="text-right text-rework-fg">{s.rework}</span>
+                                          <span data-label="Yield" className="text-right">{s.yieldPct.toFixed(1)}%</span>
                                         </div>
                                       ))}
                                     </div>
@@ -407,13 +407,13 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
           kapasitas kumulatif vendor. */}
       {invoiceDialogKoliIds && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0B131B]/45 p-4">
-          <div className="w-full max-w-[640px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]">
+          <div className="max-h-[92vh] w-full max-w-[640px] overflow-y-auto rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]">
             <div className="border-b border-border-subtle px-5 py-3.5">
               <span className="font-sans text-[13px] font-semibold text-text-primary">Submit Invoice — {invoiceDialogKoliIds.length} koli</span>
             </div>
             <div className="px-5 py-4">
               <div className="overflow-hidden rounded-md border border-[#E4E9EE]">
-                <div className="grid grid-cols-[1.1fr_1fr_0.9fr_70px_130px] gap-x-2 bg-[#F2F5F8] px-3 py-1.5 font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                <div className="m-hide grid grid-cols-[1.1fr_1fr_0.9fr_70px_130px] gap-x-2 bg-[#F2F5F8] px-3 py-1.5 font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
                   <span>MRP</span>
                   <span>Warna</span>
                   <span>Lengan</span>
@@ -423,19 +423,19 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                 {invoiceDialogLines.map((l) => {
                   const key = invoiceLineKeyLocal(l.mrpId, l.warna, l.lengan, l.usia);
                   return (
-                    <div key={key} className="grid grid-cols-[1.1fr_1fr_0.9fr_70px_130px] items-center gap-x-2 border-t border-[#EEF1F4] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+                    <div key={key} className="m-stack m-grid2 grid grid-cols-[1.1fr_1fr_0.9fr_70px_130px] items-center gap-x-2 border-t border-[#EEF1F4] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F] max-md:py-2.5">
                       <span className="font-mono">{l.mrpId}</span>
-                      <span>
+                      <span data-label="Warna">
                         {l.warna}
                         {l.usia ? ` (${l.usia})` : ""}
                       </span>
-                      <span>{l.lengan}</span>
-                      <span className="text-right font-mono">{l.qty} pcs</span>
-                      <span className="text-right font-mono">{formatRupiah(rateForLine(l))}</span>
+                      <span data-label="Lengan">{l.lengan}</span>
+                      <span data-label="Qty" className="text-right font-mono">{l.qty} pcs</span>
+                      <span data-label="Rate/pc" className="text-right font-mono">{formatRupiah(rateForLine(l))}</span>
                     </div>
                   );
                 })}
-                <div className="grid grid-cols-[1.1fr_1fr_0.9fr_70px_130px] gap-x-2 border-t border-[#EEF1F4] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[11.5px] font-semibold text-[#31414F]">
+                <div className="m-wrap grid grid-cols-[1.1fr_1fr_0.9fr_70px_130px] gap-x-2 border-t border-[#EEF1F4] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[11.5px] font-semibold text-[#31414F] max-md:justify-between max-md:py-2.5">
                   <span className="col-span-3">Total invoice</span>
                   <span className="col-span-2 text-right font-mono">{formatRupiah(invoiceDialogTotal)}</span>
                 </div>

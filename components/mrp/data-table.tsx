@@ -51,7 +51,11 @@ export function DataTable<T>({
   bodyMaxHeight,
   renderExpanded,
   collapseSignal,
+  mobileCards,
 }: {
+  /** Opsional -- di layar HP (< 768px) tiap baris jadi KARTU bertumpuk (label kolom di depan nilainya) alih-alih
+   *  tabel yang digeser ke samping. Hanya dipakai halaman portal vendor; yang lain tidak berubah sama sekali. */
+  mobileCards?: boolean;
   title: string;
   subtitle?: string;
   headerActions?: ReactNode;
@@ -139,7 +143,7 @@ export function DataTable<T>({
   const visibleColumns = [...columns.filter((c) => !c.sysadmin && visible.has(c.key)), ...(sysadminMode ? columns.filter((c) => c.sysadmin) : [])];
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
+    <div className={"overflow-hidden rounded-lg border border-border-subtle bg-surface-card" + (mobileCards ? " m-cards" : "")}>
       <div className="flex items-center gap-2 border-b border-border-subtle px-5 py-3">
         <div>
           <span className="font-sans text-[13px] font-semibold text-text-primary">{title}</span>
@@ -172,7 +176,7 @@ export function DataTable<T>({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={search.placeholder ?? "Cari…"}
-              className="w-[220px] rounded-md border border-border-subtle bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-medium text-[#31414F]"
+              className="w-[220px] max-w-full rounded-md border border-border-subtle bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-medium text-[#31414F]"
             />
           )}
           {filterDefs?.map((f, i) => (
@@ -184,7 +188,7 @@ export function DataTable<T>({
                 next[i] = e.target.value;
                 setFilterValues(next);
               }}
-              className="rounded-md border border-border-subtle bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-medium text-[#31414F]"
+              className="max-w-full rounded-md border border-border-subtle bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-medium text-[#31414F]"
             >
               <option value="">{f.label}: Semua</option>
               {f.options.map((o) => (
@@ -226,12 +230,12 @@ export function DataTable<T>({
                   >
                     <td className={"px-5 py-[11px] " + (firstColumnAlign === "right" ? "text-right" : "text-left")}>{firstColumnRender(r)}</td>
                     {visibleColumns.map((c) => (
-                      <td key={c.key} onClick={c.sysadmin ? (e) => e.stopPropagation() : undefined} className={"px-3 py-[11px] " + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple/40 bg-accent-purple-bg" : "")}>
+                      <td key={c.key} data-label={c.label} onClick={c.sysadmin ? (e) => e.stopPropagation() : undefined} className={"px-3 py-[11px] " + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple/40 bg-accent-purple-bg" : "")}>
                         {c.render(r)}
                       </td>
                     ))}
                     {renderExpanded && (
-                      <td className="px-3 py-[11px]">
+                      <td data-chevron className="px-3 py-[11px]">
                         {isExpanded ? (
                           <ChevronDown className="h-3.5 w-3.5 flex-none text-text-muted" />
                         ) : (

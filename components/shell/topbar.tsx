@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Menu } from "lucide-react";
 import type { Notification } from "@/lib/mrp/types";
 
 // Revisi 2026-09-19 (owner: "untuk sementara notifikasi di semua modul di-hide"): tombol
@@ -37,7 +38,10 @@ export function Topbar({
   onLogout,
   onOpenProfile,
   showNotifications = false,
+  onOpenMenu,
 }: {
+  /** Tombol hamburger (hanya tampil < lg) untuk membuka sidebar yang jadi laci di layar kecil. */
+  onOpenMenu?: () => void;
   role: string;
   entity: string;
   notifications?: Notification[];
@@ -53,9 +57,15 @@ export function Topbar({
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   return (
-    <div className="flex h-[52px] flex-none items-center gap-[14px] border-b border-border-subtle bg-surface-card px-[22px]">
-      <div className="font-sans text-[13px] font-semibold text-text-primary">{role}</div>
-      <div className="ml-auto flex items-center gap-[14px]">
+    <div className="flex h-[52px] flex-none items-center gap-2.5 border-b border-border-subtle bg-surface-card px-3 sm:gap-[14px] sm:px-[22px]">
+      {onOpenMenu && (
+        <button type="button" onClick={onOpenMenu} aria-label="Buka menu" className="-ml-1 flex h-9 w-9 flex-none items-center justify-center rounded-md text-text-primary hover:bg-[#F7F9FB] lg:hidden">
+          <Menu size={20} />
+        </button>
+      )}
+      {/* Nama peran/vendor sudah ada di tombol profil (kanan); di HP cukup satu kali supaya tidak sempit. */}
+      <div className="hidden truncate font-sans text-[13px] font-semibold text-text-primary sm:block">{role}</div>
+      <div className="ml-auto flex min-w-0 items-center gap-2.5 sm:gap-[14px]">
         {showNotifications && (
         <>
         <div className="relative">
@@ -72,7 +82,7 @@ export function Topbar({
             )}
           </button>
           {notifOpen && (
-            <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-[340px] rounded-lg border border-border-subtle bg-white shadow-lg">
+            <div className="fixed inset-x-3 top-[58px] z-50 rounded-lg border border-border-subtle bg-white shadow-lg sm:absolute sm:inset-x-auto sm:right-0 sm:top-[calc(100%+8px)] sm:w-[340px]">
               <div className="flex items-center border-b border-[#F1F4F7] px-3.5 py-2.5">
                 <span className="font-sans text-[12px] font-semibold text-text-primary">Notifikasi</span>
                 {unreadCount > 0 && (
@@ -127,9 +137,9 @@ export function Topbar({
             <span className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full bg-action-primary font-sans text-[11px] font-semibold text-white">
               {initialsFor(role)}
             </span>
-            <span className="flex flex-col items-start leading-tight">
-              <span className="font-sans text-[12.5px] font-semibold text-text-primary">{role}</span>
-              <span className="font-sans text-[10.5px] text-text-muted">{entity}</span>
+            <span className="flex min-w-0 flex-col items-start leading-tight">
+              <span className="max-w-[120px] truncate font-sans text-[12.5px] font-semibold text-text-primary sm:max-w-none">{role}</span>
+              <span className="hidden font-sans text-[10.5px] text-text-muted sm:block">{entity}</span>
             </span>
           </button>
           {profileOpen && (

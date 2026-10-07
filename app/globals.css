@@ -256,6 +256,93 @@
   }
 }
 
+/* Layar HP (< 768px) -- portal Vendor Produksi dipakai dari lapangan.
+   Sengaja TIDAK di dalam @layer: CSS tanpa layer menang atas utilitas Tailwind (yang ada di layer), jadi
+   `display: grid` + `grid-template-columns` inline pada tabel-tabel grid di bawah bisa ditimpa tanpa mengubah
+   tampilan desktop sama sekali.
+   - .m-stack : baris tabel (grid) jadi kartu bertumpuk; sel yang punya data-label diberi label di depan nilainya.
+   - .m-hide  : sembunyikan (mis. baris judul kolom -- sudah diganti label per sel).
+   - .m-fluid : cabut min-width tetap (pembungkus tabel lebar) supaya tidak harus digeser ke samping.
+   - input/select/textarea 16px: di iOS, font < 16px membuat layar zoom sendiri saat kolom diketuk. */
+@media (max-width: 767px) {
+  .m-hide { display: none !important; }
+  .m-fluid { min-width: 0 !important; }
+  .m-stack {
+    display: flex !important;
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 6px;
+    min-width: 0 !important;
+  }
+  .m-stack > * { text-align: left !important; justify-content: flex-start; }
+  .m-stack > [data-label]::before {
+    content: attr(data-label);
+    display: inline-block;
+    min-width: 108px;
+    margin-right: 8px;
+    font-family: var(--font-plex-sans), sans-serif;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  /* DataTable (components/mrp/data-table.tsx) dengan prop mobileCards: tabel asli -> kartu per baris. */
+  .m-cards table, .m-cards tbody { display: block; width: 100%; }
+  .m-cards thead { display: none; }
+  .m-cards tr { display: flex; flex-direction: column; gap: 6px; padding: 12px 16px; }
+  .m-cards td { display: block; padding: 0 !important; text-align: left !important; }
+  .m-cards td[data-label]::before {
+    content: attr(data-label);
+    display: inline-block;
+    min-width: 108px;
+    margin-right: 8px;
+    font-family: var(--font-plex-sans), sans-serif;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .m-cards td[data-chevron] { position: absolute; right: 14px; }
+  .m-cards tr:has(> td[data-chevron]) { position: relative; padding-right: 36px; }
+  .m-cards td[colspan] { padding: 12px 0 !important; }
+  .m-cards tr:has(> td[colspan]) { padding: 0 16px; }
+  /* .m-wrap : baris tabel jadi barisan yang membungkus (tanpa label) -- untuk baris pendek seperti daftar koli. */
+  .m-wrap {
+    display: flex !important;
+    flex-wrap: wrap;
+    align-items: center !important;
+    gap: 6px 12px;
+    min-width: 0 !important;
+  }
+  .m-wrap > * { text-align: left !important; }
+  .m-wrap > [data-label]::before {
+    content: attr(data-label) ": ";
+    font-family: var(--font-plex-sans), sans-serif;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  /* .m-grid2 (dipasang bersama .m-stack): angka-angka pendek dibagi 2 kolom, label di atas nilai; sel pertama
+     (judul) dan terakhir (tombol) selebar kartu. */
+  .m-stack.m-grid2 {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important; /* !important: sebagian tabel mengisi kolom lewat style inline */
+    gap: 6px 12px;
+  }
+  .m-stack.m-grid2 > :first-child:not([data-label]),
+  .m-stack.m-grid2 > :last-child:not([data-label]) { grid-column: 1 / -1; }
+  .m-stack.m-grid2 > [data-label]::before { display: block; min-width: 0; margin: 0 0 1px; }
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 /* Halaman pilih modul (app/page.tsx, WelcomePanel) -- animasi sambutan. Mati otomatis untuk pengguna
    dengan prefers-reduced-motion. */
 @keyframes welcome-fade-up {

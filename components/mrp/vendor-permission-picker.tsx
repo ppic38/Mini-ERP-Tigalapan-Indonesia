@@ -82,7 +82,7 @@ export function VendorPermissionPicker({ value, onChange }: { value: string[]; o
         </button>
       </div>
 
-      <div className="grid grid-cols-[1.1fr_1.4fr] gap-2 overflow-hidden rounded-md border border-[#E4E9EE]" style={{ minHeight: 220 }}>
+      <div className="grid grid-cols-[1.1fr_1.4fr] gap-2 overflow-hidden rounded-md border border-[#E4E9EE] max-md:grid-cols-1" style={{ minHeight: 220 }}>
         <div className="max-h-[320px] overflow-y-auto border-r border-[#E4E9EE] bg-[#FBFCFD]">
           {filteredModules.map((m) => {
             const { selected, total } = moduleSelectedCount(m.key);

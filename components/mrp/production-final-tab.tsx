@@ -356,6 +356,7 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
               columns={columns}
               rows={rows}
               keyOf={(r) => r.key}
+              mobileCards
               firstColumnLabel="Warna / Lengan"
               firstColumnRender={(r) => (
                 <span className="font-medium">
@@ -370,8 +371,8 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
               emptyText={groups.length === 0 ? "Belum ada warna pada rencana MRP ini." : "Tidak ada warna yang cocok dengan filter."}
               renderExpanded={(r) => (
                 <div className="overflow-x-auto">
-                  <div className="min-w-[760px] overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
-                    <div className="grid grid-cols-7 gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                  <div className="m-fluid min-w-[760px] overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
+                    <div className="m-hide grid grid-cols-7 gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                       <span>Size</span>
                       <span className="text-right">FG Target</span>
                       <span className="text-right">FG Terinput</span>
@@ -386,17 +387,17 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
                       const f = r.fgRecorded[size] ?? 0;
                       const sel = f - t;
                       return (
-                        <div key={size} className="grid grid-cols-7 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F]">
-                          <span className="font-mono font-medium">{size}</span>
-                          <span className="text-right font-mono">{t}</span>
-                          <span className="text-right font-mono text-text-muted">{f}</span>
-                          <span className="text-right font-mono text-success-fg">{r.fgFromReworkPerSize[size] ?? 0}</span>
-                          <span className={"text-right font-mono font-semibold " + (sel < 0 ? "text-danger-fg" : "text-success-fg")}>
+                        <div key={size} className="m-stack m-grid2 grid grid-cols-7 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] max-md:py-2.5">
+                          <span className="font-mono font-medium max-md:text-[13px]">Size {size}</span>
+                          <span data-label="FG target" className="text-right font-mono">{t}</span>
+                          <span data-label="FG terinput" className="text-right font-mono text-text-muted">{f}</span>
+                          <span data-label="FG dari rework" className="text-right font-mono text-success-fg">{r.fgFromReworkPerSize[size] ?? 0}</span>
+                          <span data-label="FG selisih" className={"text-right font-mono font-semibold " + (sel < 0 ? "text-danger-fg" : "text-success-fg")}>
                             {sel >= 0 ? "+" : ""}
                             {sel}
                           </span>
-                          <span className="text-right font-mono text-success-fg">{r.reworkPerSize[size] ?? 0}</span>
-                          <span className="text-right font-mono text-danger-fg">{r.currentRejectPerSize[size] ?? 0}</span>
+                          <span data-label="Rework" className="text-right font-mono text-success-fg">{r.reworkPerSize[size] ?? 0}</span>
+                          <span data-label="Reject" className="text-right font-mono text-danger-fg">{r.currentRejectPerSize[size] ?? 0}</span>
                         </div>
                       );
                     })}

@@ -626,7 +626,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                     </div>
                     <div>
                       <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Setting semua</div>
-                      <input value={fillSetting} onChange={(e) => setFillSetting(e.target.value)} placeholder="mis. lebar / heat setting" className="input mt-0.5 w-[170px]" />
+                      <input value={fillSetting} onChange={(e) => setFillSetting(e.target.value)} placeholder="mis. lebar / heat setting" className="input mt-0.5 w-[170px] max-md:w-[150px]" />
                     </div>
                     <Button onClick={applyFillToAll} variant="accent" size="sm">
                       Terapkan ke semua
@@ -637,7 +637,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
 
               <div className="mt-2 overflow-x-auto rounded-md border border-[#CFE0EF] bg-white">
                 <div
-                  className="grid min-w-[1080px] gap-x-3 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted"
+                  className="m-hide grid min-w-[1080px] gap-x-3 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted"
                   style={{ gridTemplateColumns: LIST_GRID }}
                 >
                   <span>Warna</span>
@@ -655,33 +655,37 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 {visibleLines.map((l) => {
                   const variance = rollVariance(l.roll, l.netKg);
                   return (
-                    <div key={l.id} className="grid min-w-[1080px] items-center gap-x-3 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F]" style={{ gridTemplateColumns: LIST_GRID }}>
-                      <span className="font-medium">
+                    <div key={l.id} className="m-stack grid min-w-[1080px] items-center gap-x-3 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] max-md:gap-y-2 max-md:py-3" style={{ gridTemplateColumns: LIST_GRID }}>
+                      <span data-label="Warna" className="font-medium">
                         {l.roll.warna}
                         {l.roll.isReplacement && <span className="ml-1.5 font-mono text-[10px] text-success-fg">(roll pengganti)</span>}
                       </span>
                       {l.roll.isReplacement ? (
-                        <input
-                          value={l.codeRoll}
-                          onChange={(e) => updateLine(l.id, { codeRoll: e.target.value })}
-                          placeholder="Code roll pengganti"
-                          className="rounded-md border border-[#DDE4EB] px-1.5 py-1 font-mono text-[11px]"
-                        />
+                        <span data-label="Code roll" className="flex">
+                          <input
+                            value={l.codeRoll}
+                            onChange={(e) => updateLine(l.id, { codeRoll: e.target.value })}
+                            placeholder="Code roll pengganti"
+                            className="w-full min-w-0 rounded-md border border-[#DDE4EB] px-1.5 py-1 font-mono text-[11px]"
+                          />
+                        </span>
                       ) : (
-                        <span className="font-mono text-[11px]">{l.roll.codeRoll}</span>
+                        <span data-label="Code roll" className="font-mono text-[11px]">{l.roll.codeRoll}</span>
                       )}
-                      <span className="text-right font-mono">{formatDecimal(l.roll.grossKg)}</span>
-                      <span className="flex justify-end">
+                      <span data-label="Berat kotor (kg)" className="text-right font-mono">{formatDecimal(l.roll.grossKg)}</span>
+                      <span data-label="Berat bersih (kg)" className="flex items-center justify-end">
                         <NumberInput value={l.netKg} decimals={2} onChange={(v) => updateLine(l.id, { netKg: v })} className="input w-[100px] text-right" />
                       </span>
-                      <span className={"text-right font-mono text-[11px] " + (variance.claimable ? "text-danger-fg" : variance.withinTolerance ? "text-success-fg" : "text-warning-fg")}>
+                      <span data-label="Selisih" className={"text-right font-mono text-[11px] " + (variance.claimable ? "text-danger-fg" : variance.withinTolerance ? "text-success-fg" : "text-warning-fg")}>
                         {variance.diff >= 0 ? "+" : ""}
                         {formatDecimal(variance.diff)} ({variance.pct.toFixed(1)}%)
                       </span>
-                      <span className="flex justify-end">
+                      <span data-label="Gramasi (gsm)" className="flex items-center justify-end">
                         <NumberInput value={l.gramasi} onChange={(v) => updateLine(l.id, { gramasi: v })} decimals={2} commaOnly className="input w-[80px] text-right" />
                       </span>
-                      <input value={l.setting} onChange={(e) => updateLine(l.id, { setting: e.target.value })} placeholder="Setting" className="rounded-md border border-[#DDE4EB] px-1.5 py-1 text-[11.5px]" />
+                      <span data-label="Setting" className="flex">
+                        <input value={l.setting} onChange={(e) => updateLine(l.id, { setting: e.target.value })} placeholder="Setting" className="w-full min-w-0 rounded-md border border-[#DDE4EB] px-1.5 py-1 text-[11.5px]" />
+                      </span>
                       <span className="flex justify-end gap-1.5">
                         {!l.roll.isSynthetic && (
                           <Button onClick={() => openClaim(l)} variant="danger" size="xs" title={variance.claimable ? "Selisih berat di luar toleransi -- ajukan claim" : "Ajukan claim (selisih berat / cacat fisik)"}>
@@ -704,7 +708,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               )}
               {restingError && <div className="mt-2.5 rounded-md border border-danger bg-danger-bg px-3 py-2 font-sans text-[11px] leading-[1.5] text-danger-fg">{restingError}</div>}
 
-              <div className="mt-3 flex items-center gap-2">
+              <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   onClick={submitResting}
                   disabled={!canRest || submitting}
@@ -830,7 +834,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                     const wt = warnaTableFor(len);
                     return (
                       <>
-                        <div className="grid grid-cols-6 gap-2 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
+                        <div className="m-hide grid grid-cols-6 gap-2 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
                           <span>Warna (Lengan {len === "PENDEK" ? "Pendek" : "Panjang"})</span>
                           <span className="text-right">Total roll aduan MRP</span>
                           <span className="text-right">Total roll diterima</span>
@@ -843,12 +847,12 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                           const open = warnaOpen === len + "|" + w.warna;
                           return (
                             <div key={w.warna} className="border-b border-[#F1F4F7] last:border-b-0">
-                              <div className={"grid grid-cols-6 items-center gap-2 px-4 py-[11px] font-sans text-xs text-[#31414F] " + (open ? "bg-[#F3F8FE]" : "")}>
+                              <div className={"m-stack m-grid2 grid grid-cols-6 items-center gap-2 px-4 py-[11px] font-sans text-xs text-[#31414F] " + (open ? "bg-[#F3F8FE]" : "")}>
                                 <span className="font-medium">{w.warna}</span>
-                                <span className="text-right font-mono font-semibold text-info-fg">{w.total}</span>
-                                <span className={"text-right font-mono font-semibold " + (w.available > 0 ? "text-info-fg" : "text-danger-fg")}>{w.available}</span>
-                                <span className={"text-right font-mono " + (w.missing > 0 ? "font-semibold text-warning-fg" : "text-text-muted")}>{w.missing}</span>
-                                <span className={"text-right font-mono " + (w.started > 0 ? "font-semibold text-success-fg" : "text-text-muted")}>{w.started}</span>
+                                <span data-label="Roll aduan MRP" className="text-right font-mono font-semibold text-info-fg">{w.total}</span>
+                                <span data-label="Roll diterima" className={"text-right font-mono font-semibold " + (w.available > 0 ? "text-info-fg" : "text-danger-fg")}>{w.available}</span>
+                                <span data-label="Belum diterima" className={"text-right font-mono " + (w.missing > 0 ? "font-semibold text-warning-fg" : "text-text-muted")}>{w.missing}</span>
+                                <span data-label="Sudah diresting" className={"text-right font-mono " + (w.started > 0 ? "font-semibold text-success-fg" : "text-text-muted")}>{w.started}</span>
                                 <span className="text-right">
                                   <button
                                     onClick={() => setWarnaOpen(open ? "" : len + "|" + w.warna)}
@@ -863,7 +867,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                                 <div className="border-t border-[#CFE0EF] bg-info-bg px-4 py-3">
                                   <div className="mb-1.5 font-sans text-[11px] font-semibold text-info-fg">Pilih aduan pola yang akan memakai {w.warna}</div>
                                   <div className="overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
-                                    <div className="grid grid-cols-6 gap-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                                    <div className="m-hide grid grid-cols-6 gap-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                                       <span>Kode aduan</span>
                                       <span className="text-right">Roll aduan</span>
                                       <span className="text-right">Tersedia</span>
@@ -872,13 +876,13 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                                       <span />
                                     </div>
                                     {w.needs.map((n) => (
-                                      <div key={n.key} className="grid grid-cols-6 items-center gap-2 border-t border-[#F1F4F7] px-3 py-2 font-sans text-xs text-[#31414F]">
+                                      <div key={n.key} className="m-stack m-grid2 grid grid-cols-6 items-center gap-2 border-t border-[#F1F4F7] px-3 py-2 font-sans text-xs text-[#31414F]">
                                         <span className="font-mono font-medium">{n.kode}</span>
-                                        <span className="text-right font-mono">{n.total}</span>
-                                        <span className={"text-right font-mono font-semibold " + (n.available > 0 ? "text-info-fg" : "text-danger-fg")}>{n.available}</span>
-                                        <span className={"text-right font-mono " + (n.missing > 0 ? "text-warning-fg" : "text-text-muted")}>{n.missing}</span>
-                                        <span className="text-right font-mono text-text-muted">{n.started}</span>
-                                        <span className="text-right">
+                                        <span data-label="Roll aduan" className="text-right font-mono">{n.total}</span>
+                                        <span data-label="Tersedia" className={"text-right font-mono font-semibold " + (n.available > 0 ? "text-info-fg" : "text-danger-fg")}>{n.available}</span>
+                                        <span data-label="Belum diterima" className={"text-right font-mono " + (n.missing > 0 ? "text-warning-fg" : "text-text-muted")}>{n.missing}</span>
+                                        <span data-label="Sudah diresting" className="text-right font-mono text-text-muted">{n.started}</span>
+                                        <span className="text-right max-md:[&>button]:w-full">
                                           <Button onClick={() => startPickForWarna(n.key, w.warna)} disabled={n.available <= 0} variant="primary" size="xs">
                                             Pilih roll →
                                           </Button>
@@ -896,7 +900,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   })()
                 ) : (
                   <>
-                <div className="grid grid-cols-6 gap-2 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
+                <div className="m-hide grid grid-cols-6 gap-2 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
                   <span>Kode Aduan (Lengan {len === "PENDEK" ? "Pendek" : "Panjang"})</span>
                   <span className="text-right">Total roll aduan MRP</span>
                   <span className="text-right">Total roll diterima</span>
@@ -909,12 +913,12 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   const key = g.kode + "|" + g.lengan;
                   const isSel = selectedGroupKey === key;
                   return (
-                    <div key={key} className={"grid grid-cols-6 items-center gap-2 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0 " + (isSel ? "bg-[#F3F8FE]" : "")}>
+                    <div key={key} className={"m-stack m-grid2 grid grid-cols-6 items-center gap-2 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0 " + (isSel ? "bg-[#F3F8FE]" : "")}>
                       <span className="font-mono font-medium">{g.kode}</span>
-                      <span className="text-right font-mono font-semibold text-info-fg">{g.totalQty}</span>
-                      <span className={"text-right font-mono font-semibold " + (g.totalAvailable > 0 ? "text-info-fg" : "text-danger-fg")}>{g.totalAvailable}</span>
-                      <span className={"text-right font-mono " + (g.totalMissing > 0 ? "font-semibold text-warning-fg" : "text-text-muted")}>{g.totalMissing}</span>
-                      <span className={"text-right font-mono " + (g.totalStarted > 0 ? "font-semibold text-success-fg" : "text-text-muted")}>{g.totalStarted}</span>
+                      <span data-label="Roll aduan MRP" className="text-right font-mono font-semibold text-info-fg">{g.totalQty}</span>
+                      <span data-label="Roll diterima" className={"text-right font-mono font-semibold " + (g.totalAvailable > 0 ? "text-info-fg" : "text-danger-fg")}>{g.totalAvailable}</span>
+                      <span data-label="Belum diterima" className={"text-right font-mono " + (g.totalMissing > 0 ? "font-semibold text-warning-fg" : "text-text-muted")}>{g.totalMissing}</span>
+                      <span data-label="Sudah diresting" className={"text-right font-mono " + (g.totalStarted > 0 ? "font-semibold text-success-fg" : "text-text-muted")}>{g.totalStarted}</span>
                       <span className="text-right">
                         <button
                           onClick={() => pickGroup(key)}
@@ -948,7 +952,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
         <div className="overflow-x-auto">
           {/* Revisi 2026-09-19: wrapper ini min-w-[1240px] -- header, baris grup, dan sub-tabel per-roll
               semua berbagi lebar yang SAMA sehingga latar/border-nya tidak terpotong saat digulir. */}
-          <div className="min-w-[1240px]">
+          <div className="min-w-[1240px] m-fluid">
             {!selectedMrpId && (
               <div className="px-4 py-8 text-center font-sans text-xs text-text-muted">
                 Pilih MRP di atas untuk menampilkan kode aduan, progres input resting &amp; cutting, dan riwayatnya.
@@ -957,7 +961,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
             {selectedMrpId && (
               <>
             <div
-              className="grid min-w-[1240px] gap-x-5 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
+              className="m-hide grid min-w-[1240px] gap-x-5 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
               style={{ gridTemplateColumns: CUTTING_SESSION_COLUMNS }}
             >
               <span>Kode Aduan</span>
@@ -993,7 +997,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               const groupYieldAlert = groupYieldPct !== null && groupYieldPct < YIELD_ALERT_THRESHOLD_PCT;
               return (
                 <div key={g.key} className="border-b border-[#F1F4F7] last:border-b-0">
-                  <div className="grid min-w-[1240px] items-center gap-x-5 px-4 py-[11px] font-sans text-xs text-[#31414F]" style={{ gridTemplateColumns: CUTTING_SESSION_COLUMNS }}>
+                  <div className="m-stack m-grid2 grid min-w-[1240px] items-center gap-x-5 px-4 py-[11px] font-sans text-xs text-[#31414F]" style={{ gridTemplateColumns: CUTTING_SESSION_COLUMNS }}>
                     <span className="flex flex-col gap-0.5">
                       <span className="font-mono font-medium">
                         {g.kode} · {g.lengan}
@@ -1004,10 +1008,10 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         </span>
                       )}
                     </span>
-                    <span>{distinctWarna}</span>
-                    <span className="text-center font-mono">{g.batches.length}</span>
-                    <span className="font-mono text-[11px]">{formatDateTime(g.restingAt)}</span>
-                    <span className="font-mono text-[11px]">
+                    <span data-label="Warna" className="max-md:col-span-full">{distinctWarna}</span>
+                    <span data-label="Roll" className="text-center font-mono">{g.batches.length}</span>
+                    <span data-label="Resting" className="font-mono text-[11px]">{formatDateTime(g.restingAt)}</span>
+                    <span data-label="Cutting" className="font-mono text-[11px] max-md:col-span-full">
                       {sessionComplete ? (
                         <span className="flex items-center gap-1.5">
                           {formatDateTime(earliestCuttingAt ?? g.restingAt)}
@@ -1025,11 +1029,11 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         </Button>
                       )}
                     </span>
-                    <span className="flex flex-col items-start gap-1">
+                    <span data-label="Durasi resting" className="flex flex-col items-start gap-1">
                       <span className="font-mono text-[11px] text-text-muted">{formatDuration(g.restingAt, earliestCuttingAt ?? new Date().toISOString())}</span>
                       {durasiKurang && <StatusPill tone="warning">KURANG DARI TARGET</StatusPill>}
                     </span>
-                    <span className="flex flex-col gap-0.5 font-mono text-[11px]">
+                    <span data-label="Hasil / Yield" className="flex flex-col gap-0.5 font-mono text-[11px]">
                       {filledCount === 0 ? (
                         <span className="text-text-muted">Target: {totalTarget} pcs</span>
                       ) : filledCount < g.batches.length ? (
@@ -1045,7 +1049,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         </span>
                       )}
                     </span>
-                    <span className="text-center">
+                    <span className="text-center max-md:[&>button]:w-full">
                       <Button onClick={() => toggleSessionExpanded(g.key)} variant="accent" size="xs">
                         {isExpanded ? "Tutup" : "Lihat roll →"}
                       </Button>
@@ -1054,7 +1058,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   {isExpanded && (
                     <div className="bg-[#FAFBFC]">
                       <div
-                        className="grid min-w-[1240px] gap-x-5 border-y border-[#CFE0EF] bg-info-bg/60 px-8 py-[7px] font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg"
+                        className="m-hide grid min-w-[1240px] gap-x-5 border-y border-[#CFE0EF] bg-info-bg/60 px-8 py-[7px] font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg"
                         style={{ gridTemplateColumns: CUTTING_BATCH_COLUMNS }}
                       >
                         <span>Warna</span>
@@ -1075,15 +1079,15 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         return (
                           <div
                             key={b.id}
-                            className="grid min-w-[1240px] items-center gap-x-5 border-b border-[#F1F4F7] px-8 py-[9px] font-sans text-xs text-[#31414F] last:border-b-0"
+                            className="m-stack m-grid2 grid min-w-[1240px] items-center gap-x-5 border-b border-[#F1F4F7] px-8 py-[9px] font-sans text-xs text-[#31414F] last:border-b-0 max-md:px-4 max-md:py-3"
                             style={{ gridTemplateColumns: CUTTING_BATCH_COLUMNS }}
                           >
-                            <span>{b.warna}</span>
-                            <span className="font-mono text-[11px]">{b.codeRoll || "—"}</span>
-                            <span className="text-center font-mono">{b.gramasi} gsm</span>
-                            <span className="text-[11.5px]">{b.setting || "—"}</span>
-                            <span className="font-mono text-[11px]">{b.cuttingAt ? formatDateTime(b.cuttingAt) : "—"}</span>
-                            <span className="flex flex-col gap-0.5 font-mono text-[11px]">
+                            <span data-label="Warna" className="max-md:col-span-full">{b.warna}</span>
+                            <span data-label="Code roll" className="font-mono text-[11px]">{b.codeRoll || "—"}</span>
+                            <span data-label="Gramasi" className="text-center font-mono">{b.gramasi} gsm</span>
+                            <span data-label="Setting" className="text-[11.5px]">{b.setting || "—"}</span>
+                            <span data-label="Cutting" className="font-mono text-[11px]">{b.cuttingAt ? formatDateTime(b.cuttingAt) : "—"}</span>
+                            <span data-label="Hasil / Yield" className="flex flex-col gap-0.5 font-mono text-[11px]">
                               {b.cuttingAt ? (
                                 b.sizeQty ? (
                                   <span className="flex flex-wrap items-center gap-1">
@@ -1100,7 +1104,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                               )}
                               <SysadminBatchActions batch={b} invoices={invoices} />
                             </span>
-                            <span className="flex flex-col gap-1">
+                            <span data-label="Detail size" className="flex flex-col gap-1 max-md:col-span-full">
                               {b.cuttingAt && b.sizeQty && sizesForDetail.length > 0 ? (
                                 <span className="flex flex-wrap gap-1">
                                   {sizesForDetail.map((size) => (

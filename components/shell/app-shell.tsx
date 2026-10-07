@@ -69,6 +69,8 @@ export function AppShell({
 }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  // Laci sidebar di layar kecil (< lg). Tidak berpengaruh di desktop.
+  const [navOpen, setNavOpen] = useState(false);
   // Revisi 2026-09-07: `hydrated` sudah lama ada di store (di-set true begitu getFlowSnapshot()
   // pertama SUKSES lewat StoreHydrator) tapi TIDAK PERNAH dibaca di mana pun -- akibatnya tiap
   // halaman langsung render dengan array store yang masih KOSONG selama snapshot awal masih
@@ -312,15 +314,20 @@ export function AppShell({
 
   return (
     <div className="flex min-h-screen bg-surface-page">
+      {/* < lg: sidebar jadi laci; latar gelap menutupnya saat disentuh. */}
+      {navOpen && <div className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={() => setNavOpen(false)} aria-hidden />}
       <Sidebar
         items={sidebarItems}
         groups={sysadminMode ? sysadminNavGroups() : undefined}
         activeGroupKey={role}
         activeHref={activeHref}
         badgeOverrides={badgeOverrides}
+        mobileOpen={navOpen}
+        onClose={() => setNavOpen(false)}
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar
+          onOpenMenu={() => setNavOpen(true)}
           role={topbarRole}
           entity={sysadminMode ? nav.entity : (entityOverride ?? nav.entity)}
           notifications={myNotifications}
@@ -353,12 +360,12 @@ export function AppShell({
         {/* Revisi 2026-09-30 (owner: hilangkan teks kuning, filter vendor dibuat simpel): spanduk
             "Mode Sysadmin" dihapus; di halaman portal Vendor Produksi cukup pemilih vendor saja. */}
         {sysadminMode && role === "vendorMaklon" && (
-          <div className="flex items-center gap-2 border-b border-border-subtle bg-white px-[22px] py-2 font-sans text-[11.5px] text-text-muted">
+          <div className="flex items-center gap-2 border-b border-border-subtle bg-white px-4 py-2 font-sans text-[11.5px] text-text-muted sm:px-[22px]">
             <span>Vendor:</span>
             <SysadminVendorSwitcher />
           </div>
         )}
-        <div className="flex items-center gap-2 px-[22px] pt-3.5 font-sans text-xs text-[#94A3B0]">
+        <div className="flex flex-wrap items-center gap-x-2 px-4 pt-3.5 font-sans text-xs text-[#94A3B0] sm:px-[22px]">
           {breadcrumb.map((crumb, i) => (
             <span key={i} className={i === breadcrumb.length - 1 ? "font-medium text-[#31414F]" : undefined}>
               {crumb}
@@ -366,14 +373,14 @@ export function AppShell({
             </span>
           ))}
         </div>
-        <div className="flex items-end gap-3 px-[22px] pb-0 pt-2">
-          <div>
-            <div className="font-heading text-[22px] font-bold tracking-tight text-text-primary">{title}</div>
+        <div className="flex flex-wrap items-end gap-x-3 gap-y-2 px-4 pb-0 pt-2 sm:px-[22px]">
+          <div className="min-w-0">
+            <div className="font-heading text-[20px] font-bold tracking-tight text-text-primary sm:text-[22px]">{title}</div>
             {subtitle && <div className="mt-0.5 font-sans text-xs text-text-muted">{subtitle}</div>}
           </div>
-          {actions && <div className="ml-auto flex gap-2">{actions}</div>}
+          {actions && <div className="flex flex-wrap gap-2 sm:ml-auto">{actions}</div>}
         </div>
-        <div className="flex min-w-0 flex-1 flex-col gap-3.5 px-[22px] py-4">
+        <div className="flex min-w-0 flex-1 flex-col gap-3.5 px-4 py-4 sm:px-[22px]">
           {hydrated ? (
             children
           ) : (

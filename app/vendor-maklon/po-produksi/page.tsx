@@ -339,6 +339,7 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
     >
       <DataTable
         title="PO produksi saya"
+        mobileCards
         columns={columns}
         rows={myPOs}
         keyOf={(p) => p.id}

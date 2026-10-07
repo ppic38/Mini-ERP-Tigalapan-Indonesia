@@ -602,7 +602,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
             {warnaOptions.length > 1 && (
               <div className="mt-2 flex items-center gap-2">
                 <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Filter warna</span>
-                <select value={activeWarnaFilter} onChange={(e) => setWarnaFilter(e.target.value)} className="input w-[220px]">
+                <select value={activeWarnaFilter} onChange={(e) => setWarnaFilter(e.target.value)} className="input w-[220px] max-md:min-w-0 max-md:flex-1">
                   <option value="">Semua warna</option>
                   {warnaOptions.map((w) => (
                     <option key={w} value={w}>
@@ -624,7 +624,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                 const template = cols.map((c) => c.w).join(" ");
                 return (
                   <div className="mt-2 overflow-hidden rounded-md border border-border-subtle bg-white">
-                    <div className="grid gap-x-3 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted" style={{ gridTemplateColumns: template }}>
+                    <div className="m-hide grid gap-x-3 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted" style={{ gridTemplateColumns: template }}>
                       {cols.map((c) => (
                         <span key={c.key} className={c.align}>
                           {c.label}
@@ -634,29 +634,29 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     {visibleRollSizeRows.map((r) => {
                       const sources = rollSourcesBySize.get(r.key) ?? [];
                       return (
-                        <div key={r.key} className="grid items-center gap-x-3 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0" style={{ gridTemplateColumns: template }}>
+                        <div key={r.key} className="m-stack m-grid2 grid items-center gap-x-3 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5" style={{ gridTemplateColumns: template }}>
                           {cols.map((c) => {
                             if (c.key === "warna")
                               return (
-                                <span key={c.key}>
+                                <span key={c.key} className="max-md:font-medium">
                                   {r.warna} · {r.lengan}
                                 </span>
                               );
-                            if (c.key === "size") return <span key={c.key}>{r.size}</span>;
+                            if (c.key === "size") return <span key={c.key} data-label="Size">{r.size}</span>;
                             if (c.key === "sumber")
                               return (
-                                <span key={c.key} className="flex flex-wrap gap-1">
+                                <span key={c.key} data-label="Sumber roll" className="flex flex-wrap gap-1 max-md:col-span-full">
                                   {sources.length === 0 ? <span className="text-text-muted">—</span> : sources.map((x) => sourceChip(x.code, x.qty))}
                                 </span>
                               );
                             if (c.key === "sisa")
                               return (
-                                <span key={c.key} className="text-right font-mono text-text-muted">
+                                <span key={c.key} data-label="Sisa bisa dikirim" className="text-right font-mono text-text-muted">
                                   {r.available} pcs
                                 </span>
                               );
                             return (
-                              <span key={c.key} className="flex justify-end">
+                              <span key={c.key} data-label="Qty kirim" className="flex items-center justify-end">
                                 <NumberInput
                                   value={rollQtyDraft[r.key] ?? 0}
                                   decimals={0}
@@ -706,7 +706,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                 const template = cols.map((col) => col.w).join(" ");
                 return (
                   <div className="mt-2 overflow-hidden rounded-md border border-border-subtle bg-white">
-                    <div className="grid gap-x-3 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted" style={{ gridTemplateColumns: template }}>
+                    <div className="m-hide grid gap-x-3 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted" style={{ gridTemplateColumns: template }}>
                       {cols.map((col) => (
                         <span key={col.key} className={col.align}>
                           {col.label}
@@ -717,32 +717,32 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                       const qty = qtyDraft[r.key] ?? 0;
                       const sources = reworkSources(r);
                       return (
-                        <div key={r.key} className="grid items-center gap-x-3 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0" style={{ gridTemplateColumns: template }}>
+                        <div key={r.key} className="m-stack m-grid2 grid items-center gap-x-3 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5" style={{ gridTemplateColumns: template }}>
                           {cols.map((col) => {
-                            if (col.key === "jenis") return <span key={col.key}>{kindLabel(r.kind)}</span>;
-                            if (col.key === "warna") return <span key={col.key}>{r.warna}</span>;
-                            if (col.key === "lengan") return <span key={col.key}>{r.lengan}</span>;
+                            if (col.key === "jenis") return <span key={col.key} data-label="Jenis">{kindLabel(r.kind)}</span>;
+                            if (col.key === "warna") return <span key={col.key} className="max-md:col-span-full max-md:font-medium">{r.warna}</span>;
+                            if (col.key === "lengan") return <span key={col.key} data-label="Lengan">{r.lengan}</span>;
                             if (col.key === "size")
                               return (
-                                <span key={col.key}>
+                                <span key={col.key} data-label="Size / usia">
                                   {r.size}
                                   {r.usia ? " · " + USIA_LABEL[r.usia] : ""}
                                 </span>
                               );
                             if (col.key === "sumber")
                               return (
-                                <span key={col.key} className="flex flex-wrap gap-1">
+                                <span key={col.key} data-label="Sumber roll" className="flex flex-wrap gap-1 max-md:col-span-full">
                                   {sources.length === 0 ? <span className="text-text-muted">—</span> : sources.map((x) => sourceChip(x.code, x.qty, x.fromSize))}
                                 </span>
                               );
                             if (col.key === "sisa")
                               return (
-                                <span key={col.key} className="text-right font-mono text-text-muted">
+                                <span key={col.key} data-label="Sisa bisa dikirim" className="text-right font-mono text-text-muted">
                                   {r.available} pcs
                                 </span>
                               );
                             return (
-                              <span key={col.key} className="flex justify-end">
+                              <span key={col.key} data-label="Qty kirim" className="flex items-center justify-end">
                                 <NumberInput
                                   value={qty}
                                   decimals={0}
@@ -770,7 +770,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
           <button
             onClick={submit}
             disabled={submitting}
-            className="rounded-md bg-action-primary px-3.5 py-2 font-sans text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-md bg-action-primary px-3.5 py-2 font-sans text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 max-md:w-full max-md:py-2.5"
           >
             {editingKoliId ? "Update koli" : "Simpan koli"}
           </button>
@@ -789,7 +789,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
           ) : (
             <>
               <div className="mt-2 overflow-hidden rounded-md border border-border-subtle bg-white">
-                <div className="grid grid-cols-5 gap-x-2 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted" style={sysadminMode ? { gridTemplateColumns: "repeat(5,minmax(0,1fr)) 130px" } : undefined}>
+                <div className="m-hide grid grid-cols-5 gap-x-2 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted" style={sysadminMode ? { gridTemplateColumns: "repeat(5,minmax(0,1fr)) 130px" } : undefined}>
                   <span />
                   <span>No MRP</span>
                   <span>No Koli</span>
@@ -801,19 +801,19 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                   const isExpanded = expandedKoli.has(k.id);
                   return (
                     <Fragment key={k.id}>
-                      <div className="grid grid-cols-5 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0" style={sysadminMode ? { gridTemplateColumns: "repeat(5,minmax(0,1fr)) 130px" } : undefined}>
+                      <div className="m-wrap grid grid-cols-5 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5" style={sysadminMode ? { gridTemplateColumns: "repeat(5,minmax(0,1fr)) 130px" } : undefined}>
                         <input type="checkbox" checked={selectedForEkspedisi.has(k.id)} onChange={() => toggleSelectedForEkspedisi(k.id)} disabled={k.id.startsWith("tmp-")} className="h-3.5 w-3.5 disabled:opacity-40" />
                         <span className="font-mono">{k.mrpId}</span>
                         <span className="font-mono font-medium">{k.noKoli}</span>
                         <button
                           onClick={() => toggleKoliExpanded(k.id)}
-                          className="flex items-center gap-1 text-left font-sans text-xs text-[#31414F] hover:text-action-primary"
+                          className="flex items-center gap-1 text-left font-sans text-xs text-[#31414F] hover:text-action-primary max-md:order-last max-md:basis-full"
                           title="Klik untuk lihat rincian isi koli per item"
                         >
                           {isExpanded ? <ChevronDown className="h-3.5 w-3.5 flex-none text-text-muted" /> : <ChevronRight className="h-3.5 w-3.5 flex-none text-text-muted" />}
                           {summarizeItems(k.items)}
                         </button>
-                        <span className="flex items-center justify-end gap-1.5">
+                        <span className="flex items-center justify-end gap-1.5 max-md:ml-auto">
                           <Button onClick={() => editKoli(k)} disabled={k.id.startsWith("tmp-")} variant="ghost" size="xs">
                             Edit
                           </Button>
@@ -878,7 +878,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                       )}
                     </div>
                     {first.ekspedisiNote && <div className="border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-[10.5px] text-text-muted">Catatan: {first.ekspedisiNote}</div>}
-                    <div className="grid grid-cols-5 gap-x-2 border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                    <div className="m-hide grid grid-cols-5 gap-x-2 border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                       <span>No MRP</span>
                       <span>No Koli</span>
                       <span>Isi</span>
@@ -890,25 +890,25 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                       const myWeight = weightOf(k);
                       return (
                         <Fragment key={k.id}>
-                          <div className="grid grid-cols-5 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0">
+                          <div className="m-wrap grid grid-cols-5 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5">
                             <span className="font-mono">{k.mrpId}</span>
                             <span className="font-mono font-medium">{k.noKoli}</span>
                             <button
                               onClick={() => toggleKoliExpanded(k.id)}
-                              className="flex items-center gap-1 text-left font-sans text-xs text-[#31414F] hover:text-action-primary"
+                              className="flex items-center gap-1 text-left font-sans text-xs text-[#31414F] hover:text-action-primary max-md:order-last max-md:basis-full"
                               title="Klik untuk lihat rincian isi koli per item"
                             >
                               {isExpanded ? <ChevronDown className="h-3.5 w-3.5 flex-none text-text-muted" /> : <ChevronRight className="h-3.5 w-3.5 flex-none text-text-muted" />}
                               {summarizeItems(k.items)}
                             </button>
-                            <span className="flex justify-end">
+                            <span data-label="Berat (kg)" className="flex items-center justify-end">
                               {k.beratKoli && k.beratKoli > 0 ? (
                                 <span className="font-mono">{formatDecimal(k.beratKoli)}</span>
                               ) : (
                                 <NumberInput value={myWeight} decimals={2} onChange={(v) => setWeightDraft((prev) => ({ ...prev, [k.id]: v }))} className="input w-[90px] text-right" />
                               )}
                             </span>
-                            <span className="text-right">
+                            <span className="text-right max-md:ml-auto">
                               <Button onClick={() => editKoli(k)} variant="ghost" size="xs">
                                 Edit
                               </Button>
@@ -981,7 +981,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     </span>
                   </div>
                   {first.ekspedisiNote && <div className="border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-[10.5px] text-text-muted">Catatan: {first.ekspedisiNote}</div>}
-                  <div className="grid grid-cols-4 gap-x-2 border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                  <div className="m-hide grid grid-cols-4 gap-x-2 border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                     <span>No MRP</span>
                     <span>No Koli</span>
                     <span>Isi</span>
@@ -991,18 +991,18 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     const isExpanded = expandedKoli.has(k.id);
                     return (
                       <Fragment key={k.id}>
-                        <div className="grid grid-cols-4 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0">
+                        <div className="m-wrap grid grid-cols-4 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5">
                           <span className="font-mono">{k.mrpId}</span>
                           <span className="font-mono font-medium">{k.noKoli}</span>
                           <button
                             onClick={() => toggleKoliExpanded(k.id)}
-                            className="flex items-center gap-1 text-left font-sans text-xs text-[#31414F] hover:text-action-primary"
+                            className="flex items-center gap-1 text-left font-sans text-xs text-[#31414F] hover:text-action-primary max-md:order-last max-md:basis-full"
                             title="Klik untuk lihat rincian isi koli per item"
                           >
                             {isExpanded ? <ChevronDown className="h-3.5 w-3.5 flex-none text-text-muted" /> : <ChevronRight className="h-3.5 w-3.5 flex-none text-text-muted" />}
                             {summarizeItems(k.items)}
                           </button>
-                          <span className="text-right font-mono">{formatDecimal(k.beratKoli ?? 0)}</span>
+                          <span data-label="Berat (kg)" className="text-right font-mono max-md:ml-auto">{formatDecimal(k.beratKoli ?? 0)}</span>
                         </div>
                         {isExpanded && (
                           <div className="border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-3 last:border-b-0">

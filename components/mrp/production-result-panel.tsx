@@ -306,9 +306,9 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
             </span>
           </div>
           <div className="overflow-x-auto">
-            <div className="min-w-[820px]">
+            <div className="min-w-[820px] m-fluid">
               <div
-                className="grid items-center gap-x-3 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
+                className="m-hide grid items-center gap-x-3 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
                 style={{ gridTemplateColumns: gridColumns }}
               >
                 <span>Warna / lengan</span>
@@ -376,7 +376,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                 return (
                   <div key={groupKey} className={newWarna ? "border-t border-t-[#C9D3DF]" : undefined}>
                     <div
-                      className="grid items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F]"
+                      className="m-stack grid items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F]"
                       style={{ gridTemplateColumns: gridColumns }}
                     >
                       <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -396,23 +396,23 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                       </span>
                       {kind === "REJECT" ? (
                         <>
-                          <span className="text-right font-mono">{grossReject}</span>
-                          <span className="text-right font-mono text-success-fg">
+                          <span data-label="Qty reject" className="text-right font-mono">{grossReject}</span>
+                          <span data-label="Qty rework" className="text-right font-mono text-success-fg">
                             {Object.values(reworkedAwayBySize(groupKey, productionResults)).reduce((a, b) => a + b, 0)}
                           </span>
-                          <span className="text-right font-mono text-danger-fg">{totalRecorded}</span>
+                          <span data-label="Qty sisa reject" className="text-right font-mono text-danger-fg">{totalRecorded}</span>
                         </>
                       ) : (
                         <>
                           <div className="flex flex-col items-center gap-1">
                             {/* Revisi 2026-09-19: bar progres di SAMPING KANAN qty finish good (satu baris).
                                 Revisi 2026-10-07 (owner: center): lebar tiap bagian TETAP supaya bar antar baris sejajar. */}
-                            <div className="flex items-center justify-center gap-3">
-                              <div className="flex w-[130px] shrink-0 items-baseline justify-end gap-1 font-mono text-[12px]">
+                            <div className="flex items-center justify-center gap-3 max-md:w-full max-md:justify-start max-md:gap-2">
+                              <div className="flex w-[130px] shrink-0 items-baseline justify-end gap-1 font-mono text-[12px] max-md:w-auto max-md:justify-start">
                                 <span className="font-semibold text-[#31414F]">{totalRecorded}</span>
                                 <span className="text-text-muted">/ {totalTarget} pcs</span>
                               </div>
-                              <span className="h-1.5 w-[150px] shrink-0 overflow-hidden rounded-full bg-[#EEF0F3]">
+                              <span className="h-1.5 w-[150px] shrink-0 overflow-hidden rounded-full bg-[#EEF0F3] max-md:w-auto max-md:flex-1">
                                 <span className="block h-full rounded-full bg-success" style={{ width: `${progressPct}%` }} />
                               </span>
                               <span className="w-9 shrink-0 text-left font-mono text-[10.5px] text-text-muted">{progressPct}%</span>
@@ -423,10 +423,10 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                               </span>
                             )}
                           </div>
-                          <span className="text-center font-mono text-[11px] text-text-muted">{targetDoneAt ? formatDate(targetDoneAt) : "— (belum ada material diterima)"}</span>
+                          <span data-label="Target done" className="text-center font-mono text-[11px] text-text-muted">{targetDoneAt ? formatDate(targetDoneAt) : "— (belum ada material diterima)"}</span>
                         </>
                       )}
-                      <span className="flex items-center justify-end gap-2">
+                      <span className="flex items-center justify-end gap-2 max-md:[&>button]:w-full">
                         {/* Revisi 2026-10-07 (owner: "buka kunci per warna tidak perlu, per roll saja"): tombol vendor
                             "Buka kunci" per warna DIHAPUS -- roll baru (bahan menyusul) tetap bisa diisi tanpa membuka
                             kunci, dan roll yang sudah ditutup dibuka lewat "Buka lagi" per roll. Sysadmin tetap punya
@@ -448,7 +448,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                     {expanded && isFgConfirmed && kind === "REJECT" && (
                       <div className="border-b border-[#CFE0EF] bg-info-bg p-4">
                         <div className="overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
-                          <div className="grid grid-cols-5 gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                          <div className="m-hide grid grid-cols-5 gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                             <span>Size</span>
                             <span className="text-right">Reject (otomatis)</span>
                             <span className="text-right">Rework</span>
@@ -469,12 +469,12 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                               const canDoRework = canRework && !sysadmin && !isFinalDone && sisa > 0;
                               return (
                                 <div key={size}>
-                                  <div className={"grid grid-cols-5 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-2 font-sans text-xs text-[#31414F] " + (isOpen ? "bg-info-bg" : "")}>
-                                    <span className="font-mono font-medium">{size}</span>
-                                    <span className="text-right font-mono">{grossPerSize[size] ?? 0}</span>
-                                    <span className="text-right font-mono text-success-fg">{reworkPerSize[size] ?? 0}</span>
-                                    <span className="text-right font-mono text-danger-fg">{sisa}</span>
-                                    <span className="text-right">
+                                  <div className={"m-stack grid grid-cols-5 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-2 font-sans text-xs text-[#31414F] " + (isOpen ? "bg-info-bg" : "")}>
+                                    <span data-label="Size" className="font-mono font-medium">{size}</span>
+                                    <span data-label="Reject (otomatis)" className="text-right font-mono">{grossPerSize[size] ?? 0}</span>
+                                    <span data-label="Rework" className="text-right font-mono text-success-fg">{reworkPerSize[size] ?? 0}</span>
+                                    <span data-label="Sisa reject" className="text-right font-mono text-danger-fg">{sisa}</span>
+                                    <span className="text-right max-md:[&>button]:w-full">
                                       {canDoRework ? (
                                         isOpen ? (
                                           <Button onClick={() => setReworkOpen(null)} variant="accent" size="xs">
@@ -696,7 +696,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                   })}
                                 </div>
                               )}
-                              <div className="flex items-center justify-between gap-4 border-t border-[#CFE0EF] bg-[#F3F8FD] px-4 py-3">
+                              <div className="flex items-center justify-between gap-4 border-t border-[#CFE0EF] bg-[#F3F8FD] px-4 py-3 max-md:flex-col max-md:items-stretch max-md:gap-2.5">
                                 {/* saveFgProgress & closeProductionBatch (dipanggil saveSizeTotals)
                                    sudah optimistic penuh di store.ts -- isPending/teks "Menyimpan…"
                                    dilepas, disabled cukup dari sizesToShow saja. Revisi 2026-09-23
@@ -742,7 +742,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                               <span className="rounded-full bg-white px-2 py-[1px] font-mono text-[10.5px] font-semibold text-info-fg">{groupBatches.length} roll</span>
                               <span className="font-sans text-[11px] text-text-muted">Resting → Finish Good</span>
                             </div>
-                            <div className="grid grid-cols-[1.1fr_2.2fr_0.9fr_1.1fr_0.8fr_1.3fr] gap-x-3 border-b border-[#E4E8EE] bg-[#F7F9FB] px-4 py-2 font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                            <div className="m-hide grid grid-cols-[1.1fr_2.2fr_0.9fr_1.1fr_0.8fr_1.3fr] gap-x-3 border-b border-[#E4E8EE] bg-[#F7F9FB] px-4 py-2 font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
                               <span>Roll</span>
                               <span>Size &amp; qty (FG / hasil cutting)</span>
                               <span className="text-center">Total FG / cutting</span>
@@ -763,12 +763,12 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                     .filter(([, v]) => v > 0)
                                 : [];
                               return (
-                                <div key={b.id} className="grid grid-cols-[1.1fr_2.2fr_0.9fr_1.1fr_0.8fr_1.3fr] items-center gap-x-3 border-b border-[#EEF1F4] px-4 py-3 font-sans text-[11.5px] text-[#31414F] last:border-b-0 hover:bg-[#F8FBFE]">
+                                <div key={b.id} className="m-stack grid grid-cols-[1.1fr_2.2fr_0.9fr_1.1fr_0.8fr_1.3fr] items-center gap-x-3 border-b border-[#EEF1F4] px-4 py-3 font-sans text-[11.5px] text-[#31414F] last:border-b-0 hover:bg-[#F8FBFE]">
                                   <span className="flex flex-col">
                                     <span className="font-mono text-[12px] font-medium text-text-primary">{b.codeRoll || b.id}</span>
                                     {sizeShiftLabel(b) && <span className="font-sans text-[9.5px] font-semibold text-info-fg">Alih size (sisa kain): {sizeShiftLabel(b)}</span>}
                                   </span>
-                                  <span className="flex flex-wrap gap-1.5">
+                                  <span data-label="Size & qty" className="flex flex-wrap items-center gap-1.5">
                                     {sizes
                                       .filter((sz) => sz in rollTarget || sz in (b.fgSizeQty ?? {}))
                                       .map((sz) => {
@@ -785,10 +785,10 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                         );
                                       })}
                                   </span>
-                                  <span className="text-center font-mono text-[12px]">
+                                  <span data-label="Total FG" className="text-center font-mono text-[12px]">
                                     <b className="text-text-primary">{totalFg}</b> <span className="text-text-muted">/ {totalTarget}</span>
                                   </span>
-                                  <span className="flex flex-wrap items-center justify-center gap-1">
+                                  <span data-label="Reject" className="flex flex-wrap items-center justify-center gap-1">
                                     {!b.closedAt ? (
                                       <span className="font-mono text-[11px] text-text-muted" title="Reject dihitung setelah roll ditutup">—</span>
                                     ) : rollReject.length === 0 ? (
@@ -801,7 +801,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                       ))
                                     )}
                                   </span>
-                                  <span className="text-center">
+                                  <span data-label="Status" className="text-center">
                                     {b.closedAt ? <StatusPill tone="success">Ditutup</StatusPill> : <StatusPill tone="neutral">Terbuka</StatusPill>}
                                   </span>
                                   <span className="flex items-center justify-end gap-2">
@@ -845,7 +845,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                               );
                             })}
                             {!isFinalDone && groupNeedsFinish(g) && (
-                              <div className="flex items-center justify-between gap-4 border-t border-[#CFE0EF] bg-[#F3F8FD] px-4 py-3">
+                              <div className="flex items-center justify-between gap-4 border-t border-[#CFE0EF] bg-[#F3F8FD] px-4 py-3 max-md:flex-col max-md:items-stretch max-md:gap-2.5">
                                 <span className="font-sans text-[11px] leading-[1.5] text-text-muted">
                                   Roll yang sudah punya Finish Good ditutup &amp; siap dikirim; kekurangan qty dihitung reject.
                                 </span>
@@ -885,9 +885,9 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
           {kind === "REJECT" ? "Detail Reject — by PO" : "Riwayat & Hasil Finish Good — by PO"}
         </div>
         <div className="overflow-x-auto">
-          <div className={kind === "REJECT" ? "min-w-[900px]" : "min-w-[600px]"}>
+          <div className={(kind === "REJECT" ? "min-w-[900px]" : "min-w-[600px]") + " m-fluid"}>
             <div
-              className="grid items-center gap-x-3 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
+              className="m-hide grid items-center gap-x-3 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
               style={{
                 gridTemplateColumns:
                   kind === "REJECT"
@@ -944,7 +944,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
               return (
                 <div key={poId}>
                   <div
-                    className="grid items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F]"
+                    className="m-stack grid items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F]"
                     style={{
                       gridTemplateColumns:
                         kind === "REJECT"
@@ -952,13 +952,13 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                           : "minmax(100px,0.9fr) minmax(120px,1fr) minmax(220px,1.6fr) minmax(90px,0.7fr)",
                     }}
                   >
-                    <span className="font-mono">{mrpId}</span>
-                    <span className="font-mono font-medium">{poId}</span>
+                    <span data-label="No MRP" className="font-mono">{mrpId}</span>
+                    <span data-label="No PO Produksi" className="font-mono font-medium">{poId}</span>
                     {kind === "REJECT" ? (
                       <>
-                        <span className="text-right font-mono">{qtyRejectGross}</span>
-                        <span className="text-right font-mono">{qtyRework}</span>
-                        <span className="text-right font-mono text-danger-fg">{qtySisaReject}</span>
+                        <span data-label="Qty reject" className="text-right font-mono">{qtyRejectGross}</span>
+                        <span data-label="Qty rework" className="text-right font-mono">{qtyRework}</span>
+                        <span data-label="Qty sisa reject" className="text-right font-mono text-danger-fg">{qtySisaReject}</span>
                         <input
                           value={rejectRemarks[poId] ?? ""}
                           onChange={(e) => setRejectRemark(poId, e.target.value)}
@@ -967,7 +967,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                         />
                       </>
                     ) : (
-                      <span className="flex items-center gap-2">
+                      <span data-label="Progres FG" className="flex items-center gap-2">
                         <span className="font-mono">
                           {total} / {fgTargetPo} pcs
                         </span>

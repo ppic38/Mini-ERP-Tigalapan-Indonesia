@@ -445,7 +445,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
         <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle px-4 py-3">
             <span className="font-sans text-[13px] font-semibold text-text-primary">PO material — {selectedMrpId}</span>
-            <div className="flex gap-1.5">
+            <div className="flex flex-wrap gap-1.5">
               {(
                 [
                   { key: "ALL" as const, label: `Semua (${mrpInvoicesAll.length})` },
@@ -470,7 +470,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
           {/* Item revisi 2026-09-08 (owner: "Hilangkan saja untuk kolom warna" — terlalu padat
               untuk PO multi-warna, apalagi sekarang detail per-warna sudah ada di ringkasan roll
               + qty pendek/panjang begitu PO ini dipilih, lihat di bawah). */}
-          <div className="grid grid-cols-9 gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+          <div className="m-hide grid grid-cols-9 gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
             <span>No PO</span>
             <span>No. Invoice</span>
             <span>Supplier</span>
@@ -487,30 +487,30 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
           {mrpInvoices.map((i) => {
             const progress = rollArrivalProgress(i);
             return (
-              <div key={i.id} className="grid grid-cols-9 items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0">
-                <span className="font-mono font-medium">{i.poId}</span>
+              <div key={i.id} className="m-stack m-grid2 grid grid-cols-9 items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0">
+                <span className="font-mono font-medium max-md:text-[13px]">{i.poId}</span>
                 {/* Revisi 2026-09-20 (owner): nomor invoice supplier yang diinput Procurement di Paying Voucher
                     disematkan di daftar PO material ini. */}
-                <span className="break-all font-mono text-[11px]">{i.noInvoiceVendor || "—"}</span>
-                <span>{i.supplier}</span>
+                <span data-label="No. invoice" className="break-all font-mono text-[11px] max-md:col-span-full">{i.noInvoiceVendor || "—"}</span>
+                <span data-label="Supplier">{i.supplier}</span>
                 {/* Item revisi 2026-09-06: sebelumnya 2 pill (status invoice + status kedatangan
                     roll) tampil berdampingan di baris yang sama — dobel & membingungkan menurut
                     owner ("tidak perlu ada dua statusnya tampil, buat saja jadi satu"). Cukup 1
                     pill status invoice (DELIVERY/RECEIVING) yang jadi acuan alur PO; progres
                     kedatangan roll per-warna sudah cukup terwakili kolom "Roll diterima" di
                     sebelahnya (angka + warna teks). */}
-                <span>
+                <span data-label="Status">
                   <StatusPill tone={invoiceStatusPill(i).tone}>{invoiceStatusPill(i).label}</StatusPill>
                 </span>
-                <span className={"text-right font-mono " + (progress.arrived < progress.total ? "text-warning-fg" : "text-success-fg")}>
+                <span data-label="Roll diterima" className={"text-right font-mono " + (progress.arrived < progress.total ? "text-warning-fg" : "text-success-fg")}>
                   {progress.arrived}/{progress.total} roll
                 </span>
-                <span className="font-mono text-[11px] text-text-muted">{formatDate(i.deliveredAt)}</span>
-                <span className="font-mono text-[11px] text-text-muted">{formatDate(i.receivedAt)}</span>
-                <span className="font-mono text-[11px] text-text-muted">
+                <span data-label="Tgl kirim" className="font-mono text-[11px] text-text-muted">{formatDate(i.deliveredAt)}</span>
+                <span data-label="Tgl terima" className="font-mono text-[11px] text-text-muted">{formatDate(i.receivedAt)}</span>
+                <span data-label="Target selesai" className="font-mono text-[11px] text-text-muted">
                   {i.receivedAt ? formatDate(addDays(i.receivedAt, VENDOR_PRODUKSI[vendorId]?.productionLeadDays ?? 7)) : "—"}
                 </span>
-                <span className="text-right">
+                <span className="text-right max-md:[&>button]:w-full">
                   <Button onClick={() => pickInvoice(i.id)} variant={selectedInvoiceId === i.id ? "muted" : "primary"} size="xs">
                     {selectedInvoiceId === i.id ? "Tutup detail ✕" : "Lihat Detail →"}
                   </Button>
@@ -568,7 +568,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
             </div>
             {colorGroups.length === 0 ? null : (
               <div className="mt-3 overflow-hidden rounded-md border border-[#E4E8EE]">
-                <div className="grid grid-cols-5 gap-x-2 border-b border-[#E4E8EE] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                <div className="m-hide grid grid-cols-5 gap-x-2 border-b border-[#E4E8EE] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                   <span>Warna</span>
                   <span className="text-right">Qty Pendek (pcs)</span>
                   <span className="text-right">Qty Panjang (pcs)</span>
@@ -590,14 +590,14 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                       onClick={() => pickWarna(g.warna)}
                       disabled={disabled}
                       className={
-                        "grid w-full grid-cols-5 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 text-left font-sans text-[11.5px] text-[#31414F] disabled:cursor-not-allowed disabled:opacity-50 " +
+                        "m-stack m-grid2 grid w-full grid-cols-5 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 text-left font-sans text-[11.5px] text-[#31414F] disabled:cursor-not-allowed disabled:opacity-50 max-md:py-2.5 " +
                         (active ? "bg-info-bg" : "hover:bg-[#FAFBFC]")
                       }
                     >
                       <span className={"font-medium " + (active ? "text-info-fg" : "")}>{warnaLabel(g.warna)}</span>
-                      <span className="text-right font-mono">{g.qtyPendek > 0 ? formatPcs(g.qtyPendek) : "—"}</span>
-                      <span className="text-right font-mono">{g.qtyPanjang > 0 ? formatPcs(g.qtyPanjang) : "—"}</span>
-                      <span className={"text-right font-mono " + (g.complete ? "text-success-fg" : "")}>
+                      <span data-label="Qty pendek (pcs)" className="text-right font-mono">{g.qtyPendek > 0 ? formatPcs(g.qtyPendek) : "—"}</span>
+                      <span data-label="Qty panjang (pcs)" className="text-right font-mono">{g.qtyPanjang > 0 ? formatPcs(g.qtyPanjang) : "—"}</span>
+                      <span data-label="Roll diterima" className={"text-right font-mono " + (g.complete ? "text-success-fg" : "")}>
                         {g.totalRoll > 0 ? `${g.arrivedRoll}/${g.totalRoll}` : "tanpa roll"}
                       </span>
                       <span className="flex justify-end">
@@ -643,29 +643,29 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                     tombol tutup terpisah lagi. */}
               </div>
               <div className="overflow-x-auto">
-                <div className="min-w-[820px]">
+                <div className="m-fluid min-w-[820px]">
                   {combinedRolls.length > 0 && (() => {
                     const pageCount = Math.max(1, Math.ceil(combinedRolls.length / ROLL_PAGE_SIZE));
                     const page = Math.min(rollPage, pageCount - 1);
                     const pageRolls = combinedRolls.slice(page * ROLL_PAGE_SIZE, page * ROLL_PAGE_SIZE + ROLL_PAGE_SIZE);
                     return (
                     <>
-                      <div className="flex items-center justify-between gap-3 border-b border-[#E4E8EE] bg-[#F7F9FB] px-4 py-2">
+                      <div className="flex items-center justify-between gap-3 border-b border-[#E4E8EE] bg-[#F7F9FB] px-4 py-2 max-md:flex-wrap">
                         <span className="font-sans text-[12px] font-semibold text-text-primary">
                           Roll <span className="font-mono text-[11px] font-normal text-text-muted">({combinedRolls.length - pendingRolls.length}/{combinedRolls.length} diterima)</span>
                         </span>
                         {pendingRolls.length > 0 && (
-                          <span className="flex items-center gap-3">
+                          <span className="flex items-center gap-3 max-md:w-full max-md:flex-wrap">
                             {rollsMissingCode.length > 0 && <span className="font-sans text-[11px] text-warning-fg">{rollsMissingCode.length} roll belum diisi code roll</span>}
                             {rollsWithCodeConflict.length > 0 && <span className="font-sans text-[11px] text-danger-fg">{rollsWithCodeConflict.length} roll code roll-nya sudah terdaftar</span>}
-                            <Button onClick={receiveAllRolls} disabled={rollsMissingCode.length > 0 || rollsWithCodeConflict.length > 0} variant="primary" size="sm" className="min-w-[170px]">
+                            <Button onClick={receiveAllRolls} disabled={rollsMissingCode.length > 0 || rollsWithCodeConflict.length > 0} variant="primary" size="sm" className="min-w-[170px] max-md:w-full">
                               Terima semua roll ({pendingRolls.length})
                             </Button>
                           </span>
                         )}
                       </div>
                       <div
-                        className="grid items-center gap-x-4 border-b-2 border-accent-blue bg-info-bg px-4 py-[8px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
+                        className="m-hide grid items-center gap-x-4 border-b-2 border-accent-blue bg-info-bg px-4 py-[8px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
                         style={{ gridTemplateColumns: RECEIVE_GRID + (sysadminMode ? " 150px" : "") }}
                       >
                         <span>Roll</span>
@@ -683,19 +683,21 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                         return (
                           <div
                             key={key}
-                            className="grid items-center gap-x-4 border-b border-[#F1F4F7] px-4 py-2 font-sans text-xs text-[#31414F]"
+                            className="m-stack m-grid2 grid items-center gap-x-4 border-b border-[#F1F4F7] px-4 py-2 font-sans text-xs text-[#31414F] max-md:py-3"
                             style={{ gridTemplateColumns: RECEIVE_GRID + (sysadminMode ? " 150px" : "") }}
                           >
-                            <span className="font-mono font-medium">Roll {r.idx + 1}</span>
+                            <span className="font-mono font-medium max-md:text-[13px]">Roll {r.idx + 1}</span>
                             {arrival ? (
-                              <span className="font-mono text-[11px]">{arrival.codeRoll || "—"}</span>
+                              <span data-label="Code roll" className="font-mono text-[11px] max-md:col-span-full">{arrival.codeRoll || "—"}</span>
                             ) : (
-                              <input
-                                value={code.codeRoll}
-                                onChange={(e) => setDraftCode((prev) => ({ ...prev, [key]: { ...code, codeRoll: e.target.value } }))}
-                                className="input w-full max-w-[240px] !py-1.5 font-mono text-[11px]"
-                                placeholder="Code roll"
-                              />
+                              <span data-label="Code roll" className="flex items-center max-md:col-span-full">
+                                <input
+                                  value={code.codeRoll}
+                                  onChange={(e) => setDraftCode((prev) => ({ ...prev, [key]: { ...code, codeRoll: e.target.value } }))}
+                                  className="input w-full max-w-[240px] !py-1.5 font-mono text-[11px]"
+                                  placeholder="Code roll"
+                                />
+                              </span>
                             )}
                             {/* Revisi 2026-09-29 (owner: "buat untuk vendor produksi bisa input
                                 code lot") -- kalau Procurement SUDAH mengisi code lot saat Paying
@@ -704,11 +706,11 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                                 bisa mengisinya sendiri di sini -- opsional, tidak wajib seperti
                                 code roll (tombol Terima tidak menunggu field ini). */}
                             {arrival && (arrival.codeLot || r.codeLot) ? (
-                              <span className="font-mono text-[11px] text-text-muted">{arrival.codeLot || r.codeLot}</span>
+                              <span data-label="Code lot" className="font-mono text-[11px] text-text-muted max-md:col-span-full">{arrival.codeLot || r.codeLot}</span>
                             ) : arrival ? (
                               // Roll SUDAH diterima tapi lot masih "—" (Procurement & vendor sama-sama
                               // belum mengisi) -- vendor bisa melengkapinya di sini, sekali simpan.
-                              <span className="flex items-center gap-1.5">
+                              <span data-label="Code lot" className="flex items-center gap-1.5 max-md:col-span-full">
                                 <input
                                   value={lotDraft[key] ?? ""}
                                   onChange={(e) => setLotDraft((prev) => ({ ...prev, [key]: e.target.value }))}
@@ -725,25 +727,27 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                                 </button>
                               </span>
                             ) : r.codeLot ? (
-                              <span className="font-mono text-[11px] text-text-muted">{r.codeLot}</span>
+                              <span data-label="Code lot" className="font-mono text-[11px] text-text-muted max-md:col-span-full">{r.codeLot}</span>
                             ) : (
-                              <input
-                                value={code.codeLot ?? ""}
-                                onChange={(e) => setDraftCode((prev) => ({ ...prev, [key]: { ...code, codeLot: e.target.value } }))}
-                                className="input w-full max-w-[160px] !py-1.5 font-mono text-[11px]"
-                                placeholder="Code lot"
-                              />
+                              <span data-label="Code lot" className="flex items-center max-md:col-span-full">
+                                <input
+                                  value={code.codeLot ?? ""}
+                                  onChange={(e) => setDraftCode((prev) => ({ ...prev, [key]: { ...code, codeLot: e.target.value } }))}
+                                  className="input w-full max-w-[160px] !py-1.5 font-mono text-[11px]"
+                                  placeholder="Code lot"
+                                />
+                              </span>
                             )}
-                            <span className="text-right font-mono">{formatDecimal(r.grossKg)}</span>
-                            <span className="flex flex-col items-end gap-1">
-                              <span className="flex items-center justify-end gap-2">
+                            <span data-label="Berat kotor (kg)" className="text-right font-mono">{formatDecimal(r.grossKg)}</span>
+                            <span className="flex flex-col items-end gap-1 max-md:items-stretch">
+                              <span className="flex items-center justify-end gap-2 max-md:justify-start">
                                 {arrival ? (
                                   <>
                                     <span className="font-mono text-[11px] text-text-muted">{formatDate(arrival.arrivedAt)}</span>
                                     <StatusPill tone="success">Diterima</StatusPill>
                                   </>
                                 ) : (
-                                  <Button onClick={() => markArrived(r.lengan, r.idx)} disabled={!code.codeRoll.trim() || !!conflictMsg} variant="accent" size="sm" className="w-[96px]">
+                                  <Button onClick={() => markArrived(r.lengan, r.idx)} disabled={!code.codeRoll.trim() || !!conflictMsg} variant="accent" size="sm" className="w-[96px] max-md:w-full">
                                     Terima
                                   </Button>
                                 )}
@@ -768,11 +772,11 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                         );
                       })}
                       {pageCount > 1 && (
-                        <div className="flex items-center justify-between gap-2 border-t border-[#F1F4F7] bg-[#FAFBFC] px-4 py-2 font-sans text-[11px] text-text-muted">
+                        <div className="flex items-center justify-between gap-2 border-t border-[#F1F4F7] bg-[#FAFBFC] px-4 py-2 font-sans text-[11px] text-text-muted max-md:flex-col max-md:items-stretch">
                           <span>
                             Halaman {page + 1} dari {pageCount} — {combinedRolls.length} roll total
                           </span>
-                          <span className="flex items-center gap-1">
+                          <span className="flex flex-wrap items-center gap-1">
                             <button
                               onClick={() => setRollPage(Math.max(0, page - 1))}
                               disabled={page === 0}
@@ -808,18 +812,18 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
 
                   {selectedWarnaItems.length > 0 && (
                     <>
-                      <div className={"flex items-center justify-between gap-3 border-b border-[#E4E8EE] bg-[#F7F9FB] px-4 py-2 " + (combinedRolls.length > 0 ? "border-t border-t-[#E4E8EE]" : "")}>
+                      <div className={"flex items-center justify-between gap-3 border-b border-[#E4E8EE] bg-[#F7F9FB] px-4 py-2 max-md:flex-wrap " + (combinedRolls.length > 0 ? "border-t border-t-[#E4E8EE]" : "")}>
                         <span className="font-sans text-[12px] font-semibold text-text-primary">
                           Item Tambahan <span className="text-[11px] font-normal text-text-muted">(Rib, Kerah, Manset)</span>
                         </span>
                         {pendingAddBuyIds.length > 0 && (
-                          <Button onClick={receiveAllAddBuys} variant="primary" size="sm" className="min-w-[170px]">
+                          <Button onClick={receiveAllAddBuys} variant="primary" size="sm" className="min-w-[170px] max-md:w-full">
                             Terima semua item ({pendingAddBuyIds.length})
                           </Button>
                         )}
                       </div>
                       <div
-                        className="grid items-center gap-x-4 border-b-2 border-accent-blue bg-info-bg px-4 py-[8px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
+                        className="m-hide grid items-center gap-x-4 border-b-2 border-accent-blue bg-info-bg px-4 py-[8px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
                         style={{ gridTemplateColumns: RECEIVE_GRID }}
                       >
                         <span>Item</span>
@@ -833,21 +837,21 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                         return (
                           <div
                             key={b.id}
-                            className="grid items-center gap-x-4 border-b border-[#F1F4F7] px-4 py-2 font-sans text-xs text-[#31414F] last:border-b-0"
+                            className="m-stack m-grid2 grid items-center gap-x-4 border-b border-[#F1F4F7] px-4 py-2 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-3"
                             style={{ gridTemplateColumns: RECEIVE_GRID }}
                           >
                             <span className="font-medium">{b.item}</span>
-                            <span className="text-[11.5px] text-text-muted">{b.warna || "—"}</span>
-                            <span />
-                            <span className="text-right font-mono">{formatDecimal(b.beratKg)}</span>
-                            <span className="flex items-center justify-end gap-2">
+                            <span data-label="Warna" className="text-[11.5px] text-text-muted">{b.warna || "—"}</span>
+                            <span className="max-md:hidden" />
+                            <span data-label="Berat (kg)" className="text-right font-mono">{formatDecimal(b.beratKg)}</span>
+                            <span className="flex items-center justify-end gap-2 max-md:justify-start">
                               {receipt ? (
                                 <>
                                   <span className="font-mono text-[11px] text-text-muted">{formatDate(receipt.receivedAt)}</span>
                                   <StatusPill tone="success">Diterima</StatusPill>
                                 </>
                               ) : (
-                                <Button onClick={() => receiveRawMaterialAddBuy(selectedInvoice.id, b.id)} variant="accent" size="sm" className="w-[96px]">
+                                <Button onClick={() => receiveRawMaterialAddBuy(selectedInvoice.id, b.id)} variant="accent" size="sm" className="w-[96px] max-md:w-full">
                                   Terima
                                 </Button>
                               )}
@@ -886,7 +890,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
               const noCode = rollsWithoutCode(p.mrpId);
               return (
                 <div key={p.id} className="overflow-hidden rounded-md border border-border-subtle bg-white">
-                  <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
+                  <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 max-md:flex-col max-md:items-stretch">
                     <span className="font-sans text-xs text-[#31414F]">
                       <span className="font-mono font-medium">{p.id}</span> — estimasi{" "}
                       <span className="font-semibold">{formatPcs(estTotal)} pcs</span> dari bahan diterima{" "}
@@ -904,13 +908,13 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                           const k = r.invoiceId + "|" + r.warna + "|" + r.lengan + "|" + r.idx;
                           return (
                             <div key={k} className="flex flex-wrap items-center gap-2">
-                              <span className="min-w-[260px]">
+                              <span className="min-w-[260px] max-md:min-w-0 max-md:basis-full">
                                 {r.warna} · {r.lengan} — Roll {r.idx + 1} <span className="font-mono text-[10px] text-text-muted">({r.poId})</span>
                               </span>
                               <input
                                 value={legacyCodeDraft[k] ?? ""}
                                 onChange={(e) => setLegacyCodeDraft((prev) => ({ ...prev, [k]: e.target.value }))}
-                                className="input w-[180px] text-[11px]"
+                                className="input w-[180px] text-[11px] max-md:min-w-0 max-md:flex-1"
                                 placeholder="Code roll"
                               />
                               <Button

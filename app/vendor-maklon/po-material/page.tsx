@@ -81,17 +81,17 @@ const STATUS_RANK = ["WAITING_INVOICE", "INVOICED", "PAID", "DELIVERY", "RECEIVI
 function InvoiceCard({ vendorId, inv }: { vendorId: string; inv: InvoiceSub }) {
   return (
     <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
-      <div className="grid grid-cols-4 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+      <div className="m-hide grid grid-cols-4 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
         <span>Tgl Delivery</span>
         <span>Tgl Receiving</span>
         <span>Tgl Start Produksi</span>
         <span>Target Done Produksi</span>
       </div>
-      <div className="grid grid-cols-4 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-        <span>{formatDate(inv.deliveredAt)}</span>
-        <span>{formatDate(inv.receivedAt)}</span>
-        <span>{formatDate(inv.productionStart)}</span>
-        <span>{inv.receivedAt ? formatDate(addDays(inv.receivedAt, VENDOR_PRODUKSI[vendorId]?.productionLeadDays ?? 7)) : "—"}</span>
+      <div className="m-stack m-grid2 grid grid-cols-4 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F] max-md:py-2.5">
+        <span data-label="Tgl delivery">{formatDate(inv.deliveredAt)}</span>
+        <span data-label="Tgl receiving">{formatDate(inv.receivedAt)}</span>
+        <span data-label="Tgl start produksi">{formatDate(inv.productionStart)}</span>
+        <span data-label="Target done produksi">{inv.receivedAt ? formatDate(addDays(inv.receivedAt, VENDOR_PRODUKSI[vendorId]?.productionLeadDays ?? 7)) : "—"}</span>
       </div>
       {(() => {
         // Revisi 2026-09-20 (owner: "fokus monitoring material"): 1 baris per WARNA -- roll dipisah
@@ -110,8 +110,8 @@ function InvoiceCard({ vendorId, inv }: { vendorId: string; inv: InvoiceSub }) {
         const num = (n: number, kg = false) => (n > 0 ? (kg ? formatDecimal(n) : n) : "—");
         return (
           <div className="overflow-x-auto">
-            <div className="min-w-[760px]">
-              <div className={"grid gap-x-2 border-t border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted " + cols}>
+            <div className="m-fluid min-w-[760px]">
+              <div className={"m-hide grid gap-x-2 border-t border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted " + cols}>
                 <span>Warna</span>
                 <span className="text-right">Roll (Lengan Pendek)</span>
                 <span className="text-right">Roll (Lengan Panjang)</span>
@@ -121,24 +121,24 @@ function InvoiceCard({ vendorId, inv }: { vendorId: string; inv: InvoiceSub }) {
                 <span className="text-right">Manset (kg)</span>
               </div>
               {rows.map((r) => (
-                <div key={r.warna || "__none"} className={"grid gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F] " + cols}>
+                <div key={r.warna || "__none"} className={"m-stack m-grid2 grid gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F] max-md:py-2.5 " + cols}>
                   <span className="font-medium">{r.warna || "Tanpa warna"}</span>
-                  <span className="text-right font-mono">{num(r.pendek)}</span>
-                  <span className="text-right font-mono">{num(r.panjang)}</span>
-                  <span className="text-right font-mono font-semibold">{num(r.total)}</span>
-                  <span className="text-right font-mono">{num(r.rib, true)}</span>
-                  <span className="text-right font-mono">{num(r.kerah, true)}</span>
-                  <span className="text-right font-mono">{num(r.manset, true)}</span>
+                  <span data-label="Roll pendek" className="text-right font-mono">{num(r.pendek)}</span>
+                  <span data-label="Roll panjang" className="text-right font-mono">{num(r.panjang)}</span>
+                  <span data-label="Total roll" className="text-right font-mono font-semibold">{num(r.total)}</span>
+                  <span data-label="Rib (kg)" className="text-right font-mono">{num(r.rib, true)}</span>
+                  <span data-label="Kerah (kg)" className="text-right font-mono">{num(r.kerah, true)}</span>
+                  <span data-label="Manset (kg)" className="text-right font-mono">{num(r.manset, true)}</span>
                 </div>
               ))}
-              <div className={"grid gap-x-2 border-t-2 border-[#E4E8EE] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[11.5px] font-semibold text-text-primary " + cols}>
+              <div className={"m-stack m-grid2 grid gap-x-2 border-t-2 border-[#E4E8EE] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[11.5px] font-semibold text-text-primary max-md:py-2.5 " + cols}>
                 <span>Total</span>
-                <span className="text-right font-mono">{num(sum((r) => r.pendek))}</span>
-                <span className="text-right font-mono">{num(sum((r) => r.panjang))}</span>
-                <span className="text-right font-mono">{num(sum((r) => r.total))}</span>
-                <span className="text-right font-mono">{num(sum((r) => r.rib), true)}</span>
-                <span className="text-right font-mono">{num(sum((r) => r.kerah), true)}</span>
-                <span className="text-right font-mono">{num(sum((r) => r.manset), true)}</span>
+                <span data-label="Roll pendek" className="text-right font-mono">{num(sum((r) => r.pendek))}</span>
+                <span data-label="Roll panjang" className="text-right font-mono">{num(sum((r) => r.panjang))}</span>
+                <span data-label="Total roll" className="text-right font-mono">{num(sum((r) => r.total))}</span>
+                <span data-label="Rib (kg)" className="text-right font-mono">{num(sum((r) => r.rib), true)}</span>
+                <span data-label="Kerah (kg)" className="text-right font-mono">{num(sum((r) => r.kerah), true)}</span>
+                <span data-label="Manset (kg)" className="text-right font-mono">{num(sum((r) => r.manset), true)}</span>
               </div>
             </div>
           </div>
@@ -312,6 +312,7 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
     >
       <DataTable
         title="PO material tujuan saya"
+        mobileCards
         columns={columns}
         rows={rows}
         keyOf={(r) => r.mrpId}
