@@ -13,6 +13,7 @@ import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { useMrpStore } from "@/lib/mrp/store";
 import { usePendingActions } from "@/lib/mrp/usePendingActions";
 import {
+  restingCandidateRolls,
   cumulativeSizeQtyForGroup,
   expectedRejectGrossForGroup,
   fgMurniAndReworkForGroup,
@@ -134,7 +135,6 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
   const rejectRemarks = useMrpStore((s) => s.rejectRemarks);
   const setRejectRemark = useMrpStore((s) => s.setRejectRemark);
   const confirmFgDone = useMrpStore((s) => s.confirmFgDone);
-  const undoFgConfirm = useMrpStore((s) => s.undoFgConfirm);
   // Revisi 2026-09-07 (HPP per roll) -- "Tutup Roll" per ProductionBatch (roll), lihat
   // closeProductionBatchAction. Menggantikan input size bebas per grup untuk kind="FG".
   const closeProductionBatch = useMrpStore((s) => s.closeProductionBatch);
@@ -363,6 +363,13 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                 // semua roll ditutup manual -- server (confirmFgDoneAction) otomatis menutup roll
                 // yang masih terbuka begitu tombol itu diklik.
                 const groupBatches = kind === "FG" ? productionBatches.filter((b) => b.mrpId === selectedMrpId && b.warna === g.warna && b.lengan === g.lengan && b.cuttingAt) : [];
+                // Roll warna/lengan ini yang SUDAH DITERIMA di Good Receive tapi belum selesai diproses (belum diresting, atau sudah
+                // diresting tapi belum dicutting) -- selama masih ada, warna ini belum boleh tampil "Finish Good Selesai".
+                const unprocessedRolls =
+                  kind === "FG"
+                    ? restingCandidateRolls(selectedMrpId, vendorId, rawInvoices, productionBatches).filter((r) => r.warna === g.warna && r.lengan === g.lengan).length +
+                      productionBatches.filter((b) => b.mrpId === selectedMrpId && b.vendorProduksi === vendorId && b.warna === g.warna && b.lengan === g.lengan && !b.cuttingAt).length
+                    : 0;
                 return (
                   <div key={groupKey} className={newWarna ? "border-t border-t-[#C9D3DF]" : undefined}>
                     <div
@@ -374,10 +381,13 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                           {g.warna} · {g.lengan}
                         </span>
                         {isFgConfirmed &&
-                          (groupBatches.length === 0 || groupBatches.every((b) => b.closedAt) ? (
+                          ((groupBatches.length === 0 || groupBatches.every((b) => b.closedAt)) && unprocessedRolls === 0 ? (
                             <StatusPill tone="success">Finish Good Selesai</StatusPill>
                           ) : (
-                            <StatusPill tone="info">Sebagian selesai</StatusPill>
+                            <>
+                              <StatusPill tone="info">Sebagian selesai</StatusPill>
+                              {unprocessedRolls > 0 && <span className="font-sans text-[10.5px] text-text-muted">{unprocessedRolls} roll belum diproses</span>}
+                            </>
                           ))}
                         {isFinalDone && <StatusPill tone="success">Final</StatusPill>}
                       </span>
@@ -414,20 +424,13 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                         </>
                       )}
                       <span className="flex items-center justify-end gap-2">
-                        {kind === "FG" && isFgConfirmed && (sysadmin ? (
-                          // Mode Sysadmin: tombol vendor diganti tombol Sysadmin (server menolak Sysadmin
-                          // memakai tombol vendor) -- aturan pengaman sama, plus alasan wajib & Log Audit.
+                        {/* Revisi 2026-10-07 (owner: "buka kunci per warna tidak perlu, per roll saja"): tombol vendor
+                            "Buka kunci" per warna DIHAPUS -- roll baru (bahan menyusul) tetap bisa diisi tanpa membuka
+                            kunci, dan roll yang sudah ditutup dibuka lewat "Buka lagi" per roll. Sysadmin tetap punya
+                            jalan darurat (alasan wajib & Log Audit). */}
+                        {kind === "FG" && isFgConfirmed && sysadmin && (
                           <SysadminActionsBar actions={fgConfirmCorrections({ groupKey, warna: g.warna, lengan: g.lengan, isFinalDone })} />
-                        ) : (
-                          !isFinalDone && (
-                            // undoFgConfirm sudah optimistic penuh di store.ts -- isPending/teks
-                            // "Membuka…" dilepas (redundant, sempat kelihatan walau state lokal
-                            // sudah berubah seketika).
-                            <Button onClick={() => runAction(groupKey, undoFgConfirm(groupKey))} variant="muted" size="xs">
-                              Buka kunci ↺
-                            </Button>
-                          )
-                        ))}
+                        )}
                         <Button onClick={() => toggleGroup(g.warna, g.lengan)} variant="accent" size="xs">
                           {expanded ? "Tutup" : kind === "FG" ? "Input Finish Good →" : "Lihat by size →"}
                         </Button>
