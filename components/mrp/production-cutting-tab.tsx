@@ -113,11 +113,11 @@ function rollVariance(roll: RestingCandidateRoll, netKg: number) {
 // batch 2026-09-05): 1 baris = 1 SESI RESTING ("Part", lihat restingSessionGroups di
 // lib/mrp/derive.ts); Code roll, Gramasi & Setting ada di sub-tabel per-roll (CUTTING_BATCH_COLUMNS).
 const CUTTING_SESSION_COLUMNS =
-  "minmax(150px,0.9fr) minmax(170px,1fr) minmax(50px,0.35fr) minmax(150px,0.9fr) minmax(190px,1.1fr) minmax(140px,0.8fr) minmax(210px,1.2fr) minmax(100px,0.6fr)";
+  "minmax(150px,0.9fr) minmax(170px,1fr) minmax(90px,0.5fr) minmax(150px,0.9fr) minmax(190px,1.1fr) minmax(140px,0.8fr) minmax(210px,1.2fr) minmax(100px,0.6fr)";
 
 // Kolom sub-tabel PER ROLL (ditampilkan begitu 1 baris grup di atas di-expand) -- Warna | Code
-// roll | Gramasi | Setting | Cutting | Hasil Aduan/Yield.
-const CUTTING_BATCH_COLUMNS = "minmax(150px,1fr) minmax(130px,0.8fr) minmax(90px,0.5fr) minmax(110px,0.7fr) minmax(160px,1fr) minmax(230px,1.4fr)";
+// roll | Gramasi | Setting | Cutting | Hasil Aduan/Yield | Detail Size.
+const CUTTING_BATCH_COLUMNS = "minmax(150px,1fr) minmax(130px,0.8fr) minmax(90px,0.5fr) minmax(110px,0.7fr) minmax(150px,0.9fr) minmax(170px,1fr) minmax(230px,1.4fr)";
 
 // Kolom "List roll": Warna | Code roll | Berat kotor | Berat bersih | Selisih | Gramasi | Setting | Aksi.
 const LIST_GRID = "minmax(140px,1fr) minmax(130px,0.9fr) minmax(90px,0.6fr) minmax(110px,0.7fr) minmax(130px,0.9fr) minmax(90px,0.6fr) minmax(120px,0.8fr) minmax(130px,0.8fr)";
@@ -962,7 +962,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
             >
               <span>Kode Aduan</span>
               <span>Warna</span>
-              <span className="text-right">Roll</span>
+              <span className="text-center">Roll</span>
               <span>Resting</span>
               <span>Cutting</span>
               <span>Durasi Resting</span>
@@ -1005,7 +1005,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                       )}
                     </span>
                     <span>{distinctWarna}</span>
-                    <span className="text-right font-mono">{g.batches.length}</span>
+                    <span className="text-center font-mono">{g.batches.length}</span>
                     <span className="font-mono text-[11px]">{formatDateTime(g.restingAt)}</span>
                     <span className="font-mono text-[11px]">
                       {sessionComplete ? (
@@ -1046,23 +1046,24 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                       )}
                     </span>
                     <span className="text-center">
-                      <button onClick={() => toggleSessionExpanded(g.key)} className="font-sans text-[11px] font-semibold text-action-primary">
-                        {isExpanded ? "Sembunyikan" : "Lihat roll →"}
-                      </button>
+                      <Button onClick={() => toggleSessionExpanded(g.key)} variant="accent" size="xs">
+                        {isExpanded ? "Tutup" : "Lihat roll →"}
+                      </Button>
                     </span>
                   </div>
                   {isExpanded && (
                     <div className="bg-[#FAFBFC]">
                       <div
-                        className="grid min-w-[1240px] gap-x-3 border-y border-[#CFE0EF] bg-info-bg/60 px-8 py-[7px] font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg"
+                        className="grid min-w-[1240px] gap-x-5 border-y border-[#CFE0EF] bg-info-bg/60 px-8 py-[7px] font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg"
                         style={{ gridTemplateColumns: CUTTING_BATCH_COLUMNS }}
                       >
                         <span>Warna</span>
                         <span>Code roll</span>
-                        <span className="text-right">Gramasi</span>
+                        <span className="text-center">Gramasi</span>
                         <span>Setting</span>
                         <span>Cutting</span>
                         <span>Hasil Aduan / Yield</span>
+                        <span>Detail Size</span>
                       </div>
                       {g.batches.map((b) => {
                         const targetSizes = targetSizesForBatch(b, detail?.aduanRows ?? []);
@@ -1074,35 +1075,23 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         return (
                           <div
                             key={b.id}
-                            className="grid min-w-[1240px] items-center gap-x-3 border-b border-[#F1F4F7] px-8 py-[9px] font-sans text-xs text-[#31414F] last:border-b-0"
+                            className="grid min-w-[1240px] items-center gap-x-5 border-b border-[#F1F4F7] px-8 py-[9px] font-sans text-xs text-[#31414F] last:border-b-0"
                             style={{ gridTemplateColumns: CUTTING_BATCH_COLUMNS }}
                           >
                             <span>{b.warna}</span>
                             <span className="font-mono text-[11px]">{b.codeRoll || "—"}</span>
-                            <span className="text-right font-mono">{b.gramasi} gsm</span>
+                            <span className="text-center font-mono">{b.gramasi} gsm</span>
                             <span className="text-[11.5px]">{b.setting || "—"}</span>
                             <span className="font-mono text-[11px]">{b.cuttingAt ? formatDateTime(b.cuttingAt) : "—"}</span>
                             <span className="flex flex-col gap-0.5 font-mono text-[11px]">
                               {b.cuttingAt ? (
                                 b.sizeQty ? (
-                                  <>
-                                    <span className="flex flex-wrap items-center gap-1">
-                                      <span>
-                                        {actualTotal} / {targetTotal} pcs
-                                      </span>
-                                      {yieldPct !== null && <StatusPill tone={yieldAlert ? "danger" : "success"}>{yieldPct.toFixed(1)}%</StatusPill>}
+                                  <span className="flex flex-wrap items-center gap-1">
+                                    <span>
+                                      {actualTotal} / {targetTotal} pcs
                                     </span>
-                                    {sizesForDetail.length > 0 && (
-                                      <span className="text-[10px] text-text-muted">
-                                        {sizesForDetail.map((size) => `${size} ${b.sizeQty?.[size] ?? 0}/${targetSizes[size] ?? 0}`).join(" · ")}
-                                      </span>
-                                    )}
-                                    {sizeShiftLabel(b) && (
-                                      <span className="text-[10px] font-semibold text-info-fg" title="Sisa kain roll ini dialihkan ke size lain saat Input Hasil Cutting">
-                                        Alih size (sisa kain): {sizeShiftLabel(b)}
-                                      </span>
-                                    )}
-                                  </>
+                                    {yieldPct !== null && <StatusPill tone={yieldAlert ? "danger" : "success"}>{yieldPct.toFixed(1)}%</StatusPill>}
+                                  </span>
                                 ) : (
                                   <span className="text-text-muted">— (belum diisi)</span>
                                 )
@@ -1110,6 +1099,24 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                                 <span className="text-text-muted">Target: {targetTotal} pcs</span>
                               )}
                               <SysadminBatchActions batch={b} invoices={invoices} />
+                            </span>
+                            <span className="flex flex-col gap-1">
+                              {b.cuttingAt && b.sizeQty && sizesForDetail.length > 0 ? (
+                                <span className="flex flex-wrap gap-1">
+                                  {sizesForDetail.map((size) => (
+                                    <span key={size} className="rounded bg-[#F1F5F9] px-1.5 py-[2px] font-mono text-[10.5px] text-[#475569]">
+                                      <b className="text-text-primary">{size}</b> {b.sizeQty?.[size] ?? 0}/{targetSizes[size] ?? 0}
+                                    </span>
+                                  ))}
+                                </span>
+                              ) : (
+                                <span className="font-mono text-[11px] text-text-muted">—</span>
+                              )}
+                              {b.cuttingAt && b.sizeQty && sizeShiftLabel(b) && (
+                                <span className="font-sans text-[10px] font-semibold text-info-fg" title="Sisa kain roll ini dialihkan ke size lain saat Input Hasil Cutting">
+                                  Alih size (sisa kain): {sizeShiftLabel(b)}
+                                </span>
+                              )}
                             </span>
                           </div>
                         );
