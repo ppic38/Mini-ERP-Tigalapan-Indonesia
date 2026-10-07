@@ -565,7 +565,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                             return b.fgSizeQty ?? {};
                           }
                           // Distribusi (roll pertama dulu, isi sisa kapasitasnya) LANGSUNG jadi sizeQty absolute
-                          // baru per roll yang tersentuh -- dipakai "Simpan" dan "Sisa jadi reject".
+                          // baru per roll yang tersentuh -- dipakai "Simpan".
                           function computeTouched(): Record<string, Record<string, number>> {
                             const touched: Record<string, Record<string, number>> = {};
                             for (const size of sizesOpen) {
@@ -604,40 +604,6 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                 const isFullyDone = !!b && Object.entries(b.sizeQty ?? {}).every(([size, tQty]) => (finalQty[size] ?? 0) >= tQty);
                                 return isFullyDone ? closeProductionBatch(id, finalQty) : saveFgProgress(id, finalQty);
                               })
-                            );
-                            setSizeTotalDraft({});
-                          }
-                          // Revisi 2026-09-20 (owner: "sisa jadi reject" per size): roll yang punya SISA di size ini
-                          // (setelah isian yang sedang diketik disimpan dulu) ditutup dengan Finish Good apa adanya --
-                          // selisih target-vs-FG-nya (semua size roll itu) jadi reject saat "Selesai Produksi". Bisa
-                          // dibatalkan lewat "Buka lagi" selama warna ini belum Selesai Produksi.
-                          async function markSizeRemainderAsReject(size: string) {
-                            const touched = computeTouched();
-                            const finalFor = (bt: (typeof openBatches)[number]) => touched[bt.id] ?? defaultSizeQtyFor(bt);
-                            const isFull = (bt: (typeof openBatches)[number]) => Object.entries(bt.sizeQty ?? {}).every(([sz, t]) => (finalFor(bt)[sz] ?? 0) >= t);
-                            const toClose = openBatches.filter((bt) => (bt.sizeQty?.[size] ?? 0) - (finalFor(bt)[size] ?? 0) > 0 || (!!touched[bt.id] && isFull(bt)));
-                            const rejectBySize: Record<string, number> = {};
-                            for (const bt of toClose) {
-                              for (const [sz, t] of Object.entries(bt.sizeQty ?? {})) {
-                                const short = t - (finalFor(bt)[sz] ?? 0);
-                                if (short > 0) rejectBySize[sz] = (rejectBySize[sz] ?? 0) + short;
-                              }
-                            }
-                            const rejectText = Object.entries(rejectBySize).map(([sz, q]) => `${sz} ${q} pcs`).join(" · ") || "tidak ada";
-                            const okReject = await confirmDialog({
-                              title: `Tandai sisa ${size} sebagai reject?`,
-                              message: `Roll yang ditutup (${toClose.length}): ${toClose.map((bt) => bt.codeRoll || bt.id).join(", ")}\nReject yang tercatat: ${rejectText}\n\nBisa dibatalkan lewat "Buka lagi" selama warna ini belum Selesai Produksi.`,
-                              confirmLabel: "Tandai reject",
-                              tone: "danger",
-                            });
-                            if (!okReject) return;
-                            const closeIds = new Set(toClose.map((bt) => bt.id));
-                            if (openBatches.every((bt) => closeIds.has(bt.id))) setExpandedGroupKey("");
-                            await Promise.all(
-                              openBatches
-                                .filter((bt) => closeIds.has(bt.id) || touched[bt.id])
-                                .map((bt) => (closeIds.has(bt.id) ? closeProductionBatch(bt.id, finalFor(bt)) : saveFgProgress(bt.id, touched[bt.id]))
-                              )
                             );
                             setSizeTotalDraft({});
                           }
@@ -723,13 +689,6 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                             {rec}/{tgt} pcs
                                           </span>
                                         </div>
-                                        <button
-                                          onClick={() => runAction(quickSaveKey + size, markSizeRemainderAsReject(size))}
-                                          title={`Sisa ${size} tidak akan diproduksi lagi -- roll yang memuat size ini ditutup & selisihnya tercatat reject`}
-                                          className="self-start font-sans text-[10.5px] font-semibold text-danger-fg underline"
-                                        >
-                                          Sisa jadi reject
-                                        </button>
                                       </div>
                                     );
                                   })}
