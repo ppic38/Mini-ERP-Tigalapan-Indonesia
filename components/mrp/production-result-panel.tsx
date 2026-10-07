@@ -422,7 +422,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                           )
                         ))}
                         <Button onClick={() => toggleGroup(g.warna, g.lengan)} variant="accent" size="xs">
-                          {expanded ? "Sembunyikan" : "Lihat by size →"}
+                          {expanded ? "Tutup" : kind === "FG" ? "Input Finish Good →" : "Lihat by size →"}
                         </Button>
                       </span>
                     </div>
@@ -488,7 +488,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                               <span>Size</span>
                               <span className="text-right">Target (hasil cutting)</span>
                               <span className="text-right">Finish Good</span>
-                              <span className="text-right">Kurang</span>
+                              <span className="text-right">Selisih</span>
                             </div>
                             {sizes.map((size) => {
                               const tgt = target[size] ?? 0;
@@ -773,9 +773,10 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                             <div className="border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[11px] font-semibold text-text-primary">
                               Progres per batch ({groupBatches.length} roll — Resting → Finish Good)
                             </div>
-                            <div className="grid grid-cols-4 gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                            <div className="grid grid-cols-[1.1fr_2.4fr_0.9fr_0.8fr_1.2fr] gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                               <span>Roll</span>
-                              <span className="text-right">FG / hasil cutting</span>
+                              <span>Size &amp; qty (FG / hasil cutting)</span>
+                              <span className="text-right">Total FG / cutting</span>
                               <span className="text-right">Status</span>
                               <span className="text-right">Aksi</span>
                             </div>
@@ -785,10 +786,19 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                               const totalFg = Object.values(b.fgSizeQty ?? {}).reduce((a, c) => a + c, 0);
                               const closeKey = "close-" + b.id;
                               return (
-                                <div key={b.id} className="grid grid-cols-4 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+                                <div key={b.id} className="grid grid-cols-[1.1fr_2.4fr_0.9fr_0.8fr_1.2fr] items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
                                   <span className="flex flex-col">
                                     <span className="font-mono">{b.codeRoll || b.id}</span>
                                     {sizeShiftLabel(b) && <span className="font-sans text-[9.5px] font-semibold text-info-fg">Alih size (sisa kain): {sizeShiftLabel(b)}</span>}
+                                  </span>
+                                  <span className="flex flex-wrap gap-1">
+                                    {sizes
+                                      .filter((sz) => sz in rollTarget || sz in (b.fgSizeQty ?? {}))
+                                      .map((sz) => (
+                                        <span key={sz} className="rounded bg-[#F1F5F9] px-1.5 py-[2px] font-mono text-[10.5px] text-[#475569]">
+                                          <b className="text-text-primary">{sz}</b> {(b.fgSizeQty ?? {})[sz] ?? 0}/{rollTarget[sz] ?? 0}
+                                        </span>
+                                      ))}
                                   </span>
                                   <span className="text-right font-mono">
                                     {totalFg} / {totalTarget}
