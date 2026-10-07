@@ -6,6 +6,8 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { NumberInput } from "@/components/mrp/number-input";
 import { Button } from "@/components/ui/button";
+import { alertDialog } from "@/components/ui/confirm-dialog";
+import { ColumnMenu, useColumnVisibility } from "@/components/ui/column-menu";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { useMrpStore } from "@/lib/mrp/store";
 import { usePendingActions } from "@/lib/mrp/usePendingActions";
@@ -171,7 +173,10 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   // Item 2026-09-12 (user-reported): daftar roll mentah ("Roll | Warna/lengan | Sisa per size")
   // cuma referensi teknis, bikin form penuh sebelum sempat diisi -- default disembunyikan, mirip
   // pola "Lihat daftar roll" di tab Finish Good (production-result-panel.tsx).
-  const [showRollList, setShowRollList] = useState(false);
+  // Revisi 2026-10-07 (owner: "pindahkan isi 'Lihat daftar roll' ke kolom tabel, namanya Sumber Roll, bisa ditampilkan atau tidak"): daftar roll
+  // mentah DIHAPUS -- isinya jadi kolom "Sumber Roll" di tabel Finish Good & Rework, dengan menu "⊞ Kolom" (pilihan diingat per browser).
+  const [fgCols, toggleFgCol] = useColumnVisibility("pengiriman-kolom-fg-v1", ["size", "sumber", "sisa"]);
+  const [rwCols, toggleRwCol] = useColumnVisibility("pengiriman-kolom-rework-v1", ["jenis", "lengan", "size", "sumber", "sisa"]);
   // Filter warna untuk tabel "qty per size" (kosong = semua warna). Hanya memfilter tampilan -- qty yang sudah
   // diisi di warna lain tetap ikut tersimpan.
   const [warnaFilter, setWarnaFilter] = useState("");
@@ -258,6 +263,45 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   const activeWarnaFilter = warnaOptions.includes(warnaFilter) ? warnaFilter : "";
   const visibleRollSizeRows = activeWarnaFilter ? rollSizeRows.filter((r) => r.warna === activeWarnaFilter) : rollSizeRows;
 
+  // Sumber Roll Finish Good: roll mana saja yang masih punya sisa untuk warna·lengan·size ini (code roll + sisa pcs).
+  const rollSourcesBySize = new Map<string, { code: string; qty: number }[]>();
+  for (const row of rollRows) {
+    for (const [size, qty] of Object.entries(row.remaining)) {
+      if (qty <= 0) continue;
+      const key = rollSizeKey(row.roll.warna, row.roll.lengan, size);
+      const arr = rollSourcesBySize.get(key) ?? [];
+      arr.push({ code: row.roll.codeRoll || row.roll.id, qty });
+      rollSourcesBySize.set(key, arr);
+    }
+  }
+  // Sumber Roll Rework: roll di grup ASAL yang menyumbang reject ke size asal rework itu (note "Rework dari {lengan} size {size} ({usia})").
+  function reworkSources(r: (typeof rows)[number]): { code: string; qty: number; fromSize: string }[] {
+    if (r.kind !== "REWORK" || !mrpId) return [];
+    const out = new Map<string, { code: string; qty: number; fromSize: string }>();
+    for (const res of productionResults) {
+      if (res.mrpId !== mrpId || res.vendorProduksi !== vendorId || res.kind !== "FG" || res.warna !== r.warna || res.lengan !== r.lengan) continue;
+      const note = res.note ?? "";
+      if (!note.startsWith("Rework dari") || (res.usia ?? undefined) !== r.usia || !(r.size in res.sizeQty)) continue;
+      const m = note.match(/dari\s+(PENDEK|PANJANG)\s+size\s+(\S+)/i);
+      if (!m) continue;
+      const fromLengan = m[1].toUpperCase();
+      const fromSize = m[2];
+      for (const b of productionBatches) {
+        if (b.mrpId !== mrpId || b.warna !== r.warna || b.lengan !== fromLengan || !b.closedAt) continue;
+        const short = (b.sizeQty?.[fromSize] ?? 0) - (b.fgSizeQty?.[fromSize] ?? 0);
+        if (short <= 0) continue;
+        out.set(b.id + "|" + fromSize, { code: b.codeRoll || b.id, qty: short, fromSize });
+      }
+    }
+    return Array.from(out.values());
+  }
+  const sourceChip = (code: string, qty: number, extra?: string) => (
+    <span key={code + (extra ?? "")} className="rounded-md border border-[#DDE5EE] bg-[#F8FAFC] px-2 py-[2px] font-mono text-[10.5px] text-[#475569]">
+      <b className="text-text-primary">{code}</b> · {extra ? extra + " " : ""}
+      {qty}
+    </span>
+  );
+
   function setRowQty(key: string, qty: number) {
     setQtyDraft((prev) => ({ ...prev, [key]: qty }));
   }
@@ -270,7 +314,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
     setMrpId(id);
     setQtyDraft({});
     setRollQtyDraft({});
-    setShowRollList(false);
     setWarnaFilter("");
   }
 
@@ -334,13 +377,27 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   // submit() sekarang tidak menunggu server (optimistic) -- tidak ada state "submitting" lagi.
   const submitting = false;
   async function submit() {
-    if (!mrpId || !noKoli.trim() || submitting) return;
+    if (submitting) return;
+    if (!mrpId) {
+      await alertDialog({ title: "Koli belum bisa disimpan", message: "Pilih MRP dulu sebelum menyimpan koli." });
+      return;
+    }
+    if (!noKoli.trim()) {
+      await alertDialog({ title: "Koli belum bisa disimpan", message: "Isi No koli dulu, baru qty per size bisa diisi dan koli disimpan." });
+      return;
+    }
     const validItems: DeliveryKoliItem[] = rows
       .filter((r) => (qtyDraft[r.key] ?? 0) > 0)
       .map((r) => ({ warna: r.warna, lengan: r.lengan, size: r.size, usia: r.usia, qty: Math.min(qtyDraft[r.key] ?? 0, r.available), kind: r.kind }));
     const rollItems = buildRollItems();
     const allItems = [...validItems, ...rollItems];
-    if (allItems.length === 0) return;
+    if (allItems.length === 0) {
+      await alertDialog({
+        title: "Isi koli masih kosong",
+        message: "Anda belum mengisi qty apa pun. Isi qty minimal satu size (Finish Good) atau satu item Rework di tabel, lalu klik Simpan koli.",
+      });
+      return;
+    }
     // Revisi 2026-09-19 (owner: "langsung ada hasilnya saja dulu"): TIDAK lagi menunggu server --
     // store (createDeliveryKoli/updateDeliveryKoli) sudah optimistic penuh (koli langsung muncul di
     // daftar), form dikosongkan seketika. Kalau server menolak, store sudah alert + membatalkan
@@ -522,7 +579,20 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                 (pola sama Finish Good, item 15). Qty yang diketik mengurangi sisa roll manapun
                 yang cocok -- 1 roll SEKARANG BOLEH dikirim sebagian (sisanya tetap tersedia untuk
                 koli lain nanti), dikonfirmasi lewat AskUserQuestion. */}
-            <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Finish Good — qty per size</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Finish Good — qty per size</div>
+              {rollSizeRows.length > 0 && (
+                <ColumnMenu
+                  columns={[
+                    { key: "size", label: "Size" },
+                    { key: "sumber", label: "Sumber Roll" },
+                    { key: "sisa", label: "Sisa bisa dikirim" },
+                  ]}
+                  visible={fgCols}
+                  onToggle={toggleFgCol}
+                />
+              )}
+            </div>
             {/* Item 2026-09-12 (user-reported): qty per size TIDAK BOLEH diketik sebelum No koli
                 diisi -- dulu bisa diisi begitu MRP dipilih meski No koli masih kosong, gampang
                 kepencet lupa ngisi No koli-nya baru sadar pas "Simpan koli" gagal. */}
@@ -542,109 +612,153 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                 </select>
               </div>
             )}
-            {rollSizeRows.length > 0 && (
-              <div className="mt-2 overflow-hidden rounded-md border border-border-subtle bg-white">
-                <div className="grid grid-cols-4 gap-x-2 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                  <span>Warna / lengan</span>
-                  <span>Size</span>
-                  <span className="text-right">Sisa bisa dikirim</span>
-                  <span className="text-right">Qty</span>
-                </div>
-                {visibleRollSizeRows.map((r) => (
-                  <div key={r.key} className="grid grid-cols-4 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0">
-                    <span>
-                      {r.warna} · {r.lengan}
-                    </span>
-                    <span>{r.size}</span>
-                    <span className="text-right font-mono text-text-muted">{r.available} pcs</span>
-                    <span className="flex justify-end">
-                      <NumberInput
-                        value={rollQtyDraft[r.key] ?? 0}
-                        decimals={0}
-                        disabled={!noKoli.trim()}
-                        onChange={(v) => setRollQty(r.key, Math.max(0, Math.min(v, r.available)))}
-                        className="input w-[90px] text-right disabled:cursor-not-allowed disabled:bg-[#F7F9FB] disabled:text-text-muted"
-                      />
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {/* Item 2026-09-12 (user-reported): daftar roll mentah dihide default (toggle), lihat
-                catatan di deklarasi showRollList di atas. */}
-            {rollRows.length > 0 && (
-              <button onClick={() => setShowRollList((v) => !v)} className="mt-2 font-sans text-[11px] font-semibold text-action-primary underline">
-                {showRollList ? "Sembunyikan daftar roll ↑" : `Lihat daftar roll (${rollRows.length}) →`}
-              </button>
-            )}
-            {showRollList && rollRows.length > 0 && (
-              <div className="mt-2 overflow-hidden rounded-md border border-[#F1F4F7] bg-[#FAFBFC]">
-                <div className="grid grid-cols-4 gap-x-2 border-b border-[#F1F4F7] px-3 py-1 font-sans text-[9.5px] font-medium uppercase tracking-wider text-text-muted">
-                  <span>Roll</span>
-                  <span>Warna / lengan</span>
-                  <span>Sisa per size</span>
-                  <span className="text-right">Sisa total</span>
-                </div>
-                {rollRows.map((row) => {
-                  const sizeSummary = Object.entries(row.remaining)
-                    .map(([size, q]) => `${size} ${q}`)
-                    .join(", ");
-                  const remainingTotal = Object.values(row.remaining).reduce((a, b) => a + b, 0);
-                  return (
-                    <div key={row.roll.id} className="grid grid-cols-4 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1 font-sans text-[10.5px] text-text-muted last:border-b-0">
-                      <span className="font-mono">{row.roll.codeRoll || row.roll.id}</span>
-                      <span>
-                        {row.roll.warna} · {row.roll.lengan}
-                      </span>
-                      <span className="font-mono">{sizeSummary || "—"}</span>
-                      <span className="text-right font-mono">{remainingTotal} pcs</span>
+            {rollSizeRows.length > 0 &&
+              (() => {
+                const cols = [
+                  { key: "warna", label: "Warna / lengan", w: "minmax(0,1.3fr)", always: true, align: "" },
+                  { key: "size", label: "Size", w: "minmax(0,0.5fr)", align: "" },
+                  { key: "sumber", label: "Sumber Roll", w: "minmax(0,2.2fr)", align: "" },
+                  { key: "sisa", label: "Sisa bisa dikirim", w: "minmax(0,1fr)", align: "text-right" },
+                  { key: "qty", label: "Qty", w: "110px", always: true, align: "text-right" },
+                ].filter((c) => c.always || fgCols.has(c.key));
+                const template = cols.map((c) => c.w).join(" ");
+                return (
+                  <div className="mt-2 overflow-hidden rounded-md border border-border-subtle bg-white">
+                    <div className="grid gap-x-3 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted" style={{ gridTemplateColumns: template }}>
+                      {cols.map((c) => (
+                        <span key={c.key} className={c.align}>
+                          {c.label}
+                        </span>
+                      ))}
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                    {visibleRollSizeRows.map((r) => {
+                      const sources = rollSourcesBySize.get(r.key) ?? [];
+                      return (
+                        <div key={r.key} className="grid items-center gap-x-3 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0" style={{ gridTemplateColumns: template }}>
+                          {cols.map((c) => {
+                            if (c.key === "warna")
+                              return (
+                                <span key={c.key}>
+                                  {r.warna} · {r.lengan}
+                                </span>
+                              );
+                            if (c.key === "size") return <span key={c.key}>{r.size}</span>;
+                            if (c.key === "sumber")
+                              return (
+                                <span key={c.key} className="flex flex-wrap gap-1">
+                                  {sources.length === 0 ? <span className="text-text-muted">—</span> : sources.map((x) => sourceChip(x.code, x.qty))}
+                                </span>
+                              );
+                            if (c.key === "sisa")
+                              return (
+                                <span key={c.key} className="text-right font-mono text-text-muted">
+                                  {r.available} pcs
+                                </span>
+                              );
+                            return (
+                              <span key={c.key} className="flex justify-end">
+                                <NumberInput
+                                  value={rollQtyDraft[r.key] ?? 0}
+                                  decimals={0}
+                                  disabled={!noKoli.trim()}
+                                  onChange={(v) => setRollQty(r.key, Math.max(0, Math.min(v, r.available)))}
+                                  className="input w-[90px] text-right disabled:cursor-not-allowed disabled:bg-[#F7F9FB] disabled:text-text-muted"
+                                />
+                              </span>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
           </div>
         )}
 
         {mrpId && anyAvailable && (
           <div className="mt-4">
-            <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Rework &amp; sisa FG lama</div>
-            {anyAvailable && (
-              <div className="mt-2 overflow-hidden rounded-md border border-border-subtle bg-white">
-                <div className="grid grid-cols-6 gap-x-2 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                  <span>Jenis produk</span>
-                  <span>Warna</span>
-                  <span>Lengan</span>
-                  <span>Size / Usia</span>
-                  <span className="text-right">Sisa bisa dikirim</span>
-                  <span className="text-right">Qty</span>
-                </div>
-                {rows.map((r) => {
-                  const qty = qtyDraft[r.key] ?? 0;
-                  return (
-                    <div key={r.key} className="grid grid-cols-6 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0">
-                      <span>{kindLabel(r.kind)}</span>
-                      <span>{r.warna}</span>
-                      <span>{r.lengan}</span>
-                      <span>
-                        {r.size}
-                        {r.usia ? " · " + USIA_LABEL[r.usia] : ""}
-                      </span>
-                      <span className="text-right font-mono text-text-muted">{r.available} pcs</span>
-                      <span className="flex justify-end">
-                        <NumberInput
-                          value={qty}
-                          decimals={0}
-                          disabled={!noKoli.trim()}
-                          onChange={(v) => setRowQty(r.key, Math.max(0, Math.min(v, r.available)))}
-                          className="input w-[90px] text-right disabled:cursor-not-allowed disabled:bg-[#F7F9FB] disabled:text-text-muted"
-                        />
-                      </span>
+            <div className="flex items-center justify-between gap-2">
+              <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Rework &amp; sisa FG lama</div>
+              <ColumnMenu
+                columns={[
+                  { key: "jenis", label: "Jenis produk" },
+                  { key: "lengan", label: "Lengan" },
+                  { key: "size", label: "Size / Usia" },
+                  { key: "sumber", label: "Sumber Roll" },
+                  { key: "sisa", label: "Sisa bisa dikirim" },
+                ]}
+                visible={rwCols}
+                onToggle={toggleRwCol}
+              />
+            </div>
+            {anyAvailable &&
+              (() => {
+                const cols = [
+                  { key: "jenis", label: "Jenis produk", w: "minmax(0,0.9fr)", align: "" },
+                  { key: "warna", label: "Warna", w: "minmax(0,1.2fr)", always: true, align: "" },
+                  { key: "lengan", label: "Lengan", w: "minmax(0,0.8fr)", align: "" },
+                  { key: "size", label: "Size / Usia", w: "minmax(0,1fr)", align: "" },
+                  { key: "sumber", label: "Sumber Roll", w: "minmax(0,2fr)", align: "" },
+                  { key: "sisa", label: "Sisa bisa dikirim", w: "minmax(0,1fr)", align: "text-right" },
+                  { key: "qty", label: "Qty", w: "110px", always: true, align: "text-right" },
+                ].filter((col) => col.always || rwCols.has(col.key));
+                const template = cols.map((col) => col.w).join(" ");
+                return (
+                  <div className="mt-2 overflow-hidden rounded-md border border-border-subtle bg-white">
+                    <div className="grid gap-x-3 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted" style={{ gridTemplateColumns: template }}>
+                      {cols.map((col) => (
+                        <span key={col.key} className={col.align}>
+                          {col.label}
+                        </span>
+                      ))}
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                    {rows.map((r) => {
+                      const qty = qtyDraft[r.key] ?? 0;
+                      const sources = reworkSources(r);
+                      return (
+                        <div key={r.key} className="grid items-center gap-x-3 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0" style={{ gridTemplateColumns: template }}>
+                          {cols.map((col) => {
+                            if (col.key === "jenis") return <span key={col.key}>{kindLabel(r.kind)}</span>;
+                            if (col.key === "warna") return <span key={col.key}>{r.warna}</span>;
+                            if (col.key === "lengan") return <span key={col.key}>{r.lengan}</span>;
+                            if (col.key === "size")
+                              return (
+                                <span key={col.key}>
+                                  {r.size}
+                                  {r.usia ? " · " + USIA_LABEL[r.usia] : ""}
+                                </span>
+                              );
+                            if (col.key === "sumber")
+                              return (
+                                <span key={col.key} className="flex flex-wrap gap-1">
+                                  {sources.length === 0 ? <span className="text-text-muted">—</span> : sources.map((x) => sourceChip(x.code, x.qty, x.fromSize))}
+                                </span>
+                              );
+                            if (col.key === "sisa")
+                              return (
+                                <span key={col.key} className="text-right font-mono text-text-muted">
+                                  {r.available} pcs
+                                </span>
+                              );
+                            return (
+                              <span key={col.key} className="flex justify-end">
+                                <NumberInput
+                                  value={qty}
+                                  decimals={0}
+                                  disabled={!noKoli.trim()}
+                                  onChange={(v) => setRowQty(r.key, Math.max(0, Math.min(v, r.available)))}
+                                  className="input w-[90px] text-right disabled:cursor-not-allowed disabled:bg-[#F7F9FB] disabled:text-text-muted"
+                                />
+                              </span>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
           </div>
         )}
 
