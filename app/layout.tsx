@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, Space_Grotesk, IBM_Plex_Mono } from "next/font/google";
 import { StoreHydrator } from "@/components/shell/store-hydrator";
 import { BusyOverlay } from "@/components/shell/busy-overlay";
+import { DialogHost } from "@/components/ui/confirm-dialog";
 import "./globals.css";
 
 const inter = Inter({
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col">
         <StoreHydrator />
         <BusyOverlay />
+        <DialogHost />
         {children}
       </body>
     </html>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { alertDialog } from "@/components/ui/confirm-dialog";
 import Link from "next/link";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
@@ -170,7 +171,7 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
     try {
       await submitFobMaklonInvoice(poId);
     } catch (err) {
-      window.alert("Gagal mengajukan invoice FOB. " + (err instanceof Error ? err.message : String(err)));
+      void alertDialog({ title: "Gagal mengajukan invoice FOB", message: err instanceof Error ? err.message : String(err), tone: "danger" });
     } finally {
       setSubmittingFobId(null);
     }

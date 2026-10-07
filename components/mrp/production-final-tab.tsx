@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import type { Lengan } from "@/lib/mrp/types";
 import { StatusPill } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
@@ -263,16 +264,18 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
           // Urut per warna (A-Z), di dalam tiap warna Pendek dulu baru Panjang -- sama dengan tab Finish Good/Reject/Rework.
           rows.sort((x, y) => x.warna.localeCompare(y.warna, "id-ID") || (x.lengan === y.lengan ? 0 : x.lengan === "PENDEK" ? -1 : 1));
 
-          function finalize(r: FinalRow) {
+          async function finalize(r: FinalRow) {
             const warnings = groupCloseWarningLines(`${r.warna} · ${r.lengan}`, r.closeSummary);
             if (r.openClaims.length > 0) warnings.push(`• ${r.openClaims.length} klaim material belum selesai (roll pengganti bisa jadi masih dalam proses)`);
             if (
               warnings.length > 0 &&
-              !window.confirm(
-                "PERHATIAN sebelum menutup warna ini:\n\n" +
-                  warnings.join("\n") +
-                  '\n\nSetelah "Selesai Produksi", roll BARU untuk warna/lengan ini tidak bisa di-cutting lagi kecuali dibuka kunci dulu. Tetap lanjutkan?'
-              )
+              !(await confirmDialog({
+                title: `Selesaikan Final Produksi ${r.warna} · ${r.lengan}?`,
+                message: 'Setelah "Selesai Produksi", roll BARU untuk warna/lengan ini tidak bisa di-cutting lagi kecuali dibuka kunci dulu. Tetap lanjutkan?',
+                details: warnings,
+                detailsTitle: "Perhatian sebelum menutup warna ini",
+                confirmLabel: "Selesai Produksi",
+              }))
             ) {
               return;
             }

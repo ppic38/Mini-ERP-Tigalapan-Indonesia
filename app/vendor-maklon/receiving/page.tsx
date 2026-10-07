@@ -2,6 +2,7 @@
 
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { useEffect, useState } from "react";
+import { alertDialog } from "@/components/ui/confirm-dialog";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Button } from "@/components/ui/button";
@@ -916,7 +917,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                                 onClick={() => {
                                   const legacyFound = findRollCodeConflict(legacyCodeDraft[k] ?? "", invoices, { invoiceId: r.invoiceId, warna: r.warna, lengan: r.lengan, rollIndex: r.idx });
                                   if (legacyFound) {
-                                    window.alert(describeRollCodeConflict(legacyFound));
+                                    void alertDialog({ title: "Code roll sudah dipakai", message: describeRollCodeConflict(legacyFound), tone: "danger" });
                                     return;
                                   }
                                   markRollArrived(r.invoiceId, r.warna, r.lengan, r.idx, legacyCodeDraft[k]?.trim());

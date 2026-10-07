@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { NumberInput } from "@/components/mrp/number-input";
 import { StatusPill } from "@/components/ui/status-pill";
 import { ProgressBar } from "@/components/ui/progress-bar";
@@ -218,7 +219,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
   // tombolnya sebelumnya bisa terklik tanpa konfirmasi (dekat tombol Simpan). Sekarang selalu tanya dulu.
   // Revisi 2026-09-19 (owner): dialog juga merinci bahan yang belum diterima / belum diproduksi &
   // Finish Good yang masih di bawah qty rencana MRP, per warna/lengan yang akan ditutup.
-  function confirmFinish(toClose: { warna: string; lengan: string }[]) {
+  function confirmFinish(toClose: { warna: string; lengan: string }[]): Promise<boolean> {
     const scope = toClose.length > 1 ? `${toClose.length} warna/lengan sekaligus` : `${toClose[0]?.warna} · ${toClose[0]?.lengan}`;
     const detail = toClose.flatMap((g) =>
       groupCloseWarningLines(
@@ -226,11 +227,14 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
         groupCloseSummary(selectedMrpId, vendorId, g.warna, g.lengan as Lengan, mrpDetails, rawInvoices, productionBatches, productionResults)
       )
     );
-    return window.confirm(
-      `Selesaikan Finish Good ${scope}?\n\n` +
-        (detail.length > 0 ? `PERHATIAN -- masih ada yang belum tuntas:\n${detail.join("\n")}\n\n` : "") +
-        'Roll yang SUDAH punya Finish Good akan DITUTUP dan langsung bisa dikirim; kekurangan qty-nya dihitung sebagai reject (bisa dirework). Roll yang belum diisi tetap terbuka, dan roll baru masih bisa ditambahkan nanti.\n\nKalau hanya ingin menyimpan progres, pilih Batal lalu klik "Simpan →".'
-    );
+    return confirmDialog({
+      title: `Selesaikan Finish Good ${scope}?`,
+      message:
+        'Roll yang sudah punya Finish Good akan ditutup dan langsung bisa dikirim; kekurangan qty-nya dihitung sebagai reject (bisa dirework). Roll yang belum diisi tetap terbuka, dan roll baru masih bisa ditambahkan nanti.\n\nKalau hanya ingin menyimpan progres, pilih Batal lalu klik "Simpan →".',
+      details: detail,
+      detailsTitle: "Masih ada yang belum tuntas",
+      confirmLabel: "Selesai Produksi",
+    });
   }
 
   function toggleGroup(warna: string, lengan: string) {
@@ -324,8 +328,10 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                   {kind === "REJECT" ? "Belum ada reject untuk MRP ini." : "Belum ada warna yang tercutting untuk MRP ini."}
                 </div>
               )}
-              {groups.map((g) => {
+              {groups.map((g, gi) => {
                 const groupKey = selectedMrpId + "|" + g.warna + "|" + g.lengan;
+                // Pembatas tipis antar WARNA (mis. HITAM Pendek/Panjang -> warna berikutnya) supaya kelompok warna terbaca.
+                const newWarna = gi > 0 && groups[gi - 1].warna !== g.warna;
                 // Total Qty sekarang dari hasil aduan AKTUAL yang diinput vendor per roll di
                 // Cutting (cuttingSizesForGroup), bukan lagi murni estimasi rasio dari target MRP —
                 // fallback otomatis ke estimasi lama kalau grup ini belum ada batch yang diisi.
@@ -358,7 +364,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                 // yang masih terbuka begitu tombol itu diklik.
                 const groupBatches = kind === "FG" ? productionBatches.filter((b) => b.mrpId === selectedMrpId && b.warna === g.warna && b.lengan === g.lengan && b.cuttingAt) : [];
                 return (
-                  <div key={groupKey}>
+                  <div key={groupKey} className={newWarna ? "border-t border-t-[#C9D3DF]" : undefined}>
                     <div
                       className="grid items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F]"
                       style={{ gridTemplateColumns: gridColumns }}
@@ -618,13 +624,13 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                               }
                             }
                             const rejectText = Object.entries(rejectBySize).map(([sz, q]) => `${sz} ${q} pcs`).join(" · ") || "tidak ada";
-                            if (
-                              !window.confirm(
-                                `Tandai sisa ${size} sebagai reject?\n\nRoll yang ditutup (${toClose.length}): ${toClose.map((bt) => bt.codeRoll || bt.id).join(", ")}\nReject yang tercatat: ${rejectText}\n\nBisa dibatalkan lewat "Buka lagi" selama warna ini belum Selesai Produksi.`
-                              )
-                            ) {
-                              return;
-                            }
+                            const okReject = await confirmDialog({
+                              title: `Tandai sisa ${size} sebagai reject?`,
+                              message: `Roll yang ditutup (${toClose.length}): ${toClose.map((bt) => bt.codeRoll || bt.id).join(", ")}\nReject yang tercatat: ${rejectText}\n\nBisa dibatalkan lewat "Buka lagi" selama warna ini belum Selesai Produksi.`,
+                              confirmLabel: "Tandai reject",
+                              tone: "danger",
+                            });
+                            if (!okReject) return;
                             const closeIds = new Set(toClose.map((bt) => bt.id));
                             if (openBatches.every((bt) => closeIds.has(bt.id))) setExpandedGroupKey("");
                             await Promise.all(
@@ -690,7 +696,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                 // baris. Sekarang tiap size = 1 kartu (grid auto-fill): pill label size
                                 // selebar teksnya (nowrap) + "sisa maks" di baris atas, input di tengah
                                 // (lebar penuh kartu), progres kecil di bawah.
-                                <div className="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-3 px-4 py-3">
+                                <div className="grid grid-cols-[repeat(auto-fit,minmax(210px,1fr))] gap-3 px-4 py-3">
                                   {sizesToShow.map((size) => {
                                     const rec = recorded[size] ?? 0;
                                     const tgt = target[size] ?? 0;
@@ -850,7 +856,9 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                             {!isFinalDone && groupNeedsFinish(g) && (
                               <div className="flex items-center justify-end border-t border-[#F1F4F7] bg-[#F8FBFF] px-3 py-2.5">
                                 <Button
-                                  onClick={() => confirmFinish([g]) && runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan))}
+                                  onClick={async () => {
+                                    if (await confirmFinish([g])) runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan));
+                                  }}
                                   disabled={isPending(groupKey)}
                                   title="Selesaikan Finish Good grup ini -- roll yang masih terbuka otomatis ditutup, selisih target vs FG jadi reject"
                                   variant="primary"

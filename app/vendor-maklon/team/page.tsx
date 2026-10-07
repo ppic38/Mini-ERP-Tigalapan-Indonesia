@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AppShell } from "@/components/shell/app-shell";
 import { Button } from "@/components/ui/button";
+import { alertDialog, confirmDialog } from "@/components/ui/confirm-dialog";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import {
@@ -155,14 +156,15 @@ function TeamContent({ vendorId }: { vendorId: string }) {
 
   async function toggleActive(m: VendorTeamMemberRow) {
     const res = await updateVendorTeamMemberAction(m.id, { active: !m.active });
-    if (!res.ok) window.alert(res.error);
+    if (!res.ok) await alertDialog({ title: "Gagal mengubah akun", message: res.error, tone: "danger" });
     void reload();
   }
 
   async function handleDelete(m: VendorTeamMemberRow) {
-    if (!window.confirm(`Hapus akun ${m.username} (${m.name})? Aksi ini tidak bisa dibatalkan.`)) return;
+    const ok = await confirmDialog({ title: `Hapus akun ${m.username}?`, message: `Akun ${m.name} (${m.username}) akan dihapus. Aksi ini tidak bisa dibatalkan.`, confirmLabel: "Hapus akun", tone: "danger" });
+    if (!ok) return;
     const res = await deleteVendorTeamMemberAction(m.id);
-    if (!res.ok) window.alert(res.error);
+    if (!res.ok) await alertDialog({ title: "Gagal menghapus akun", message: res.error, tone: "danger" });
     void reload();
   }
 
