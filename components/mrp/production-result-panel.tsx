@@ -611,43 +611,10 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                             );
                             setSizeTotalDraft({});
                           }
-                          // Reject SEMENTARA = selisih target-vs-FG dari roll yang sudah DITUTUP (final per roll); angka resmi
-                          // tetap dihitung server saat "Selesai Produksi".
-                          const closedWithShortfall = groupBatches
-                            .filter((bt) => bt.closedAt)
-                            .map((bt) => ({
-                              bt,
-                              short: Object.entries(bt.sizeQty ?? {})
-                                .map(([sz, t]) => [sz, Math.max(0, t - (bt.fgSizeQty?.[sz] ?? 0))] as const)
-                                .filter(([, v]) => v > 0),
-                            }))
-                            .filter((x) => x.short.length > 0);
-                          const rejectSummary =
-                            closedWithShortfall.length > 0 ? (
-                              <div className="border-t border-[#F0DFC2] bg-warning-bg px-4 py-2.5 font-sans text-[11px] leading-[1.5] text-warning-fg">
-                                <div className="font-semibold">Reject sementara (dari roll yang sudah ditutup) — final saat Selesai Produksi</div>
-                                <div className="mt-1.5 flex flex-col gap-1">
-                                  {closedWithShortfall.map(({ bt, short }) => (
-                                    <div key={bt.id} className="flex flex-wrap items-center gap-2">
-                                      <span className="font-mono">{bt.codeRoll || bt.id}</span>
-                                      <span className="font-mono font-semibold">{short.map(([sz, v]) => `${sz} ${v} pcs`).join(" · ")}</span>
-                                      {sysadmin ? (
-                                        <SysadminActionsBar actions={rollReopenCorrections(bt, isFinalDone)} />
-                                      ) : (
-                                        <button onClick={() => runAction("reopen-" + bt.id, reopenProductionBatch(bt.id))} className="font-semibold text-action-primary underline">
-                                          Buka lagi
-                                        </button>
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : null;
                           if (sizesOpen.length === 0) {
                             return groupBatches.length > 0 ? (
                               <div className="overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
                                 <div className="px-3 py-3 text-center font-sans text-[11.5px] text-text-muted">Semua roll grup ini sudah tertutup.</div>
-                                {rejectSummary}
                               </div>
                             ) : null;
                           }
@@ -709,7 +676,6 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                   Simpan →
                                 </Button>
                               </div>
-                              {rejectSummary}
                               {overflow.length > 0 && (
                                 <div className="border-t border-[#F0DFC2] bg-warning-bg px-3 py-1.5 font-sans text-[10.5px] text-warning-fg">
                                   Size {overflow.join(", ")} melebihi SISA kapasitas roll terbuka — kelebihannya tidak ikut terisi ke roll mana pun.
@@ -745,10 +711,11 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                               <span className="rounded-full bg-white px-2 py-[1px] font-mono text-[10.5px] font-semibold text-info-fg">{groupBatches.length} roll</span>
                               <span className="font-sans text-[11px] text-text-muted">Resting → Finish Good</span>
                             </div>
-                            <div className="grid grid-cols-[1.1fr_2.4fr_1fr_0.9fr_1.3fr] gap-x-3 border-b border-[#E4E8EE] bg-[#F7F9FB] px-4 py-2 font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                            <div className="grid grid-cols-[1.1fr_2.2fr_0.9fr_1.1fr_0.8fr_1.3fr] gap-x-3 border-b border-[#E4E8EE] bg-[#F7F9FB] px-4 py-2 font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
                               <span>Roll</span>
                               <span>Size &amp; qty (FG / hasil cutting)</span>
                               <span className="text-center">Total FG / cutting</span>
+                              <span className="text-center">Reject</span>
                               <span className="text-center">Status</span>
                               <span className="text-right">Aksi</span>
                             </div>
@@ -757,8 +724,15 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                               const totalTarget = Object.values(rollTarget).reduce((a, c) => a + c, 0);
                               const totalFg = Object.values(b.fgSizeQty ?? {}).reduce((a, c) => a + c, 0);
                               const closeKey = "close-" + b.id;
+                              // Reject roll ini = selisih target-vs-FG per size; baru final kalau roll sudah DITUTUP (angka resmi
+                              // dihitung server saat "Selesai Produksi"). Roll terbuka belum punya reject.
+                              const rollReject = b.closedAt
+                                ? Object.entries(rollTarget)
+                                    .map(([sz, t]) => [sz, Math.max(0, t - ((b.fgSizeQty ?? {})[sz] ?? 0))] as const)
+                                    .filter(([, v]) => v > 0)
+                                : [];
                               return (
-                                <div key={b.id} className="grid grid-cols-[1.1fr_2.4fr_1fr_0.9fr_1.3fr] items-center gap-x-3 border-b border-[#EEF1F4] px-4 py-3 font-sans text-[11.5px] text-[#31414F] last:border-b-0 hover:bg-[#F8FBFE]">
+                                <div key={b.id} className="grid grid-cols-[1.1fr_2.2fr_0.9fr_1.1fr_0.8fr_1.3fr] items-center gap-x-3 border-b border-[#EEF1F4] px-4 py-3 font-sans text-[11.5px] text-[#31414F] last:border-b-0 hover:bg-[#F8FBFE]">
                                   <span className="flex flex-col">
                                     <span className="font-mono text-[12px] font-medium text-text-primary">{b.codeRoll || b.id}</span>
                                     {sizeShiftLabel(b) && <span className="font-sans text-[9.5px] font-semibold text-info-fg">Alih size (sisa kain): {sizeShiftLabel(b)}</span>}
@@ -782,6 +756,19 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                   </span>
                                   <span className="text-center font-mono text-[12px]">
                                     <b className="text-text-primary">{totalFg}</b> <span className="text-text-muted">/ {totalTarget}</span>
+                                  </span>
+                                  <span className="flex flex-wrap items-center justify-center gap-1">
+                                    {!b.closedAt ? (
+                                      <span className="font-mono text-[11px] text-text-muted" title="Reject dihitung setelah roll ditutup">—</span>
+                                    ) : rollReject.length === 0 ? (
+                                      <span className="font-mono text-[11px] text-text-muted">0</span>
+                                    ) : (
+                                      rollReject.map(([sz, v]) => (
+                                        <span key={sz} className="rounded-md border border-[#EFC9C4] bg-danger-bg px-2 py-[3px] font-mono text-[10.5px] text-danger-fg">
+                                          <b>{sz}</b> {v}
+                                        </span>
+                                      ))
+                                    )}
                                   </span>
                                   <span className="text-center">
                                     {b.closedAt ? <StatusPill tone="success">Ditutup</StatusPill> : <StatusPill tone="neutral">Terbuka</StatusPill>}
