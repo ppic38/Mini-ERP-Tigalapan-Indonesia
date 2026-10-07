@@ -54,6 +54,8 @@ import {
   movableRollCountForInvoiceColor,
   warnaLenganGroupsWithFg,
   reworkSizeAllowed,
+  reworkTargetSizeAllowed,
+  KIDS_SIZES,
   rollRemainingBySizeForMrp,
   resiGroupInvoiceLines,
   warehouseReceivableGroups,
@@ -4151,8 +4153,12 @@ export async function reworkRejectSizeAction(input: { mrpId: string; vendorProdu
   // Item revisi 2026-09-08 (owner: "Yang bisa dirework adalah size yang sama ukurannya dengan
   // juga yang ada dibawah size yang ingin dirework tersebut") -- guard yang sama dengan lengan di
   // atas, dicek ulang server-side (UI production-rework-tab.tsx sudah memfilter dropdown-nya).
-  if (!reworkSizeAllowed(input.fromSize, input.toSize)) {
-    throw new Error(`Rework ${input.fromSize} ke ${input.toSize} tidak valid — size tujuan cuma boleh sama atau lebih kecil dari size asal.`);
+  if (!reworkTargetSizeAllowed(input.fromSize, input.toSize, input.usia)) {
+    throw new Error(
+      input.usia === "KIDS"
+        ? `Rework ke size ${input.toSize} (Kids) tidak valid — size Kids yang tersedia: ${KIDS_SIZES.join(", ")}.`
+        : `Rework ${input.fromSize} ke ${input.toSize} tidak valid — size tujuan cuma boleh sama atau lebih kecil dari size asal.`
+    );
   }
   const db = supabaseServer();
   const sourceGroupKey = `${input.mrpId}|${input.warna}|${input.lengan}`;

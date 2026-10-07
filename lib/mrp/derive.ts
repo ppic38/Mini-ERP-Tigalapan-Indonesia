@@ -2648,6 +2648,17 @@ export function reworkSizeAllowed(fromSize: string, toSize: string): boolean {
   return toIdx <= fromIdx;
 }
 
+/** Semua size Kids (rentang XS - 2XL). Rework kain Dewasa -> Kids selalu memotong ke ukuran yang LEBIH KECIL,
+ *  jadi untuk hasil Kids seluruh size Kids boleh dipilih, tidak dibatasi size asal (revisi 2026-10-07). */
+export const KIDS_SIZES = ["XS", "S", "M", "L", "XL", "2XL"];
+
+/** Size tujuan rework yang sah. Hasil KIDS: salah satu dari KIDS_SIZES (apa pun size asalnya). Hasil DEWASA: aturan lama
+ *  (sama atau lebih kecil dari size asal, lihat reworkSizeAllowed). */
+export function reworkTargetSizeAllowed(fromSize: string, toSize: string, usia: Usia): boolean {
+  if (usia === "KIDS") return KIDS_SIZES.includes(toSize.trim().toUpperCase());
+  return reworkSizeAllowed(fromSize, toSize);
+}
+
 export type AvailableFgRow = { warna: string; lengan: Lengan; size: string; usia?: Usia; available: number };
 
 function isReworkResult(r: ProductionResult): boolean {
