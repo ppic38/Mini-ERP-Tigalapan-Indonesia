@@ -1,7 +1,6 @@
 "use client";
 
 import { Fragment, useState } from "react";
-import { NumberInput } from "@/components/mrp/number-input";
 import { Button } from "@/components/ui/button";
 import { useMrpStore } from "@/lib/mrp/store";
 import { cumulativeSizeQtyForGroup, cutWarnaLenganGroups, formatDateTimeShort, mrpDetailFor, mrpIdsWithRemainingReject, productionGroupMetaFor, reworkTargetSizeAllowed, KIDS_SIZES, sizeIndex } from "@/lib/mrp/derive";
@@ -142,18 +141,58 @@ export function ProductionReworkTab({ vendorId }: { vendorId: string }) {
     return (
       <div className="border-b border-[#CFE0EF] bg-info-bg px-4 py-4">
         <div className="overflow-hidden rounded-md border border-[#A8C5DF] bg-white">
-          <div className="flex items-center justify-between gap-3 border-b border-[#CFE0EF] bg-info-bg px-4 py-2.5">
+          <div className="border-b border-[#CFE0EF] bg-info-bg px-4 py-2.5">
             <span className="font-sans text-[11.5px] font-semibold text-info-fg">
               Input rework — {r.warna} · {r.lengan} · size {r.size}
-            </span>
-            <span className="font-mono text-[10.5px] text-text-muted">
-              sisa reject <b className="text-text-primary">{r.max}</b> pcs
             </span>
           </div>
           <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3 px-4 py-3">
             <div className={fieldCard}>
-              <span className={fieldLabel}>Qty dirework</span>
-              <NumberInput value={qty} onChange={(v) => setQty(Math.max(1, Math.min(v, r.max)))} decimals={0} className="input h-9 w-full text-right text-[13px] font-semibold" />
+              <div className="flex items-baseline justify-between gap-2">
+                <span className={fieldLabel}>Qty dirework</span>
+                <span className="whitespace-nowrap font-mono text-[10px] text-text-muted">
+                  sisa reject <span className="font-semibold text-[#31414F]">{r.max}</span>
+                </span>
+              </div>
+              {/* ▼/▲ = -1/+1 dan "Maks" = isi sebesar sisa reject (sama pola Input qty per size di Finish Good). */}
+              <div className="flex h-9 items-stretch overflow-hidden rounded-md border border-[#DDE4EB] bg-white">
+                <button
+                  type="button"
+                  onClick={() => setQty((v) => Math.max(0, v - 1))}
+                  disabled={qty <= 0}
+                  aria-label="Kurangi qty"
+                  className="w-8 flex-none border-r border-[#DDE4EB] text-[10px] text-text-muted hover:bg-[#F2F4F7] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  ▼
+                </button>
+                <input
+                  value={qty > 0 ? String(qty) : ""}
+                  onChange={(e) => {
+                    const digits = e.target.value.replace(/[^0-9]/g, "");
+                    setQty(Math.min(r.max, digits ? parseInt(digits, 10) : 0));
+                  }}
+                  inputMode="numeric"
+                  placeholder="0"
+                  className="w-full min-w-0 px-1 text-center font-mono text-[13px] font-semibold outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setQty((v) => Math.min(r.max, v + 1))}
+                  disabled={qty >= r.max}
+                  aria-label="Tambah qty"
+                  className="w-8 flex-none border-l border-[#DDE4EB] text-[10px] text-text-muted hover:bg-[#F2F4F7] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  ▲
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQty(r.max)}
+                  disabled={qty === r.max}
+                  className="flex-none border-l border-[#DDE4EB] bg-info-bg px-2.5 font-sans text-[11px] font-semibold text-info-fg hover:bg-[#DCEBF8] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Maks
+                </button>
+              </div>
             </div>
             <div className={fieldCard}>
               <span className={fieldLabel}>Lengan hasil</span>
@@ -208,7 +247,7 @@ export function ProductionReworkTab({ vendorId }: { vendorId: string }) {
               <Button onClick={() => setReworking(null)} disabled={submitting} variant="ghost" size="md">
                 Batal
               </Button>
-              <Button onClick={submitRework} disabled={!toSize.trim() || submitting} variant="primary" size="md" className="min-w-[130px]">
+              <Button onClick={submitRework} disabled={!toSize.trim() || qty <= 0 || submitting} variant="primary" size="md" className="min-w-[130px]">
                 {submitting ? "Menyimpan…" : "Simpan Rework"}
               </Button>
             </div>
