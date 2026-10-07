@@ -317,8 +317,8 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                   </>
                 ) : (
                   <>
-                    <span>Progres</span>
-                    <span>Target done produksi</span>
+                    <span className="text-center">Progres</span>
+                    <span className="text-center">Target done produksi</span>
                   </>
                 )}
                 <span className="text-right">Aksi</span>
@@ -391,17 +391,18 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                         </>
                       ) : (
                         <>
-                          <div className="flex flex-col gap-1">
-                            {/* Revisi 2026-09-19: bar progres di SAMPING KANAN qty finish good (satu baris). */}
-                            <div className="flex items-center gap-3">
-                              <div className="flex shrink-0 items-baseline gap-1 font-mono text-[12px]">
+                          <div className="flex flex-col items-center gap-1">
+                            {/* Revisi 2026-09-19: bar progres di SAMPING KANAN qty finish good (satu baris).
+                                Revisi 2026-10-07 (owner: center): lebar tiap bagian TETAP supaya bar antar baris sejajar. */}
+                            <div className="flex items-center justify-center gap-3">
+                              <div className="flex w-[130px] shrink-0 items-baseline justify-end gap-1 font-mono text-[12px]">
                                 <span className="font-semibold text-[#31414F]">{totalRecorded}</span>
                                 <span className="text-text-muted">/ {totalTarget} pcs</span>
                               </div>
-                              <span className="h-1.5 min-w-[80px] max-w-[160px] flex-1 overflow-hidden rounded-full bg-[#EEF0F3]">
+                              <span className="h-1.5 w-[150px] shrink-0 overflow-hidden rounded-full bg-[#EEF0F3]">
                                 <span className="block h-full rounded-full bg-success" style={{ width: `${progressPct}%` }} />
                               </span>
-                              <span className="w-9 shrink-0 font-mono text-[10.5px] text-text-muted">{progressPct}%</span>
+                              <span className="w-9 shrink-0 text-left font-mono text-[10.5px] text-text-muted">{progressPct}%</span>
                             </div>
                             {!!fgSplit?.rework && (
                               <span className="font-mono text-[10px] text-text-muted">
@@ -409,7 +410,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                               </span>
                             )}
                           </div>
-                          <span className="font-mono text-[11px] text-text-muted">{targetDoneAt ? formatDate(targetDoneAt) : "— (belum ada material diterima)"}</span>
+                          <span className="text-center font-mono text-[11px] text-text-muted">{targetDoneAt ? formatDate(targetDoneAt) : "— (belum ada material diterima)"}</span>
                         </>
                       )}
                       <span className="flex items-center justify-end gap-2">
@@ -668,7 +669,7 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                     const tgt = target[size] ?? 0;
                                     const pct = tgt > 0 ? Math.min(100, Math.round((rec / tgt) * 100)) : 0;
                                     return (
-                                      <div key={size} className="flex flex-col gap-2 rounded-md border border-[#CFE0EF] bg-white px-3 py-2.5 shadow-[0_1px_2px_rgba(11,19,27,.05)]">
+                                      <div key={size} className="flex flex-col gap-2.5 rounded-lg border-2 border-[#BCD3E8] bg-white px-3.5 py-3 shadow-[0_1px_3px_rgba(11,19,27,.08)]">
                                         <div className="flex items-center justify-between gap-2">
                                           <span className="whitespace-nowrap rounded-md bg-info-bg px-2.5 py-1 font-sans text-[12.5px] font-bold text-info-fg">{size}</span>
                                           <span className="whitespace-nowrap font-mono text-[10px] text-text-muted">
@@ -694,13 +695,14 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                   })}
                                 </div>
                               )}
-                              <div className="flex items-center gap-2 border-t border-[#CFE0EF] bg-[#F8FBFF] px-4 py-3">
+                              <div className="flex items-center justify-between gap-4 border-t border-[#CFE0EF] bg-[#F3F8FD] px-4 py-3">
                                 {/* saveFgProgress & closeProductionBatch (dipanggil saveSizeTotals)
                                    sudah optimistic penuh di store.ts -- isPending/teks "Menyimpan…"
                                    dilepas, disabled cukup dari sizesToShow saja. Revisi 2026-09-23
                                    (owner): tombol "Selesai Produksi" dipindah ke kartu roll per batch
                                    di bawah (lihat "Progres per batch") -- di sini cuma "Simpan". */}
-                                <Button onClick={() => runAction(quickSaveKey, saveSizeTotals())} disabled={sizesToShow.length === 0} variant="accent" size="sm">
+                                <span className="font-sans text-[11px] text-text-muted">Simpan progres Finish Good tanpa menutup roll — masih bisa diisi lagi nanti.</span>
+                                <Button onClick={() => runAction(quickSaveKey, saveSizeTotals())} disabled={sizesToShow.length === 0} variant="primary" size="md" className="min-w-[120px]">
                                   Simpan →
                                 </Button>
                               </div>
@@ -734,15 +736,17 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                            aksi penyelesaian selalu berdampingan dengan daftar roll/batch yang jadi dasarnya --
                            tetap 1 aksi per grup (confirmFgDone), TIDAK ada lagi versi "sekaligus banyak warna". */}
                         {groupBatches.length > 0 && (
-                          <div className="mt-3 overflow-hidden rounded-md border border-[#EEF1F4] bg-white">
-                            <div className="border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[11px] font-semibold text-text-primary">
-                              Progres per batch ({groupBatches.length} roll — Resting → Finish Good)
+                          <div className="mt-4 overflow-hidden rounded-lg border border-[#CFE0EF] bg-white shadow-[0_1px_3px_rgba(11,19,27,.06)]">
+                            <div className="flex items-center gap-2.5 border-b border-[#CFE0EF] bg-info-bg px-4 py-2.5">
+                              <span className="font-sans text-[12px] font-semibold text-info-fg">Progres per batch</span>
+                              <span className="rounded-full bg-white px-2 py-[1px] font-mono text-[10.5px] font-semibold text-info-fg">{groupBatches.length} roll</span>
+                              <span className="font-sans text-[11px] text-text-muted">Resting → Finish Good</span>
                             </div>
-                            <div className="grid grid-cols-[1.1fr_2.4fr_0.9fr_0.8fr_1.2fr] gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                            <div className="grid grid-cols-[1.1fr_2.4fr_1fr_0.9fr_1.3fr] gap-x-3 border-b border-[#E4E8EE] bg-[#F7F9FB] px-4 py-2 font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
                               <span>Roll</span>
                               <span>Size &amp; qty (FG / hasil cutting)</span>
-                              <span className="text-right">Total FG / cutting</span>
-                              <span className="text-right">Status</span>
+                              <span className="text-center">Total FG / cutting</span>
+                              <span className="text-center">Status</span>
                               <span className="text-right">Aksi</span>
                             </div>
                             {groupBatches.map((b) => {
@@ -751,69 +755,79 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                               const totalFg = Object.values(b.fgSizeQty ?? {}).reduce((a, c) => a + c, 0);
                               const closeKey = "close-" + b.id;
                               return (
-                                <div key={b.id} className="grid grid-cols-[1.1fr_2.4fr_0.9fr_0.8fr_1.2fr] items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+                                <div key={b.id} className="grid grid-cols-[1.1fr_2.4fr_1fr_0.9fr_1.3fr] items-center gap-x-3 border-b border-[#EEF1F4] px-4 py-3 font-sans text-[11.5px] text-[#31414F] last:border-b-0 hover:bg-[#F8FBFE]">
                                   <span className="flex flex-col">
-                                    <span className="font-mono">{b.codeRoll || b.id}</span>
+                                    <span className="font-mono text-[12px] font-medium text-text-primary">{b.codeRoll || b.id}</span>
                                     {sizeShiftLabel(b) && <span className="font-sans text-[9.5px] font-semibold text-info-fg">Alih size (sisa kain): {sizeShiftLabel(b)}</span>}
                                   </span>
-                                  <span className="flex flex-wrap gap-1">
+                                  <span className="flex flex-wrap gap-1.5">
                                     {sizes
                                       .filter((sz) => sz in rollTarget || sz in (b.fgSizeQty ?? {}))
-                                      .map((sz) => (
-                                        <span key={sz} className="rounded bg-[#F1F5F9] px-1.5 py-[2px] font-mono text-[10.5px] text-[#475569]">
-                                          <b className="text-text-primary">{sz}</b> {(b.fgSizeQty ?? {})[sz] ?? 0}/{rollTarget[sz] ?? 0}
-                                        </span>
-                                      ))}
+                                      .map((sz) => {
+                                        const fg = (b.fgSizeQty ?? {})[sz] ?? 0;
+                                        const tg = rollTarget[sz] ?? 0;
+                                        const full = tg > 0 && fg >= tg;
+                                        return (
+                                          <span
+                                            key={sz}
+                                            className={"rounded-md border px-2 py-[3px] font-mono text-[10.5px] " + (full ? "border-[#BFE3CF] bg-success-bg text-success-fg" : "border-[#DDE5EE] bg-[#F8FAFC] text-[#475569]")}
+                                          >
+                                            <b className={full ? "" : "text-text-primary"}>{sz}</b> {fg}/{tg}
+                                          </span>
+                                        );
+                                      })}
                                   </span>
-                                  <span className="text-right font-mono">
-                                    {totalFg} / {totalTarget}
+                                  <span className="text-center font-mono text-[12px]">
+                                    <b className="text-text-primary">{totalFg}</b> <span className="text-text-muted">/ {totalTarget}</span>
                                   </span>
-                                  <span className="text-right">
+                                  <span className="text-center">
                                     {b.closedAt ? <StatusPill tone="success">Ditutup</StatusPill> : <StatusPill tone="neutral">Terbuka</StatusPill>}
                                   </span>
-                                  <span className="flex items-center justify-end gap-3 text-right">
-                                    <button
+                                  <span className="flex items-center justify-end gap-2">
+                                    <Button
                                       onClick={() => {
                                         setEditFgBatchId(b.id);
                                         setEditFgDraft({ ...(b.fgSizeQty ?? {}) });
                                       }}
                                       title="Koreksi Finish Good roll ini per size (bisa menaikkan atau menurunkan)"
-                                      className="font-sans text-[10.5px] font-semibold text-action-primary underline"
+                                      variant="muted"
+                                      size="xs"
                                     >
                                       Edit FG
-                                    </button>
+                                    </Button>
                                     {/* closeProductionBatch sudah optimistic penuh -- isPending/teks
                                        "Menutup…" dilepas. */}
                                     {b.closedAt &&
                                       (sysadmin ? (
                                         <SysadminActionsBar actions={rollReopenCorrections(b, isFinalDone)} />
                                       ) : (
-                                        <button
-                                          onClick={() => runAction("reopen-" + b.id, reopenProductionBatch(b.id))}
-                                          className="font-sans text-[10.5px] font-semibold text-action-primary underline"
-                                        >
+                                        <Button onClick={() => runAction("reopen-" + b.id, reopenProductionBatch(b.id))} variant="muted" size="xs">
                                           Buka lagi
-                                        </button>
+                                        </Button>
                                       ))}
                                     {!b.closedAt && (
-                                      <button
+                                      <Button
                                         onClick={() => runAction(closeKey, closeProductionBatch(b.id, b.fgSizeQty ?? {}))}
                                         title={
                                           totalFg < totalTarget
                                             ? `Sisa ${totalTarget - totalFg} pcs roll ini akan tercatat reject saat grup "Selesai Produksi".`
                                             : undefined
                                         }
-                                        className="font-sans text-[10.5px] font-semibold text-action-primary underline"
+                                        variant="accent"
+                                        size="xs"
                                       >
                                         Tutup Roll
-                                      </button>
+                                      </Button>
                                     )}
                                   </span>
                                 </div>
                               );
                             })}
                             {!isFinalDone && groupNeedsFinish(g) && (
-                              <div className="flex items-center justify-end border-t border-[#F1F4F7] bg-[#F8FBFF] px-3 py-2.5">
+                              <div className="flex items-center justify-between gap-4 border-t border-[#CFE0EF] bg-[#F3F8FD] px-4 py-3">
+                                <span className="font-sans text-[11px] leading-[1.5] text-text-muted">
+                                  Roll yang sudah punya Finish Good ditutup &amp; siap dikirim; kekurangan qty dihitung reject.
+                                </span>
                                 <Button
                                   onClick={async () => {
                                     if (await confirmFinish([g])) runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan));
@@ -821,9 +835,10 @@ export function ProductionResultPanel({ vendorId, kind, title }: { vendorId: str
                                   disabled={isPending(groupKey)}
                                   title="Selesaikan Finish Good grup ini -- roll yang masih terbuka otomatis ditutup, selisih target vs FG jadi reject"
                                   variant="primary"
-                                  size="sm"
+                                  size="md"
+                                  className="min-w-[160px] border-transparent bg-success hover:opacity-90"
                                 >
-                                  {isPending(groupKey) ? "Menyimpan…" : "Selesai Produksi →"}
+                                  {isPending(groupKey) ? "Menyimpan…" : "Selesai Produksi ✓"}
                                 </Button>
                               </div>
                             )}
