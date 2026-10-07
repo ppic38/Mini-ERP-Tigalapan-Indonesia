@@ -105,12 +105,15 @@ function rollVariance(roll: RestingCandidateRoll, netKg: number) {
   return roll.isSynthetic ? { ...v, claimable: false } : v;
 }
 
-// Kolom baris GRUP "Material dalam produksi" -- MRP | Kode·lengan | Part | Warna | Roll | Resting |
-// Cutting | Durasi Resting | Status Resting | Hasil Aduan/Yield | expander. Item 5 (feedback
+// Kolom baris GRUP "Material dalam produksi" -- Kode·lengan (+ "Resting ke-N dari M" kalau kode itu
+// diresting >1 kali) | Warna | Roll | Resting | Cutting | Durasi (+ peringatan kurang dari target) |
+// Hasil Aduan/Yield | expander. Revisi 2026-10-07 (owner: tabel terlalu lebar): kolom MRP dibuang (MRP
+// sudah dipilih lewat filter di atas), Part jadi label kecil hanya kalau perlu, Durasi & Status Resting
+// digabung. Item 5 (feedback
 // batch 2026-09-05): 1 baris = 1 SESI RESTING ("Part", lihat restingSessionGroups di
 // lib/mrp/derive.ts); Code roll, Gramasi & Setting ada di sub-tabel per-roll (CUTTING_BATCH_COLUMNS).
 const CUTTING_SESSION_COLUMNS =
-  "minmax(85px,0.5fr) minmax(140px,0.8fr) minmax(90px,0.5fr) minmax(150px,0.9fr) minmax(60px,0.4fr) minmax(160px,1fr) minmax(190px,1.1fr) minmax(110px,0.6fr) minmax(160px,0.9fr) minmax(230px,1.4fr) minmax(110px,0.6fr)";
+  "minmax(150px,0.9fr) minmax(170px,1fr) minmax(50px,0.35fr) minmax(150px,0.9fr) minmax(190px,1.1fr) minmax(140px,0.8fr) minmax(210px,1.2fr) minmax(100px,0.6fr)";
 
 // Kolom sub-tabel PER ROLL (ditampilkan begitu 1 baris grup di atas di-expand) -- Warna | Code
 // roll | Gramasi | Setting | Cutting | Hasil Aduan/Yield.
@@ -943,9 +946,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
           </div>
         )}
         <div className="overflow-x-auto">
-          {/* Revisi 2026-09-19: wrapper ini min-w-[1740px] -- header, baris grup, dan sub-tabel per-roll
+          {/* Revisi 2026-09-19: wrapper ini min-w-[1240px] -- header, baris grup, dan sub-tabel per-roll
               semua berbagi lebar yang SAMA sehingga latar/border-nya tidak terpotong saat digulir. */}
-          <div className="min-w-[1740px]">
+          <div className="min-w-[1240px]">
             {!selectedMrpId && (
               <div className="px-4 py-8 text-center font-sans text-xs text-text-muted">
                 Pilih MRP di atas untuk menampilkan kode aduan, progres input resting &amp; cutting, dan riwayatnya.
@@ -954,18 +957,15 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
             {selectedMrpId && (
               <>
             <div
-              className="grid min-w-[1740px] gap-x-5 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
+              className="grid min-w-[1240px] gap-x-5 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
               style={{ gridTemplateColumns: CUTTING_SESSION_COLUMNS }}
             >
-              <span>MRP</span>
               <span>Kode Aduan</span>
-              <span>Part</span>
               <span>Warna</span>
               <span className="text-right">Roll</span>
               <span>Resting</span>
               <span>Cutting</span>
               <span>Durasi Resting</span>
-              <span>Status Resting</span>
               <span>Hasil Aduan / Yield</span>
               <span className="text-center">Detail</span>
             </div>
@@ -993,14 +993,16 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               const groupYieldAlert = groupYieldPct !== null && groupYieldPct < YIELD_ALERT_THRESHOLD_PCT;
               return (
                 <div key={g.key} className="border-b border-[#F1F4F7] last:border-b-0">
-                  <div className="grid min-w-[1740px] items-center gap-x-5 px-4 py-[11px] font-sans text-xs text-[#31414F]" style={{ gridTemplateColumns: CUTTING_SESSION_COLUMNS }}>
-                    <span className="font-mono">{g.mrpId}</span>
-                    <span className="font-mono font-medium">
-                      {g.kode} · {g.lengan}
-                    </span>
-                    <span>
-                      Part {g.partNo}
-                      {g.partTotal > 1 && <span className="ml-1 font-mono text-[10px] text-text-muted">dari {g.partTotal}</span>}
+                  <div className="grid min-w-[1240px] items-center gap-x-5 px-4 py-[11px] font-sans text-xs text-[#31414F]" style={{ gridTemplateColumns: CUTTING_SESSION_COLUMNS }}>
+                    <span className="flex flex-col gap-0.5">
+                      <span className="font-mono font-medium">
+                        {g.kode} · {g.lengan}
+                      </span>
+                      {g.partTotal > 1 && (
+                        <span className="w-fit rounded bg-[#F1F5F9] px-1.5 py-[1px] font-sans text-[10px] font-medium text-[#475569]">
+                          Resting ke-{g.partNo} dari {g.partTotal}
+                        </span>
+                      )}
                     </span>
                     <span>{distinctWarna}</span>
                     <span className="text-right font-mono">{g.batches.length}</span>
@@ -1023,8 +1025,10 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         </Button>
                       )}
                     </span>
-                    <span className="font-mono text-[11px] text-text-muted">{formatDuration(g.restingAt, earliestCuttingAt ?? new Date().toISOString())}</span>
-                    <span>{durasiKurang && <StatusPill tone="warning">RESTING KURANG DARI TARGET</StatusPill>}</span>
+                    <span className="flex flex-col items-start gap-1">
+                      <span className="font-mono text-[11px] text-text-muted">{formatDuration(g.restingAt, earliestCuttingAt ?? new Date().toISOString())}</span>
+                      {durasiKurang && <StatusPill tone="warning">KURANG DARI TARGET</StatusPill>}
+                    </span>
                     <span className="flex flex-col gap-0.5 font-mono text-[11px]">
                       {filledCount === 0 ? (
                         <span className="text-text-muted">Target: {totalTarget} pcs</span>
@@ -1050,7 +1054,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   {isExpanded && (
                     <div className="bg-[#FAFBFC]">
                       <div
-                        className="grid min-w-[1740px] gap-x-3 border-y border-[#CFE0EF] bg-info-bg/60 px-8 py-[7px] font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg"
+                        className="grid min-w-[1240px] gap-x-3 border-y border-[#CFE0EF] bg-info-bg/60 px-8 py-[7px] font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg"
                         style={{ gridTemplateColumns: CUTTING_BATCH_COLUMNS }}
                       >
                         <span>Warna</span>
@@ -1070,7 +1074,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         return (
                           <div
                             key={b.id}
-                            className="grid min-w-[1740px] items-center gap-x-3 border-b border-[#F1F4F7] px-8 py-[9px] font-sans text-xs text-[#31414F] last:border-b-0"
+                            className="grid min-w-[1240px] items-center gap-x-3 border-b border-[#F1F4F7] px-8 py-[9px] font-sans text-xs text-[#31414F] last:border-b-0"
                             style={{ gridTemplateColumns: CUTTING_BATCH_COLUMNS }}
                           >
                             <span>{b.warna}</span>
@@ -1377,7 +1381,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
           // roll yang masih butuh aksi (atau SEMUA roll di mode edit).
           const session = sessionGroups.find((g) => g.key === activeCuttingGroupKey);
           if (!session) return null;
-          const { kode, lengan, partNo } = session;
+          const { kode, lengan, partNo, partTotal } = session;
           const groupBatches = cuttingGroupEditAll ? session.batches : session.batches.filter(batchNeedsCuttingInput);
           if (groupBatches.length === 0) return null;
           const byWarna = new Map<string, typeof groupBatches>();
@@ -1433,7 +1437,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               <div className="flex max-h-[90vh] w-full max-w-[760px] flex-col rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]">
                 <div className="border-b border-border-subtle px-5 py-3.5">
                   <div className="font-sans text-[13px] font-semibold text-text-primary">
-                    {cuttingGroupEditAll ? "Edit" : "Input"} Hasil Cutting — {kode} · {lengan} · Part {partNo}
+                    {cuttingGroupEditAll ? "Edit" : "Input"} Hasil Cutting — {kode} · {lengan}
+                    {partTotal > 1 ? ` · Resting ke-${partNo}` : ""}
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 font-sans text-[11px] text-text-muted">
                     <span>
