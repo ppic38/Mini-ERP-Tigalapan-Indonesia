@@ -1,5 +1,20 @@
 # Migrasi Project — Status & Riwayat
 
+## Tim Saya: password terlihat + tanpa menunggu -- migration 0065 (2026-10-08)
+Owner: "tampilkan password user dari Tim Saya", "jangan sampai lama memuat/simpan ... tapi jangan conflict atau corrupt".
+- **Migration 0065** (`vendor_users.password_enc`): salinan password anggota tim TERENKRIPSI (AES-256-GCM, kunci dari
+  SESSION_SECRET -- pola sama migration 0063, `lib/auth/password-vault.ts`). Login tetap bcrypt. **Owner menjalankan manual**
+  di SQL Editor: `alter table public.vendor_users add column if not exists password_enc text;`. Kode aman kalau belum jalan
+  (tombol mata menjawab "jalankan migration 0065"). Anggota yang dibuat SEBELUM ini tampil "Belum tersimpan" sampai passwordnya
+  di-ganti sekali lewat Edit. Hanya akun UTAMA vendor yang bisa melihat (`revealVendorTeamMemberPasswordAction`); password
+  diambil dari server hanya saat mata diklik (tidak ikut daftar).
+- **Tanpa menunggu**: `lib/mrp/vendor-team-store.ts` -- daftar anggota/riwayat di-cache di memori (pindah halaman tidak "Memuat…"
+  lagi), tambah/ubah/nonaktifkan/hapus mengubah layar seketika dan server menyusul; ditolak server = dibatalkan + pemberitahuan
+  (tambah: modal dibuka lagi dengan isian tadi). Anti-bentrok: hasil ambil-ulang dibuang kalau ada tulisan yang dimulai sesudahnya
+  (epoch), lalu disamakan dengan server sekali setelah tulisan terakhir selesai; rollback per-baris.
+- Login vendor: contoh "Cecep" dihapus. Redaksi subjudul, urutan kolom (sempat tertukar Status/Halaman di versi mobile -- diperbaiki),
+  tombol aksi satu baris.
+
 ## Upload Invoice Supplier di Paying Voucher -- migration 0064 (2026-10-06)
 Owner: "upload invoice dari supplier ... nama warna di invoice beda dengan di MRP ... tidak ingin ada selisih".
 Di wizard Buat PV (Procurement) muncul pilihan **Upload invoice KNITTO** / **Input manual** (hanya untuk supplier

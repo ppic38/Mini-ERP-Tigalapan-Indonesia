@@ -35,8 +35,8 @@ export function decryptPassword(stored: string): string | null {
   }
 }
 
-export type VaultTable = "internal_accounts" | "internal_role_users" | "vendors_produksi";
-const KEY_COLUMN: Record<VaultTable, string> = { internal_accounts: "role", internal_role_users: "id", vendors_produksi: "id" };
+export type VaultTable = "internal_accounts" | "internal_role_users" | "vendors_produksi" | "vendor_users";
+const KEY_COLUMN: Record<VaultTable, string> = { internal_accounts: "role", internal_role_users: "id", vendors_produksi: "id", vendor_users: "id" };
 
 /** Simpan salinan terenkripsi -- BEST-EFFORT & terpisah dari update hash utama: password sudah
  *  berhasil diganti (hash), jadi gagal di sini (mis. migration 0063 belum dijalankan, kolom belum
@@ -51,7 +51,7 @@ export async function savePasswordCopy(table: VaultTable, keyValue: string, plai
 
 export async function readPasswordCopy(table: VaultTable, keyValue: string): Promise<{ found: boolean; password: string | null }> {
   const { data, error } = await supabaseServer().from(table).select("password_enc").eq(KEY_COLUMN[table], keyValue).maybeSingle();
-  if (error) throw new Error(error.message.includes("password_enc") ? "Kolom password_enc belum ada -- jalankan migration 0063 di Supabase dulu." : error.message);
+  if (error) throw new Error(error.message.includes("password_enc") ? `Kolom password_enc belum ada -- jalankan migration ${table === "vendor_users" ? "0065" : "0063"} di Supabase dulu.` : error.message);
   if (!data) return { found: false, password: null };
   const stored = (data as { password_enc?: string | null }).password_enc;
   return { found: true, password: stored ? decryptPassword(stored) : null };

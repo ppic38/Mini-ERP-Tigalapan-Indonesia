@@ -76,7 +76,7 @@ export default function VendorLoginPage() {
                 }}
                 className="input mt-1"
                 autoFocus
-                placeholder="contoh: Cecep"
+                placeholder=""
               />
             </div>
             <div>

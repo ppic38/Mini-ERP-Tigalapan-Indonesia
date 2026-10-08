@@ -5,6 +5,7 @@ import { requireSession } from "../auth/session";
 import { supabaseServer } from "../supabase/server";
 import type { ActionResult } from "./action-result";
 import { nextReadableId } from "./repo/ids";
+import { readPasswordCopy, savePasswordCopy } from "../auth/password-vault";
 import { VALID_VENDOR_PAGES } from "./vendorPages";
 
 /** Kelola "Tim Saya" -- akun anggota tim per vendor produksi (migration 0057, owner 2026-09-27:
@@ -66,6 +67,20 @@ export async function addVendorTeamMemberAction(input: { username: string; name:
     const hash = await bcrypt.hash(input.password, 10);
     const { error } = await db.from("vendor_users").insert({ id, vendor_produksi: vendorId, username, name: input.name.trim(), password_hash: hash, allowed_pages: pages, active: true });
     if (error) throw new Error(error.message);
+    await savePasswordCopy("vendor_users", id, input.password);
+  });
+}
+
+/** Tampilkan password anggota tim (salinan terenkripsi, migration 0065) -- akun UTAMA vendor saja, dan hanya
+ *  untuk anggota milik vendor itu sendiri. password = null berarti belum ada salinan (akun dibuat sebelum fitur
+ *  ini / password belum pernah di-reset) -- pemakainya diminta mengatur ulang password sekali. */
+export async function revealVendorTeamMemberPasswordAction(id: string): Promise<ActionResult<{ password: string | null }>> {
+  return toActionResult(async () => {
+    const vendorId = await requireMainVendorSession();
+    const { data: row } = await supabaseServer().from("vendor_users").select("id").eq("id", id).eq("vendor_produksi", vendorId).maybeSingle();
+    if (!row) throw new Error("Anggota tim tidak ditemukan.");
+    const res = await readPasswordCopy("vendor_users", id);
+    return { password: res.password };
   });
 }
 
@@ -101,6 +116,7 @@ export async function resetVendorTeamMemberPasswordAction(id: string, newPasswor
     const hash = await bcrypt.hash(newPassword, 10);
     const { error } = await db.from("vendor_users").update({ password_hash: hash }).eq("id", id);
     if (error) throw new Error(error.message);
+    await savePasswordCopy("vendor_users", id, newPassword);
   });
 }
 
