@@ -61,6 +61,7 @@ export default function VendorLoginPage() {
             <Building2 size={28} strokeWidth={1.75} className="text-accent-orange" />
           </span>
           <div className="mt-4 font-heading text-xl font-bold text-text-primary">Login Vendor Produksi</div>
+          <div className="mt-1.5 font-sans text-xs text-text-muted">Masukkan nama vendor atau username Anda, beserta password.</div>
 
           <form onSubmit={handleSubmit} className="mt-5 flex flex-col gap-3">
             <div>
