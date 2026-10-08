@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
 import { SizeQtyControl } from "@/components/mrp/size-qty-control";
 import { useMrpStore } from "@/lib/mrp/store";
+import { alertDialog } from "@/components/ui/confirm-dialog";
 import {
   availableRollsByAduanRow,
   startedRollsForAduan,
@@ -452,9 +453,11 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
       setSelectedGroupKey("");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Gagal memulai resting.";
-      setRestingError(msg);
+      // Pop-up (bukan kotak kecil di bawah daftar yang mudah terlewat) -- sama seperti Simpan Hasil Cutting & FG.
+      const takenByOthers = /di-resting/.test(msg);
+      void alertDialog({ title: takenByOthers ? "Resting dibatalkan" : "Resting gagal", message: msg, tone: "danger" });
       // Roll diambil tim lain: daftar lama tidak berlaku lagi -- pilih ulang dari data terbaru (isian lain dibiarkan).
-      if (/di-resting/.test(msg)) setLines([]);
+      if (takenByOthers) setLines([]);
     } finally {
       setSubmitting(false);
     }
