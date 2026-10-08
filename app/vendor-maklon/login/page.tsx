@@ -53,21 +53,18 @@ export default function VendorLoginPage() {
       <div className="w-full max-w-[380px]">
         <Link href="/" className="mb-4 flex items-center gap-1.5 font-sans text-[11.5px] font-medium text-white/60 hover:text-white/90">
           <ArrowLeft size={13} />
-          Kembali ke pilih modul
+          Kembali
         </Link>
 
         <div className="rounded-xl border border-white/10 bg-surface-card p-6 shadow-[0_16px_40px_rgba(0,0,0,.3)]">
           <span className="flex h-[64px] w-[64px] items-center justify-center rounded-lg bg-accent-orange-bg">
             <Building2 size={28} strokeWidth={1.75} className="text-accent-orange" />
           </span>
-          <div className="mt-3.5 font-sans text-[13px] font-semibold text-text-muted">Tigalapan Indonesia</div>
-          <div className="mt-1 font-heading text-xl font-bold text-text-primary">Login Vendor Produksi</div>
+          <div className="mt-4 font-heading text-xl font-bold text-text-primary">Login Vendor Produksi</div>
 
-          <div className="mt-2 font-sans text-xs text-text-muted">Ketik nama vendor Anda (akun utama) atau username Anda (anggota tim), lalu masukkan password.</div>
-
-          <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-3">
+          <form onSubmit={handleSubmit} className="mt-5 flex flex-col gap-3">
             <div>
-              <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Nama Vendor / Username</div>
+              <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Username</div>
               <input
                 value={identifier}
                 onChange={(e) => {
@@ -87,7 +84,6 @@ export default function VendorLoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="input !pr-9"
-                  placeholder="••••••••"
                 />
                 <button
                   type="button"
