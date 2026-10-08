@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ClipboardList, Package, Wallet, Building2, Lock, X, ShieldCheck, Factory, Eye, EyeOff, Warehouse, Crown, ShieldAlert, Users } from "lucide-react";
+import { ArrowLeft, ClipboardList, Package, Wallet, Building2, Lock, X, ShieldCheck, Factory, Eye, EyeOff, Warehouse, Crown, ShieldAlert, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
 import { INTERNAL_ACCOUNTS, type InternalRole } from "@/lib/internal-auth";
 import { useVendorAuthStore } from "@/lib/mrp/vendor-auth-store";
 import { internalRoleRequiresUsernameAction } from "@/lib/auth/actions";
+import { VendorLoginForm } from "@/components/mrp/vendor-login-form";
 
 // Urutan kartu (owner 2026-09-27): ppic, procurement, finance, produksi, warehouse, scm, general
 // manager, sysadmin, lalu Vendor Produksi (kartu terpisah, selalu paling akhir -- lihat di bawah).
@@ -98,7 +99,56 @@ export default function ModuleSelectPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  // Login Vendor Produksi (revisi 2026-10-08, owner: "kartu Vendor Produksi langsung jadi modul login besar sesuai
+  // ukuran container, menghapus modul-modul lain, halamannya tetap sama"): kartu kecil MEMBESAR menjadi form login
+  // seukuran panel "Pilih Modul" sementara kartu modul lain memudar. Panel tidak berubah ukuran -- lapisan login
+  // (absolute) tumbuh dari posisi/ukuran kartu ke seluruh panel (teknik FLIP: ukur kartu -> animasikan ke inset 0).
+  // closed -> opening (lapisan di posisi kartu) -> open (lapisan memenuhi panel) -> closing (menyusut kembali).
+  const [vendorStage, setVendorStage] = useState<"closed" | "opening" | "open" | "closing">("closed");
+  const [vendorRect, setVendorRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const vendorBtnRef = useRef<HTMLButtonElement>(null);
+
+  function measureVendorCard() {
+    const panel = panelRef.current;
+    const btn = vendorBtnRef.current;
+    if (!panel || !btn) return null;
+    const p = panel.getBoundingClientRect();
+    const b = btn.getBoundingClientRect();
+    return { top: b.top - p.top - panel.clientTop, left: b.left - p.left - panel.clientLeft, width: b.width, height: b.height };
+  }
+  function openVendorLogin() {
+    // Selalu tampilkan form login vendor dulu, walau sebelumnya ada sesi vendor lain yang masih tersimpan --
+    // supaya user memilih akun vendor yang dituju.
+    logoutVendor();
+    const rect = measureVendorCard();
+    if (!rect) {
+      router.push("/vendor-maklon/login");
+      return;
+    }
+    setVendorRect(rect);
+    setVendorStage("opening");
+    // Timer (bukan requestAnimationFrame): rAF berhenti kalau tab tidak aktif dan animasi macet di awal.
+    window.setTimeout(() => setVendorStage("open"), 50);
+  }
+  function closeVendorLogin() {
+    const rect = measureVendorCard();
+    if (rect) setVendorRect(rect);
+    setVendorStage("closing");
+    window.setTimeout(() => setVendorStage("closed"), 380);
+  }
+  useEffect(() => {
+    if (vendorStage !== "open") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeVendorLogin();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [vendorStage]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!mounted) return null;
+  const vendorFaded = vendorStage === "opening" || vendorStage === "open";
+  const vendorExpanded = vendorStage === "open";
 
   function pickRole(role: InternalRole) {
     setSelectedRole(role);
@@ -146,8 +196,8 @@ export default function ModuleSelectPage() {
       <div className="relative mx-auto grid min-h-screen w-full max-w-[1240px] grid-cols-1 items-center gap-10 px-6 py-10 lg:h-screen lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:gap-16 lg:px-10 lg:py-6">
         <WelcomePanel />
 
-        <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-5 shadow-[0_20px_60px_rgba(0,0,0,.35)] backdrop-blur-md sm:p-6">
-          <div className="mb-4">
+        <div ref={panelRef} className="relative rounded-2xl border border-white/10 bg-white/[0.06] p-5 shadow-[0_20px_60px_rgba(0,0,0,.35)] backdrop-blur-md sm:p-6">
+          <div className={cn("mb-4 transition-opacity duration-200", vendorFaded && "opacity-0")}>
             <div className="font-heading text-[20px] font-bold text-white">Pilih Modul</div>
             <div className="mt-0.5 font-sans text-[12px] text-white/65">Pilih modul yang ingin Anda akses.</div>
           </div>
@@ -169,6 +219,7 @@ export default function ModuleSelectPage() {
               onClick={() => pickRole(m.role)}
               className={cn(
                 "group flex items-center gap-3 rounded-xl border bg-surface-card p-3 text-left font-sans shadow-[0_8px_22px_rgba(0,0,0,.22)] transition-all duration-200",
+                vendorFaded && "pointer-events-none scale-95 opacity-0",
                 active
                   ? isSysadmin
                     ? "border-accent-purple shadow-[0_12px_28px_rgba(124,58,237,.32)]"
@@ -200,13 +251,12 @@ export default function ModuleSelectPage() {
         })}
 
         <button
-          onClick={() => {
-            // Selalu tampilkan form login vendor dulu, walau sebelumnya ada sesi vendor
-            // lain yang masih tersimpan — supaya user memilih akun vendor yang dituju.
-            logoutVendor();
-            router.push("/vendor-maklon/login");
-          }}
-          className="group flex items-center gap-3 rounded-xl border border-white/10 bg-surface-card p-3 text-left font-sans shadow-[0_8px_22px_rgba(0,0,0,.22)] transition-all duration-200 hover:-translate-y-0.5 hover:border-white/25 hover:shadow-[0_12px_28px_rgba(0,0,0,.32)] sm:col-span-2"
+          ref={vendorBtnRef}
+          onClick={openVendorLogin}
+          className={cn(
+            "group flex items-center gap-3 rounded-xl border border-white/10 bg-surface-card p-3 text-left font-sans shadow-[0_8px_22px_rgba(0,0,0,.22)] transition-all duration-200 hover:-translate-y-0.5 hover:border-white/25 hover:shadow-[0_12px_28px_rgba(0,0,0,.32)] sm:col-span-2",
+            vendorStage !== "closed" && "invisible"
+          )}
         >
           <span className="flex h-11 w-11 flex-none items-center justify-center rounded-lg bg-accent-orange-bg transition-colors duration-200 group-hover:bg-accent-orange">
             <Building2 size={22} strokeWidth={1.75} className="text-accent-orange transition-colors duration-200 group-hover:text-white" />
@@ -217,6 +267,55 @@ export default function ModuleSelectPage() {
           </span>
         </button>
       </div>
+
+          {vendorStage !== "closed" && (
+            <div
+              className={cn(
+                "absolute z-20 overflow-hidden bg-surface-card shadow-[0_16px_40px_rgba(0,0,0,.35)] transition-[top,left,width,height,border-radius] duration-[380ms] ease-[cubic-bezier(.4,0,.2,1)] motion-reduce:transition-none",
+                vendorExpanded ? "rounded-2xl" : "rounded-xl"
+              )}
+              style={vendorExpanded ? { top: 0, left: 0, width: "100%", height: "100%" } : (vendorRect ?? undefined)}
+            >
+              {/* Wajah kartu (ikon + teks) -- memudar saat lapisan membesar, supaya terasa kartu itu yang berubah jadi form. */}
+              <div className={cn("absolute inset-0 flex items-center gap-3 p-3 transition-opacity duration-150", vendorExpanded ? "opacity-0" : "opacity-100")}>
+                <span className="flex h-11 w-11 flex-none items-center justify-center rounded-lg bg-accent-orange-bg">
+                  <Building2 size={22} strokeWidth={1.75} className="text-accent-orange" />
+                </span>
+                <span className="min-w-0 font-sans">
+                  <span className="block text-[13px] font-semibold text-text-primary">Vendor Produksi</span>
+                  <span className="mt-0.5 block text-[10.5px] leading-[1.35] text-text-muted">Portal vendor</span>
+                </span>
+              </div>
+
+              {(vendorStage === "open" || vendorStage === "closing") && (
+                <div
+                  className={cn(
+                    "absolute inset-0 overflow-y-auto",
+                    vendorStage === "open" ? "animate-in fade-in fill-mode-backwards delay-200 duration-300" : "opacity-0 transition-opacity duration-150"
+                  )}
+                >
+                  <button
+                    type="button"
+                    onClick={closeVendorLogin}
+                    className="absolute left-4 top-3.5 z-10 flex items-center gap-1.5 font-sans text-[11.5px] font-medium text-text-muted hover:text-text-primary"
+                  >
+                    <ArrowLeft size={13} />
+                    Kembali
+                  </button>
+                  <div className="mx-auto flex min-h-full w-full max-w-[340px] flex-col justify-center px-6 py-14">
+                    <span className="flex h-[64px] w-[64px] items-center justify-center rounded-lg bg-accent-orange-bg">
+                      <Building2 size={28} strokeWidth={1.75} className="text-accent-orange" />
+                    </span>
+                    <div className="mt-4 font-heading text-xl font-bold text-text-primary">Login Vendor Produksi</div>
+                    <div className="mt-1.5 font-sans text-xs text-text-muted">Masukkan nama vendor atau username Anda, beserta password.</div>
+                    <div className="mt-5">
+                      <VendorLoginForm onSuccess={() => router.push("/vendor-maklon/po-produksi")} />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
