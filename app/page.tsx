@@ -99,23 +99,25 @@ export default function ModuleSelectPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  // Login Vendor Produksi (revisi 2026-10-08, owner: "kartu Vendor Produksi langsung jadi modul login besar sesuai
-  // ukuran container, menghapus modul-modul lain, halamannya tetap sama"): kartu kecil MEMBESAR menjadi form login
-  // seukuran panel "Pilih Modul" sementara kartu modul lain memudar. Panel tidak berubah ukuran -- lapisan login
-  // (absolute) tumbuh dari posisi/ukuran kartu ke seluruh panel (teknik FLIP: ukur kartu -> animasikan ke inset 0).
+  // Login Vendor Produksi (revisi 2026-10-08, owner: "kartu Vendor Produksi langsung jadi modul login besar, menghapus
+  // modul-modul lain, halamannya tetap sama" + "jangan menutupi semua -- batasnya ujung-ujung modul internal, tidak
+  // mengambil teks Pilih Modul dan sisi kiri/kanan"): kartu kecil MEMBESAR menjadi form login seukuran AREA KARTU MODUL
+  // (pembungkus gridWrapRef) sementara kartu modul lain memudar; judul "Pilih Modul" dan tepi panel tetap terlihat. Panel
+  // tidak berubah ukuran -- lapisan login (absolute di dalam pembungkus) tumbuh dari posisi/ukuran kartu ke inset 0
+  // pembungkus (teknik FLIP: ukur kartu -> animasikan ke inset 0).
   // closed -> opening (lapisan di posisi kartu) -> open (lapisan memenuhi panel) -> closing (menyusut kembali).
   const [vendorStage, setVendorStage] = useState<"closed" | "opening" | "open" | "closing">("closed");
   const [vendorRect, setVendorRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
+  const gridWrapRef = useRef<HTMLDivElement>(null); // pembungkus area kartu modul -- batas lapisan login
   const vendorBtnRef = useRef<HTMLButtonElement>(null);
 
   function measureVendorCard() {
-    const panel = panelRef.current;
+    const wrap = gridWrapRef.current;
     const btn = vendorBtnRef.current;
-    if (!panel || !btn) return null;
-    const p = panel.getBoundingClientRect();
+    if (!wrap || !btn) return null;
+    const w = wrap.getBoundingClientRect();
     const b = btn.getBoundingClientRect();
-    return { top: b.top - p.top - panel.clientTop, left: b.left - p.left - panel.clientLeft, width: b.width, height: b.height };
+    return { top: b.top - w.top, left: b.left - w.left, width: b.width, height: b.height };
   }
   function openVendorLogin() {
     // Selalu tampilkan form login vendor dulu, walau sebelumnya ada sesi vendor lain yang masih tersimpan --
@@ -196,14 +198,15 @@ export default function ModuleSelectPage() {
       <div className="relative mx-auto grid min-h-screen w-full max-w-[1240px] grid-cols-1 items-center gap-10 px-6 py-10 lg:h-screen lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:gap-16 lg:px-10 lg:py-6">
         <WelcomePanel />
 
-        <div ref={panelRef} className="relative rounded-2xl border border-white/10 bg-white/[0.06] p-5 shadow-[0_20px_60px_rgba(0,0,0,.35)] backdrop-blur-md sm:p-6">
-          <div className={cn("mb-4 transition-opacity duration-200", vendorFaded && "opacity-0")}>
+        <div className="relative rounded-2xl border border-white/10 bg-white/[0.06] p-5 shadow-[0_20px_60px_rgba(0,0,0,.35)] backdrop-blur-md sm:p-6">
+          <div className="mb-4">
             <div className="font-heading text-[20px] font-bold text-white">Pilih Modul</div>
             <div className="mt-0.5 font-sans text-[12px] text-white/65">Pilih modul yang ingin Anda akses.</div>
           </div>
 
       {/* Kartu SELALU punya tinggi tetap (tidak pernah berubah bentuk saat diklik) — form
          password ditampilkan di modal terpisah (lihat di bawah), bukan ditempel di dalam kartu. */}
+      <div ref={gridWrapRef} className="relative">
       <div className="grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">
         {MODULES.map((m) => {
           const Icon = m.icon;
@@ -272,7 +275,7 @@ export default function ModuleSelectPage() {
             <div
               className={cn(
                 "absolute z-20 overflow-hidden bg-surface-card shadow-[0_16px_40px_rgba(0,0,0,.35)] transition-[top,left,width,height,border-radius] duration-[380ms] ease-[cubic-bezier(.4,0,.2,1)] motion-reduce:transition-none",
-                vendorExpanded ? "rounded-2xl" : "rounded-xl"
+                "rounded-xl"
               )}
               style={vendorExpanded ? { top: 0, left: 0, width: "100%", height: "100%" } : (vendorRect ?? undefined)}
             >
@@ -302,13 +305,13 @@ export default function ModuleSelectPage() {
                     <ArrowLeft size={13} />
                     Kembali
                   </button>
-                  <div className="mx-auto flex min-h-full w-full max-w-[340px] flex-col justify-center px-6 py-14">
-                    <span className="flex h-[64px] w-[64px] items-center justify-center rounded-lg bg-accent-orange-bg">
-                      <Building2 size={28} strokeWidth={1.75} className="text-accent-orange" />
+                  <div className="mx-auto flex min-h-full w-full max-w-[340px] flex-col justify-center px-6 pb-6 pt-11">
+                    <span className="flex h-[52px] w-[52px] items-center justify-center rounded-lg bg-accent-orange-bg">
+                      <Building2 size={24} strokeWidth={1.75} className="text-accent-orange" />
                     </span>
-                    <div className="mt-4 font-heading text-xl font-bold text-text-primary">Login Vendor Produksi</div>
-                    <div className="mt-1.5 font-sans text-xs text-text-muted">Masukkan nama vendor atau username Anda, beserta password.</div>
-                    <div className="mt-5">
+                    <div className="mt-3 font-heading text-xl font-bold text-text-primary">Login Vendor Produksi</div>
+                    <div className="mt-1 font-sans text-xs text-text-muted">Masukkan nama vendor atau username Anda, beserta password.</div>
+                    <div className="mt-4">
                       <VendorLoginForm onSuccess={() => router.push("/vendor-maklon/po-produksi")} />
                     </div>
                   </div>
@@ -316,6 +319,7 @@ export default function ModuleSelectPage() {
               )}
             </div>
           )}
+          </div>
         </div>
       </div>
 
