@@ -305,13 +305,18 @@ export default function ModuleSelectPage() {
                     <ArrowLeft size={13} />
                     Kembali
                   </button>
-                  <div className="mx-auto flex min-h-full w-full max-w-[340px] flex-col justify-center px-6 pb-6 pt-11">
-                    <span className="flex h-[52px] w-[52px] items-center justify-center rounded-lg bg-accent-orange-bg">
-                      <Building2 size={24} strokeWidth={1.75} className="text-accent-orange" />
-                    </span>
-                    <div className="mt-3 font-heading text-xl font-bold text-text-primary">Login Vendor Produksi</div>
-                    <div className="mt-1 font-sans text-xs text-text-muted">Masukkan nama vendor atau username Anda, beserta password.</div>
-                    <div className="mt-4">
+                  <div className="mx-auto flex min-h-full w-full max-w-[340px] flex-col justify-center px-6 py-8">
+                    {/* Ikon di kiri, judul + petunjuk di kanannya (setinggi ikon); form di bawahnya, blok seluruhnya di tengah. */}
+                    <div className="flex items-center gap-3.5">
+                      <span className="flex h-14 w-14 flex-none items-center justify-center rounded-lg bg-accent-orange-bg">
+                        <Building2 size={26} strokeWidth={1.75} className="text-accent-orange" />
+                      </span>
+                      <div className="min-w-0">
+                        <div className="font-heading text-lg font-bold leading-tight text-text-primary">Login Vendor Produksi</div>
+                        <div className="mt-1 font-sans text-[11.5px] leading-snug text-text-muted">Masukkan nama vendor atau username Anda, beserta password.</div>
+                      </div>
+                    </div>
+                    <div className="mt-6">
                       <VendorLoginForm onSuccess={() => router.push("/vendor-maklon/po-produksi")} />
                     </div>
                   </div>

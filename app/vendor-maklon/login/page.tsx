@@ -35,13 +35,17 @@ export default function VendorLoginPage() {
         </Link>
 
         <div className="rounded-xl border border-white/10 bg-surface-card p-6 shadow-[0_16px_40px_rgba(0,0,0,.3)]">
-          <span className="flex h-[64px] w-[64px] items-center justify-center rounded-lg bg-accent-orange-bg">
-            <Building2 size={28} strokeWidth={1.75} className="text-accent-orange" />
-          </span>
-          <div className="mt-4 font-heading text-xl font-bold text-text-primary">Login Vendor Produksi</div>
-          <div className="mt-1.5 font-sans text-xs text-text-muted">Masukkan nama vendor atau username Anda, beserta password.</div>
+          <div className="flex items-center gap-3.5">
+            <span className="flex h-14 w-14 flex-none items-center justify-center rounded-lg bg-accent-orange-bg">
+              <Building2 size={26} strokeWidth={1.75} className="text-accent-orange" />
+            </span>
+            <div className="min-w-0">
+              <div className="font-heading text-lg font-bold leading-tight text-text-primary">Login Vendor Produksi</div>
+              <div className="mt-1 font-sans text-[11.5px] leading-snug text-text-muted">Masukkan nama vendor atau username Anda, beserta password.</div>
+            </div>
+          </div>
 
-          <div className="mt-5">
+          <div className="mt-6">
             <VendorLoginForm onSuccess={() => router.push("/vendor-maklon/po-produksi")} />
           </div>
         </div>
