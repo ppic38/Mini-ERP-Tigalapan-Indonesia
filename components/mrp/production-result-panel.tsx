@@ -637,7 +637,9 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                 // Roll ini sekarang sudah lengkap (setiap size di target rollnya
                                 // sudah tercapai) -- tutup otomatis, TIDAK menunggu klik manual.
                                 const isFullyDone = !!b && Object.entries(b.sizeQty ?? {}).every(([size, tQty]) => (finalQty[size] ?? 0) >= tQty);
-                                return isFullyDone ? closeProductionBatch(id, finalQty) : saveFgProgress(id, finalQty);
+                                // Kirim juga angka FG roll ini yang dilihat layar -- server menolak kalau tim lain sudah mengubahnya.
+                                const expectedFg = { ...(b?.fgSizeQty ?? {}) };
+                                return isFullyDone ? closeProductionBatch(id, finalQty, expectedFg) : saveFgProgress(id, finalQty, expectedFg);
                               })
                             );
                             setSizeTotalDraft({});
@@ -828,7 +830,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                       ))}
                                     {!b.closedAt && (
                                       <Button
-                                        onClick={() => runAction(closeKey, closeProductionBatch(b.id, b.fgSizeQty ?? {}))}
+                                        onClick={() => runAction(closeKey, closeProductionBatch(b.id, b.fgSizeQty ?? {}, { ...(b.fgSizeQty ?? {}) }))}
                                         title={
                                           totalFg < totalTarget
                                             ? `Sisa ${totalTarget - totalFg} pcs roll ini akan tercatat reject saat grup "Selesai Produksi".`

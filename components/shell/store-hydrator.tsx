@@ -28,6 +28,16 @@ const MIN_REFETCH_INTERVAL_MS = 5_000;
 // pernah pindah/fokus ulang) baru lihat perubahan user/tab lain setelah maks 1 jam alih-alih 2
 // menit -- (a)/(b)/(c) di atas TETAP tidak terpengaruh sama sekali.
 const POLL_INTERVAL_MS = 3_600_000;
+// Revisi 2026-10-08 (owner: "aman untuk multiuser ... dua tim cutting bersama tidak saling bentrok"): selagi tab
+// terlihat, tanya ANGKA VERSI data tiap ini detik (RPC get_data_version -- beberapa byte saja, bukan snapshot). Snapshot
+// penuh baru diambil kalau versinya berubah (ada yang menulis, termasuk tim lain). Setelah lampiran PDF PV dikeluarkan
+// dari snapshot (migration 0066 / getInvoiceBuktiPvAction) ukurannya kecil, jadi pola ini murah untuk egress.
+const VERSION_CHECK_INTERVAL_MS = 20_000;
+// PENGAMAN: Server Action dari satu browser dikerjakan SATU PER SATU, jadi snapshot yang lambat membuat klik tulis ikut
+// antre di belakangnya. Kalau pengambilan terakhir lambat (> SLOW_REFRESH_MS -- mis. database sedang berat), jarak
+// pengecekan berikutnya diperlebar otomatis (8x durasi, maks 10 menit) supaya polling tidak menambah antrean.
+const SLOW_REFRESH_MS = 2_000;
+const MAX_VERSION_CHECK_INTERVAL_MS = 600_000;
 
 /** Mount sekali di root layout (lihat app/layout.tsx). Mengisi useMrpStore dari Supabase lewat
  *  getFlowSnapshotAction (Server Action), menggantikan zustand `persist`/localStorage yang lama.
@@ -66,13 +76,23 @@ export function StoreHydrator() {
     // snapshot lokal yang perlu dijaga di sini; refresh() aman dipanggil dari effect manapun.
     // [hemat-egress] `checkOnly`: pemicu pasif (fokus tab) cukup tanya angka versi dulu, snapshot penuh
     // hanya diambil kalau ada yang berubah. Mount & poll berkala TETAP snapshot penuh (jaring pengaman).
-    function fetchNow(force = false, checkOnly = false) {
+    let authFailed = false;
+    // Mengembalikan durasi (ms) pemanggilan -- dipakai pengaman polling di bawah.
+    function fetchNow(force = false, checkOnly = false): Promise<number> {
       const now = Date.now();
-      if (!force && now - lastFetchAt.current < MIN_REFETCH_INTERVAL_MS) return;
+      if (!force && now - lastFetchAt.current < MIN_REFETCH_INTERVAL_MS) return Promise.resolve(0);
       lastFetchAt.current = now;
-      (checkOnly ? refreshIfChangedRef.current() : refreshRef.current()).catch(() => {
-        // Belum login / sesi kedaluwarsa di halaman ini -- biarkan store tetap kosong.
-      });
+      const startedAt = performance.now();
+      return (checkOnly ? refreshIfChangedRef.current() : refreshRef.current())
+        .then(() => {
+          authFailed = false;
+        })
+        .catch((err) => {
+          // Belum login / sesi kedaluwarsa di halaman ini -- biarkan store tetap kosong, dan jangan terus bertanya
+          // tiap 20 detik di halaman publik (login dll.) -- polling jalan lagi begitu ada fetch yang berhasil.
+          if (err instanceof Error && /^(Unauthorized|Forbidden)/.test(err.message)) authFailed = true;
+        })
+        .then(() => performance.now() - startedAt);
     }
 
     fetchNow(true);
@@ -85,11 +105,27 @@ export function StoreHydrator() {
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") fetchNow();
     }, POLL_INTERVAL_MS);
+    let stopped = false;
+    let versionTimer: ReturnType<typeof setTimeout> | undefined;
+    function scheduleVersionCheck(delay: number) {
+      versionTimer = setTimeout(async () => {
+        if (stopped) return;
+        let nextDelay = VERSION_CHECK_INTERVAL_MS;
+        if (document.visibilityState === "visible" && !authFailed) {
+          const took = await fetchNow(false, true);
+          if (took > SLOW_REFRESH_MS) nextDelay = Math.min(MAX_VERSION_CHECK_INTERVAL_MS, Math.max(VERSION_CHECK_INTERVAL_MS, took * 8));
+        }
+        if (!stopped) scheduleVersionCheck(nextDelay);
+      }, delay);
+    }
+    scheduleVersionCheck(VERSION_CHECK_INTERVAL_MS);
 
     return () => {
+      stopped = true;
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
       clearInterval(interval);
+      if (versionTimer) clearTimeout(versionTimer);
     };
   }, []);
 

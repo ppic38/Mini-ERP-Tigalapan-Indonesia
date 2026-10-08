@@ -376,13 +376,13 @@ type FlowActions = {
   // bikin entri WASTE) sudah dihapus, jadi kind di sini praktis selalu "FG"/"REJECT" saja.
   submitProductionResult: (input: { mrpId: string; vendorProduksi: string; warna: string; lengan: Lengan; kind: "FG" | "REJECT"; sizeQty: Record<string, number>; note?: string }) => Promise<void>;
   /** "Tutup Roll" (HPP per roll) -- lihat closeProductionBatchAction di lib/mrp/actions.ts. */
-  closeProductionBatch: (batchId: string, fgSizeQty: Record<string, number>) => Promise<void>;
+  closeProductionBatch: (batchId: string, fgSizeQty: Record<string, number>, expectedFg?: Record<string, number>) => Promise<void>;
   /** Buka lagi roll yang sudah ditutup (batalkan "sisa jadi reject") -- lihat reopenProductionBatchAction. */
   reopenProductionBatch: (batchId: string) => Promise<void>;
   /** Koreksi FG aktual 1 roll per size (naik/turun) -- lihat editRollFgAction. */
   editRollFg: (batchId: string, sizeQty: Record<string, number>) => Promise<void>;
   /** "Simpan progres" (belum menutup roll) -- lihat saveFgProgressAction di lib/mrp/actions.ts. */
-  saveFgProgress: (batchId: string, sizeQty: Record<string, number>) => Promise<void>;
+  saveFgProgress: (batchId: string, sizeQty: Record<string, number>, expectedFg?: Record<string, number>) => Promise<void>;
   createDeliveryKoli: (input: { mrpId: string; vendorProduksi: string; ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }) => Promise<void>;
   /** Item 2026-09-11 (migration 0026) -- lihat setKoliEkspedisiResiGroupAction di actions.ts.
    *  Pengganti setKoliWeight/markKoliDelivered/setKoliEkspedisi lama (dihapus, cuma dipanggil dari
@@ -482,7 +482,14 @@ type FlowActions = {
    *  lewat 1 round-trip server (bukan N), optimistic PENUH (patch state SEBELUM await, pola sama
    *  seperti markRollArrived) supaya modal Hasil Cutting bisa langsung tertutup tanpa nunggu apa
    *  pun -- lihat saveGroup di production-cutting-tab.tsx. */
-  updateBatchesToCutting: (batchIds: string[], cuttingAt: string, sizeQtyByBatchId: Record<string, Record<string, number>>, sizeShiftsByBatchId?: Record<string, { from: string; to: string; qty: number }[]>) => Promise<void>;
+  updateBatchesToCutting: (
+    batchIds: string[],
+    cuttingAt: string,
+    sizeQtyByBatchId: Record<string, Record<string, number>>,
+    sizeShiftsByBatchId?: Record<string, { from: string; to: string; qty: number }[]>,
+    /** Keadaan roll saat modal dibuka -- server menolak simpanan kalau roll sudah diubah orang lain (anti-timpa). */
+    expectedByBatchId?: Record<string, { cuttingAt?: string | null; sizeQty?: Record<string, number> }>
+  ) => Promise<void>;
   /** Item 14 (feedback batch 2026-09-10): edit resting_at untuk 1 sesi resting (beberapa batch
    *  sekaligus, semuanya berbagi resting_at yang sama). */
   updateBatchRestingAt: (batchIds: string[], restingAt: string) => Promise<void>;
@@ -1302,7 +1309,13 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // jadi di-patch LANGSUNG dari hasil nyatanya (pola sama sendPoToFinance/updateBatchToCutting)
   // -- SATU round-trip untuk semua roll, bukan N berurutan seperti startProductionBatch (lama).
   startProductionBatches: async (input) => {
-    const created = unwrapAction(await actions.startProductionBatchesAction(input));
+    let created;
+    try {
+      created = unwrapAction(await actions.startProductionBatchesAction(input));
+    } catch (err) {
+      backgroundRefresh(); // mis. roll sudah di-resting tim lain -- muat ulang supaya daftar roll tersedia benar
+      throw err;
+    }
     set({ productionBatches: [...get().productionBatches, ...created] });
     backgroundRefresh();
   },
@@ -1313,18 +1326,19 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // Optimistic PATCH sebelum tulisnya selesai (pola sama markRollArrived) -- fgSizeQty & closedAt
   // 100% deterministik dari argumen (batchId, fgSizeQty) yang dioper, tidak ada nilai yang baru
   // pasti setelah server selesai (beda dari confirmFgDone yang menghitung reject otomatis).
-  closeProductionBatch: async (batchId, fgSizeQty) => {
+  closeProductionBatch: async (batchId, fgSizeQty, expectedFg) => {
     const previous = get().productionBatches;
     const tmpResultId = optimisticFgLog(batchId, fgSizeQty);
     set({
       productionBatches: previous.map((b) => (b.id === batchId ? { ...b, fgSizeQty, closedAt: b.closedAt ?? localDateString(new Date()) } : b)),
     });
     try {
-      unwrapAction(await actions.closeProductionBatchAction(batchId, fgSizeQty));
+      unwrapAction(await actions.closeProductionBatchAction(batchId, fgSizeQty, expectedFg));
     } catch (err) {
       set({ productionBatches: previous });
       dropOptimisticResult(tmpResultId);
       notifyError("Gagal menutup roll -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      backgroundRefresh(); // data terbaru (mis. milik tim lain) langsung dimuat
       throw err;
     }
     backgroundRefresh();
@@ -1360,16 +1374,17 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   },
   // Optimistic PATCH -- sama seperti closeProductionBatch di atas, sizeQty deterministik dari
   // argumen (server REPLACE penuh, bukan merge, jadi client meniru persis).
-  saveFgProgress: async (batchId, sizeQty) => {
+  saveFgProgress: async (batchId, sizeQty, expectedFg) => {
     const previous = get().productionBatches;
     const tmpResultId = optimisticFgLog(batchId, sizeQty);
     set({ productionBatches: previous.map((b) => (b.id === batchId ? { ...b, fgSizeQty: sizeQty } : b)) });
     try {
-      unwrapAction(await actions.saveFgProgressAction(batchId, sizeQty));
+      unwrapAction(await actions.saveFgProgressAction(batchId, sizeQty, expectedFg));
     } catch (err) {
       set({ productionBatches: previous });
       dropOptimisticResult(tmpResultId);
       notifyError("Gagal menyimpan progres FG -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      backgroundRefresh(); // data terbaru (mis. milik tim lain) langsung dimuat
       throw err;
     }
     backgroundRefresh();
@@ -2116,14 +2131,14 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // Fix-nya: 1 round-trip untuk SEMUA batchIds sekaligus (updateBatchesToCuttingAction), patch
   // optimistic PENUH SEBELUM await (pola sama seperti markRollArrived di atas), 1 kali
   // backgroundRefresh() di akhir saja (bukan N kali).
-  updateBatchesToCutting: async (batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId = {}) => {
+  updateBatchesToCutting: async (batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId = {}, expectedByBatchId) => {
     const idSet = new Set(batchIds);
     const previous = get().productionBatches;
     set({
       productionBatches: previous.map((b) => (idSet.has(b.id) ? { ...b, cuttingAt, sizeQty: sizeQtyByBatchId[b.id] ?? b.sizeQty, sizeShifts: (sizeShiftsByBatchId[b.id] ?? []).length > 0 ? sizeShiftsByBatchId[b.id] : undefined } : b)),
     });
     try {
-      unwrapAction(await actions.updateBatchesToCuttingAction(batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId));
+      unwrapAction(await actions.updateBatchesToCuttingAction(batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId, expectedByBatchId));
     } catch (err) {
       set({ productionBatches: previous });
       notifyError("Gagal menyimpan hasil cutting -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));

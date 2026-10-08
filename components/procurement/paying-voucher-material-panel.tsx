@@ -16,7 +16,8 @@ import { getInvoicePaymentProofAction } from "@/lib/mrp/actions";
 // Revisi 2026-09-06: preview+download konsisten di semua modul -- lihat komentar di file ini.
 // Revisi 2026-09-08 (bug fix popup blocked): openPreviewWindow/fillPreviewWindow -- lihat
 // catatan panjang di lib/mrp/clientFiles.ts.
-import { viewAndDownloadFile, openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
+import { openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
+import { viewInvoiceBuktiPv } from "@/lib/mrp/viewInvoicePv";
 import { SysadminTd, SysadminTh } from "@/components/sysadmin/correction-dialog";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { materialInvoiceVoidCorrections } from "@/components/sysadmin/procurement-corrections";
@@ -481,11 +482,11 @@ export function PayingVoucherMaterialPanel() {
                                             <StatusPill tone={badge.tone}>{badge.label}</StatusPill>
                                           </td>
                                           <td className="px-3 py-[10px]">
-                                            {inv.buktiPvDataUrl ? (
+                                            {inv.buktiPvAvailable ? (
                                               <button
                                                 onClick={(e) => {
                                                   e.stopPropagation();
-                                                  viewAndDownloadFile(inv.buktiPvDataUrl!);
+                                                  void viewInvoiceBuktiPv(inv.id);
                                                 }}
                                                 className="font-sans text-[11px] font-semibold text-action-primary underline"
                                               >

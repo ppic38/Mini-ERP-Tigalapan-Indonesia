@@ -193,6 +193,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   const [activeCuttingGroupKey, setActiveCuttingGroupKey] = useState<string | null>(null);
   // Hasil aduan AKTUAL per roll (qty per size), keyed per batch id.
   const [cuttingSizeDraft, setCuttingSizeDraft] = useState<Record<string, Record<string, number>>>({});
+  // Keadaan roll saat modal Input/Edit Hasil Cutting dibuka (anti-timpa antar tim, lihat openCuttingGroupModal).
+  const [cuttingBase, setCuttingBase] = useState<Record<string, { cuttingAt: string | null; sizeQty: Record<string, number> }>>({});
   // Alih size sisa kain (owner 2026-10-04, migration 0062): per roll, per size ASAL -> { size tujuan, qty }.
   // `cuttingSizeDraft` hanya berisi hasil di size-nya sendiri (TANPA pcs hasil alih); pcs alih ditambahkan
   // ke size tujuan saat Simpan (mergedSizeQty), dan dikurangkan lagi saat modal dibuka untuk edit.
@@ -449,7 +451,10 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
       setLines([]);
       setSelectedGroupKey("");
     } catch (e) {
-      setRestingError(e instanceof Error ? e.message : "Gagal memulai resting.");
+      const msg = e instanceof Error ? e.message : "Gagal memulai resting.";
+      setRestingError(msg);
+      // Roll diambil tim lain: daftar lama tidak berlaku lagi -- pilih ulang dari data terbaru (isian lain dibiarkan).
+      if (/di-resting/.test(msg)) setLines([]);
     } finally {
       setSubmitting(false);
     }
@@ -529,6 +534,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   function openCuttingGroupModal(sessionKey: string, editAll = false) {
     const session = sessionGroups.find((g) => g.key === sessionKey);
     const groupBatches = editAll ? (session?.batches ?? []) : (session?.batches ?? []).filter(batchNeedsCuttingInput);
+    // Keadaan roll yang DILIHAT pemakai saat mulai mengedit -- dikirim ke server saat Simpan supaya hasil cutting yang
+    // baru diisi tim lain tidak tertimpa (lihat assertBatchesUnchanged di actions.ts).
+    setCuttingBase(Object.fromEntries(groupBatches.map((b) => [b.id, { cuttingAt: b.cuttingAt ?? null, sizeQty: { ...(b.sizeQty ?? {}) } }])));
     setCuttingSizeDraft((prev) => {
       const next = { ...prev };
       for (const b of groupBatches) {
@@ -1436,8 +1444,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 groupBatches.map((b) => b.id),
                 effectiveCuttingAt,
                 sizeQtyByBatchId,
-                sizeShiftsByBatchId
-              );
+                sizeShiftsByBatchId,
+                Object.fromEntries(groupBatches.map((b) => [b.id, cuttingBase[b.id] ?? { cuttingAt: b.cuttingAt ?? null, sizeQty: { ...(b.sizeQty ?? {}) } }]))
+              ).catch(() => {}); // pesan gagal sudah ditampilkan store (notifyError) + data dimuat ulang
               closeCuttingGroupModal();
             } catch (err) {
               setCuttingGroupError(err instanceof Error ? err.message : "Gagal menyimpan hasil cutting.");

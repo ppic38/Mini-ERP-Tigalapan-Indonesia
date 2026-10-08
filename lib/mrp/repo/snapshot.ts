@@ -697,7 +697,9 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
       status: inv.status,
       destinationVendor: inv.destination_vendor ?? "",
       bookedAt: inv.booked_at,
-      buktiPvDataUrl: inv.bukti_pv_storage_path ?? undefined,
+      // PDF-nya SENGAJA tidak ikut snapshot (13 MB dari 13,5 MB!) -- cukup penanda ada/tidaknya; isinya diambil saat
+      // diklik lewat getInvoiceBuktiPvAction (migration 0066).
+      buktiPvAvailable: !!(inv.bukti_pv_storage_path || inv.bukti_pv_file_name),
       buktiPvFileName: inv.bukti_pv_file_name ?? undefined,
       buktiBayarAt: inv.bukti_bayar_at ?? undefined,
       buktiBayarFileName: inv.bukti_bayar_file_name ?? undefined,

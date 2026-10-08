@@ -31,7 +31,8 @@ import { getInvoicePaymentProofAction } from "@/lib/mrp/actions";
 // Revisi 2026-09-06: preview+download konsisten di semua modul -- lihat komentar di file ini.
 // Revisi 2026-09-08 (bug fix popup blocked): openPreviewWindow/fillPreviewWindow -- lihat
 // catatan panjang di lib/mrp/clientFiles.ts.
-import { viewAndDownloadFile, openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
+import { openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
+import { viewInvoiceBuktiPv } from "@/lib/mrp/viewInvoicePv";
 
 // Round-2 fix (Tester bug 2): batas HARUS dicek pada ukuran hasil ENCODE base64, bukan
 // `file.size` mentah -- base64 menggembungkan ukuran kira-kira +33%, jadi file 1.5 MB mentah jadi
@@ -382,8 +383,8 @@ export function PaymentPanel() {
       label: "Lampiran Invoice",
       default: true,
       render: (i) =>
-        i.buktiPvDataUrl ? (
-          <button onClick={() => viewAndDownloadFile(i.buktiPvDataUrl!)} className="font-sans text-[11px] font-semibold text-action-primary underline">
+        i.buktiPvAvailable ? (
+          <button onClick={() => void viewInvoiceBuktiPv(i.id)} className="font-sans text-[11px] font-semibold text-action-primary underline">
             Lihat / Download
           </button>
         ) : (

@@ -1,5 +1,24 @@
 # Migrasi Project — Status & Riwayat
 
+## Kecepatan & multi-user: lampiran PV keluar dari snapshot (0066), penjaga 2 tim (0067) (2026-10-08)
+Owner: "user tidak menunggu buffering lama" + "aman untuk multiuser, dua tim cutting bersama tidak saling bentrok".
+- **Akar lambat (terukur):** 97% isi snapshot (13,1 dari 13,5 MB) = lampiran PDF Paying Voucher yang tertanam di
+  `raw_material_invoices.bukti_pv_storage_path`. Tiap pengambilan data 4-27 detik (kadang timeout 57014), dan karena Server Action
+  satu browser dikerjakan BERURUTAN, klik tulis ikut antre di belakang snapshot -> terasa "buffering". Kode sekarang TIDAK mengirim
+  PDF ke browser (`buktiPvAvailable` saja; PDF diambil saat diklik lewat `getInvoiceBuktiPvAction`, `lib/mrp/viewInvoicePv.ts`).
+- **Migration 0066** (`invoice_pv_files`): memindahkan PDF ke tabel terpisah + mengosongkan kolom lama (isi disalin dulu) supaya
+  snapshot di SISI DATABASE juga kecil (egress). **Owner menjalankan manual. SEBAIKNYA DULU sebelum polling 20 detik bermanfaat.**
+  Kode jalan sebelum maupun sesudah migration (tulis ke tabel baru, fallback kolom lama; baca tabel baru, fallback kolom lama).
+- **Polling versi data tiap 20 detik** (`components/shell/store-hydrator.tsx`, RPC get_data_version, beberapa byte) -> perubahan tim lain
+  muncul dalam detik. Otomatis diperlebar (8x durasi, maks 10 menit) kalau pengambilan data lambat; berhenti di halaman tanpa sesi.
+- **Penjaga bentrok** (`assertBatchesUnchanged`, actions.ts): Simpan Hasil Cutting (modal membawa keadaan roll saat dibuka), Simpan
+  progres FG & Tutup Roll (membawa angka FG yang dilihat layar) ditolak server kalau roll sudah diubah orang lain -- pesan jelas, data
+  dimuat ulang, tidak ada yang tertimpa. **Resting**: satu code_roll hanya boleh punya satu batch (cek server + rollback bila gagal di
+  tengah daftar) + **migration 0067** (indeks unik parsial) sebagai jaring terakhir. Catatan jujur: cek-lalu-tulis tidak atomik
+  (jendela milidetik, bukan lagi menit-jam); atomik penuh butuh fungsi database/kolom versi.
+- Diuji (BAYU, data dipulihkan): cutting & resting ditolak benar + jalur normal sukses; FG jalur normal sukses (angka dasar terkirim),
+  penolakan FG tervalidasi lewat helper yang sama (uji konflik FG lewat UI tidak konklusif).
+
 ## Tim Saya: password terlihat + tanpa menunggu -- migration 0065 (2026-10-08)
 Owner: "tampilkan password user dari Tim Saya", "jangan sampai lama memuat/simpan ... tapi jangan conflict atau corrupt".
 - **Migration 0065** (`vendor_users.password_enc`): salinan password anggota tim TERENKRIPSI (AES-256-GCM, kunci dari

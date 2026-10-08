@@ -307,10 +307,11 @@ export type RawMaterialInvoice = {
   status: InvoiceStatus;
   destinationVendor: string;
   bookedAt: string;
-  /** Bukti Paying Voucher (PDF) yang diupload Procurement sebelum PV ini bisa diajukan — disimpan
-   *  sebagai data URI base64 (belum ada backend/object storage, lihat catatan di lib/mrp/store.ts
-   *  bookInvoice). `buktiPvFileName` cuma buat tampilan (nama file asli), bukan dipakai logic. */
-  buktiPvDataUrl?: string;
+  /** Bukti Paying Voucher (PDF) yang diupload Procurement sebelum PV ini bisa diajukan. Isinya (data URI base64)
+   *  TIDAK ikut snapshot lagi (revisi 2026-10-08, migration 0066 -- dulu 97% isi snapshot): cuma penanda
+   *  `buktiPvAvailable`; PDF-nya diambil saat diklik lewat getInvoiceBuktiPvAction. `buktiPvFileName` cuma buat
+   *  tampilan (nama file asli), bukan dipakai logic. */
+  buktiPvAvailable?: boolean;
   buktiPvFileName?: string;
   /** Bukti pembayaran (PDF) yang diupload Finance saat/setelah invoice ini dibayar — inilah
    *  bukti yang diserahkan Procurement ke vendor material. Sama seperti buktiPvDataUrl, payload

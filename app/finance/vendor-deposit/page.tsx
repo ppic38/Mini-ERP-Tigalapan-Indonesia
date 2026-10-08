@@ -12,7 +12,8 @@ import { formatDateTime, formatRupiah, vendorDepositBalance, vendorDepositEntrie
 import { getInvoicePaymentProofAction, getMaterialClaimPhotoAction } from "@/lib/mrp/actions";
 // Revisi 2026-09-08 (bug fix popup blocked): openPreviewWindow/fillPreviewWindow -- lihat
 // catatan panjang di lib/mrp/clientFiles.ts.
-import { viewAndDownloadFile, openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
+import { openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
+import { viewInvoiceBuktiPv } from "@/lib/mrp/viewInvoicePv";
 import type { RawMaterialInvoice, VendorDepositEntry } from "@/lib/mrp/types";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
@@ -183,9 +184,9 @@ export default function VendorDepositPage() {
                       {formatRupiah(e.amount)}
                     </span>
                     <span className="flex flex-wrap gap-x-2 gap-y-0.5">
-                      {ctx.invoice?.buktiPvDataUrl ? (
+                      {ctx.invoice?.buktiPvAvailable ? (
                         <button
-                          onClick={() => viewAndDownloadFile(ctx.invoice!.buktiPvDataUrl!)}
+                          onClick={() => void viewInvoiceBuktiPv(ctx.invoice!.id)}
                           className="font-sans text-[10.5px] font-semibold text-action-primary underline"
                         >
                           PV lama

@@ -901,6 +901,36 @@ export async function approveMaklonPoAction(id: string): Promise<void> {
 // Invoicing (raw material)
 // =========================================================================
 
+/** Simpan lampiran PV ke invoice_pv_files (migration 0066). Kalau tabelnya belum ada (migration belum dijalankan),
+ *  jatuh ke kolom lama raw_material_invoices.bukti_pv_storage_path supaya fitur tetap jalan. Dipanggil SETELAH baris
+ *  invoice berhasil di-insert (FK). */
+async function saveInvoicePvFile(db: ReturnType<typeof supabaseServer>, invoiceId: string, dataUrl?: string | null, fileName?: string | null): Promise<void> {
+  if (!dataUrl) return;
+  const { error } = await db.from("invoice_pv_files").upsert({ invoice_id: invoiceId, data_url: dataUrl, file_name: fileName ?? null });
+  if (!error) return;
+  const { error: fallbackErr } = await db.from("raw_material_invoices").update({ bukti_pv_storage_path: dataUrl }).eq("id", invoiceId);
+  if (fallbackErr) throw new Error(`Gagal menyimpan lampiran Paying Voucher: ${fallbackErr.message}`);
+}
+
+/** Ambil PDF lampiran PV 1 invoice on-demand (tidak ikut snapshot, lihat migration 0066) -- pola & hak akses SAMA
+ *  dengan getInvoicePaymentProofAction: Finance/Procurement/Sysadmin, atau vendor tujuan invoice itu sendiri. */
+export async function getInvoiceBuktiPvAction(invoiceId: string): Promise<{ dataUrl: string; fileName?: string } | null> {
+  const session = await requireSession();
+  const db = supabaseServer();
+  if (session.vendorId) {
+    const { data: inv } = await db.from("raw_material_invoices").select("destination_vendor").eq("id", invoiceId).maybeSingle();
+    if (inv?.destination_vendor !== session.vendorId) throw new Error("Forbidden: invoice ini bukan milik vendor Anda.");
+  } else {
+    requireAnyInternalRole(session, ["finance", "procurement", "sysadmin"]);
+  }
+  const { data } = await db.from("invoice_pv_files").select("data_url,file_name").eq("invoice_id", invoiceId).maybeSingle();
+  if (data) return { dataUrl: data.data_url, fileName: data.file_name ?? undefined };
+  // Fallback: invoice lama / migration 0066 belum dijalankan -- PDF masih di kolom lama.
+  const { data: old } = await db.from("raw_material_invoices").select("bukti_pv_storage_path,bukti_pv_file_name").eq("id", invoiceId).maybeSingle();
+  if (!old?.bukti_pv_storage_path) return null;
+  return { dataUrl: old.bukti_pv_storage_path, fileName: old.bukti_pv_file_name ?? undefined };
+}
+
 export async function bookInvoiceAction(
   poId: string,
   input: { colorEntries: ColorEntry[]; addBuys: AddBuyItem[]; diskon: number; kodeTransaksi: string; noInvoiceVendor: string; buktiPvDataUrl?: string; buktiPvFileName?: string }
@@ -937,10 +967,10 @@ export async function bookInvoiceAction(
     status: "INVOICED",
     destination_vendor: po.vendor_produksi,
     booked_at: today(),
-    bukti_pv_storage_path: input.buktiPvDataUrl ?? null,
-    bukti_pv_file_name: input.buktiPvFileName ?? null,
+    bukti_pv_file_name: input.buktiPvFileName ?? "bukti-pv.pdf",
   });
   if (insErr) throw new Error(`Gagal booking invoice: ${insErr.message}`);
+  await saveInvoicePvFile(db, invoiceId, input.buktiPvDataUrl, input.buktiPvFileName ?? "bukti-pv.pdf");
 
   for (const c of input.colorEntries) {
     const colorId = `${invoiceId}-${c.warna}-${c.lengan}`;
@@ -2232,18 +2262,68 @@ async function validateSizeShifts(db: ReturnType<typeof supabaseServer>, batchId
  *  spec/changes.md). Fix-nya: 1 round-trip untuk SEMUA roll dalam grup sekaligus, 1 kali gate
  *  "Selesai Produksi", 1 kali recomputeAutoRejectForGroup -- store.ts cukup panggil
  *  backgroundRefresh() SATU KALI di akhir, bukan N kali. */
+/** KEADAAN roll yang DILIHAT pemakai saat mulai mengedit -- dipakai untuk mencegah dua tim saling menimpa (revisi
+ *  2026-10-08, "dua tim cutting bersama tidak saling bentrok"). Dibandingkan dengan isi database tepat sebelum
+ *  menulis; kalau sudah berbeda (anggota tim lain baru saja mengubahnya), simpanan DITOLAK alih-alih menimpa. */
+type BatchExpectation = { cuttingAt?: string | null; sizeQty?: Record<string, number>; fgSizeQty?: Record<string, number> };
+
+function sameQty(a: Record<string, number> | undefined, b: Record<string, number>): boolean {
+  const ea = Object.entries(a ?? {}).filter(([, v]) => v > 0);
+  const eb = new Map(Object.entries(b).filter(([, v]) => v > 0));
+  return ea.length === eb.size && ea.every(([k, v]) => eb.get(k) === v);
+}
+
+async function assertBatchesUnchanged(db: ReturnType<typeof supabaseServer>, expected: Record<string, BatchExpectation> | undefined): Promise<void> {
+  const ids = Object.keys(expected ?? {});
+  if (!expected || ids.length === 0) return;
+  const needSizes = ids.filter((id) => expected[id].sizeQty !== undefined);
+  const needFg = ids.filter((id) => expected[id].fgSizeQty !== undefined);
+  const [batches, sizes, fg] = await Promise.all([
+    db.from("production_batches").select("id,code_roll,cutting_at").in("id", ids),
+    needSizes.length ? db.from("production_batch_sizes").select("production_batch_id,size,qty").in("production_batch_id", needSizes) : Promise.resolve({ data: [] as { production_batch_id: string; size: string; qty: number }[], error: null }),
+    needFg.length ? db.from("production_batch_fg_sizes").select("production_batch_id,size,qty").in("production_batch_id", needFg) : Promise.resolve({ data: [] as { production_batch_id: string; size: string; qty: number }[], error: null }),
+  ]);
+  if (batches.error) throw new Error(batches.error.message);
+  const group = (rows: { production_batch_id: string; size: string; qty: number }[] | null) => {
+    const m = new Map<string, Record<string, number>>();
+    for (const r of rows ?? []) m.set(r.production_batch_id, { ...(m.get(r.production_batch_id) ?? {}), [r.size]: Number(r.qty) });
+    return m;
+  };
+  const curSizes = group(sizes.data);
+  const curFg = group(fg.data);
+  const changed: string[] = [];
+  for (const b of batches.data ?? []) {
+    const e = expected[b.id];
+    let diff = false;
+    if (e.cuttingAt !== undefined) {
+      const was = e.cuttingAt ? Date.parse(e.cuttingAt) : null;
+      const now = b.cutting_at ? Date.parse(b.cutting_at) : null;
+      if (was !== now) diff = true;
+    }
+    if (e.sizeQty !== undefined && !sameQty(e.sizeQty, curSizes.get(b.id) ?? {})) diff = true;
+    if (e.fgSizeQty !== undefined && !sameQty(e.fgSizeQty, curFg.get(b.id) ?? {})) diff = true;
+    if (diff) changed.push(b.code_roll || b.id);
+  }
+  if (changed.length > 0) {
+    throw new Error(
+      `Roll ${changed.join(", ")} baru saja diubah oleh anggota tim lain, jadi simpanan Anda dibatalkan supaya tidak menimpa kerja mereka. Data terbaru sudah dimuat -- periksa dulu lalu simpan lagi.`
+    );
+  }
+}
+
 export async function updateBatchesToCuttingAction(
   batchIds: string[],
   cuttingAt: string,
   sizeQtyByBatchId: Record<string, Record<string, number>>,
-  sizeShiftsByBatchId: Record<string, SizeShift[]> = {}
+  sizeShiftsByBatchId: Record<string, SizeShift[]> = {},
+  expectedByBatchId?: Record<string, { cuttingAt?: string | null; sizeQty?: Record<string, number> }>
 ): Promise<ActionResult<{ batchId: string; cuttingAt: string; sizeQty?: Record<string, number> }[]>> {
   // Revisi 2026-09-19: di production Next.js MENYEMBUNYIKAN pesan Error yang di-throw Server Action
   // (klien hanya menerima "Minified React error #441" -- alasan sebenarnya, mis. 'grup sudah Selesai
   // Produksi', tidak pernah sampai ke user). Makanya alasan penolakan dikembalikan sebagai nilai
   // ({ ok: false, error }) dan store yang melempar ulang di sisi klien.
   try {
-    return { ok: true, data: await updateBatchesToCuttingImpl(batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId) };
+    return { ok: true, data: await updateBatchesToCuttingImpl(batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId, expectedByBatchId) };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -2253,11 +2333,14 @@ async function updateBatchesToCuttingImpl(
   batchIds: string[],
   cuttingAt: string,
   sizeQtyByBatchId: Record<string, Record<string, number>>,
-  sizeShiftsByBatchId: Record<string, SizeShift[]> = {}
+  sizeShiftsByBatchId: Record<string, SizeShift[]> = {},
+  expectedByBatchId?: Record<string, { cuttingAt?: string | null; sizeQty?: Record<string, number> }>
 ): Promise<{ batchId: string; cuttingAt: string; sizeQty?: Record<string, number> }[]> {
   await requireVendorSession();
   if (batchIds.length === 0) return [];
   const db = supabaseServer();
+  // Dua tim di sesi resting yang sama: tolak kalau roll-nya sudah diubah orang lain sejak modal ini dibuka.
+  await assertBatchesUnchanged(db, expectedByBatchId);
 
   // Validasi SEMUA batchId dari 1 groupKey yang sama -- server TIDAK percaya urutan/isi array dari
   // client begitu saja (client bisa saja salah kirim campuran grup warna/lengan berbeda).
@@ -2795,10 +2878,10 @@ export async function createClaimReplacementInvoiceAction(
     destination_vendor: claimRow.vendor_produksi,
     booked_at: today(),
     source_claim_id: key,
-    bukti_pv_storage_path: buktiInvoiceDataUrl ?? null,
-    bukti_pv_file_name: buktiInvoiceFileName ?? null,
+    bukti_pv_file_name: buktiInvoiceDataUrl ? (buktiInvoiceFileName ?? "bukti-pv.pdf") : (buktiInvoiceFileName ?? null),
   });
   if (insErr) throw new Error(`Gagal membuat PV pengganti: ${insErr.message}`);
+  await saveInvoicePvFile(db, invoiceId, buktiInvoiceDataUrl, buktiInvoiceFileName ?? "bukti-pv.pdf");
   await db.from("raw_material_invoice_colors").insert({ id: colorId, invoice_id: invoiceId, warna: claimRow.warna, lengan: claimRow.lengan, harga_per_roll: rateBaru });
   await db.from("raw_material_invoice_rolls").insert({ invoice_color_id: colorId, roll_index: 0, gross_kg: beratBaruKg });
 
@@ -3054,10 +3137,10 @@ export async function createClaimReplacementInvoiceBundleAction(
     destination_vendor: claimRowFirst.vendor_produksi,
     booked_at: today(),
     source_claim_id: keys[0], // 1 sumber utama disimpan (pola lama) -- semua key tetap tertaut lewat langkah 1.9.
-    bukti_pv_storage_path: buktiInvoiceDataUrl ?? null,
-    bukti_pv_file_name: buktiInvoiceFileName ?? null,
+    bukti_pv_file_name: buktiInvoiceDataUrl ? (buktiInvoiceFileName ?? "bukti-pv.pdf") : (buktiInvoiceFileName ?? null),
   });
   if (insErr) throw new Error(`Gagal membuat PV pengganti gabungan: ${insErr.message}`);
+  await saveInvoicePvFile(db, newInvoiceId, buktiInvoiceDataUrl, buktiInvoiceFileName ?? "bukti-pv.pdf");
 
   // 1.5 Per DISTINCT (warna,lengan): 1 raw_material_invoice_colors row (rate PER WARNA) + roll_index
   // BARU mulai dari 0 per grup warna (ikuti pola bookInvoiceAction, BUKAN rollIndex roll asal).
@@ -3585,6 +3668,19 @@ async function startProductionBatchesImpl(input: {
   const db = supabaseServer();
   const createdAt = today();
   const created: ProductionBatch[] = [];
+  // Satu roll fisik (code_roll) hanya boleh di-resting SEKALI -- kalau dua tim memilih roll yang sama dari layar
+  // yang sama-sama belum diperbarui, yang kedua ditolak di sini (indeks unik migration 0067 = jaring terakhir).
+  const rollCodes = input.lines.map((l) => l.codeRoll?.trim()).filter((c): c is string => !!c);
+  if (new Set(rollCodes.map((c) => c.toLowerCase())).size !== rollCodes.length) throw new Error("Ada roll yang sama dua kali di daftar Resting.");
+  if (rollCodes.length > 0) {
+    const { data: used } = await db.from("production_batches").select("code_roll").in("code_roll", rollCodes);
+    if (used && used.length > 0) {
+      throw new Error(`Roll ${used.map((u) => u.code_roll).join(", ")} sudah di-resting (kemungkinan oleh anggota tim lain barusan). Data terbaru sudah dimuat -- pilih roll lain.`);
+    }
+  }
+  const rollbackCreated = async () => {
+    if (created.length > 0) await db.from("production_batches").delete().in("id", created.map((c) => c.id));
+  };
   for (const line of input.lines) {
     const { data: aduanRow } = await db.from("aduan_pola_rows").select("vendor,kode,warna,lengan").eq("id", line.aduanRowId).single();
     if (!aduanRow) throw new Error("Baris Aduan Pola tidak ditemukan.");
@@ -3607,6 +3703,11 @@ async function startProductionBatchesImpl(input: {
       ...(line.setting?.trim() ? { setting: line.setting.trim() } : {}),
     });
     if (error) {
+      // Gagal di tengah daftar: batalkan yang sudah terlanjur dibuat di panggilan ini (jangan tinggalkan separuh jadi).
+      await rollbackCreated();
+      if (/production_batches_code_roll_uniq|duplicate key/i.test(error.message)) {
+        throw new Error("Roll ini baru saja di-resting oleh anggota tim lain. Data terbaru sudah dimuat -- pilih roll lain.");
+      }
       if (/setting/i.test(error.message)) {
         throw new Error(
           'Kolom "Setting" belum ada di database (migration 0048 belum dijalankan). Kosongkan isian Setting lalu klik Resting lagi, atau minta admin menjalankan migration 0048.'
@@ -3722,11 +3823,11 @@ async function logFgProgressDelta(
  *  lama yang baca pool production_results (tab Reject/Rework, badge, "Selesai Produksi" tahap 1/2,
  *  Pengiriman Rework) tetap jalan tanpa disentuh sama sekali. Lihat plan HPP per roll untuk desain
  *  lengkap. */
-export async function closeProductionBatchAction(batchId: string, fgSizeQty: Record<string, number>): Promise<ActionResult<void>> {
-  return toActionResult(() => closeProductionBatchImpl(batchId, fgSizeQty));
+export async function closeProductionBatchAction(batchId: string, fgSizeQty: Record<string, number>, expectedFg?: Record<string, number>): Promise<ActionResult<void>> {
+  return toActionResult(() => closeProductionBatchImpl(batchId, fgSizeQty, expectedFg));
 }
 
-async function closeProductionBatchImpl(batchId: string, fgSizeQty: Record<string, number>): Promise<void> {
+async function closeProductionBatchImpl(batchId: string, fgSizeQty: Record<string, number>, expectedFg?: Record<string, number>): Promise<void> {
   const actor = await requireVendorSessionWithActor();
   const db = supabaseServer();
   const { data: batch } = await db
@@ -3737,6 +3838,7 @@ async function closeProductionBatchImpl(batchId: string, fgSizeQty: Record<strin
   if (!batch) throw new Error("Roll tidak ditemukan.");
   if (!batch.cutting_at) throw new Error("Roll ini belum dicutting — isi Hasil Cutting dulu di tab Cutting.");
   if (batch.closed_at) return;
+  if (expectedFg) await assertBatchesUnchanged(db, { [batchId]: { fgSizeQty: expectedFg } });
   const groupKey = `${batch.mrp_id}|${batch.warna}|${batch.lengan}`;
   // Revisi 2026-09-20: roll baru BOLEH ditutup walau warnanya sudah pernah "Selesai" (gelombang berikutnya) -- yang
   // dikunci hanya Final Produksi (done_at).
@@ -3929,11 +4031,11 @@ async function autoCloseOpenBatchesForGroup(db: SupabaseClient, groupBatches: Pr
  *  dikerjakan, progres hari-hari sebelumnya tidak pernah benar2 tersimpan. Sekarang tersimpan ke
  *  production_batch_fg_sizes betulan, dibaca lagi sebagai draft awal begitu grup dibuka ulang
  *  (lihat production-result-panel.tsx). */
-export async function saveFgProgressAction(batchId: string, sizeQty: Record<string, number>): Promise<ActionResult<void>> {
-  return toActionResult(() => saveFgProgressImpl(batchId, sizeQty));
+export async function saveFgProgressAction(batchId: string, sizeQty: Record<string, number>, expectedFg?: Record<string, number>): Promise<ActionResult<void>> {
+  return toActionResult(() => saveFgProgressImpl(batchId, sizeQty, expectedFg));
 }
 
-async function saveFgProgressImpl(batchId: string, sizeQty: Record<string, number>): Promise<void> {
+async function saveFgProgressImpl(batchId: string, sizeQty: Record<string, number>, expectedFg?: Record<string, number>): Promise<void> {
   await requireVendorSession();
   const db = supabaseServer();
   const { data: batch } = await db
@@ -3944,6 +4046,8 @@ async function saveFgProgressImpl(batchId: string, sizeQty: Record<string, numbe
   if (!batch) throw new Error("Roll tidak ditemukan.");
   if (!batch.cutting_at) throw new Error("Roll ini belum dicutting — isi Hasil Cutting dulu di tab Cutting.");
   if (batch.closed_at) throw new Error("Roll ini sudah ditutup — tidak bisa diubah lagi.");
+  // Dua tim mengisi Finish Good roll yang sama: tolak kalau angkanya sudah berubah sejak layar ini memuatnya.
+  if (expectedFg) await assertBatchesUnchanged(db, { [batchId]: { fgSizeQty: expectedFg } });
 
   // Log ke riwayat DULU (delta terhadap fg_logged_snapshot) -- lihat catatan panjang di
   // logFgProgressDelta -- baru replace production_batch_fg_sizes, supaya kalau insert riwayat
