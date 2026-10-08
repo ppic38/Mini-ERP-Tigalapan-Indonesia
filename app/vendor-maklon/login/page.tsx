@@ -29,7 +29,7 @@ export default function VendorLoginPage() {
       style={{ background: "linear-gradient(160deg, #000000 0%, #050912 30%, #0A1B3D 62%, var(--accent-blue) 100%)" }}
     >
       <div className="w-full max-w-[380px]">
-        <Link href="/" className="mb-4 flex items-center gap-1.5 font-sans text-[11.5px] font-medium text-white/60 hover:text-white/90">
+        <Link href="/" className="mb-4 flex items-center justify-end gap-1.5 font-sans text-[11.5px] font-medium text-white/60 hover:text-white/90">
           <ArrowLeft size={13} />
           Kembali
         </Link>

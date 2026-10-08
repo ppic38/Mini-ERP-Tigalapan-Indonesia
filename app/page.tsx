@@ -300,7 +300,7 @@ export default function ModuleSelectPage() {
                   <button
                     type="button"
                     onClick={closeVendorLogin}
-                    className="absolute left-4 top-3.5 z-10 flex items-center gap-1.5 font-sans text-[11.5px] font-medium text-text-muted hover:text-text-primary"
+                    className="absolute right-4 top-3.5 z-10 flex items-center gap-1.5 font-sans text-[11.5px] font-medium text-text-muted hover:text-text-primary"
                   >
                     <ArrowLeft size={13} />
                     Kembali
