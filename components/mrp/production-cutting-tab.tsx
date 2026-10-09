@@ -102,6 +102,8 @@ type RollLine = { id: string; roll: RestingCandidateRoll; netKg: number; gramasi
  *  `claimable`: berat kotornya cuma catatan awal, bukan invoice supplier, jadi tidak ada klaim yang
  *  bisa diajukan & selisih tidak boleh memblokir Resting. */
 function rollVariance(roll: RestingCandidateRoll, netKg: number) {
+  // Berat bersih belum diisi (kosong = 0): belum ada selisih yang bisa dinilai -- bukan "100% lebih ringan".
+  if (!(netKg > 0)) return { diff: 0, pct: 0, withinTolerance: true, claimable: false };
   const v = weightVariance(roll.grossKg, netKg);
   return roll.isSynthetic ? { ...v, claimable: false } : v;
 }
@@ -394,9 +396,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
       ...picked.map((roll) => ({
         id: roll.claimKey,
         roll,
-        // Default berat bersih = berat kotor invoice (sama seperti tahap timbang lama), tinggal
-        // dikoreksi kalau timbangan fisik berbeda.
-        netKg: roll.netKg ?? roll.grossKg,
+        // Berat bersih dikosongkan (revisi 2026-10-09, owner): operator mengisi hasil timbangan sendiri.
+        // Resting baru bisa diklik setelah semua roll terisi (canRest). Roll yang sudah pernah ditimbang tetap terisi.
+        netKg: roll.netKg ?? 0,
         gramasi: fillGramasi,
         setting: fillSetting,
         codeRoll: roll.codeRoll,
@@ -515,7 +517,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
       if (claimKind === "BERAT" && claimVariance) {
         await receiveRawMaterialRoll(r.invoiceId, r.warna, r.lengan, r.rollIndex, claimLine.netKg, { diffKg: claimVariance.diff, pct: claimVariance.pct }, undefined, photo);
       } else {
-        await submitRollDefectClaim([{ invoiceId: r.invoiceId, warna: r.warna, lengan: r.lengan, rollIndex: r.rollIndex, netKg: claimLine.netKg }], claimNote.trim(), photo);
+        await submitRollDefectClaim([{ invoiceId: r.invoiceId, warna: r.warna, lengan: r.lengan, rollIndex: r.rollIndex, netKg: claimLine.netKg > 0 ? claimLine.netKg : r.grossKg }], claimNote.trim(), photo);
       }
       removeLine(claimLine.id);
       closeClaim();
@@ -688,8 +690,14 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         <NumberInput value={l.netKg} decimals={2} emptyWhenZero placeholder="mis. 25,50" onChange={(v) => updateLine(l.id, { netKg: v })} className="input w-[100px] text-right" />
                       </span>
                       <span data-label="Selisih" className={"text-right font-mono text-[11px] " + (variance.claimable ? "text-danger-fg" : variance.withinTolerance ? "text-success-fg" : "text-warning-fg")}>
-                        {variance.diff >= 0 ? "+" : ""}
-                        {formatDecimal(variance.diff)} ({variance.pct.toFixed(1)}%)
+                        {l.netKg > 0 ? (
+                          <>
+                            {variance.diff >= 0 ? "+" : ""}
+                            {formatDecimal(variance.diff)} ({variance.pct.toFixed(1)}%)
+                          </>
+                        ) : (
+                          "—"
+                        )}
                       </span>
                       <span data-label="Gramasi (gsm)" className="flex items-center justify-end">
                         <NumberInput value={l.gramasi} onChange={(v) => updateLine(l.id, { gramasi: v })} decimals={2} commaOnly emptyWhenZero placeholder="mis. 180" className="input w-[80px] text-right" />
