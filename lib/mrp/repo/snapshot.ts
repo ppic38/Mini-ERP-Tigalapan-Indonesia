@@ -1053,7 +1053,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
   // Master Data "Kerah/Manset" (konversi pcs->kg + harga/kg, migration 0036) -- `kg_per_pcs`/
   // `harga_per_kg` numeric Postgres, `Number(...)` wajib sama seperti kolom numeric lain di file ini.
   const kerahMansetSettings: KerahMansetSettingRow[] = (kerahMansetSettingRows.data ?? []).map((r) => ({
-    kind: r.kind as "KERAH" | "MANSET",
+    kind: r.kind as "KERAH" | "MANSET" | "RIB",
     kgPerPcs: Number(r.kg_per_pcs),
     hargaPerKg: Number(r.harga_per_kg),
   }));

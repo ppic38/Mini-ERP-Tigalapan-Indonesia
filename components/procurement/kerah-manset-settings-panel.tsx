@@ -28,9 +28,10 @@ export function KerahMansetSettingsPanel() {
   const rowsRaw = useMrpStore((s) => s.kerahMansetSettings);
   const updateRow = useMrpStore((s) => s.updateKerahMansetSetting);
 
-  // Urutan tampil KERAH lalu MANSET — tidak terjamin dari server (order by kind di migration
-  // seharusnya sudah alfabetis KERAH < MANSET, tapi tetap di-sort eksplisit di sini untuk aman).
-  const rows = [...rowsRaw].sort((a, b) => (a.kind === "KERAH" ? 0 : 1) - (b.kind === "KERAH" ? 0 : 1));
+  // Urutan tampil: Rib, Kerah, Manset (migration 0069 menambah baris RIB) — di-sort eksplisit karena urutan dari server tidak terjamin.
+  const KIND_ORDER = { RIB: 0, KERAH: 1, MANSET: 2 } as const;
+  const kindLabel = (k: KerahMansetSettingRow["kind"]) => (k === "RIB" ? "Rib" : k === "KERAH" ? "Kerah" : "Manset");
+  const rows = [...rowsRaw].sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind]);
 
   const [editingRow, setEditingRow] = useState<KerahMansetSettingRow | null>(null);
   const [draft, setDraft] = useState<Draft>({ kgPerPcs: 0 });
@@ -58,7 +59,7 @@ export function KerahMansetSettingsPanel() {
   }
 
   const columns: ColumnDef<KerahMansetSettingRow>[] = [
-    { key: "item", label: "Item", default: true, render: (r) => <span className="font-sans text-[12.5px] font-medium text-text-primary">{r.kind === "KERAH" ? "Kerah" : "Manset"}</span> },
+    { key: "item", label: "Item", default: true, render: (r) => <span className="font-sans text-[12.5px] font-medium text-text-primary">{kindLabel(r.kind)}</span> },
     { key: "kgPerPcs", label: "Kg per Pcs", default: true, align: "right", render: (r) => r.kgPerPcs.toLocaleString("id-ID", { minimumFractionDigits: 3, maximumFractionDigits: 3 }) },
     {
       key: "aksi",
@@ -75,18 +76,18 @@ export function KerahMansetSettingsPanel() {
   return (
     <>
       <DataTable
-        title="Kerah/Manset"
+        title="Rib / Kerah / Manset"
         columns={columns}
         rows={rows}
         keyOf={(r) => r.kind}
-        search={{ placeholder: "Cari item…", getText: (r) => (r.kind === "KERAH" ? "Kerah" : "Manset") }}
+        search={{ placeholder: "Cari item…", getText: (r) => kindLabel(r.kind) }}
         firstColumnLabel="No."
         firstColumnRender={(r) => <span className="font-mono text-[11px] text-text-muted">{rows.indexOf(r) + 1}</span>}
         emptyText="Data belum tersedia."
         bodyMaxHeight="60vh"
       />
       {editingRow && (
-        <MasterDataFormModal title={`Edit ${editingRow.kind === "KERAH" ? "Kerah" : "Manset"}`} onCancel={() => setEditingRow(null)} onSave={handleSave} saving={saving} error={error}>
+        <MasterDataFormModal title={`Edit ${kindLabel(editingRow.kind)}`} onCancel={() => setEditingRow(null)} onSave={handleSave} saving={saving} error={error}>
           <ModalField label="Kg per Pcs">
             <NumberInput value={draft.kgPerPcs} onChange={(v) => setDraft({ ...draft, kgPerPcs: v })} decimals={3} className="input w-full" />
           </ModalField>

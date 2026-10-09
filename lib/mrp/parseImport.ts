@@ -60,7 +60,7 @@ function toLengan(raw: string): Lengan {
 
 export async function parseMrpImportFile(
   file: File,
-  kerahMansetSettings?: { kind: "KERAH" | "MANSET"; kgPerPcs: number; hargaPerKg: number }[]
+  kerahMansetSettings?: { kind: "KERAH" | "MANSET" | "RIB"; kgPerPcs: number; hargaPerKg: number }[]
 ): Promise<ParsedMrpImport> {
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: "array" });
@@ -156,10 +156,12 @@ export async function parseMrpImportFile(
   // parameter tidak diisi -- supaya pemanggil lain/test lama yang belum di-update tidak patah.
   const kerahKgPerPcs = kerahMansetSettings?.find((s) => s.kind === "KERAH")?.kgPerPcs ?? 0.02;
   const mansetKgPerPcs = kerahMansetSettings?.find((s) => s.kind === "MANSET")?.kgPerPcs ?? 0.03;
+  // Rib (migration 0069): kg per pcs untuk kebutuhan rib kalau kolom RIB KILOGRAM kosong. Bawaan 0,007 (7 gram) kalau belum ada di Master Data.
+  const ribKgPerPcs = kerahMansetSettings?.find((s) => s.kind === "RIB")?.kgPerPcs ?? 0.007;
 
   const lenganGroups = Array.from(groupMap.values()).map((g) => {
     if (!g.totalQty) g.totalQty = g.sizes.reduce((a, s) => a + s.qty, 0);
-    if (!g.ribKg) g.ribKg = Math.round(((g.totalQty * 6.5) / 1000) * 1000) / 1000;
+    if (!g.ribKg) g.ribKg = Math.round(g.totalQty * ribKgPerPcs * 1000) / 1000;
     if (!g.rollEstimate) g.rollEstimate = g.totalQty > 0 ? Math.max(1, Math.round(g.totalQty / 117)) : 0;
     // Grup dengan qty > 0 (benar-benar ada pemesanan) TAPI tidak satu pun barisnya punya vendor
     // valid (semuanya "-"/kosong) -- ini genuinely data tidak lengkap, bukan placeholder yang sah,

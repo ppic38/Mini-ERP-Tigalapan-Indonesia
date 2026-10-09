@@ -92,7 +92,8 @@ export type ItemSellingPriceRow = {
  *  angka qty pcs mentah dari kolom Excel KERAH/MANSET jadi kg sungguhan, dan oleh PO Approval
  *  (app/procurement/po-approval/page.tsx) untuk estimasi nominal Rp (PURELY DISPLAY, tidak
  *  mengubah nilai PO Bahan aktual). */
-export type KerahMansetSettingRow = { kind: "KERAH" | "MANSET"; kgPerPcs: number; hargaPerKg: number };
+/** Parameter konversi pcs -> kg per jenis material tambahan. "RIB" (migration 0069) = kg rib per pcs untuk kebutuhan rib saat upload MRP. */
+export type KerahMansetSettingRow = { kind: "KERAH" | "MANSET" | "RIB"; kgPerPcs: number; hargaPerKg: number };
 
 /** Master Data "Harga RIB" (migration 0037) -- harga RIB per kg, per supplier + warna (bentuk sama
  *  seperti HargaKainRow tanpa `kategori`). Di-seed dari price list KNITTO; supplier lain yang belum

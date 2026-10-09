@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Master Data "Rib per Pcs" -- migration 0069 (2026-10-09)
+Owner: faktor rib naik dari 6,5 ke 7 gram/pcs "di data terbaru saja", dan bisa diatur seperti Kerah/Manset. `kerah_manset_settings` dapat baris `RIB` (kg_per_pcs 0,007; constraint kind diperluas). Dipakai `parseMrpImportFile` (lib/mrp/parseImport.ts) HANYA saat upload MRP baru dan kolom RIB KILOGRAM kosong (`ribKg = totalQty x kgPerPcs`, bawaan 0,007 kalau baris belum ada); MRP lama tidak dihitung ulang. Diedit di Procurement > Master Data > "Rib / Kerah / Manset". **Owner menjalankan migration manual**; sebelum itu baris Rib belum tampil di panel tapi upload tetap memakai 7 gram. Halaman input MRP manual (app/mrp/ppic/new) memakai konstanta 7 gram.
+
 ## Profil Saya portal Vendor Produksi (2026-10-09, tanpa migration baru)
 Permintaan owner: halaman profil untuk akun utama dan anggota tim vendor, untuk mengganti password; username tidak boleh diubah.
 - Halaman `/vendor-maklon/profil-saya` (`app/vendor-maklon/profil-saya/page.tsx`), dibuka dari menu profil di topbar. Menampilkan username/nama (akun utama: nama vendor) TERKUNCI; hanya password yang bisa diganti. Logika: `lib/mrp/vendorProfileActions.ts` (password saat ini wajib cocok, baru min. 6 karakter dan harus beda, hash bcrypt + salinan terenkripsi `savePasswordCopy`, tercatat di vendor_action_log tanpa isi password).

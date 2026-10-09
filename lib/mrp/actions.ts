@@ -5939,7 +5939,7 @@ export async function deleteEkspedisiRateAction(id: string): Promise<void> {
 
 // Master Data "Kerah/Manset" (konversi pcs->kg + harga/kg, GLOBAL, migration 0036) -- SELALU
 // PERSIS 2 baris (KERAH & MANSET), tidak ada add/delete, cuma update.
-export async function updateKerahMansetSettingAction(kind: "KERAH" | "MANSET", patch: Partial<Pick<KerahMansetSettingRow, "kgPerPcs" | "hargaPerKg">>): Promise<void> {
+export async function updateKerahMansetSettingAction(kind: "KERAH" | "MANSET" | "RIB", patch: Partial<Pick<KerahMansetSettingRow, "kgPerPcs" | "hargaPerKg">>): Promise<void> {
   await requireMasterDataRole();
   const p: Record<string, unknown> = {};
   if (patch.kgPerPcs !== undefined) p.kg_per_pcs = patch.kgPerPcs;

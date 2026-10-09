@@ -13,7 +13,7 @@ export function ImportDropzone({
   // Master Data "Kerah/Manset" (migration 0036) -- di-thread dari app/mrp/ppic/page.tsx (yang
   // punya akses useMrpStore) supaya konversi qty pcs -> kg SUDAH diterapkan di preview parse ini
   // (bukan cuma nanti pas commit), konsisten dengan data yang benar-benar tersimpan.
-  kerahMansetSettings?: { kind: "KERAH" | "MANSET"; kgPerPcs: number; hargaPerKg: number }[];
+  kerahMansetSettings?: { kind: "KERAH" | "MANSET" | "RIB"; kgPerPcs: number; hargaPerKg: number }[];
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [parsed, setParsed] = useState<ParsedMrpImport | null>(null);

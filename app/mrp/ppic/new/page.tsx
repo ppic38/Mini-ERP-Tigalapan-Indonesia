@@ -11,7 +11,7 @@ import type { Lengan } from "@/lib/mrp/types";
 type ItemRow = { id: number; label: string; size: string; qty: number };
 
 let rowSeq = 4;
-const KG_FACTOR = 6.5 / 1000;
+const KG_FACTOR = 7 / 1000; // 7 gram rib per pcs (dari 6,5, 2026-10-09)
 
 export default function InputMrpPage() {
   const router = useRouter();
