@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { alertDialog } from "@/components/ui/confirm-dialog";
 import Link from "next/link";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Download } from "lucide-react";
+import { exportMaklonPoRasioExcel } from "@/lib/mrp/exportPoExcel";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
@@ -186,6 +187,18 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
   // kesanggupan normal mereka per minggu.
   const weeklyCapacity = vendorProduksiList.find((v) => v.id === vendorId)?.weeklyCapacity ?? 0;
 
+  const [rasioBusyId, setRasioBusyId] = useState<string | null>(null);
+  async function downloadRasio(p: MaklonPO) {
+    setRasioBusyId(p.id);
+    try {
+      await exportMaklonPoRasioExcel([p], mrpDetails, `Form-Rasio-${p.id}.xlsx`);
+    } catch (err) {
+      void alertDialog({ title: "Gagal membuat file", message: err instanceof Error ? err.message : String(err), tone: "danger" });
+    } finally {
+      setRasioBusyId(null);
+    }
+  }
+
   const columns: ColumnDef<MaklonPO>[] = [
     { key: "noPo", label: "No PO", default: false, render: (p) => <span className="font-mono font-medium">{p.id}</span> },
     { key: "qty", label: "Qty", default: true, align: "right", render: (p) => formatPcs(p.qty) + " pcs" },
@@ -260,6 +273,21 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
         ) : (
           "—"
         ),
+    },
+    {
+      key: "rasio",
+      label: "Form Rasio",
+      default: true,
+      render: (p) => (
+        <button
+          onClick={() => void downloadRasio(p)}
+          disabled={rasioBusyId === p.id}
+          className="inline-flex items-center gap-1 rounded-md border border-[#CBD5DF] px-2.5 py-1 font-sans text-[11px] font-semibold text-action-primary hover:bg-[#F2F4F7] disabled:opacity-50"
+        >
+          <Download size={12} />
+          {rasioBusyId === p.id ? "Membuat…" : "Excel"}
+        </button>
+      ),
     },
     {
       key: "aksi",

@@ -51,6 +51,25 @@ export async function listVendorTeamAction(): Promise<ActionResult<VendorTeamMem
   });
 }
 
+/** Pengaturan OPSIONAL (migration 0068): hasil cutting anggota tim yang kurang dari target wajib disetujui akun utama.
+ *  `available` false = migration 0068 belum dijalankan (toggle disembunyikan di Tim Saya). */
+export async function getCuttingApprovalRequiredAction(): Promise<ActionResult<{ required: boolean; available: boolean }>> {
+  return toActionResult(async () => {
+    const vendorId = await requireMainVendorSession();
+    const { data, error } = await supabaseServer().from("vendors_produksi").select("cutting_approval_required").eq("id", vendorId).maybeSingle();
+    if (error) return { required: false, available: false };
+    return { required: !!data?.cutting_approval_required, available: true };
+  });
+}
+
+export async function setCuttingApprovalRequiredAction(required: boolean): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    const vendorId = await requireMainVendorSession();
+    const { error } = await supabaseServer().from("vendors_produksi").update({ cutting_approval_required: required }).eq("id", vendorId);
+    if (error) throw new Error("Gagal menyimpan pengaturan -- jalankan migration 0068 di Supabase dulu. " + error.message);
+  });
+}
+
 export async function addVendorTeamMemberAction(input: { username: string; name: string; password: string; allowedPages: string[] }): Promise<ActionResult<void>> {
   return toActionResult(async () => {
     const vendorId = await requireMainVendorSession();

@@ -431,4 +431,134 @@ export async function exportMaklonPoExcel(pos: MaklonPO[], mrpDetails: MrpDetail
   await download(wb, fileName);
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Form Rasio PO Produksi (permintaan vendor 2026-10-09: "export form PO dengan format [tabel MRP] untuk informasi
+// rasio, semua informasi ada di situ tanpa buka satu-satu di ERP"). Susunan kolom meniru template MRP: per warna ->
+// per lengan -> per size, dengan Total / Total Roll / Rib Total digabung per grup (warna+lengan) dan Kerah/Manset
+// per lengan + total per warna. TANPA harga. Kebutuhan roll & rib per item dibagi proporsional dari angka grup/aduan
+// (sama dengan pembagian di template): roll per size = qtyRoll aduan x (qty size / qty aduan), rib per size =
+// ribKg grup x (qty size / total grup). Kategori diambil per GRUP (parser menyimpan kategori baris pertama grup).
+const RASIO_HEAD = [
+  "KATEGORI", "WARNA", "ITEM", "JENIS LENGAN DAN UKURAN", "QTY", "TOTAL", "KEBUTUHAN ROLL PER ITEM", "TOTAL ROLL", "ADUAN POLA", "VENDOR",
+  "KEBUTUHAN RIB PER ITEM", "RIB TOTAL", "KERAH (PDK)", "MANSET (PDK)", "KERAH (PJG)", "MANSET (PJG)", "KERAH (TOTAL)", "MANSET (TOTAL)",
+];
+const RASIO_WIDTHS = [14, 22, 30, 24, 8, 9, 14, 10, 12, 16, 14, 10, 11, 11, 11, 11, 12, 12];
+const ORANGE = "FFFFC000";
+const KIDS_FILL = "FFFFF2CC";
+
+function rasioSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
+  ws.views = [{ showGridLines: false, state: "frozen", ySplit: 4 }];
+  ws.pageSetup = { paperSize: 9, orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+  RASIO_WIDTHS.forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  const vendorName = VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi;
+  const detail = mrpDetailFor(po.mrpId, mrpDetails);
+
+  ws.mergeCells(1, 1, 1, 8);
+  const t = ws.getCell(1, 1);
+  t.value = "FORM RASIO PO PRODUKSI  |  " + po.id + "  |  " + po.mrpId;
+  t.font = { name: FONT, size: 13, bold: true, color: { argb: INK } };
+  ws.mergeCells(2, 1, 2, 8);
+  const sub = ws.getCell(2, 1);
+  sub.value = "Vendor: " + vendorName + "   |   Total qty: " + po.qty.toLocaleString("id-ID") + " pcs   |   Tanggal cetak: " + formatDate(localDateString(new Date()));
+  sub.font = { name: FONT, size: 10, color: { argb: GRAY } };
+
+  const hr = 4;
+  RASIO_HEAD.forEach((h, i) => {
+    const c = ws.getCell(hr, i + 1);
+    c.value = h;
+    c.font = { name: FONT, size: 10, bold: true, color: { argb: INK } };
+    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ORANGE } };
+    c.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    c.border = BORDER;
+  });
+  ws.getRow(hr).height = 30;
+
+  const groups = (detail?.lenganGroups ?? []).filter(
+    (g) => g.totalQty > 0 && (g.vendorDefault === po.vendorProduksi || (detail?.aduanRows ?? []).some((a) => a.lenganGroupId === g.id && a.vendor === po.vendorProduksi))
+  );
+  const warnaOrder: string[] = [];
+  for (const g of groups) if (!warnaOrder.includes(g.warna)) warnaOrder.push(g.warna);
+
+  let r = hr + 1;
+  const put = (row: number, col: number, v: string | number, o: { align?: "left" | "right" | "center"; fmt?: string; bold?: boolean; fill?: string } = {}) => {
+    const c = ws.getCell(row, col);
+    c.value = v;
+    c.font = { name: FONT, size: 10, bold: o.bold ?? false, color: { argb: INK } };
+    c.alignment = { vertical: "middle", horizontal: o.align ?? "left" };
+    c.border = BORDER;
+    if (o.fmt) c.numFmt = o.fmt;
+    if (o.fill) c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: o.fill } };
+    return c;
+  };
+  const merge = (r1: number, r2: number, col: number) => {
+    if (r2 > r1) ws.mergeCells(r1, col, r2, col);
+  };
+
+  for (const warna of warnaOrder) {
+    const warnaStart = r;
+    const ofWarna = groups.filter((g) => g.warna === warna).sort((a, b) => (a.lengan === b.lengan ? 0 : a.lengan === "PENDEK" ? -1 : 1));
+    let kerahTotal = 0;
+    let mansetTotal = 0;
+    for (const g of ofWarna) {
+      const gStart = r;
+      const lenganShort = g.lengan === "PENDEK" ? "PDK" : "PJG";
+      const aduan = (detail?.aduanRows ?? []).filter((a) => a.lenganGroupId === g.id);
+      const groupRoll = aduan.length > 0 ? aduan.reduce((s, a) => s + a.qtyRoll, 0) : g.rollEstimate;
+      for (const sz of g.sizes) {
+        const fill = /KIDS/i.test(g.kategori) ? KIDS_FILL : undefined;
+        const withSize = aduan.filter((a) => a.sizes.some((x) => x.size === sz.size && x.qty > 0));
+        const rollPerItem = withSize.reduce((s, a) => {
+          const q = a.sizes.find((x) => x.size === sz.size)?.qty ?? 0;
+          return s + (a.qty > 0 ? a.qtyRoll * (q / a.qty) : 0);
+        }, 0);
+        const ribPerItem = g.totalQty > 0 ? g.ribKg * (sz.qty / g.totalQty) : 0;
+        put(r, 1, g.kategori || "—", { fill });
+        put(r, 2, g.warna, { fill });
+        put(r, 3, g.warna + " " + lenganShort + " " + sz.size, { fill });
+        put(r, 4, g.lengan + " " + sz.size, { fill });
+        put(r, 5, sz.qty, { align: "right", fmt: "#,##0", fill });
+        put(r, 7, rollPerItem, { align: "right", fmt: "0.00", fill });
+        put(r, 9, withSize.length > 0 ? withSize.map((a) => a.kode).join(", ") : "-", { align: "center", fill });
+        put(r, 10, vendorName, { fill });
+        put(r, 11, ribPerItem, { align: "right", fmt: "0.00", fill });
+        r++;
+      }
+      const gEnd = r - 1;
+      put(gStart, 6, g.totalQty, { align: "center", fmt: "#,##0", bold: true });
+      put(gStart, 8, groupRoll, { align: "center", fmt: "0.##", bold: true });
+      put(gStart, 12, g.ribKg, { align: "center", fmt: "0.##", bold: true });
+      for (const col of [6, 8, 12]) merge(gStart, gEnd, col);
+      const kc = g.lengan === "PENDEK" ? [13, 14] : [15, 16];
+      put(gStart, kc[0], g.kerahKg || "", { align: "center", fmt: "0.###" });
+      put(gStart, kc[1], g.mansetKg || "", { align: "center", fmt: "0.###" });
+      for (const col of [13, 14, 15, 16]) {
+        for (let rr = gStart; rr <= gEnd; rr++) if (!ws.getCell(rr, col).border?.top) put(rr, col, "", {});
+        merge(gStart, gEnd, col);
+      }
+      kerahTotal += g.kerahKg;
+      mansetTotal += g.mansetKg;
+    }
+    const warnaEnd = r - 1;
+    put(warnaStart, 17, kerahTotal, { align: "center", fmt: "0.###" });
+    put(warnaStart, 18, mansetTotal, { align: "center", fmt: "0.###" });
+    for (const col of [17, 18]) {
+      for (let rr = warnaStart; rr <= warnaEnd; rr++) if (rr !== warnaStart) put(rr, col, "", {});
+      merge(warnaStart, warnaEnd, col);
+    }
+  }
+  if (warnaOrder.length === 0) {
+    const c = ws.getCell(hr + 1, 1);
+    c.value = "Tidak ada rincian MRP untuk vendor ini.";
+    c.font = { name: FONT, size: 10, italic: true, color: { argb: GRAY } };
+  }
+}
+
+/** Form Rasio PO Produksi: 1 PO = 1 sheet (landscape), banyak PO = banyak sheet dalam 1 file. No-op kalau `pos` kosong. */
+export async function exportMaklonPoRasioExcel(pos: MaklonPO[], mrpDetails: MrpDetail[], fileName: string) {
+  if (pos.length === 0) return;
+  const { wb } = await newWorkbook();
+  for (const po of pos) rasioSheet(wb.addWorksheet(sheetName(wb, "Rasio " + po.id.replace(/^PO-(MKL-)?/, ""))), po, mrpDetails);
+  await download(wb, fileName);
+}
+
 type ExcelJS_Buffer = Parameters<Workbook["addImage"]>[0]["buffer"];

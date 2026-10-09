@@ -770,6 +770,16 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
       sizeQty: sizeRows.length > 0 ? sizeQty : undefined,
       fgSizeQty: fgSizeRows.length > 0 ? fgSizeQty : undefined,
       closedAt: b.closed_at ?? undefined,
+      cuttingApproval: b.cutting_approval_status
+        ? {
+            status: b.cutting_approval_status as "PENDING" | "APPROVED" | "REJECTED",
+            submittedBy: b.cutting_submitted_by ?? undefined,
+            submittedAt: b.cutting_submitted_at ?? undefined,
+            decidedBy: b.cutting_decided_by ?? undefined,
+            decidedAt: b.cutting_decided_at ?? undefined,
+            note: b.cutting_decision_note ?? undefined,
+          }
+        : undefined,
     };
   });
   const productionYieldResolutions: Record<string, ProductionYieldResolution> = {};

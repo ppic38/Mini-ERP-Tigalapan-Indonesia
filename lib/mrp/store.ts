@@ -493,6 +493,9 @@ type FlowActions = {
   /** Item 14 (feedback batch 2026-09-10): edit resting_at untuk 1 sesi resting (beberapa batch
    *  sekaligus, semuanya berbagi resting_at yang sama). */
   updateBatchRestingAt: (batchIds: string[], restingAt: string) => Promise<void>;
+  /** Migration 0068 (opsional per vendor): akun UTAMA vendor menyetujui / menolak hasil cutting anggota tim yang kurang
+   *  dari target. Tolak mengosongkan lagi hasil cutting roll itu (alasan wajib). Melempar kalau ditolak server. */
+  decideCuttingApproval: (batchIds: string[], decision: "APPROVE" | "REJECT", note?: string) => Promise<void>;
   resolveProductionYield: (batchId: string, note: string) => Promise<void>;
   unresolveProductionYield: (batchId: string) => Promise<void>;
   reworkRejectSize: (input: { mrpId: string; vendorProduksi: string; warna: string; lengan: Lengan; fromSize: string; qty: number; toLengan: Lengan; toSize: string; usia: Usia }) => Promise<void>;
@@ -2151,6 +2154,15 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       // dipanggil eksplisit di sini juga supaya client selalu balik konsisten dengan DB, apa pun
       // hasil aslinya di server (bukan cuma percaya revert optimistic lokal).
       backgroundRefresh();
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  decideCuttingApproval: async (batchIds, decision, note) => {
+    try {
+      unwrapAction(await actions.decideCuttingApprovalAction(batchIds, decision, note));
+    } catch (err) {
+      backgroundRefresh(); // keputusan mungkin sudah diambil orang lain -- tampilkan keadaan terbaru
       throw err;
     }
     backgroundRefresh();

@@ -181,7 +181,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
     runKeyed(key, promise, setActionError);
   }
 
-  const mrpIds = Array.from(new Set(productionBatches.filter((b) => b.vendorProduksi === vendorId && b.cuttingAt).map((b) => b.mrpId)));
+  const mrpIds = Array.from(new Set(productionBatches.filter((b) => b.vendorProduksi === vendorId && b.cuttingAt && b.cuttingApproval?.status !== "PENDING").map((b) => b.mrpId)));
   // warnaLenganGroupsWithFg (bukan cutWarnaLenganGroups) -- ikutkan grup TUJUAN rework lintas
   // lengan yang tidak pernah dicutting sendiri (lihat catatan di lib/mrp/derive.ts), supaya FG
   // hasil rework itu punya baris sendiri yang bisa di-"Selesai Produksi"-kan juga.
@@ -205,7 +205,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
     const gk = selectedMrpId + "|" + g.warna + "|" + g.lengan;
     const meta = productionGroupMetaFor(gk, productionGroupMeta);
     if (meta?.doneAt) return false;
-    const gb = productionBatches.filter((b) => b.mrpId === selectedMrpId && b.warna === g.warna && b.lengan === g.lengan && b.cuttingAt);
+    const gb = productionBatches.filter((b) => b.mrpId === selectedMrpId && b.warna === g.warna && b.lengan === g.lengan && b.cuttingAt && b.cuttingApproval?.status !== "PENDING");
     const openWithFg = gb.some((b) => !b.closedAt && Object.values(b.fgSizeQty ?? {}).some((q) => q > 0));
     if (openWithFg) return true;
     if (!meta?.fgConfirmedAt) {
@@ -365,7 +365,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                 // saja). Sejak revisi 2026-09-12, tombol "Selesai Produksi" TIDAK lagi menunggu
                 // semua roll ditutup manual -- server (confirmFgDoneAction) otomatis menutup roll
                 // yang masih terbuka begitu tombol itu diklik.
-                const groupBatches = kind === "FG" ? productionBatches.filter((b) => b.mrpId === selectedMrpId && b.warna === g.warna && b.lengan === g.lengan && b.cuttingAt) : [];
+                const groupBatches = kind === "FG" ? productionBatches.filter((b) => b.mrpId === selectedMrpId && b.warna === g.warna && b.lengan === g.lengan && b.cuttingAt && b.cuttingApproval?.status !== "PENDING") : [];
                 // Roll warna/lengan ini yang SUDAH DITERIMA di Good Receive tapi belum selesai diproses (belum diresting, atau sudah
                 // diresting tapi belum dicutting) -- selama masih ada, warna ini belum boleh tampil "Finish Good Selesai".
                 const unprocessedRolls =

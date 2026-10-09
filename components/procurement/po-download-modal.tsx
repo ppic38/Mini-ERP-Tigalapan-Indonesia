@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { exportMaklonPoExcel } from "@/lib/mrp/exportPoExcel";
+import { exportMaklonPoExcel, exportMaklonPoRasioExcel } from "@/lib/mrp/exportPoExcel";
 import { exportMaterialPoExcel } from "@/lib/mrp/exportPoExcel";
 import { exportMaklonPoPdf, exportMaklonPoPdfBatch, exportMaterialPoPdf, exportMaterialPoPdfBatch, type PoExportVariant } from "@/lib/mrp/exportPoPdf";
 import type { MrpDetail } from "@/lib/mrp/store";
@@ -21,16 +21,18 @@ export type PoDownloadRequest =
  *  PoExportVariant (lib/mrp/exportPoPdf.ts) untuk penjelasan lengkap bedanya. */
 export function PoDownloadModal({ request, mrpDetails, onClose }: { request: PoDownloadRequest; mrpDetails: MrpDetail[]; onClose: () => void }) {
   const [variant, setVariant] = useState<PoExportVariant>("internal");
-  const [busy, setBusy] = useState<"pdf" | "excel" | null>(null);
+  const [busy, setBusy] = useState<"pdf" | "excel" | "rasio" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const count = request.pos.length;
   const suffix = variant === "external" ? "-eksternal" : "";
 
-  async function run(format: "pdf" | "excel") {
+  async function run(format: "pdf" | "excel" | "rasio") {
     setBusy(format);
     setError(null);
     try {
-      if (format === "pdf") {
+      if (format === "rasio") {
+        if (request.kind === "maklon") await exportMaklonPoRasioExcel(request.pos, mrpDetails, `${request.baseName}-rasio.xlsx`);
+      } else if (format === "pdf") {
         if (request.kind === "material") {
           if (count === 1) exportMaterialPoPdf(request.pos[0], mrpDetails, variant);
           else exportMaterialPoPdfBatch(request.pos, mrpDetails, `${request.baseName}${suffix}.pdf`, variant);
@@ -105,6 +107,16 @@ export function PoDownloadModal({ request, mrpDetails, onClose }: { request: PoD
               <span className="text-[10.5px] text-text-muted">{busy === "excel" ? "Membuat file…" : ".xlsx, ber-kop logo"}</span>
             </button>
           </div>
+          {request.kind === "maklon" && (
+            <button
+              onClick={() => run("rasio")}
+              disabled={busy != null}
+              className="mt-3 flex w-full flex-col items-center gap-1 rounded-lg border border-[#DDE4EB] px-3 py-3 font-sans hover:border-accent-blue hover:bg-info-bg disabled:opacity-50"
+            >
+              <span className="text-[13px] font-semibold text-text-primary">Form Rasio (Excel)</span>
+              <span className="text-[10.5px] text-text-muted">{busy === "rasio" ? "Membuat file…" : "Tabel MRP per size: roll, aduan pola, rib, kerah/manset"}</span>
+            </button>
+          )}
           {error && <div className="mt-3 rounded-md border border-danger bg-danger-bg px-3 py-2 font-sans text-[11.5px] text-danger-fg">{error}</div>}
         </div>
       </div>

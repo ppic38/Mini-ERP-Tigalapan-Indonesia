@@ -9,6 +9,7 @@ import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { useVendorTeamStore, type TeamMember } from "@/lib/mrp/vendor-team-store";
 import { describeVendorPermissions } from "@/lib/mrp/vendorPages";
+import { getCuttingApprovalRequiredAction, setCuttingApprovalRequiredAction } from "@/lib/mrp/vendorTeamActions";
 import { VendorPermissionPicker } from "@/components/mrp/vendor-permission-picker";
 
 function fmtTime(iso: string): string {
@@ -176,6 +177,64 @@ function PasswordCell({ member }: { member: TeamMember }) {
   );
 }
 
+/** Pengaturan OPSIONAL: hasil cutting anggota tim yang kurang dari target wajib disetujui akun utama (migration 0068). */
+function CuttingApprovalSetting() {
+  const [state, setState] = useState<{ required: boolean; available: boolean } | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    getCuttingApprovalRequiredAction()
+      .then((r) => {
+        if (alive && r.ok) setState(r.data);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (!state || !state.available) return null;
+
+  async function toggle() {
+    if (!state || saving) return;
+    const next = !state.required;
+    setSaving(true);
+    setState({ ...state, required: next });
+    try {
+      const r = await setCuttingApprovalRequiredAction(next);
+      if (!r.ok) throw new Error(r.error);
+    } catch (err) {
+      setState((s) => (s ? { ...s, required: !next } : s));
+      void alertDialog({ title: "Pengaturan tidak tersimpan", message: err instanceof Error ? err.message : String(err), tone: "danger" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border-subtle bg-surface-card px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <div className="font-sans text-[13px] font-semibold text-text-primary">Persetujuan hasil cutting</div>
+        <div className="mt-0.5 font-sans text-[11.5px] text-text-muted">
+          Bila aktif, hasil cutting yang diinput anggota tim dan kurang dari target menunggu persetujuan Anda (akun utama) sebelum Finish Good bisa diisi. Hasil yang diinput akun utama tidak perlu persetujuan.
+        </div>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={state.required}
+        onClick={() => void toggle()}
+        disabled={saving}
+        className={"relative h-6 w-11 flex-none rounded-full transition-colors disabled:opacity-60 " + (state.required ? "bg-action-primary" : "bg-[#CBD5DF]")}
+      >
+        <span className={"absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all " + (state.required ? "left-[22px]" : "left-0.5")} />
+        <span className="sr-only">{state.required ? "Aktif" : "Nonaktif"}</span>
+      </button>
+    </div>
+  );
+}
+
 const ROW_GRID = "minmax(100px,1fr) minmax(110px,1.1fr) 170px minmax(150px,1.5fr) 86px 224px";
 
 function TeamContent({ vendorId }: { vendorId: string }) {
@@ -245,6 +304,8 @@ function TeamContent({ vendorId }: { vendorId: string }) {
     >
       <div className="flex flex-col gap-4">
         {error && <div className="rounded-md border border-danger bg-danger-bg px-4 py-2.5 font-sans text-[12px] text-danger-fg">{error}</div>}
+
+        <CuttingApprovalSetting />
 
         <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
           <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-4 py-3">

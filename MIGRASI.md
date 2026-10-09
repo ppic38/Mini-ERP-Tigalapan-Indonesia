@@ -1,5 +1,11 @@
 # Migrasi Project — Status & Riwayat
 
+## Persetujuan hasil cutting (opsional per vendor) + Form Rasio PO -- migration 0068 (2026-10-09)
+Permintaan vendor: (1) export form PO format tabel MRP untuk info rasio, (2) approval cutting sub tim -> akun utama kalau hasil kurang dari target, OPSIONAL per vendor.
+- **Form Rasio (Excel)**: `exportMaklonPoRasioExcel` (lib/mrp/exportPoExcel.ts). Kolom meniru template MRP (kategori, warna, item, lengan+size, qty, total, kebutuhan roll per item, total roll, aduan pola, vendor, rib per item, rib total, kerah/manset PDK/PJG/total), TANPA harga. Roll per size = qtyRoll aduan x qty size / qty aduan; rib per size = ribKg grup x qty size / total grup. Tombol: portal vendor (PO Produksi Saya, kolom Form Rasio) + dialog Download PO internal (tombol Form Rasio). Kategori dari grup (baris pertama), jadi baris KIDS dalam grup campuran memakai kategori grup.
+- **Migration 0068** (`0068_cutting_approval.sql`, owner menjalankan manual): `vendors_produksi.cutting_approval_required` (default false) + kolom `production_batches.cutting_approval_status/submitted_by/submitted_at/decided_by/decided_at/decision_note`. Kode aman sebelum migration (fitur mati, toggle disembunyikan).
+- **Aturan**: vendor menyalakan toggle di Tim Saya (akun utama). Anggota tim menyimpan hasil cutting dan ada size di bawah target (setelah alih size sisa kain diperhitungkan) -> roll PENDING (server, `applyCuttingApproval`), Finish Good roll itu terkunci (UI: roll tidak muncul di tab FG; server: `assertCuttingNotPending` di Tutup Roll/progres FG/Edit FG). Akun utama menyetujui atau menolak (`decideCuttingApprovalAction`; tolak = hasil cutting dikosongkan lagi + alasan wajib tampil ke tim). Akun utama yang menyimpan sendiri tidak perlu persetujuan. Notifikasi vendor + vendor_action_log.
+
 ## Kecepatan & multi-user: lampiran PV keluar dari snapshot (0066), penjaga 2 tim (0067) (2026-10-08)
 Owner: "user tidak menunggu buffering lama" + "aman untuk multiuser, dua tim cutting bersama tidak saling bentrok".
 - **Akar lambat (terukur):** 97% isi snapshot (13,1 dari 13,5 MB) = lampiran PDF Paying Voucher yang tertanam di

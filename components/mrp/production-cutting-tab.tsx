@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
 import { SizeQtyControl } from "@/components/mrp/size-qty-control";
 import { useMrpStore } from "@/lib/mrp/store";
+import { useVendorAuthStore } from "@/lib/mrp/vendor-auth-store";
 import { alertDialog } from "@/components/ui/confirm-dialog";
 import {
   availableRollsByAduanRow,
@@ -131,6 +132,12 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   const invoices = useMrpStore((s) => s.invoices);
   const productionBatches = useMrpStore((s) => s.productionBatches);
   const startProductionBatches = useMrpStore((s) => s.startProductionBatches);
+  // Persetujuan akun utama atas hasil cutting kurang dari target (migration 0068, opsional per vendor).
+  const isMainAccount = !useVendorAuthStore((s) => s.actor);
+  const decideCuttingApproval = useMrpStore((s) => s.decideCuttingApproval);
+  const [rejectTarget, setRejectTarget] = useState<{ ids: string[]; label: string } | null>(null);
+  const [rejectNote, setRejectNote] = useState("");
+  const [decidingKey, setDecidingKey] = useState<string | null>(null);
   // saveGroup pakai updateBatchesToCutting (1 round-trip utk semua roll grup, lihat komentar
   // saveGroup di bawah). Fungsi single-nya (updateBatchToCutting) tidak dipakai di sini.
   const updateBatchesToCutting = useMrpStore((s) => s.updateBatchesToCutting);
@@ -750,6 +757,27 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
             </div>
   ) : null;
 
+  const pendingApprovalGroups = (() => {
+    const m = new Map<string, ProductionBatch[]>();
+    for (const b of productionBatches) {
+      if (b.vendorProduksi !== vendorId || b.cuttingApproval?.status !== "PENDING") continue;
+      const key = `${b.mrpId}|${b.kode}|${b.lengan}|${b.cuttingApproval.submittedBy ?? ""}|${b.cuttingApproval.submittedAt ?? ""}`;
+      m.set(key, [...(m.get(key) ?? []), b]);
+    }
+    return Array.from(m.entries());
+  })();
+  const rejectedApprovals = productionBatches.filter((b) => b.vendorProduksi === vendorId && b.cuttingApproval?.status === "REJECTED" && !b.cuttingAt);
+  async function decideApproval(key: string, ids: string[], decision: "APPROVE" | "REJECT", note?: string) {
+    setDecidingKey(key);
+    try {
+      await decideCuttingApproval(ids, decision, note);
+    } catch (err) {
+      void alertDialog({ title: decision === "APPROVE" ? "Persetujuan tidak berhasil" : "Penolakan tidak berhasil", message: err instanceof Error ? err.message : String(err), tone: "danger" });
+    } finally {
+      setDecidingKey(null);
+    }
+  }
+
   return (
     <>
       <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
@@ -769,6 +797,83 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
         </select>
         {readyMrps.length === 0 && <div className="mt-2 font-sans text-xs text-text-muted">Belum ada MRP dengan bahan siap dan pekerjaan belum selesai.</div>}
       </div>
+
+      {pendingApprovalGroups.length > 0 && (
+        <div className="mt-3 rounded-lg border border-[#F0DFC2] bg-warning-bg px-4 py-3">
+          <div className="font-sans text-[12.5px] font-semibold text-warning-fg">
+            {isMainAccount ? "Menunggu persetujuan Anda" : "Menunggu persetujuan akun utama"} — {pendingApprovalGroups.reduce((s, [, bs]) => s + bs.length, 0)} roll
+          </div>
+          <div className="mt-0.5 font-sans text-[11px] text-warning-fg">
+            Hasil cutting di bawah ini kurang dari target. Finish Good roll-nya baru bisa diisi setelah disetujui akun utama.
+          </div>
+          <div className="mt-2.5 flex flex-col gap-2">
+            {pendingApprovalGroups.map(([key, bs]) => {
+              const first = bs[0];
+              const aduanRows = mrpDetails.find((d) => d.mrp.id === first.mrpId)?.aduanRows ?? [];
+              const label = `${first.mrpId} · ${first.kode} · ${first.lengan}`;
+              return (
+                <div key={key} className="rounded-md border border-[#F0DFC2] bg-white px-3 py-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-sans text-[12px] font-semibold text-text-primary">{label}</span>
+                    <span className="font-sans text-[11px] text-text-muted">
+                      diinput {first.cuttingApproval?.submittedBy ?? "anggota tim"}
+                      {first.cuttingApproval?.submittedAt ? " · " + formatDateTime(first.cuttingApproval.submittedAt) : ""}
+                    </span>
+                    {isMainAccount && (
+                      <span className="ml-auto flex gap-1.5">
+                        <Button onClick={() => void decideApproval(key, bs.map((b) => b.id), "APPROVE")} disabled={decidingKey === key} variant="success" size="xs">
+                          {decidingKey === key ? "Memproses…" : "Setujui"}
+                        </Button>
+                        <Button
+                          onClick={() => {
+                            setRejectNote("");
+                            setRejectTarget({ ids: bs.map((b) => b.id), label });
+                          }}
+                          disabled={decidingKey === key}
+                          variant="danger"
+                          size="xs"
+                        >
+                          Tolak
+                        </Button>
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1.5 flex flex-col gap-1">
+                    {bs.map((b) => {
+                      const target = targetSizesForBatch(b, aduanRows);
+                      const short = Object.entries(target).filter(([size, t]) => t - (b.sizeQty?.[size] ?? 0) > 0);
+                      return (
+                        <div key={b.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 font-sans text-[11px] text-[#31414F]">
+                          <span className="font-mono">{b.codeRoll || b.id}</span>
+                          <span className="text-text-muted">{b.warna}</span>
+                          {short.map(([size, t]) => (
+                            <span key={size} className="rounded bg-danger-bg px-1.5 py-[1px] font-mono text-[10.5px] text-danger-fg">
+                              {size} {b.sizeQty?.[size] ?? 0}/{t}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {rejectedApprovals.length > 0 && (
+        <div className="mt-3 rounded-lg border border-danger bg-danger-bg px-4 py-3 font-sans text-[11.5px] text-danger-fg">
+          <div className="text-[12.5px] font-semibold">Hasil cutting ditolak akun utama — input ulang</div>
+          <div className="mt-1.5 flex flex-col gap-1">
+            {rejectedApprovals.map((b) => (
+              <div key={b.id}>
+                <span className="font-mono">{b.codeRoll || b.id}</span> ({b.warna} · {b.lengan}) — {b.cuttingApproval?.decidedBy ?? "akun utama"}: {b.cuttingApproval?.note || "tanpa alasan"}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {selectedMrpId && claimRolls.length > 0 && (
         <button
@@ -1121,6 +1226,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                               ) : (
                                 <span className="text-text-muted">Target: {targetTotal} pcs</span>
                               )}
+                              {b.cuttingApproval?.status === "PENDING" && <StatusPill tone="warning">Menunggu persetujuan akun utama</StatusPill>}
+                              {b.cuttingApproval?.status === "APPROVED" && <StatusPill tone="success">Disetujui akun utama</StatusPill>}
                               <SysadminBatchActions batch={b} invoices={invoices} />
                             </span>
                             <span data-label="Detail size" className="flex flex-col gap-1 max-md:col-span-full">
@@ -1588,6 +1695,44 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
             </div>
           );
         })()}
+
+      {rejectTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4">
+          <div className="w-full max-w-[420px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]">
+            <div className="border-b border-border-subtle px-5 py-3.5 font-sans text-[13px] font-semibold text-text-primary">Tolak hasil cutting</div>
+            <div className="px-5 py-4">
+              <div className="font-sans text-[11.5px] text-text-muted">{rejectTarget.label} · {rejectTarget.ids.length} roll. Hasil cutting dikosongkan lagi dan tim diminta menginput ulang.</div>
+              <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Alasan (wajib)</div>
+              <textarea
+                value={rejectNote}
+                onChange={(e) => setRejectNote(e.target.value)}
+                placeholder="Contoh: size L kurang 12 pcs, cek ulang hitungan"
+                rows={3}
+                autoFocus
+                className="input mt-1 w-full"
+              />
+            </div>
+            <div className="flex justify-end gap-2 border-t border-border-subtle px-5 py-3.5">
+              <Button onClick={() => setRejectTarget(null)} variant="ghost" size="sm">
+                Batal
+              </Button>
+              <Button
+                onClick={() => {
+                  const t = rejectTarget;
+                  const note = rejectNote.trim();
+                  setRejectTarget(null);
+                  void decideApproval("reject:" + t.ids.join(","), t.ids, "REJECT", note);
+                }}
+                disabled={!rejectNote.trim()}
+                variant="danger"
+                size="sm"
+              >
+                Tolak hasil cutting
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

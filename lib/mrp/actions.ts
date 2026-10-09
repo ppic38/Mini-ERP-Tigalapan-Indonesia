@@ -2226,6 +2226,136 @@ type SizeShift = { from: string; to: string; qty: number };
 /** Validasi alih size sisa kain (owner 2026-10-04): hanya ke size LEBIH KECIL, qty bulat positif, pcs hasil
  *  alih harus benar-benar ada di hasil cutting size tujuan, dan total yang dialihkan dari satu size
  *  tidak boleh melebihi KEKURANGAN hasil cutting size itu terhadap targetnya (kain sisa, bukan tambahan). */
+/** Target hasil cutting per size untuk 1 roll (sama dengan targetSizesForBatch di derive.ts, versi server). */
+async function loadBatchTargetSizes(db: ReturnType<typeof supabaseServer>, batchId: string): Promise<Record<string, number>> {
+  const { data: batch } = await db.from("production_batches").select("aduan_row_id,qty_roll").eq("id", batchId).maybeSingle();
+  if (!batch) return {};
+  const [{ data: row }, { data: rowSizes }] = await Promise.all([
+    db.from("aduan_pola_rows").select("qty_roll").eq("id", batch.aduan_row_id).maybeSingle(),
+    db.from("aduan_pola_sizes").select("size,qty").eq("aduan_row_id", batch.aduan_row_id),
+  ]);
+  const ratio = row && Number(row.qty_roll) > 0 ? Number(batch.qty_roll) / Number(row.qty_roll) : 0;
+  const target: Record<string, number> = {};
+  for (const s of rowSizes ?? []) target[s.size] = Math.round(Number(s.qty) * ratio);
+  return target;
+}
+
+/** Setting vendor: apakah hasil cutting yang kurang dari target wajib disetujui akun utama. Kolom belum ada (migration
+ *  0068 belum dijalankan) = dianggap mati, alur lama tidak terganggu. */
+async function loadCuttingApprovalRequired(db: ReturnType<typeof supabaseServer>, vendorId: string): Promise<boolean> {
+  const { data, error } = await db.from("vendors_produksi").select("cutting_approval_required").eq("id", vendorId).maybeSingle();
+  if (error) return false;
+  return !!data?.cutting_approval_required;
+}
+
+/** Dipanggil di akhir simpan hasil cutting. Ada size di bawah target (setelah sisa kain yang dialihkan size diperhitungkan)
+ *  DAN penyimpannya anggota tim DAN vendor mewajibkan persetujuan -> roll itu PENDING. Selain itu (akun utama, tidak ada
+ *  kekurangan, atau pengaturan mati) status persetujuan dibersihkan seperti alur biasa. */
+async function applyCuttingApproval(
+  db: ReturnType<typeof supabaseServer>,
+  actor: { vendorId: string; vendorUserId: string | null; actorName: string },
+  batchIds: string[],
+  sizeQtyByBatchId: Record<string, Record<string, number>>,
+  shiftsByBatchId: Record<string, SizeShift[]>
+): Promise<void> {
+  const required = actor.vendorUserId != null && (await loadCuttingApprovalRequired(db, actor.vendorId));
+  const pending: { id: string; short: string[] }[] = [];
+  if (required) {
+    for (const id of batchIds) {
+      const target = await loadBatchTargetSizes(db, id);
+      const actual = sizeQtyByBatchId[id] ?? {};
+      const shiftedFrom: Record<string, number> = {};
+      for (const x of shiftsByBatchId[id] ?? []) if (x.qty > 0) shiftedFrom[x.from] = (shiftedFrom[x.from] ?? 0) + x.qty;
+      const short = Object.entries(target)
+        .filter(([size, t]) => t - (actual[size] ?? 0) - (shiftedFrom[size] ?? 0) > 0)
+        .map(([size, t]) => `${size} ${actual[size] ?? 0}/${t}`);
+      if (short.length > 0) pending.push({ id, short });
+    }
+  }
+  const pendingIds = new Set(pending.map((p) => p.id));
+  const clearIds = batchIds.filter((id) => !pendingIds.has(id));
+  if (clearIds.length > 0) {
+    // Hanya baris yang memang punya status; error diabaikan kalau migration 0068 belum jalan.
+    const { error } = await db
+      .from("production_batches")
+      .update({ cutting_approval_status: null, cutting_submitted_by: null, cutting_submitted_at: null, cutting_decided_by: null, cutting_decided_at: null, cutting_decision_note: null })
+      .in("id", clearIds)
+      .not("cutting_approval_status", "is", null);
+    if (error) console.error("applyCuttingApproval: gagal membersihkan status (migration 0068 sudah jalan?)", error.message);
+  }
+  if (pending.length > 0) {
+    const { error } = await db
+      .from("production_batches")
+      .update({ cutting_approval_status: "PENDING", cutting_submitted_by: actor.actorName, cutting_submitted_at: new Date().toISOString(), cutting_decided_by: null, cutting_decided_at: null, cutting_decision_note: null })
+      .in("id", pending.map((p) => p.id));
+    if (error) throw new Error("Gagal mengajukan persetujuan hasil cutting -- jalankan migration 0068 di Supabase dulu. " + error.message);
+    const { data: labels } = await db.from("production_batches").select("id,code_roll,warna,lengan").in("id", pending.map((p) => p.id));
+    const names = (labels ?? []).map((b) => `${b.code_roll ?? b.id} (${b.warna} · ${b.lengan})`).join(", ");
+    await insertNotification(notif(`Hasil cutting dari ${actor.actorName} kurang dari target dan menunggu persetujuan akun utama: ${names}`, ["vendorMaklon"], actor.vendorId));
+    await logVendorAction(actor, `Ajukan persetujuan hasil cutting ${pending.length} roll (kurang dari target)`, "production_batches", pending.map((p) => p.id).join(","));
+  }
+}
+
+/** Finish Good roll yang hasil cuttingnya masih menunggu persetujuan akun utama ditolak. */
+async function assertCuttingNotPending(db: ReturnType<typeof supabaseServer>, batchId: string): Promise<void> {
+  const { data, error } = await db.from("production_batches").select("cutting_approval_status").eq("id", batchId).maybeSingle();
+  if (error) return; // kolom belum ada = fitur belum aktif
+  if (data?.cutting_approval_status === "PENDING") {
+    throw new Error("Hasil cutting roll ini masih menunggu persetujuan akun utama vendor -- Finish Good baru bisa diisi setelah disetujui.");
+  }
+}
+
+/** Akun UTAMA vendor menyetujui / menolak hasil cutting (anggota tim) yang menunggu persetujuan. Tolak = hasil cutting roll
+ *  dikosongkan lagi (roll kembali ke Input Hasil Cutting) dengan alasan yang tampil ke tim. */
+export async function decideCuttingApprovalAction(batchIds: string[], decision: "APPROVE" | "REJECT", note?: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    const actor = await requireVendorSessionWithActor();
+    if (actor.vendorUserId) throw new Error("Hanya akun utama vendor yang bisa menyetujui atau menolak hasil cutting.");
+    if (batchIds.length === 0) return;
+    const reason = (note ?? "").trim();
+    if (decision === "REJECT" && !reason) throw new Error("Alasan penolakan wajib diisi.");
+    const db = supabaseServer();
+    const { data: rows, error } = await db
+      .from("production_batches")
+      .select("id,vendor_produksi,code_roll,warna,lengan,mrp_id,cutting_approval_status,closed_at")
+      .in("id", batchIds);
+    if (error) throw new Error(error.message);
+    if (!rows || rows.length !== batchIds.length) throw new Error("Sebagian roll tidak ditemukan.");
+    for (const b of rows) {
+      if (b.vendor_produksi !== actor.vendorId) throw new Error("Roll ini bukan milik vendor Anda.");
+      if (b.cutting_approval_status !== "PENDING") throw new Error(`Roll ${b.code_roll ?? b.id} sudah diputuskan (atau tidak lagi menunggu persetujuan) -- data terbaru dimuat ulang.`);
+    }
+    const now = new Date().toISOString();
+    if (decision === "APPROVE") {
+      const { error: upErr } = await db
+        .from("production_batches")
+        .update({ cutting_approval_status: "APPROVED", cutting_decided_by: actor.actorName, cutting_decided_at: now, cutting_decision_note: reason || null })
+        .in("id", batchIds);
+      if (upErr) throw new Error(upErr.message);
+    } else {
+      const { error: delErr } = await db.from("production_batch_sizes").delete().in("production_batch_id", batchIds);
+      if (delErr) throw new Error(delErr.message);
+      const { error: upErr } = await db
+        .from("production_batches")
+        .update({ cutting_at: null, size_shifts: null, cutting_approval_status: "REJECTED", cutting_decided_by: actor.actorName, cutting_decided_at: now, cutting_decision_note: reason })
+        .in("id", batchIds);
+      if (upErr) throw new Error(upErr.message);
+      await db.from("production_yield_resolutions").delete().in("production_batch_id", batchIds);
+    }
+    const names = rows.map((b) => `${b.code_roll ?? b.id} (${b.warna} · ${b.lengan})`).join(", ");
+    await insertNotification(
+      notif(
+        decision === "APPROVE"
+          ? `Hasil cutting disetujui akun utama (${actor.actorName}): ${names}. Finish Good sudah bisa diisi.`
+          : `Hasil cutting DITOLAK akun utama (${actor.actorName}): ${names} -- alasan: ${reason}. Input ulang hasil cutting.`,
+        ["vendorMaklon"],
+        actor.vendorId
+      )
+    );
+    await logVendorAction(actor, `${decision === "APPROVE" ? "Setujui" : "Tolak"} hasil cutting ${rows.length} roll${reason ? " -- " + reason : ""}`, "production_batches", batchIds.join(","));
+  });
+}
+
 async function validateSizeShifts(db: ReturnType<typeof supabaseServer>, batchId: string, sizeQty: Record<string, number>, shifts: SizeShift[]): Promise<void> {
   const { data: batch } = await db.from("production_batches").select("aduan_row_id,qty_roll,code_roll").eq("id", batchId).single();
   if (!batch) throw new Error("Roll tidak ditemukan.");
@@ -2336,7 +2466,7 @@ async function updateBatchesToCuttingImpl(
   sizeShiftsByBatchId: Record<string, SizeShift[]> = {},
   expectedByBatchId?: Record<string, { cuttingAt?: string | null; sizeQty?: Record<string, number> }>
 ): Promise<{ batchId: string; cuttingAt: string; sizeQty?: Record<string, number> }[]> {
-  await requireVendorSession();
+  const actor = await requireVendorSessionWithActor();
   if (batchIds.length === 0) return [];
   const db = supabaseServer();
   // Dua tim di sesi resting yang sama: tolak kalau roll-nya sudah diubah orang lain sejak modal ini dibuka.
@@ -2408,6 +2538,10 @@ async function updateBatchesToCuttingImpl(
       console.error("updateBatchesToCuttingAction: gagal mengosongkan size_shifts (migration 0062 sudah jalan?)", shiftErr.message);
     }
   }
+
+  // Persetujuan akun utama (migration 0068, opsional per vendor): hasil cutting anggota tim yang ada size di bawah target
+  // menunggu persetujuan; Finish Good roll itu terkunci sampai diputuskan.
+  await applyCuttingApproval(db, actor, batchIds, sizeQtyByBatchId, sizeShiftsByBatchId);
 
   // recomputeAutoRejectForGroup 1x untuk groupKey ini (bukan N kali seperti kalau ini dipanggil
   // lewat loop versi single) -- fungsi ini SUDAH ada & dipakai versi single, reuse apa adanya.
@@ -3838,6 +3972,7 @@ async function closeProductionBatchImpl(batchId: string, fgSizeQty: Record<strin
   if (!batch) throw new Error("Roll tidak ditemukan.");
   if (!batch.cutting_at) throw new Error("Roll ini belum dicutting — isi Hasil Cutting dulu di tab Cutting.");
   if (batch.closed_at) return;
+  await assertCuttingNotPending(db, batchId);
   if (expectedFg) await assertBatchesUnchanged(db, { [batchId]: { fgSizeQty: expectedFg } });
   const groupKey = `${batch.mrp_id}|${batch.warna}|${batch.lengan}`;
   // Revisi 2026-09-20: roll baru BOLEH ditutup walau warnanya sudah pernah "Selesai" (gelombang berikutnya) -- yang
@@ -3887,6 +4022,7 @@ async function editRollFgImpl(batchId: string, sizeQty: Record<string, number>):
   if (!batch) throw new Error("Roll tidak ditemukan.");
   if (batch.vendor_produksi !== vendorId) throw new Error("Roll ini bukan milik vendor Anda.");
   if (!batch.cutting_at) throw new Error("Roll ini belum dicutting.");
+  await assertCuttingNotPending(db, batchId);
   const groupKey = `${batch.mrp_id}|${batch.warna}|${batch.lengan}`;
   const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).maybeSingle();
   if (meta?.done_at) throw new Error(`Grup ${batch.warna} · ${batch.lengan} sudah Final Produksi -- buka kunci Final dulu sebelum mengedit FG.`);
@@ -4046,6 +4182,7 @@ async function saveFgProgressImpl(batchId: string, sizeQty: Record<string, numbe
   if (!batch) throw new Error("Roll tidak ditemukan.");
   if (!batch.cutting_at) throw new Error("Roll ini belum dicutting — isi Hasil Cutting dulu di tab Cutting.");
   if (batch.closed_at) throw new Error("Roll ini sudah ditutup — tidak bisa diubah lagi.");
+  await assertCuttingNotPending(db, batchId);
   // Dua tim mengisi Finish Good roll yang sama: tolak kalau angkanya sudah berubah sejak layar ini memuatnya.
   if (expectedFg) await assertBatchesUnchanged(db, { [batchId]: { fgSizeQty: expectedFg } });
 

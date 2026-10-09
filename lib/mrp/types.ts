@@ -409,6 +409,10 @@ export type ProductionBatch = {
   /** Revisi 2026-09-07: roll ini sudah "Tutup Roll" — FG-nya final & siap masuk Pengiriman (per
    *  roll, lihat DeliveryKoli.sourceBatchIds), tidak bisa diedit lagi lewat form Finish Good. */
   closedAt?: string;
+  /** Migration 0068 (OPSIONAL per vendor): persetujuan akun utama atas hasil cutting yang kurang dari target,
+   *  kalau diinput anggota tim. Kosong = tidak ada persetujuan (alur biasa). PENDING mengunci Finish Good roll ini;
+   *  REJECTED = hasil cutting sudah dikosongkan lagi dan `note` berisi alasan penolakan. */
+  cuttingApproval?: { status: "PENDING" | "APPROVED" | "REJECTED"; submittedBy?: string; submittedAt?: string; decidedBy?: string; decidedAt?: string; note?: string };
 };
 
 /** Catatan resolusi alert yield (<99%) per roll — dilempar ke portal internal Produksi, bukan ke
