@@ -660,6 +660,8 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                                 <NumberInput
                                   value={rollQtyDraft[r.key] ?? 0}
                                   decimals={0}
+                                  emptyWhenZero
+                                  placeholder="mis. 12"
                                   disabled={!noKoli.trim()}
                                   onChange={(v) => setRollQty(r.key, Math.max(0, Math.min(v, r.available)))}
                                   className="input w-[90px] text-right disabled:cursor-not-allowed disabled:bg-[#F7F9FB] disabled:text-text-muted"
@@ -746,6 +748,8 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                                 <NumberInput
                                   value={qty}
                                   decimals={0}
+                                  emptyWhenZero
+                                  placeholder="mis. 12"
                                   disabled={!noKoli.trim()}
                                   onChange={(v) => setRowQty(r.key, Math.max(0, Math.min(v, r.available)))}
                                   className="input w-[90px] text-right disabled:cursor-not-allowed disabled:bg-[#F7F9FB] disabled:text-text-muted"
@@ -905,7 +909,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                               {k.beratKoli && k.beratKoli > 0 ? (
                                 <span className="font-mono">{formatDecimal(k.beratKoli)}</span>
                               ) : (
-                                <NumberInput value={myWeight} decimals={2} onChange={(v) => setWeightDraft((prev) => ({ ...prev, [k.id]: v }))} className="input w-[90px] text-right" />
+                                <NumberInput value={myWeight} decimals={2} emptyWhenZero placeholder="mis. 2,50" onChange={(v) => setWeightDraft((prev) => ({ ...prev, [k.id]: v }))} className="input w-[90px] text-right" />
                               )}
                             </span>
                             <span className="text-right max-md:ml-auto">
@@ -1060,6 +1064,8 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                       <NumberInput
                         value={dialogWeights[id] ?? 0}
                         decimals={2}
+                        emptyWhenZero
+                        placeholder="mis. 2,50"
                         onChange={(v) => setDialogWeights((prev) => ({ ...prev, [id]: v }))}
                         className="input w-[90px] text-right"
                       />

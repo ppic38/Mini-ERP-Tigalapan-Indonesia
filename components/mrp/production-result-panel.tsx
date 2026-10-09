@@ -682,6 +682,8 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                         <NumberInput
                                           value={sizeTotalDraft[size] ?? 0}
                                           decimals={0}
+                                          emptyWhenZero
+                                          placeholder="Contoh: 24"
                                           onChange={(v) => setSizeTotalDraft((prev) => ({ ...prev, [size]: v }))}
                                           className="input h-9 w-full text-right text-[13px] font-semibold"
                                         />

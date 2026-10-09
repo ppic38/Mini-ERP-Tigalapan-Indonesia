@@ -89,6 +89,10 @@ export function NumberInput({
    *  LOKAL komponen, bukan ke server) TETAP dapat onChange per-keystroke seperti sebelumnya --
    *  prop ini SENGAJA opt-in, bukan mengubah perilaku default currency yang sudah ada. */
   commitOnBlurOnly = false,
+  /** Saat true: tampil KOSONG (placeholder terlihat) setiap kali value 0 dan field tidak sedang difokus -- juga setelah
+   *  user mengosongkannya / mengetik 0 lalu keluar. Beda dari startEmptyIfZero yang hanya kosong di awal. Dipakai di
+   *  isian qty/berat portal vendor produksi supaya tidak ada "0" / "0,00" yang harus dihapus dulu. */
+  emptyWhenZero = false,
 }: {
   value: number;
   onChange: (v: number) => void;
@@ -100,8 +104,9 @@ export function NumberInput({
   commaOnly?: boolean;
   disabled?: boolean;
   commitOnBlurOnly?: boolean;
+  emptyWhenZero?: boolean;
 }) {
-  const initialEmpty = startEmptyIfZero && value === 0;
+  const initialEmpty = (startEmptyIfZero || emptyWhenZero) && value === 0;
   const [text, setText] = useState(initialEmpty ? "" : currency ? "Rp " + formatNum(value, 0) : formatNum(value, decimals));
   const [touched, setTouched] = useState(!initialEmpty);
   // Fix (2026-09-15, owner-reported: "tidak bisa typing, harus paste semua value" di form Master
@@ -123,7 +128,7 @@ export function NumberInput({
 
   useEffect(() => {
     if (focused) return;
-    if (startEmptyIfZero && value === 0 && !touched) {
+    if ((emptyWhenZero && value === 0) || (startEmptyIfZero && value === 0 && !touched)) {
       setText("");
       return;
     }
@@ -181,7 +186,7 @@ export function NumberInput({
         setFocused(false);
         const parsed = commaOnly ? parseCommaNumber(text) : parseLocaleNumber(text);
         onChange(parsed);
-        setText(formatNum(parsed, decimals));
+        setText(emptyWhenZero && parsed === 0 ? "" : formatNum(parsed, decimals));
       }}
       inputMode="decimal"
       placeholder={placeholder}

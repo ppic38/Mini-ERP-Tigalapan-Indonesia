@@ -633,7 +633,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   <div className="flex flex-wrap items-end gap-2 max-md:w-full max-md:flex-col max-md:items-stretch">
                     <div>
                       <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Gramasi semua</div>
-                      <NumberInput value={fillGramasi} onChange={setFillGramasi} decimals={2} commaOnly className="input mt-0.5 w-[90px] text-right max-md:w-full" />
+                      <NumberInput value={fillGramasi} onChange={setFillGramasi} decimals={2} commaOnly emptyWhenZero placeholder="mis. 180" className="input mt-0.5 w-[90px] text-right max-md:w-full" />
                     </div>
                     <div>
                       <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Setting semua</div>
@@ -685,14 +685,14 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                       )}
                       <span data-label="Berat kotor (kg)" className="text-right font-mono">{formatDecimal(l.roll.grossKg)}</span>
                       <span data-label="Berat bersih (kg)" className="flex items-center justify-end">
-                        <NumberInput value={l.netKg} decimals={2} onChange={(v) => updateLine(l.id, { netKg: v })} className="input w-[100px] text-right" />
+                        <NumberInput value={l.netKg} decimals={2} emptyWhenZero placeholder="mis. 25,50" onChange={(v) => updateLine(l.id, { netKg: v })} className="input w-[100px] text-right" />
                       </span>
                       <span data-label="Selisih" className={"text-right font-mono text-[11px] " + (variance.claimable ? "text-danger-fg" : variance.withinTolerance ? "text-success-fg" : "text-warning-fg")}>
                         {variance.diff >= 0 ? "+" : ""}
                         {formatDecimal(variance.diff)} ({variance.pct.toFixed(1)}%)
                       </span>
                       <span data-label="Gramasi (gsm)" className="flex items-center justify-end">
-                        <NumberInput value={l.gramasi} onChange={(v) => updateLine(l.id, { gramasi: v })} decimals={2} commaOnly className="input w-[80px] text-right" />
+                        <NumberInput value={l.gramasi} onChange={(v) => updateLine(l.id, { gramasi: v })} decimals={2} commaOnly emptyWhenZero placeholder="mis. 180" className="input w-[80px] text-right" />
                       </span>
                       <span data-label="Setting" className="flex">
                         <input value={l.setting} onChange={(e) => updateLine(l.id, { setting: e.target.value })} placeholder="Setting" className="w-full min-w-0 rounded-md border border-[#DDE4EB] px-1.5 py-1 text-[11.5px]" />
