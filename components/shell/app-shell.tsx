@@ -342,7 +342,15 @@ export function AppShell({
           // Revisi 2026-09-29 (owner: "profil saya jangan begini. tapi buat halaman penuh ...
           // bukan pop up") -- navigasi ke halaman penuh per modul (PROFILE_HREF, lib/shell/nav.ts),
           // BUKAN modal lagi. Hanya ditampilkan kalau login lewat akun bernama (internalActor ada).
-          onOpenProfile={internalShell && internalActor && PROFILE_HREF[shellRole as InternalRole] ? () => router.push(PROFILE_HREF[shellRole as InternalRole]!) : undefined}
+          onOpenProfile={
+            internalShell
+              ? internalActor && PROFILE_HREF[shellRole as InternalRole]
+                ? () => router.push(PROFILE_HREF[shellRole as InternalRole]!)
+                : undefined
+              : role === "vendorMaklon"
+                ? () => router.push("/vendor-maklon/profil-saya")
+                : undefined
+          }
           onLogout={
             internalShell
               ? () => {

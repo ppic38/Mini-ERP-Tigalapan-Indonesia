@@ -1,5 +1,10 @@
 # Migrasi Project — Status & Riwayat
 
+## Profil Saya portal Vendor Produksi (2026-10-09, tanpa migration baru)
+Permintaan owner: halaman profil untuk akun utama dan anggota tim vendor, untuk mengganti password; username tidak boleh diubah.
+- Halaman `/vendor-maklon/profil-saya` (`app/vendor-maklon/profil-saya/page.tsx`), dibuka dari menu profil di topbar. Menampilkan username/nama (akun utama: nama vendor) TERKUNCI; hanya password yang bisa diganti. Logika: `lib/mrp/vendorProfileActions.ts` (password saat ini wajib cocok, baru min. 6 karakter dan harus beda, hash bcrypt + salinan terenkripsi `savePasswordCopy`, tercatat di vendor_action_log tanpa isi password).
+- `proxy.ts`: halaman ini selalu boleh dibuka anggota tim, tidak tergantung allowedPages. Sesi yang berjalan tetap valid setelah ganti password. Nama anggota tim tidak bisa diubah dari sini (jejak log memakai nama itu); perubahan nama tetap lewat Tim Saya (akun utama).
+
 ## Persetujuan hasil cutting (opsional per vendor) + Form Rasio PO -- migration 0068 (2026-10-09)
 Permintaan vendor: (1) export form PO format tabel MRP untuk info rasio, (2) approval cutting sub tim -> akun utama kalau hasil kurang dari target, OPSIONAL per vendor.
 - **Form Rasio (Excel)**: `exportMaklonPoRasioExcel` (lib/mrp/exportPoExcel.ts). Kolom meniru template MRP (kategori, warna, item, lengan+size, qty, total, kebutuhan roll per item, total roll, aduan pola, vendor, rib per item, rib total, kerah/manset PDK/PJG/total), TANPA harga. Roll per size = qtyRoll aduan x qty size / qty aduan; rib per size = ribKg grup x qty size / total grup. Tombol: portal vendor (PO Produksi Saya, kolom Form Rasio) + dialog Download PO internal (tombol Form Rasio). Kategori dari grup (baris pertama), jadi baris KIDS dalam grup campuran memakai kategori grup.

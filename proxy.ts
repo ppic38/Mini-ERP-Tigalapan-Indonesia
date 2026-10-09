@@ -60,7 +60,8 @@ export async function proxy(request: NextRequest) {
     // packing") -- dibatasi ke halaman yang diizinkan saja, DAN tidak boleh membuka "Tim Saya"
     // (kelola akun lain) sama sekali walau kebetulan ada di allowedPages. Akun UTAMA vendor
     // (vendorActor null) tetap akses penuh, tidak berubah dari sebelumnya.
-    if (session.vendorActor) {
+    // "Profil Saya" (ganti password sendiri) selalu boleh dibuka akun apa pun, tidak tergantung allowedPages.
+    if (session.vendorActor && pathname !== "/vendor-maklon/profil-saya") {
       if (pathname === "/vendor-maklon/team") return NextResponse.redirect(new URL(firstAllowedVendorUrl(session.vendorActor.allowedPages), request.url));
       if (!vendorHasPageAccess(session.vendorActor.allowedPages, pathname)) return NextResponse.redirect(new URL(firstAllowedVendorUrl(session.vendorActor.allowedPages), request.url));
     }
