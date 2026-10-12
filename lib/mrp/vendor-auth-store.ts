@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { loginVendorAction, loginVendorUserAction, logoutVendorAction } from "../auth/actions";
-import { useMrpStore } from "./store";
+import { useMrpStore, markIntentionalLogout, clearIntentionalLogout } from "./store";
 import { useInternalAuthStore } from "../internal-auth-store";
 
 // CATATAN MIGRASI SUPABASE: dulu login() mengecek password langsung ke
@@ -39,6 +39,7 @@ export const useVendorAuthStore = create<VendorAuthState>()(
       login: async (nameOrId, password) => {
         const result = await loginVendorAction(nameOrId, password);
         if (!result.ok) return false;
+        clearIntentionalLogout();
         set({ loggedInVendorId: result.vendorId ?? null, actor: null });
         // Login vendor = identitas aktif di browser ini pindah ke vendor (lihat ActiveIdentity di
         // lib/internal-auth-store.ts) -- supaya sesi Sysadmin yang lupa di-logout tidak membuat portal
@@ -52,12 +53,14 @@ export const useVendorAuthStore = create<VendorAuthState>()(
       loginUser: async (username, password) => {
         const result = await loginVendorUserAction(username, password);
         if (!result.ok) return false;
+        clearIntentionalLogout();
         set({ loggedInVendorId: result.vendorId ?? null, actor: result.actor ?? null });
         useInternalAuthStore.getState().setActiveIdentity("vendor");
         void useMrpStore.getState().refresh();
         return true;
       },
       logout: () => {
+        markIntentionalLogout();
         void logoutVendorAction();
         set({ loggedInVendorId: null, actor: null });
         const internal = useInternalAuthStore.getState();

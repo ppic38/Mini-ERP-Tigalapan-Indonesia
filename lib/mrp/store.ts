@@ -59,6 +59,16 @@ import { unwrapAction } from "./action-result";
 // yang sudah dibungkus try/catch -- tidak men-trap akses ke modul asli sama sekali, jadi tidak
 // kena invariant itu.
 let redirectingForAuthError = false;
+// Logout disengaja (revisi 2026-10-12, owner: "saat logout dari vendor produksi dilempar ke halaman pilih modul, harusnya ke login
+// vendor"): cookie sesi sengaja dihapus, jadi aksi yang masih berjalan/antre pada saat itu akan gagal "Unauthorized" -- itu BUKAN
+// sesi kedaluwarsa, tidak boleh memunculkan dialog "Sesi berakhir" maupun menyeret halaman ke "/". Penanda ini berlaku 10 detik.
+let intentionalLogoutUntil = 0;
+export function markIntentionalLogout(): void {
+  intentionalLogoutUntil = Date.now() + 10_000;
+}
+export function clearIntentionalLogout(): void {
+  intentionalLogoutUntil = 0;
+}
 // Bug fix (2026-09-06): race condition "Tandai diterima 4 baris cepat-cepat -> 2 baris sempat
 // balik lagi jadi belum diterima, lalu balik sendiri jadi diterima". Root cause: tiap action
 // optimistic (assignMaterialSupplier, markRollArrived, dkk) memanggil backgroundRefresh() begitu
@@ -134,6 +144,10 @@ function guardAction<Args extends unknown[], R>(
       return await fn(...args);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      if (alertOnAuthError && typeof window !== "undefined" && (message.startsWith("Unauthorized") || message.startsWith("Forbidden")) && Date.now() < intentionalLogoutUntil) {
+        // Logout yang disengaja sedang berjalan: abaikan senyap, halaman sudah diarahkan ke login oleh pemanggil logout.
+        return undefined as R;
+      }
       if (alertOnAuthError && typeof window !== "undefined" && (message.startsWith("Unauthorized") || message.startsWith("Forbidden"))) {
         // Aksi yang gagal biasanya diikuti get().refresh() (juga dibungkus guardAction) -- tanpa
         // guard ini, refresh() akan gagal dengan error sesi yang SAMA lagi dan memicu alert +
@@ -141,7 +155,8 @@ function guardAction<Args extends unknown[], R>(
         if (!redirectingForAuthError) {
           redirectingForAuthError = true;
           await alertDialog({ title: "Sesi berakhir", message: "Sesi login Anda sudah tidak valid/kedaluwarsa. Anda akan diarahkan ke halaman login ulang.", tone: "danger" });
-          window.location.href = "/";
+          // Portal vendor punya halaman login sendiri; modul internal memakai halaman pilih modul ("/").
+          window.location.href = window.location.pathname.startsWith("/vendor-maklon") ? "/vendor-maklon/login" : "/";
         }
         return undefined as R;
       }
