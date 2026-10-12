@@ -447,7 +447,8 @@ const ORANGE = "FFFFC000";
 const KIDS_FILL = "FFFFF2CC";
 
 function rasioSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
-  ws.views = [{ showGridLines: false, state: "frozen", ySplit: 4 }];
+  // Header (baris 4) dibekukan: topLeftCell/activeCell eksplisit supaya Excel menggambar baris header dengan benar saat digulir.
+  ws.views = [{ showGridLines: false, state: "frozen", xSplit: 0, ySplit: 4, topLeftCell: "A5", activeCell: "A5" }];
   ws.pageSetup = { paperSize: 9, orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
   RASIO_WIDTHS.forEach((w, i) => (ws.getColumn(i + 1).width = w));
   const vendorName = VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi;
@@ -480,7 +481,7 @@ function rasioSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
   for (const g of groups) if (!warnaOrder.includes(g.warna)) warnaOrder.push(g.warna);
 
   let r = hr + 1;
-  const put = (row: number, col: number, v: string | number, o: { align?: "left" | "right" | "center"; fmt?: string; bold?: boolean; fill?: string } = {}) => {
+  const put = (row: number, col: number, v: string | number | { formula: string; result: number }, o: { align?: "left" | "right" | "center"; fmt?: string; bold?: boolean; fill?: string } = {}) => {
     const c = ws.getCell(row, col);
     c.value = v;
     c.font = { name: FONT, size: 10, bold: o.bold ?? false, color: { argb: INK } };
@@ -503,16 +504,20 @@ function rasioSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
       const gStart = r;
       const lenganShort = g.lengan === "PENDEK" ? "PDK" : "PJG";
       const aduan = (detail?.aduanRows ?? []).filter((a) => a.lenganGroupId === g.id);
-      const groupRoll = aduan.length > 0 ? aduan.reduce((s, a) => s + a.qtyRoll, 0) : g.rollEstimate;
+      const sumQty = g.sizes.reduce((s, x) => s + x.qty, 0);
+      let sumRoll = 0;
+      let sumRib = 0;
       for (const sz of g.sizes) {
-        const fill = /KIDS/i.test(g.kategori) ? KIDS_FILL : undefined;
+        // Kategori per grup (data lama / grup tanpa kategori memakai kategori MRP-nya).
+        const kategori = g.kategori || detail?.mrp.kategori || "—";
+        const fill = /KIDS/i.test(kategori) ? KIDS_FILL : undefined;
         const withSize = aduan.filter((a) => a.sizes.some((x) => x.size === sz.size && x.qty > 0));
         const rollPerItem = withSize.reduce((s, a) => {
           const q = a.sizes.find((x) => x.size === sz.size)?.qty ?? 0;
           return s + (a.qty > 0 ? a.qtyRoll * (q / a.qty) : 0);
         }, 0);
-        const ribPerItem = g.totalQty > 0 ? g.ribKg * (sz.qty / g.totalQty) : 0;
-        put(r, 1, g.kategori || "—", { fill });
+        const ribPerItem = sumQty > 0 ? g.ribKg * (sz.qty / sumQty) : 0;
+        put(r, 1, kategori, { fill });
         put(r, 2, g.warna, { fill });
         put(r, 3, g.warna + " " + lenganShort + " " + sz.size, { fill });
         put(r, 4, g.lengan + " " + sz.size, { fill });
@@ -521,26 +526,29 @@ function rasioSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
         put(r, 9, withSize.length > 0 ? withSize.map((a) => a.kode).join(", ") : "-", { align: "center", fill });
         put(r, 10, vendorName, { fill });
         put(r, 11, ribPerItem, { align: "right", fmt: "0.00", fill });
+        sumRoll += rollPerItem;
+        sumRib += ribPerItem;
         r++;
       }
       const gEnd = r - 1;
-      put(gStart, 6, g.totalQty, { align: "center", fmt: "#,##0", bold: true });
-      put(gStart, 8, groupRoll, { align: "center", fmt: "0.##", bold: true });
-      put(gStart, 12, g.ribKg, { align: "center", fmt: "0.##", bold: true });
+      // Total, Total Roll, dan Rib Total berupa RUMUS (jumlah baris di atasnya), bukan angka mati -- ikut berubah kalau diedit.
+      put(gStart, 6, { formula: `SUM(E${gStart}:E${gEnd})`, result: sumQty }, { align: "center", fmt: "#,##0", bold: true });
+      put(gStart, 8, { formula: `SUM(G${gStart}:G${gEnd})`, result: sumRoll }, { align: "center", fmt: "0.00", bold: true });
+      put(gStart, 12, { formula: `SUM(K${gStart}:K${gEnd})`, result: sumRib }, { align: "center", fmt: "0.00", bold: true });
       for (const col of [6, 8, 12]) merge(gStart, gEnd, col);
       const kc = g.lengan === "PENDEK" ? [13, 14] : [15, 16];
-      put(gStart, kc[0], g.kerahKg || "", { align: "center", fmt: "0.###" });
-      put(gStart, kc[1], g.mansetKg || "", { align: "center", fmt: "0.###" });
+      put(gStart, kc[0], g.kerahKg || "", { align: "center", fmt: "0.00" });
+      put(gStart, kc[1], g.mansetKg || "", { align: "center", fmt: "0.00" });
       for (const col of [13, 14, 15, 16]) {
         for (let rr = gStart; rr <= gEnd; rr++) if (!ws.getCell(rr, col).border?.top) put(rr, col, "", {});
         merge(gStart, gEnd, col);
       }
-      kerahTotal += g.kerahKg;
-      mansetTotal += g.mansetKg;
+      kerahTotal += g.kerahKg || 0;
+      mansetTotal += g.mansetKg || 0;
     }
     const warnaEnd = r - 1;
-    put(warnaStart, 17, kerahTotal, { align: "center", fmt: "0.###" });
-    put(warnaStart, 18, mansetTotal, { align: "center", fmt: "0.###" });
+    put(warnaStart, 17, { formula: `SUM(M${warnaStart}:M${warnaEnd},O${warnaStart}:O${warnaEnd})`, result: kerahTotal }, { align: "center", fmt: "0.00" });
+    put(warnaStart, 18, { formula: `SUM(N${warnaStart}:N${warnaEnd},P${warnaStart}:P${warnaEnd})`, result: mansetTotal }, { align: "center", fmt: "0.00" });
     for (const col of [17, 18]) {
       for (let rr = warnaStart; rr <= warnaEnd; rr++) if (rr !== warnaStart) put(rr, col, "", {});
       merge(warnaStart, warnaEnd, col);

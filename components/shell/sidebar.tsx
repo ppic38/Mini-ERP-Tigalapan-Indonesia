@@ -22,6 +22,8 @@ import {
   Lock,
   Database,
   X,
+  BookOpen,
+  MessageCircle,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -108,7 +110,11 @@ export function Sidebar({
   badgeOverrides,
   mobileOpen = false,
   onClose,
+  help,
 }: {
+  /** Blok bantuan di dasar sidebar (revisi 2026-10-12, owner: panduan penggunaan ERP + nomor feedback; untuk saat ini hanya
+   *  modul Vendor Produksi). Kosong = tidak tampil. */
+  help?: { guideHref: string; guideActive?: boolean; phoneLabel: string; whatsappUrl: string };
   /** Layar < lg: sidebar jadi laci (drawer) di atas konten; `mobileOpen` = sedang terbuka. Di layar
    *  lg ke atas prop ini diabaikan (sidebar tetap tampil seperti biasa). */
   mobileOpen?: boolean;
@@ -157,7 +163,10 @@ export function Sidebar({
         // < lg: laci tetap di kiri layar, geser masuk/keluar. >= lg: kolom biasa di samping konten.
         "fixed inset-y-0 left-0 z-40 transition-transform duration-200 ease-out",
         mobileOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full",
-        "lg:static lg:z-auto lg:w-[212px] lg:max-w-none lg:translate-x-0 lg:overflow-visible lg:shadow-none lg:transition-none"
+        "lg:z-auto lg:w-[212px] lg:max-w-none lg:translate-x-0 lg:shadow-none lg:transition-none",
+        // Dengan blok bantuan, sidebar menempel setinggi layar supaya Panduan & nomor feedback selalu terlihat di dasar layar
+        // (bukan di dasar halaman yang panjang). Tanpa bantuan: perilaku lama.
+        help ? "lg:sticky lg:top-0 lg:h-screen lg:self-start lg:overflow-y-auto" : "lg:static lg:overflow-visible"
       )}
     >
       <div className="flex h-[52px] flex-none items-center gap-[9px] border-b border-white/8 px-4">
@@ -205,7 +214,34 @@ export function Sidebar({
             })
           : items.map((item) => <SidebarItem key={item.label} item={item} activeHref={activeHref} badgeOverrides={badgeOverrides} onNavigate={onClose} />)}
       </div>
-      <div className="mt-auto border-t border-white/8 px-4 py-3.5 font-mono text-[10.5px] text-[#5E7288]">
+      {help && (
+        <div className="mt-auto flex flex-col gap-1 border-t border-white/8 p-2.5">
+          <Link
+            href={help.guideHref}
+            onClick={onClose}
+            className={cn(
+              "flex items-center gap-2.5 rounded-[8px] px-3 py-2 font-sans text-[12.5px]",
+              help.guideActive ? "bg-accent-blue font-semibold text-white" : "font-medium text-[#9AA4BE] hover:text-white"
+            )}
+          >
+            <BookOpen size={15} strokeWidth={2} className="flex-shrink-0 opacity-90" />
+            <span className="flex-1">Panduan Penggunaan</span>
+          </Link>
+          <a
+            href={help.whatsappUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-start gap-2.5 rounded-[8px] px-3 py-2 font-sans text-[11.5px] text-[#9AA4BE] hover:text-white"
+          >
+            <MessageCircle size={15} strokeWidth={2} className="mt-px flex-shrink-0 opacity-90" />
+            <span className="flex flex-col leading-snug">
+              <span className="font-medium">Feedback &amp; bantuan</span>
+              <span className="font-mono text-[11px] text-[#7C89A6]">{help.phoneLabel}</span>
+            </span>
+          </a>
+        </div>
+      )}
+      <div className={cn("border-t border-white/8 px-4 py-3.5 font-mono text-[10.5px] text-[#5E7288]", !help && "mt-auto")}>
         v1.0 · Tigalapan Indonesia
       </div>
     </div>

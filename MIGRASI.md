@@ -1,5 +1,10 @@
 # Migrasi Project — Status & Riwayat
 
+## Panduan & kontak feedback di sidebar Vendor Produksi; Form Rasio (2026-10-12, tanpa migration)
+Owner: kolom FORM RASIO di PO Produksi Saya dipindah ke paling kanan; dasar sidebar vendor produksi memuat "Panduan Penggunaan" + nomor feedback 0853-9525-7703 (WhatsApp wa.me/6285395257703), HANYA modul vendor produksi (bukan mode Sysadmin).
+- `components/shell/sidebar.tsx` prop `help` (diisi di app-shell untuk role vendorMaklon); dengan blok bantuan sidebar `lg:sticky h-screen` supaya selalu di dasar layar. Halaman `/vendor-maklon/panduan` (app/vendor-maklon/panduan/page.tsx, isi panduan per menu -- perbarui kalau alur halaman berubah); `proxy.ts` mengizinkan anggota tim membukanya apa pun allowedPages-nya (seperti Profil Saya).
+- Form Rasio Excel: Total/Total Roll/Rib Total/Kerah-Manset Total sekarang RUMUS SUM, format angka 0.00 (bukan 0.## yang menampilkan "1."), kategori jatuh ke kategori MRP bila grup kosong, pembekuan baris header dengan topLeftCell eksplisit.
+
 ## Master Data "Rib per Pcs" -- migration 0069 (2026-10-09)
 Owner: faktor rib naik dari 6,5 ke 7 gram/pcs "di data terbaru saja", dan bisa diatur seperti Kerah/Manset. `kerah_manset_settings` dapat baris `RIB` (kg_per_pcs 0,007; constraint kind diperluas). Dipakai `parseMrpImportFile` (lib/mrp/parseImport.ts) HANYA saat upload MRP baru dan kolom RIB KILOGRAM kosong (`ribKg = totalQty x kgPerPcs`, bawaan 0,007 kalau baris belum ada); MRP lama tidak dihitung ulang. Diedit di Procurement > Master Data > "Rib / Kerah / Manset". **Owner menjalankan migration manual**; sebelum itu baris Rib belum tampil di panel tapi upload tetap memakai 7 gram. Halaman input MRP manual (app/mrp/ppic/new) memakai konstanta 7 gram.
 

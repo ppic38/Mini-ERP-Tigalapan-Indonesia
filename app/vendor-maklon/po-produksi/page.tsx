@@ -275,21 +275,6 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
         ),
     },
     {
-      key: "rasio",
-      label: "Form Rasio",
-      default: true,
-      render: (p) => (
-        <button
-          onClick={() => void downloadRasio(p)}
-          disabled={rasioBusyId === p.id}
-          className="inline-flex items-center gap-1 rounded-md border border-[#CBD5DF] px-2.5 py-1 font-sans text-[11px] font-semibold text-action-primary hover:bg-[#F2F4F7] disabled:opacity-50"
-        >
-          <Download size={12} />
-          {rasioBusyId === p.id ? "Membuat…" : "Excel"}
-        </button>
-      ),
-    },
-    {
       key: "aksi",
       label: "Aksi",
       default: true,
@@ -351,6 +336,21 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
         if (displayStatus === "PAID" || displayStatus === "FULLY_PAID") return <span className="font-sans text-[11px] text-success-fg">Lunas</span>;
         return "—";
       },
+    },
+    {
+      key: "rasio",
+      label: "Form Rasio",
+      default: true,
+      render: (p) => (
+        <button
+          onClick={() => void downloadRasio(p)}
+          disabled={rasioBusyId === p.id}
+          className="inline-flex items-center gap-1 rounded-md border border-[#CBD5DF] px-2.5 py-1 font-sans text-[11px] font-semibold text-action-primary hover:bg-[#F2F4F7] disabled:opacity-50"
+        >
+          <Download size={12} />
+          {rasioBusyId === p.id ? "Membuat…" : "Excel"}
+        </button>
+      ),
     },
   ];
 
