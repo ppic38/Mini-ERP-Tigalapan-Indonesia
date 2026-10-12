@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Reset MRP kini ikut membersihkan notifikasi (2026-10-12, tanpa migration)
+Owner: notifikasi "PO Produksi ... telah disetujui Finance" masih tampil padahal MRP-nya sudah direset. Sebabnya: tabel notifications hanya berisi teks (tanpa kolom mrp_id) sehingga resetMrpCore sengaja tidak menyentuhnya. Sekarang resetMrpCore mengumpulkan nomor MRP, nomor PO material/produksi, dan nomor invoice (material + vendor) milik MRP itu SEBELUM dihapus, lalu `deleteNotificationsMentioning` menghapus notifikasi yang menyebut nomor tersebut (batas nomor penuh: "MRP-W36" tidak menghapus notifikasi "MRP-W36-B"). Best-effort: gagal membersihkan notifikasi tidak menggagalkan reset. Notifikasi yatim yang sudah terlanjur ada dibersihkan dengan skrip SQL sekali jalan (dibuat di chat, bukan migration): notifikasi yang menyebut nomor PO/VINV/INV tetapi tidak satu pun nomornya masih ada di material_pos, maklon_pos, vendor_invoices, raw_material_invoices.
+
 ## Panduan & kontak feedback di sidebar Vendor Produksi; Form Rasio (2026-10-12, tanpa migration)
 Owner: kolom FORM RASIO di PO Produksi Saya dipindah ke paling kanan; dasar sidebar vendor produksi memuat "Panduan Penggunaan" + nomor feedback 0853-9525-7703 (WhatsApp wa.me/6285395257703), HANYA modul vendor produksi (bukan mode Sysadmin).
 - `components/shell/sidebar.tsx` prop `help` (diisi di app-shell untuk role vendorMaklon); dengan blok bantuan sidebar `lg:sticky h-screen` supaya selalu di dasar layar. Halaman `/vendor-maklon/panduan` (app/vendor-maklon/panduan/page.tsx, isi panduan per menu -- perbarui kalau alur halaman berubah); `proxy.ts` mengizinkan anggota tim membukanya apa pun allowedPages-nya (seperti Profil Saya).

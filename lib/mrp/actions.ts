@@ -5274,6 +5274,12 @@ async function resetMrpCore(mrpId: string): Promise<void> {
   if (rawInvoicesErr) throw new Error(`Gagal memvalidasi invoice material sebelum reset MRP ${mrpId}: ${rawInvoicesErr.message}`);
   const rawInvoiceIds = (rawInvoices ?? []).map((r) => r.id);
 
+  // Penanda untuk membersihkan notifikasi lama milik MRP ini setelah reset (notifikasi hanya berupa teks, tidak punya kolom
+  // mrp_id): nomor MRP, nomor PO material/produksi, dan nomor invoice yang akan ikut terhapus. Dikumpulkan SEKARANG karena
+  // barisnya hilang bersama cascade. Gagal mengumpulkan = notifikasi saja yang tidak terbersihkan, reset tetap jalan.
+  const [matPoRefs, makPoRefs] = await Promise.all([db.from("material_pos").select("id").eq("mrp_id", mrpId), db.from("maklon_pos").select("id").eq("mrp_id", mrpId)]);
+  const notificationRefs = [mrpId, mrpId.replace(/_/g, "-"), ...(matPoRefs.data ?? []).map((p) => p.id), ...(makPoRefs.data ?? []).map((p) => p.id), ...rawInvoiceIds, ...affectedInvoiceIds];
+
   // ===== FASE HAPUS -- semua guard di atas sudah lolos, baru mulai ada operasi delete ===== //
 
   if (affectedInvoiceIds.length > 0) {
@@ -5306,6 +5312,34 @@ async function resetMrpCore(mrpId: string): Promise<void> {
   // production_group_meta, delivery_kolis, dan vendor_invoice_lines milik MRP ini.
   const { error: mrpErr } = await db.from("mrp").delete().eq("id", mrpId);
   if (mrpErr) throw new Error(`Reset MRP gagal di tabel "mrp": ${mrpErr.message}`);
+
+  await deleteNotificationsMentioning(db, notificationRefs);
+}
+
+/** Hapus notifikasi yang teksnya menyebut salah satu nomor di `refs` (nomor MRP / PO / invoice milik MRP yang baru direset).
+ *  Pencocokan memakai batas nomor penuh (huruf/angka/garis penghubung dianggap bagian nomor), supaya "MRP-W36" tidak
+ *  ikut menghapus notifikasi milik "MRP-W36-B" yang masih ada. Best-effort: kegagalan di sini tidak menggagalkan reset. */
+async function deleteNotificationsMentioning(db: ReturnType<typeof supabaseServer>, refs: string[]): Promise<void> {
+  try {
+    const ids = Array.from(new Set(refs.filter((r) => r && r.length >= 4)));
+    if (ids.length === 0) return;
+    const pattern = ids.map((i) => i.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+    const exact = new RegExp(`(?<![A-Za-z0-9_-])(?:${pattern})(?![A-Za-z0-9_-])`, "i");
+    const hits = new Set<string>();
+    for (let i = 0; i < ids.length; i += 15) {
+      const filter = ids.slice(i, i + 15).map((c) => `text.ilike."%${c}%"`).join(",");
+      const { data, error } = await db.from("notifications").select("id,text").or(filter);
+      if (error) throw new Error(error.message);
+      for (const n of data ?? []) if (exact.test(n.text)) hits.add(n.id);
+    }
+    const hitIds = Array.from(hits);
+    for (let i = 0; i < hitIds.length; i += 100) {
+      const { error } = await db.from("notifications").delete().in("id", hitIds.slice(i, i + 100));
+      if (error) throw new Error(error.message);
+    }
+  } catch (err) {
+    console.error("deleteNotificationsMentioning: notifikasi lama gagal dibersihkan", err instanceof Error ? err.message : err);
+  }
 }
 
 // -------------------------------------------------------------------------
