@@ -110,10 +110,14 @@ export function Sidebar({
   mobileOpen = false,
   onClose,
   help,
+  boxedHrefs,
 }: {
   /** Link "Panduan Penggunaan" di dasar sidebar (revisi 2026-10-12, owner; untuk saat ini hanya modul Vendor Produksi).
    *  Nomor feedback ada di halaman panduannya. Kosong = tidak tampil. */
   help?: { guideHref: string; guideActive?: boolean };
+  /** Menu yang dikelompokkan dalam satu kotak bergaris (hanya garis, tanpa latar), sama gayanya dengan kotak grup Sysadmin
+   *  tanpa label. Item berurutan yang ada di daftar ini masuk satu kotak. Dipakai portal Vendor Produksi untuk PO Produksi/Material. */
+  boxedHrefs?: string[];
   /** Layar < lg: sidebar jadi laci (drawer) di atas konten; `mobileOpen` = sedang terbuka. Di layar
    *  lg ke atas prop ini diabaikan (sidebar tetap tampil seperti biasa). */
   mobileOpen?: boolean;
@@ -211,7 +215,30 @@ export function Sidebar({
                 </div>
               );
             })
-          : items.map((item) => <SidebarItem key={item.label} item={item} activeHref={activeHref} badgeOverrides={badgeOverrides} onNavigate={onClose} />)}
+          : (() => {
+              const out: React.ReactNode[] = [];
+              let run: NavItem[] = [];
+              const flush = () => {
+                if (run.length === 0) return;
+                out.push(
+                  <div key={"box-" + run[0].label} className="mb-1.5 flex flex-col gap-0.5 rounded-[10px] border border-accent-purple/60 p-1">
+                    {run.map((item) => (
+                      <SidebarItem key={item.label} item={item} activeHref={activeHref} badgeOverrides={badgeOverrides} onNavigate={onClose} />
+                    ))}
+                  </div>
+                );
+                run = [];
+              };
+              for (const item of items) {
+                if (item.href && boxedHrefs?.includes(item.href)) run.push(item);
+                else {
+                  flush();
+                  out.push(<SidebarItem key={item.label} item={item} activeHref={activeHref} badgeOverrides={badgeOverrides} onNavigate={onClose} />);
+                }
+              }
+              flush();
+              return out;
+            })()}
       </div>
       {help && (
         <div className="mt-auto flex flex-col gap-1 border-t border-white/8 p-2.5">

@@ -324,6 +324,8 @@ export function AppShell({
         badgeOverrides={badgeOverrides}
         mobileOpen={navOpen}
         onClose={() => setNavOpen(false)}
+        // PO Produksi Saya & PO Material Saya dibingkai garis ungu (tanpa latar/label) di portal Vendor Produksi.
+        boxedHrefs={role === "vendorMaklon" && !sysadminMode ? ["/vendor-maklon/po-produksi", "/vendor-maklon/po-material"] : undefined}
         // Link Panduan Penggunaan: untuk saat ini HANYA portal Vendor Produksi (bukan mode Sysadmin).
         help={
           role === "vendorMaklon" && !sysadminMode
