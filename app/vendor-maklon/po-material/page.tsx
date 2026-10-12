@@ -14,6 +14,13 @@ import { seenPoKey, useMarkPoSeen } from "@/lib/shell/seen-po";
 // Revisi 2026-09-19: link Bukti PV & Bukti Bayar (revisi 2026-09-06) dicabut lagi dari halaman ini
 // -- owner: vendor produksi tidak perlu melihat lampiran PV/bukti bayar di PO Material Saya.
 
+/** Lencana status di halaman ini. Revisi 2026-10-12 (owner): status RECEIVING ditampilkan "GOOD RECEIPT" berwarna hijau (nama
+ *  yang dikenal vendor, sama dengan menu Good Receive). Hanya tampilan portal vendor -- nilai status di data tidak berubah. */
+function materialStatusBadge(status: string): { label: string; tone: "neutral" | "info" | "warning" | "success" | "danger" | "rework" | "active" | "locked" | "done" } {
+  if (status === "RECEIVING") return { label: "GOOD RECEIPT", tone: "success" };
+  return invoiceBadge(status as RawMaterialInvoice["status"]);
+}
+
 const REMARK_BY_STATUS: Record<string, string> = {
   WAITING_INVOICE: "Menunggu invoice supplier",
   INVOICED: "Menunggu payment",
@@ -180,7 +187,7 @@ function InvoiceListExpanded({ vendorId, group }: { vendorId: string; group: Row
                   {inv.status === "WAITING_INVOICE" ? (
                     <StatusPill tone="warning">WAITING INVOICE</StatusPill>
                   ) : (
-                    <StatusPill tone={invoiceBadge(inv.status as RawMaterialInvoice["status"]).tone}>{invoiceBadge(inv.status as RawMaterialInvoice["status"]).label}</StatusPill>
+                    <StatusPill tone={materialStatusBadge(inv.status).tone}>{materialStatusBadge(inv.status).label}</StatusPill>
                   )}
                   <span className="text-text-muted">{REMARK_BY_STATUS[inv.status] ?? "—"}</span>
                   <span className="ml-auto font-mono text-text-muted">{inv.roll} roll</span>
@@ -292,7 +299,7 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
         r.status === "WAITING_INVOICE" ? (
           <StatusPill tone="warning">WAITING INVOICE</StatusPill>
         ) : (
-          <StatusPill tone={invoiceBadge(r.status as RawMaterialInvoice["status"]).tone}>{invoiceBadge(r.status as RawMaterialInvoice["status"]).label}</StatusPill>
+          <StatusPill tone={materialStatusBadge(r.status).tone}>{materialStatusBadge(r.status).label}</StatusPill>
         ),
     },
     { key: "remark", label: "Remark", default: false, render: (r) => REMARK_BY_STATUS[r.status] ?? "—" },
@@ -322,7 +329,8 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
         filterDefs={[
           { label: "No MRP", options: Array.from(new Set(rows.map((r) => r.mrpId))), test: (r, v) => r.mrpId === v },
           { label: "No PO", options: Array.from(new Set(poRows.map((p) => p.poId))), test: (r, v) => r.pos.some((p) => p.poId === v) },
-          { label: "Status", options: Array.from(new Set(rows.map((r) => r.status))), test: (r, v) => r.status === v },
+          // Filter memakai nama yang sama dengan lencana (RECEIVING tampil "GOOD RECEIPT").
+          { label: "Status", options: Array.from(new Set(rows.map((r) => materialStatusBadge(r.status).label))), test: (r, v) => materialStatusBadge(r.status).label === v },
         ]}
         emptyText="Belum ada PO material yang disetujui Finance untuk vendor Anda."
         renderExpanded={(r) => <InvoiceListExpanded vendorId={vendorId} group={r} />}
