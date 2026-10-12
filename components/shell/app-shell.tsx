@@ -367,8 +367,10 @@ export function AppShell({
                 }
               : role === "vendorMaklon"
                 ? () => {
+                    // Kembali ke tempat vendor ini login: panel login di halaman utama, atau halaman login vendor.
+                    const origin = useVendorAuthStore.getState().loginOrigin;
                     logoutVendor();
-                    router.push("/vendor-maklon/login");
+                    router.push(origin === "chooser" ? "/?masuk=vendor" : "/vendor-maklon/login");
                   }
                 : undefined
           }

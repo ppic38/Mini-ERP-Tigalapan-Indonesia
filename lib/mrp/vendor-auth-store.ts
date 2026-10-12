@@ -20,7 +20,13 @@ import { useInternalAuthStore } from "../internal-auth-store";
 // membaca cookie httpOnly sungguhan yang jadi penjaga sebenarnya).
 export type VendorActorInfo = { username: string; name: string; allowedPages: string[] };
 
+/** Dari mana vendor ini login: panel login di halaman utama ("chooser") atau halaman /vendor-maklon/login ("login"). Logout
+ *  mengembalikan ke tempat yang sama (revisi 2026-10-12, owner). Disimpan bersama sesi supaya tahan muat ulang halaman. */
+export type VendorLoginOrigin = "chooser" | "login";
+
 type VendorAuthState = {
+  loginOrigin: VendorLoginOrigin;
+  setLoginOrigin: (origin: VendorLoginOrigin) => void;
   loggedInVendorId: string | null;
   actor: VendorActorInfo | null;
   /** Login akun UTAMA berbasis ketik nama vendor (bukan dropdown/select) — `nameOrId`
@@ -34,6 +40,8 @@ type VendorAuthState = {
 export const useVendorAuthStore = create<VendorAuthState>()(
   persist(
     (set) => ({
+      loginOrigin: "login",
+      setLoginOrigin: (origin) => set({ loginOrigin: origin }),
       loggedInVendorId: null,
       actor: null,
       login: async (nameOrId, password) => {

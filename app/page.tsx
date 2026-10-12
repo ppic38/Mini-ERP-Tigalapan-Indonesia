@@ -82,6 +82,7 @@ export default function ModuleSelectPage() {
   const login = useInternalAuthStore((s) => s.login);
   const loginUser = useInternalAuthStore((s) => s.loginUser);
   const logoutVendor = useVendorAuthStore((s) => s.logout);
+  const setLoginOrigin = useVendorAuthStore((s) => s.setLoginOrigin);
   const router = useRouter();
 
   const [selectedRole, setSelectedRole] = useState<InternalRole | null>(null);
@@ -147,6 +148,21 @@ export default function ModuleSelectPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [vendorStage]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Logout vendor yang tadinya login dari panel ini kembali ke sini dengan panel login vendor sudah terbuka (?masuk=vendor).
+  useEffect(() => {
+    if (!mounted || typeof window === "undefined") return;
+    if (new URLSearchParams(window.location.search).get("masuk") !== "vendor") return;
+    window.history.replaceState(null, "", "/");
+    const t = window.setTimeout(() => {
+      const rect = measureVendorCard();
+      if (!rect) return;
+      setVendorRect(rect);
+      setVendorStage("opening");
+      window.setTimeout(() => setVendorStage("open"), 50);
+    }, 150);
+    return () => window.clearTimeout(t);
+  }, [mounted]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!mounted) return null;
   const vendorFaded = vendorStage === "opening" || vendorStage === "open";
@@ -317,7 +333,12 @@ export default function ModuleSelectPage() {
                       </div>
                     </div>
                     <div className="mt-6">
-                      <VendorLoginForm onSuccess={() => router.push("/vendor-maklon/po-produksi")} />
+                      <VendorLoginForm
+                        onSuccess={() => {
+                          setLoginOrigin("chooser");
+                          router.push("/vendor-maklon/po-produksi");
+                        }}
+                      />
                     </div>
                   </div>
                 </div>

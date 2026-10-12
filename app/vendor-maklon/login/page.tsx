@@ -15,6 +15,7 @@ export default function VendorLoginPage() {
   useEffect(() => setMounted(true), []);
 
   const loggedInVendorId = useVendorAuthStore((s) => s.loggedInVendorId);
+  const setLoginOrigin = useVendorAuthStore((s) => s.setLoginOrigin);
   const router = useRouter();
 
   useEffect(() => {
@@ -46,7 +47,12 @@ export default function VendorLoginPage() {
           </div>
 
           <div className="mt-6">
-            <VendorLoginForm onSuccess={() => router.push("/vendor-maklon/po-produksi")} />
+            <VendorLoginForm
+              onSuccess={() => {
+                setLoginOrigin("login");
+                router.push("/vendor-maklon/po-produksi");
+              }}
+            />
           </div>
         </div>
       </div>

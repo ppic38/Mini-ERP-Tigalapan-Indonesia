@@ -21,11 +21,14 @@ export function VendorAuthGuard({ children }: { children: (vendorId: string) => 
   // melihat portalnya sendiri (lihat ActiveIdentity di lib/internal-auth-store.ts).
   const sysadmin = useSysadminMode();
   const sysadminVendorId = useSysadminVendorStore((s) => s.vendorId);
+  const loginOrigin = useVendorAuthStore((s) => s.loginOrigin);
   const router = useRouter();
 
+  // Tanpa sesi vendor: kembali ke tempat login terakhir (panel login di halaman utama, atau halaman login vendor) --
+  // SAMA dengan tujuan tombol Logout di app-shell, supaya dua pengalihan itu tidak saling berebut arah.
   useEffect(() => {
-    if (mounted && !sysadmin && !loggedInVendorId) router.replace("/vendor-maklon/login");
-  }, [mounted, sysadmin, loggedInVendorId, router]);
+    if (mounted && !sysadmin && !loggedInVendorId) router.replace(loginOrigin === "chooser" ? "/?masuk=vendor" : "/vendor-maklon/login");
+  }, [mounted, sysadmin, loggedInVendorId, loginOrigin, router]);
 
   if (!mounted) return null;
   if (sysadmin) return sysadminVendorId ? <>{children(sysadminVendorId)}</> : <SysadminVendorPicker />;
