@@ -169,8 +169,9 @@ function InvoiceListExpanded({ vendorId, group }: { vendorId: string; group: Row
                   className="flex w-full flex-wrap items-center gap-2 bg-[#F2F4F7] px-3 py-1.5 text-left font-sans text-[11px] font-medium text-text-primary"
                 >
                   {isOpen ? <ChevronDown className="h-3.5 w-3.5 flex-none text-text-muted" /> : <ChevronRight className="h-3.5 w-3.5 flex-none text-text-muted" />}
-                  <span className="font-mono">{inv.invoiceId}</span>
-                  <span className="font-mono text-text-muted">({po.poId})</span>
+                  {/* Nomor internal sistem (INV-K...) sengaja tidak ditampilkan: tidak dipakai Procurement/Finance maupun vendor.
+                      Yang dikenali semua pihak: nomor PO dan nomor invoice supplier di bawah. */}
+                  <span className="font-mono">{po.poId}</span>
                   {inv.noInvoiceVendor && (
                     <span className="text-text-muted">
                       No. Invoice: <span className="font-mono font-medium text-text-primary">{inv.noInvoiceVendor}</span>
