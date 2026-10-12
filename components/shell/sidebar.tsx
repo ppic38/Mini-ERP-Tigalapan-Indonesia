@@ -23,7 +23,6 @@ import {
   Database,
   X,
   BookOpen,
-  MessageCircle,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -112,9 +111,9 @@ export function Sidebar({
   onClose,
   help,
 }: {
-  /** Blok bantuan di dasar sidebar (revisi 2026-10-12, owner: panduan penggunaan ERP + nomor feedback; untuk saat ini hanya
-   *  modul Vendor Produksi). Kosong = tidak tampil. */
-  help?: { guideHref: string; guideActive?: boolean; phoneLabel: string; whatsappUrl: string };
+  /** Link "Panduan Penggunaan" di dasar sidebar (revisi 2026-10-12, owner; untuk saat ini hanya modul Vendor Produksi).
+   *  Nomor feedback ada di halaman panduannya. Kosong = tidak tampil. */
+  help?: { guideHref: string; guideActive?: boolean };
   /** Layar < lg: sidebar jadi laci (drawer) di atas konten; `mobileOpen` = sedang terbuka. Di layar
    *  lg ke atas prop ini diabaikan (sidebar tetap tampil seperti biasa). */
   mobileOpen?: boolean;
@@ -227,18 +226,6 @@ export function Sidebar({
             <BookOpen size={15} strokeWidth={2} className="flex-shrink-0 opacity-90" />
             <span className="flex-1">Panduan Penggunaan</span>
           </Link>
-          <a
-            href={help.whatsappUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-start gap-2.5 rounded-[8px] px-3 py-2 font-sans text-[11.5px] text-[#9AA4BE] hover:text-white"
-          >
-            <MessageCircle size={15} strokeWidth={2} className="mt-px flex-shrink-0 opacity-90" />
-            <span className="flex flex-col leading-snug">
-              <span className="font-medium">Feedback &amp; bantuan</span>
-              <span className="font-mono text-[11px] text-[#7C89A6]">{help.phoneLabel}</span>
-            </span>
-          </a>
         </div>
       )}
       <div className={cn("border-t border-white/8 px-4 py-3.5 font-mono text-[10.5px] text-[#5E7288]", !help && "mt-auto")}>

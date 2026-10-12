@@ -104,7 +104,7 @@ function PanduanContent({ vendorId }: { vendorId: string }) {
       roleOverride={VENDOR_PRODUKSI[vendorId]?.name ?? vendorId}
       entityOverride="Vendor Produksi"
     >
-      <div className="flex max-w-[760px] flex-col gap-3">
+      <div className="flex flex-col gap-3">
         <a
           href={WHATSAPP_URL}
           target="_blank"

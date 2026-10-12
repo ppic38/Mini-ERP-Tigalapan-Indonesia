@@ -324,10 +324,10 @@ export function AppShell({
         badgeOverrides={badgeOverrides}
         mobileOpen={navOpen}
         onClose={() => setNavOpen(false)}
-        // Panduan penggunaan + nomor feedback: untuk saat ini HANYA portal Vendor Produksi (bukan mode Sysadmin).
+        // Link Panduan Penggunaan: untuk saat ini HANYA portal Vendor Produksi (bukan mode Sysadmin).
         help={
           role === "vendorMaklon" && !sysadminMode
-            ? { guideHref: "/vendor-maklon/panduan", guideActive: activeHref === "/vendor-maklon/panduan", phoneLabel: "0853-9525-7703", whatsappUrl: "https://wa.me/6285395257703" }
+            ? { guideHref: "/vendor-maklon/panduan", guideActive: activeHref === "/vendor-maklon/panduan" }
             : undefined
         }
       />
