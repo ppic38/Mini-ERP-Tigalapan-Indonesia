@@ -634,7 +634,6 @@ export default function MaterialTrackingPage() {
                   <td className="px-3 py-[11px] text-right font-mono tabular-nums font-medium">{formatRupiah(m.totalNilai)}</td>
                   <td className="px-3 py-[11px]">
                     <div className="flex flex-col items-start gap-1">
-                      <StatusPill tone="neutral">{m.rows.length} baris</StatusPill>
                       <StatusPill tone={deliveryStatusBadge(m.rows).tone}>{deliveryStatusBadge(m.rows).label}</StatusPill>
                     </div>
                   </td>
@@ -666,7 +665,6 @@ export default function MaterialTrackingPage() {
                           <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(s.totalNilai)}</td>
                           <td className="px-3 py-[10px]">
                             <div className="flex flex-col items-start gap-1">
-                              <StatusPill tone="neutral">{s.rows.length} baris</StatusPill>
                               <StatusPill tone={deliveryStatusBadge(s.rows).tone}>{deliveryStatusBadge(s.rows).label}</StatusPill>
                             </div>
                           </td>
@@ -696,7 +694,6 @@ export default function MaterialTrackingPage() {
                           <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(v.totalNilai)}</td>
                           <td className="px-3 py-[10px]">
                             <div className="flex flex-col items-start gap-1">
-                              <StatusPill tone="neutral">{v.rows.length} baris</StatusPill>
                               <StatusPill tone={deliveryStatusBadge(v.rows).tone}>{deliveryStatusBadge(v.rows).label}</StatusPill>
                             </div>
                           </td>
