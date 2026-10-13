@@ -707,7 +707,10 @@ export default function MaterialTrackingPage() {
                                       <span className="mr-1.5 text-text-muted">{expanded ? "▾" : "▸"}</span>
                                       <span className="flex flex-col">
                                         <span className="font-medium text-text-primary">{r.poId}</span>
-                                        <span className="font-mono text-[10.5px] text-text-muted">{r.mrpId}</span>
+                                        <span className="font-mono text-[10.5px] text-text-muted">
+                                          {r.mrpId}
+                                          {r.invoice?.noInvoiceVendor ? " · Inv. " + r.invoice.noInvoiceVendor : ""}
+                                        </span>
                                       </span>
                                     </span>
                                   </td>
@@ -744,7 +747,8 @@ export default function MaterialTrackingPage() {
                                           </div>
                                         );
                                         return (
-                                          <div className="mb-2 grid grid-cols-3 gap-2 max-md:grid-cols-1">
+                                          <div className="mb-2 grid grid-cols-4 gap-2 max-md:grid-cols-1">
+                                            {box("No. invoice supplier", r.invoice!.noInvoiceVendor || "—", r.invoice!.supplier)}
                                             {box("Tgl dikirim", d.sent ? formatDate(d.sent) : "Belum di-set delivery")}
                                             {box("Mulai diterima vendor", d.firstReceived ? formatDate(d.firstReceived) : "Belum ada roll diterima", d.total > 0 ? `${d.arrived}/${d.total} roll sudah diterima` : undefined)}
                                             {box("Lengkap diterima", d.lastReceived ? formatDate(d.lastReceived) : "Belum lengkap", d.lastReceived ? undefined : d.total > 0 ? `Sisa ${d.total - d.arrived} roll` : undefined)}
