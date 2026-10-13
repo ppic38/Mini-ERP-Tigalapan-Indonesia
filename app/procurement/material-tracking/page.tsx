@@ -15,6 +15,7 @@ import { invoiceDeliveryCorrections } from "@/components/sysadmin/procurement-co
 import { RollCodeEditor } from "@/components/sysadmin/roll-code-editor";
 import { useMrpStore } from "@/lib/mrp/store";
 import {
+  formatDate,
   formatPcs,
   formatRupiah,
   maklonPoBadgeWithApproval,
@@ -56,6 +57,34 @@ type TrackingRow = {
   status: MaterialPoFullStatus;
   invoice?: RawMaterialInvoice;
 };
+
+/** Tanggal satu kiriman (satu invoice): kapan dikirim (Set Delivery), kapan roll pertama diterima vendor, dan kapan roll TERAKHIR
+ *  diterima (hanya kalau semua roll sudah masuk). Diturunkan dari data yang sudah ada (deliveredAt, receivedAt, rollArrivals) --
+ *  revisi 2026-10-13, owner: Procurement perlu tahu kapan dikirim dan diterima di vendor; satu PO bisa dikirim parsial,
+ *  jadi ditampilkan per baris kiriman saat dibuka. */
+function shipmentDates(inv: RawMaterialInvoice) {
+  const dates: string[] = [];
+  for (const list of Object.values(inv.rollArrivals ?? {})) for (const a of list) if (a?.arrivedAt) dates.push(a.arrivedAt);
+  dates.sort();
+  const { arrived, total } = rollArrivalProgress(inv);
+  return {
+    sent: inv.deliveredAt,
+    firstReceived: dates[0] ?? inv.receivedAt,
+    lastReceived: total > 0 && arrived === total ? dates[dates.length - 1] : undefined,
+    arrived,
+    total,
+  };
+}
+
+/** Penerimaan satu warna/lengan dalam satu kiriman: "5/5 roll · 12/10/2026" atau rentang tanggal kalau diterima bertahap. */
+function colorArrivalText(inv: RawMaterialInvoice, warna: string, lengan: string, rollCount: number): string {
+  const list = inv.rollArrivals?.[warna + "|" + lengan] ?? [];
+  const dates = list.filter((a): a is NonNullable<typeof a> => !!a?.arrivedAt).map((a) => a.arrivedAt).sort();
+  if (dates.length === 0) return "Belum diterima";
+  const first = formatDate(dates[0]);
+  const last = formatDate(dates[dates.length - 1]);
+  return `${dates.length}/${rollCount} roll · ${first === last ? first : first + " – " + last}`;
+}
 
 export default function MaterialTrackingPage() {
   const sysadminMode = useSysadminMode();
@@ -705,18 +734,37 @@ export default function MaterialTrackingPage() {
                                 {expanded && r.invoice && (
                                   <tr>
                                     <td colSpan={6 + (sysadminMode ? 1 : 0)} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-[88px]">
+                                      {(() => {
+                                        const d = shipmentDates(r.invoice);
+                                        const box = (label: string, value: string, hint?: string) => (
+                                          <div className="rounded-md border border-[#E4E8EE] bg-[#FAFBFC] px-3 py-2">
+                                            <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">{label}</div>
+                                            <div className="mt-0.5 font-mono text-[12px] font-semibold text-text-primary">{value}</div>
+                                            {hint && <div className="font-sans text-[10.5px] text-text-muted">{hint}</div>}
+                                          </div>
+                                        );
+                                        return (
+                                          <div className="mb-2 grid grid-cols-3 gap-2 max-md:grid-cols-1">
+                                            {box("Tgl dikirim", d.sent ? formatDate(d.sent) : "Belum di-set delivery")}
+                                            {box("Mulai diterima vendor", d.firstReceived ? formatDate(d.firstReceived) : "Belum ada roll diterima", d.total > 0 ? `${d.arrived}/${d.total} roll sudah diterima` : undefined)}
+                                            {box("Lengkap diterima", d.lastReceived ? formatDate(d.lastReceived) : "Belum lengkap", d.lastReceived ? undefined : d.total > 0 ? `Sisa ${d.total - d.arrived} roll` : undefined)}
+                                          </div>
+                                        );
+                                      })()}
                                       <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
-                                        <div className="grid grid-cols-3 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                                        <div className="grid grid-cols-4 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                                           <span>Warna / Lengan</span>
                                           <span className="text-right">Roll</span>
+                                          <span className="text-right">Diterima vendor</span>
                                           <span className="text-right">Harga/Roll</span>
                                         </div>
                                         {r.invoice.colorEntries.map((c, i) => (
-                                          <div key={i} className="grid grid-cols-3 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+                                          <div key={i} className="grid grid-cols-4 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
                                             <span>
                                               {c.warna} · {c.lengan}
                                             </span>
                                             <span className="text-right font-mono">{c.rolls.length}</span>
+                                            <span className="text-right font-mono text-[11px]">{colorArrivalText(r.invoice!, c.warna, c.lengan, c.rolls.length)}</span>
                                             <span className="text-right font-mono">{formatRupiah(c.hargaPerRoll)}</span>
                                           </div>
                                         ))}

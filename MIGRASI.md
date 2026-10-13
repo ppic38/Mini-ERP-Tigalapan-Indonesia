@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Material Tracking Procurement: tanggal kirim & terima per kiriman (2026-10-13, tanpa migration)
+Owner: Procurement perlu tahu kapan material dikirim dan kapan diterima vendor; satu PO bisa dikirim parsial, jadi tampil saat baris PO dibuka (app/procurement/material-tracking/page.tsx). Tiga kotak: Tgl dikirim (deliveredAt, Set Delivery), Mulai diterima vendor (tanggal roll pertama dari rollArrivals, fallback receivedAt) + progres roll, Lengkap diterima (tanggal roll TERAKHIR, hanya kalau semua roll sudah masuk; selain itu "Belum lengkap, sisa N roll"). Tabel warna/lengan dapat kolom "Diterima vendor" (jumlah roll + tanggal atau rentang tanggal). Murni turunan data yang sudah ada.
+
 ## Logout vendor kembali ke tempat login (2026-10-12, tanpa migration; menyempurnakan entri logout di bawahnya)
 Owner: logout dari portal vendor harus kembali ke halaman asal login -- login dari panel di halaman utama ("/") kembali ke sana, login dari /vendor-maklon/login kembali ke sana. `useVendorAuthStore.loginOrigin` ("chooser" | "login", ikut disimpan di localStorage) diisi saat login sukses (app/page.tsx = chooser, app/vendor-maklon/login = login). Tombol Logout (app-shell) dan VendorAuthGuard sama-sama mengarah ke `/?masuk=vendor` (chooser; halaman utama membuka panel login vendor otomatis lalu membersihkan alamat) atau `/vendor-maklon/login`. Akar bug sebelumnya: dua pengalihan (Logout dan penjaga halaman) berebut arah; sekarang tujuannya sama.
 
