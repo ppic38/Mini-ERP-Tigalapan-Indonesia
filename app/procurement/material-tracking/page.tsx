@@ -58,6 +58,16 @@ type TrackingRow = {
   invoice?: RawMaterialInvoice;
 };
 
+/** Status kiriman di halaman ini (revisi 2026-10-13, owner): GOOD RECEIPT (hijau) kalau SEMUA roll kiriman itu sudah diterima vendor;
+ *  selama belum lengkap -- sudah dikirim tapi belum diterima atau baru diterima sebagian -- tampil DELIVERY (ungu). Tahap lain
+ *  (PAID, PRODUCTION, dst.) memakai lencana bawaan. Hanya tampilan; nilai status di data tidak berubah. */
+function trackingStatusBadge(r: { status: MaterialPoFullStatus; invoice?: RawMaterialInvoice }) {
+  if ((r.status === "DELIVERY" || r.status === "RECEIVING") && r.invoice) {
+    return rollArrivalStatus(r.invoice) === "LENGKAP" ? { label: "GOOD RECEIPT", tone: "success" as const } : { label: "DELIVERY", tone: "rework" as const };
+  }
+  return materialPoFullStatusBadge(r.status);
+}
+
 /** Tanggal satu kiriman (satu invoice): kapan dikirim (Set Delivery), kapan roll pertama diterima vendor, dan kapan roll TERAKHIR
  *  diterima (hanya kalau semua roll sudah masuk). Diturunkan dari data yang sudah ada (deliveredAt, receivedAt, rollArrivals) --
  *  revisi 2026-10-13, owner: Procurement perlu tahu kapan dikirim dan diterima di vendor; satu PO bisa dikirim parsial,
@@ -240,7 +250,7 @@ export default function MaterialTrackingPage() {
       (!mrpFilterTracking || r.mrpId === mrpFilterTracking) &&
       (!poFilterTracking || r.poId === poFilterTracking) &&
       (!entitasFilterTracking || r.entitas === entitasFilterTracking) &&
-      (!statusFilterTracking || materialPoFullStatusBadge(r.status).label === statusFilterTracking) &&
+      (!statusFilterTracking || trackingStatusBadge(r).label === statusFilterTracking) &&
       (!rollFilterTracking ||
         (r.invoice &&
           ((rollFilterTracking === "Belum" && rollArrivalStatus(r.invoice) === "BELUM") ||
@@ -258,9 +268,14 @@ export default function MaterialTrackingPage() {
   function deliveryStatusBadge(rs: TrackingRow[]) {
     const relevant = rs.filter((r) => !!r.invoice);
     const pending = relevant.filter((r) => r.invoice!.status === "PAID" && !r.invoice!.deliveredAt).length;
-    if (pending === 0) return { tone: "success" as const, label: "Semua delivery" };
-    if (pending === relevant.length) return { tone: "danger" as const, label: `${pending} belum delivery` };
-    return { tone: "warning" as const, label: `${pending} belum delivery` };
+    if (pending === relevant.length && pending > 0) return { tone: "danger" as const, label: `${pending} belum delivery` };
+    if (pending > 0) return { tone: "warning" as const, label: `${pending} belum delivery` };
+    // Semua sudah di-Set Delivery: ringkas perjalanan fisiknya -- Good Receipt (hijau) kalau semua kiriman sudah lengkap diterima
+    // vendor, selain itu Delivery (ungu) beserta berapa kiriman yang sudah lengkap.
+    if (relevant.length === 0) return { tone: "success" as const, label: "Semua delivery" };
+    const received = relevant.filter((r) => rollArrivalStatus(r.invoice!) === "LENGKAP").length;
+    if (received === relevant.length) return { tone: "success" as const, label: "Good Receipt" };
+    return { tone: "rework" as const, label: `Delivery (${received}/${relevant.length} diterima)` };
   }
 
   // Pohon 3 tingkat (lihat catatan di deklarasi expandedTrackingMrp): No MRP -> Supplier -> Vendor
@@ -563,7 +578,7 @@ export default function MaterialTrackingPage() {
             {
               label: "Status",
               value: statusFilterTracking,
-              options: Array.from(new Set(rows.map((r) => materialPoFullStatusBadge(r.status).label))),
+              options: Array.from(new Set(rows.map((r) => trackingStatusBadge(r).label))),
               onChange: setStatusFilterTracking,
             },
             { label: "Roll diterima", value: rollFilterTracking, options: ["Belum", "Parsial", "Lengkap"], onChange: setRollFilterTracking },
@@ -692,7 +707,7 @@ export default function MaterialTrackingPage() {
                             const expanded = expandedTrackingId === r.id;
                             const progress = r.invoice ? rollArrivalProgress(r.invoice) : null;
                             const arrivalBadge = r.invoice ? rollArrivalStatusBadge(rollArrivalStatus(r.invoice)) : null;
-                            const statusBadge = materialPoFullStatusBadge(r.status);
+                            const statusBadge = trackingStatusBadge(r);
                             return (
                               <Fragment key={r.id}>
                                 <tr
