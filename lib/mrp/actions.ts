@@ -687,7 +687,7 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
   const notifText = outstandingAfter
     ? `PO untuk ${mrpId} diajukan SEBAGIAN — ${materialPOs.length} PO material, ${maklonPOs.length} PO maklon (masih ada warna yang belum dipilih vendor material)`
     : `PO untuk ${mrpId} diajukan — ${materialPOs.length} PO material, ${maklonPOs.length} PO maklon`;
-  const notifFull = notifText + (needReview > 0 ? ` — ${needReview} PO menunggu approval bertingkat (mulai Level 2, portal Procurement)` : " — semua PO bernilai kecil (Level 1) langsung disetujui");
+  const notifFull = notifText + (needReview > 0 ? ` — ${needReview} PO menunggu approval bertingkat (mulai Level 2, portal SCM)` : " — semua PO bernilai kecil (Level 1) langsung disetujui");
 
   // PERFORMA: tandai material_rows terkirim, tandai lengan_groups FOB terkirim (tahap 3), update
   // mrp.po_sent (kalau semua sudah tuntas), & notifikasi -- independen satu sama lain, paralel.

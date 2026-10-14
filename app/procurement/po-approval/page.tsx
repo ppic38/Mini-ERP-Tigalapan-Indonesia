@@ -525,7 +525,7 @@ export default function PoApprovalPage() {
         items={[
           { key: "material", label: "PO Material" },
           { key: "produksi", label: "PO Produksi" },
-          { key: "approval", label: "Approval PO Saya (Level 2)", badge: countPoPendingForRole("procurement", materialPOs, maklonPOs) + countPoRejected(materialPOs, maklonPOs) },
+          { key: "approval", label: "Status Approval PO", badge: countPoPendingForRole("procurement", materialPOs, maklonPOs) + countPoRejected(materialPOs, maklonPOs) },
         ]}
         active={tab}
         onChange={(k) => setTab(k as PoApprovalTab)}

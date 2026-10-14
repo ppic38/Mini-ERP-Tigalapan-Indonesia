@@ -3,7 +3,7 @@
  *  SCM/General Manager). Berlaku untuk PO Material & PO Produksi, MENGGANTIKAN approval Finance tunggal:
  *
  *   Level 1  Rp 0 – 2 jt           Procurement Staff                    SLA 1 hari
- *   Level 2  > 2 jt – 50 jt        Asisten Manager Procurement          SLA 1 hari
+ *   Level 2  > 2 jt – 50 jt        SCM (portal SCM)                     SLA 1 hari   (revisi 2026-10-14: dulu "Asisten Manager Procurement")
  *   Level 3  > 50 jt – 200 jt      FAT Manager (Finance) + SCM Manager  SLA 2 hari
  *   Level 4  > 200 jt              General Manager / Board of Director  SLA 2 hari
  *
@@ -31,7 +31,7 @@ export type PoApprovalEntry = {
 
 export const APPROVAL_LEVEL_TABLE = [
   { level: 1, max: 2_000_000, label: "Level 1", approver: "Procurement Staff", slaDays: 1, keterangan: "Pembelian rutin nilai kecil" },
-  { level: 2, max: 50_000_000, label: "Level 2", approver: "Asisten Manager Procurement", slaDays: 1, keterangan: "Memerlukan review harga & vendor" },
+  { level: 2, max: 50_000_000, label: "Level 2", approver: "SCM", slaDays: 1, keterangan: "Memerlukan review harga & vendor" },
   { level: 3, max: 200_000_000, label: "Level 3", approver: "FAT Manager + SCM Manager", slaDays: 2, keterangan: "Memerlukan validasi anggaran FAT" },
   { level: 4, max: Infinity, label: "Level 4", approver: "General Manager / Board of Director", slaDays: 2, keterangan: "Nilai besar, kontrak jangka panjang, atau capex" },
 ] as const;
@@ -45,17 +45,22 @@ export function approvalLevelForAmount(amount: number): 1 | 2 | 3 | 4 {
   return 4;
 }
 
-/** Siapa (portal mana) yang harus menyetujui tiap langkah. */
+/** Siapa (portal mana) yang harus menyetujui tiap langkah. Revisi 2026-10-14 (owner: tidak ada akun "Asisten Manager",
+ *  Level 2 diganti SCM): langkah 2 disetujui portal SCM, bukan Procurement. */
 export const APPROVAL_STEP_ROLES: Record<number, ApprovalRole[]> = {
   1: ["procurement"],
-  2: ["procurement"],
+  2: ["scm"],
   3: ["finance", "scm"],
   4: ["gm"],
 };
 
+/** Persetujuan langkah 2 yang SUDAH tercatat oleh Procurement (sebelum Level 2 dipindah ke SCM) tetap dianggap sah, supaya PO
+ *  yang sudah melewati Level 2 tidak mundur lagi ke antrean SCM. */
+const APPROVAL_STEP_LEGACY_ROLES: Record<number, ApprovalRole[]> = { 2: ["procurement"] };
+
 export const APPROVAL_STEP_LABEL: Record<number, string> = {
   1: "Level 1 · Procurement Staff",
-  2: "Level 2 · Asisten Manager Procurement",
+  2: "Level 2 · SCM",
   3: "Level 3 · FAT Manager + SCM Manager",
   4: "Level 4 · General Manager",
 };
@@ -137,7 +142,8 @@ export function poApprovalState(po: PoApprovalSubject, now: Date = new Date()): 
   for (let s = 2; s <= level; s++) {
     const need = APPROVAL_STEP_ROLES[s] ?? [];
     const have = approvedBy(s);
-    if (!need.every((r) => have.includes(r))) {
+    const doneByLegacy = (APPROVAL_STEP_LEGACY_ROLES[s] ?? []).some((r) => have.includes(r));
+    if (!doneByLegacy && !need.every((r) => have.includes(r))) {
       currentStep = s;
       break;
     }
@@ -174,7 +180,9 @@ export function poApprovalSummary(state: PoApprovalState): string {
   if (state.legacy) return "Menunggu Finance";
   if (state.rejected) return "Ditolak — perbaiki & ajukan ulang";
   if (state.currentStep == null) return "—";
-  const who = state.pendingRoles.map((r) => (r === "finance" ? "FAT Manager" : r === "scm" ? "SCM Manager" : r === "gm" ? "General Manager" : "Asisten Manager")).join(" + ");
+  const who = state.pendingRoles
+    .map((r) => (r === "finance" ? "FAT Manager" : r === "scm" ? (state.currentStep === 2 ? "SCM" : "SCM Manager") : r === "gm" ? "General Manager" : "Procurement"))
+    .join(" + ");
   return `Menunggu Level ${state.currentStep} (${who})`;
 }
 
