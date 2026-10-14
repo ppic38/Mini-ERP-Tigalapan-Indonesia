@@ -77,6 +77,37 @@ export async function parseMrpImportFile(
     throw new Error(`Sheet "${mrpSheetName}" tidak sesuai template — kolom hilang: ${missing.join(", ")}`);
   }
 
+  // Revisi 2026-10-14 (owner: "tidak pakai perhitungan di ERP, full baca dari Excel agar tidak salah"): roll, rib, kerah, manset
+  // SEMUA dibaca dari Excel -- ERP tidak lagi memperkirakan (dulu: qty / 117 pcs per roll, qty x gram per pcs). Template baru
+  // memakai judul ROLL (SIZE) / RIB (SIZE) / KERAH (SIZE) / MANSET (SIZE) (per baris size, dijumlahkan per warna+lengan);
+  // template lama (RAW MATERIAL (ROLL) / RIB KILOGRAM / KERAH / MANSET) tetap dibaca. Judul dicocokkan tanpa peduli huruf
+  // besar-kecil dan spasi ganda ("KERAH  (TOTAL)"). Kolom roll/rib yang tidak ada = import ditolak dengan pesan jelas.
+  const normHeader = (s: string) => s.replace(/\s+/g, " ").trim().toUpperCase();
+  const headerOf = new Map(cols.map((c) => [normHeader(c), c]));
+  const hasHeader = (...names: string[]) => names.some((n) => headerOf.has(normHeader(n)));
+  const cell = (row: Record<string, unknown>, name: string): unknown => {
+    const key = headerOf.get(normHeader(name));
+    return key === undefined ? undefined : row[key];
+  };
+  const toNum = (v: unknown): number => {
+    if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+    if (v == null || v === "") return 0;
+    const n = Number(String(v).replace(",", "."));
+    return Number.isFinite(n) ? n : 0;
+  };
+  const newTemplate = hasHeader("ROLL (SIZE)");
+  const rollHeader = newTemplate ? "ROLL (SIZE)" : "RAW MATERIAL (ROLL)";
+  const ribHeader = hasHeader("RIB (SIZE)") ? "RIB (SIZE)" : "RIB KILOGRAM";
+  const missingCalc: string[] = [];
+  if (!hasHeader("ROLL (SIZE)", "RAW MATERIAL (ROLL)")) missingCalc.push("ROLL (SIZE)");
+  if (!hasHeader("RIB (SIZE)", "RIB KILOGRAM")) missingCalc.push("RIB (SIZE)");
+  if (missingCalc.length > 0) {
+    throw new Error(
+      `Sheet "${mrpSheetName}" tidak punya kolom ${missingCalc.join(" / ")}. ERP tidak lagi menghitung roll dan rib sendiri -- isi kedua kolom itu di Excel (template terbaru: ROLL (SIZE), RIB (SIZE)).`
+    );
+  }
+  const sums = new Map<string, { roll: number; rib: number; kerah: number; manset: number }>();
+
   // Migration 0058 (owner 2026-09-27: template baru bisa campur CMT & FOB dalam 1 file, kolom
   // "CAT PROD" per BARIS -- lihat catatan panjang di CatProd/LenganGroup.catProd, types.ts) --
   // dibaca BY NAMA HEADER (bukan posisional lagi, supaya tidak salah kolom kalau susunan template
@@ -132,20 +163,31 @@ export async function parseMrpImportFile(
     if (!isVendorPlaceholder && !group.vendorDefault) {
       group.vendorDefault = normalizeVendorCode(vendorRaw);
     }
-    const totalOverride = Number(row["TOTAL"] ?? 0);
-    const ribOverride = Number(row["RIB KILOGRAM"] ?? 0);
-    const rollOverride = Number(row["RAW MATERIAL (ROLL)"] ?? 0);
+    const totalOverride = toNum(cell(row, "TOTAL"));
     if (totalOverride) group.totalQty = totalOverride;
-    if (ribOverride) group.ribKg = ribOverride;
-    if (rollOverride) group.rollEstimate = rollOverride;
+    if (newTemplate) {
+      // Template baru: jumlahkan angka per baris size (ROLL/RIB/KERAH/MANSET (SIZE)) per warna+lengan.
+      const sm = sums.get(key) ?? { roll: 0, rib: 0, kerah: 0, manset: 0 };
+      sm.roll += toNum(cell(row, rollHeader));
+      sm.rib += toNum(cell(row, ribHeader));
+      sm.kerah += toNum(cell(row, "KERAH (SIZE)"));
+      sm.manset += toNum(cell(row, "MANSET (SIZE)"));
+      sums.set(key, sm);
+    } else {
+      // Template lama: nilai non-zero terakhir per grup menang (perilaku lama), tetap dari Excel.
+      const ribOverride = toNum(cell(row, ribHeader));
+      const rollOverride = toNum(cell(row, rollHeader));
+      if (ribOverride) group.ribKg = ribOverride;
+      if (rollOverride) group.rollEstimate = rollOverride;
+    }
     // Kerah/Manset (spec BAGIAN 2) -- HANYA dibaca untuk baris ber-KATEGORI persis "WANGKI MYNO"
     // (exact match setelah trim+uppercase, dikonfirmasi user) -- baris kategori lain SENGAJA tidak
     // menyentuh kerahKg/mansetKg grup ini sama sekali (tetap default 0). Sama pola override
     // "nilai non-zero terakhir menang" seperti ribOverride di atas, TANPA fallback formula.
     const rowKategori = String(row["KATEGORI"] ?? "").trim().toUpperCase();
-    if (rowKategori === "WANGKI MYNO") {
-      const kerahOverride = Number(row["KERAH"] ?? 0);
-      const mansetOverride = Number(row["MANSET"] ?? 0);
+    if (!newTemplate && rowKategori === "WANGKI MYNO") {
+      const kerahOverride = toNum(cell(row, "KERAH"));
+      const mansetOverride = toNum(cell(row, "MANSET"));
       if (kerahOverride) group.kerahKg = kerahOverride;
       if (mansetOverride) group.mansetKg = mansetOverride;
     }
@@ -156,13 +198,22 @@ export async function parseMrpImportFile(
   // parameter tidak diisi -- supaya pemanggil lain/test lama yang belum di-update tidak patah.
   const kerahKgPerPcs = kerahMansetSettings?.find((s) => s.kind === "KERAH")?.kgPerPcs ?? 0.02;
   const mansetKgPerPcs = kerahMansetSettings?.find((s) => s.kind === "MANSET")?.kgPerPcs ?? 0.03;
-  // Rib (migration 0069): kg per pcs untuk kebutuhan rib kalau kolom RIB KILOGRAM kosong. Bawaan 0,007 (7 gram) kalau belum ada di Master Data.
-  const ribKgPerPcs = kerahMansetSettings?.find((s) => s.kind === "RIB")?.kgPerPcs ?? 0.007;
+  const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
   const lenganGroups = Array.from(groupMap.values()).map((g) => {
     if (!g.totalQty) g.totalQty = g.sizes.reduce((a, s) => a + s.qty, 0);
-    if (!g.ribKg) g.ribKg = Math.round(g.totalQty * ribKgPerPcs * 1000) / 1000;
-    if (!g.rollEstimate) g.rollEstimate = g.totalQty > 0 ? Math.max(1, Math.round(g.totalQty / 117)) : 0;
+    if (newTemplate) {
+      const sm = sums.get(g.warna + "|" + g.lengan) ?? { roll: 0, rib: 0, kerah: 0, manset: 0 };
+      // Roll fisik utuh: pecahan dari jumlah ROLL (SIZE) dibulatkan ke atas (Excel Anda sudah menjumlah ke bilangan bulat per grup).
+      g.rollEstimate = Math.ceil(sm.roll - 1e-9);
+      g.ribKg = round3(sm.rib);
+      g.kerahKg = round3(sm.kerah);
+      g.mansetKg = round3(sm.manset);
+    }
+    // Tidak ada perkiraan: grup yang ada pemesanannya wajib punya roll dari Excel.
+    if (g.totalQty > 0 && !(g.rollEstimate > 0)) {
+      throw new Error(`Roll untuk ${g.warna} · ${g.lengan} (qty ${g.totalQty}) kosong atau 0 di kolom ${rollHeader}. ERP tidak menghitung roll sendiri -- isi dari Excel.`);
+    }
     // Grup dengan qty > 0 (benar-benar ada pemesanan) TAPI tidak satu pun barisnya punya vendor
     // valid (semuanya "-"/kosong) -- ini genuinely data tidak lengkap, bukan placeholder yang sah,
     // jadi tetap ditolak dengan pesan jelas (bukan diam-diam disimpan vendor kosong).
@@ -174,8 +225,8 @@ export async function parseMrpImportFile(
     // SINI, SEKALI, sebelum disimpan/ditampilkan di preview manapun. `if (g.kerahKg)` bukan
     // `if (g.kerahKg !== undefined)` -- SENGAJA, konsisten dengan pola `if (kerahOverride)`/
     // `if (ribOverride)` di atas, 0 tetap 0 tidak perlu dikonversi.
-    if (g.kerahKg) g.kerahKg = Math.round(g.kerahKg * kerahKgPerPcs * 1000) / 1000;
-    if (g.mansetKg) g.mansetKg = Math.round(g.mansetKg * mansetKgPerPcs * 1000) / 1000;
+    if (!newTemplate && g.kerahKg) g.kerahKg = Math.round(g.kerahKg * kerahKgPerPcs * 1000) / 1000;
+    if (!newTemplate && g.mansetKg) g.mansetKg = Math.round(g.mansetKg * mansetKgPerPcs * 1000) / 1000;
     return g;
   });
   // Item 2026-09-12 (user-reported, DIREVERT 2026-09-12): grup qty 0 (placeholder murni dari
@@ -196,11 +247,15 @@ export async function parseMrpImportFile(
       if (aMissing.length > 0) {
         throw new Error(`Sheet "${aduanSheetName}" tidak sesuai template — kolom hilang: ${aMissing.join(", ")}`);
       }
+      // Vendor per baris aduan dibaca dari kolom VENDOR sheet ini (revisi 2026-10-14): satu warna+lengan boleh dikerjakan
+      // beberapa vendor sekaligus. Sheet tanpa kolom VENDOR (template lama) memakai vendor default grup seperti sebelumnya.
+      const aHeaderOf = new Map(aCols.map((c) => [normHeader(c), c]));
+      const aduanVendorKey = aHeaderOf.get("VENDOR");
       rows.forEach((row, i) => {
         const warna = String(row["WARNA"] ?? "").trim();
         const lengan = toLengan(String(row["LENGAN"] ?? ""));
         const kode = String(row["ADUAN POLA"] ?? "").trim();
-        const qtyRoll = Number(row["QTY ROLL"] ?? 0);
+        const qtyRoll = toNum(row["QTY ROLL"]);
         const qty1 = Number(row["Qty1"] ?? 0);
         if (!warna || !kode) return;
         const group = lenganGroups.find((g) => g.warna === warna && g.lengan === lengan);
@@ -254,6 +309,11 @@ export async function parseMrpImportFile(
           const bySize = new Map<string, number>();
           parts.forEach((tok, idx) => bySize.set(tok, (bySize.get(tok) ?? 0) + partQtys[idx]));
           sizes = Array.from(bySize.entries()).map(([size, qty]) => ({ size, qty }));
+        } else if (parts.length <= 1) {
+          // Aduan SATU size (mis. "3XL" dengan Qty1=36, Qty2=36): total pcs = jumlah SEMUA kolom Qty (72), sama dengan sheet utama.
+          // Dulu hanya Qty1 yang dibaca sehingga qty vendor kurang dari yang direncanakan (revisi 2026-10-14).
+          const allQty = aCols.filter((c) => /^QTY\d+$/i.test(c.trim())).reduce((sum, c) => sum + toNum(row[c]), 0);
+          sizes = [{ size: kode, qty: allQty > 0 ? allQty : qty1 }];
         } else {
           sizes = [{ size: kode, qty: qty1 }];
         }
@@ -266,9 +326,13 @@ export async function parseMrpImportFile(
           qtyRoll,
           sizes,
           qty: sizes.reduce((a, s) => a + s.qty, 0),
-          // `|| "-"` (bukan `??`) -- vendorDefault bisa jadi string kosong "" (grup qty 0 tanpa
-          // vendor valid sama sekali, lihat catatan di atas), bukan cuma null/undefined.
-          vendor: group?.vendorDefault || "-",
+          vendor: (() => {
+            if (aduanVendorKey === undefined) return group?.vendorDefault || "-";
+            const raw = String(row[aduanVendorKey] ?? "").trim();
+            if (raw && raw !== "-") return normalizeVendorCode(raw);
+            if (qtyRoll > 0) throw new Error(`Sheet "${aduanSheetName}", baris ADUAN POLA "${kode}" (${warna} · ${lengan}, ${qtyRoll} roll): kolom VENDOR kosong/"-". Isi vendor yang mengerjakan baris ini.`);
+            return "-";
+          })(),
         });
       });
     }

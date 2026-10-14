@@ -1,5 +1,13 @@
 # Migrasi Project — Status & Riwayat
 
+## Upload MRP: baca roll/rib/kerah/manset dari Excel (tanpa hitung ERP) + vendor per baris aduan + vendor per warna di PPIC (2026-10-14, tanpa migration)
+Owner: roll di ERP beda dengan Excel (file ERP_W39: roll ERP 597 vs Excel 642, rib 489,9 vs 389,9; 38 dari 63 grup warna-lengan roll-nya beda). Penyebab: template baru memakai judul ROLL (SIZE) / RIB (SIZE) / KERAH (SIZE) / MANSET (SIZE) yang tidak dikenali parser, sehingga ERP memakai rumus cadangan (qty / 117 per roll, qty x gram per pcs). Perubahan di lib/mrp/parseImport.ts:
+- Roll, rib, kerah, manset DIBACA dari Excel: jumlah kolom (SIZE) per warna+lengan (roll dibulatkan ke atas). Template lama (RAW MATERIAL (ROLL), RIB KILOGRAM, KERAH, MANSET) tetap dibaca. Judul dicocokkan tanpa peduli huruf besar/spasi ganda. TIDAK ADA lagi rumus cadangan: kolom roll/rib tidak ada = import ditolak; grup ber-qty dengan roll kosong/0 = ditolak dengan pesan jelas. Master Data "Rib per Pcs" (0069) tidak lagi dipakai upload (barisnya dibiarkan).
+- Vendor per baris aduan dibaca dari kolom VENDOR sheet "Aduan Pola" (satu warna+lengan boleh dikerjakan banyak vendor; dulu semua baris grup dipaksa ke vendor pertama). Sheet tanpa kolom VENDOR memakai vendor default grup. Baris ber-roll tanpa vendor = ditolak.
+- Aduan SATU size (mis. "3XL" dengan Qty1=36, Qty2=36) kini menjumlah SEMUA kolom Qty (72); dulu hanya Qty1 sehingga qty vendor BAYU/YOGI-02 kurang 78/36 dibanding sheet utama.
+- Diuji dengan file W39 asli: total roll 642 (= Excel = sheet Aduan Pola), rib 389,86 (= Excel), qty per vendor kedua sheet identik, 10 grup dibagi >1 vendor terbaca benar.
+- PPIC: kolom "Vendor produksi" di pratinjau import dan di tabel rincian warna (MrpWarnaBreakdownTable; juga dipakai SCM): daftar vendor per warna beserta pcs dan roll (`MrpWarnaBreakdown.vendors`, derive.ts).
+
 ## Material Tracking Procurement: tanggal kirim & terima per kiriman (2026-10-13, tanpa migration)
 Owner: Procurement perlu tahu kapan material dikirim dan kapan diterima vendor; satu PO bisa dikirim parsial, jadi tampil saat baris PO dibuka (app/procurement/material-tracking/page.tsx). Tiga kotak: Tgl dikirim (deliveredAt, Set Delivery), Mulai diterima vendor (tanggal roll pertama dari rollArrivals, fallback receivedAt) + progres roll, Lengkap diterima (tanggal roll TERAKHIR, hanya kalau semua roll sudah masuk; selain itu "Belum lengkap, sisa N roll"). Tabel warna/lengan dapat kolom "Diterima vendor" (jumlah roll + tanggal atau rentang tanggal). Murni turunan data yang sudah ada.
 

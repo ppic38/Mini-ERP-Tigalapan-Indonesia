@@ -42,6 +42,18 @@ export function ImportDropzone({
   // Item BAGIAN 2 (Req 20) — kolom Kerah/Manset cuma ditampilkan kalau ADA baris hasil parse yang
   // benar-benar punya nilai (kategori "WANGKI MYNO"), supaya file kategori lain tidak penuh kolom 0.
   const showKerahManset = parsed ? parsed.lenganGroups.some((g) => g.kerahKg > 0 || g.mansetKg > 0) : false;
+  // Vendor yang mengerjakan tiap grup warna+lengan (dari baris aduan pola): satu grup bisa dibagi ke beberapa vendor sekaligus.
+  const vendorsOfGroup = (groupId: string) => {
+    const m = new Map<string, { code: string; qty: number; roll: number }>();
+    for (const a of parsed?.aduanRows ?? []) {
+      if (a.lenganGroupId !== groupId || !a.vendor || a.vendor === "-") continue;
+      const c = m.get(a.vendor) ?? { code: a.vendor, qty: 0, roll: 0 };
+      c.qty += a.qty;
+      c.roll += a.qtyRoll;
+      m.set(a.vendor, c);
+    }
+    return Array.from(m.values()).sort((p, q) => q.qty - p.qty);
+  };
 
   function confirmImport() {
     if (!parsed) return;
@@ -107,7 +119,7 @@ export function ImportDropzone({
             <div className="overflow-hidden rounded-md border border-border-subtle">
               <div
                 className="grid gap-x-3 bg-[#F7F9FB] px-3.5 py-2 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
-                style={{ gridTemplateColumns: showKerahManset ? "repeat(8, minmax(0, 1fr))" : "repeat(6, minmax(0, 1fr))" }}
+                style={{ gridTemplateColumns: showKerahManset ? "repeat(7, minmax(0, 1fr)) minmax(250px, 2.6fr)" : "repeat(5, minmax(0, 1fr)) minmax(250px, 2.6fr)" }}
               >
                 <span>Warna</span>
                 <span>Lengan</span>
@@ -122,7 +134,7 @@ export function ImportDropzone({
                 <div
                   key={g.id}
                   className="grid items-center gap-x-3 border-t border-[#F1F4F7] px-3.5 py-2 font-sans text-xs text-[#31414F]"
-                  style={{ gridTemplateColumns: showKerahManset ? "repeat(8, minmax(0, 1fr))" : "repeat(6, minmax(0, 1fr))" }}
+                  style={{ gridTemplateColumns: showKerahManset ? "repeat(7, minmax(0, 1fr)) minmax(250px, 2.6fr)" : "repeat(5, minmax(0, 1fr)) minmax(250px, 2.6fr)" }}
                 >
                   <span>{g.warna}</span>
                   <span>{g.lengan}</span>
@@ -131,7 +143,17 @@ export function ImportDropzone({
                   {showKerahManset && <span className="text-right font-mono">{g.kerahKg.toLocaleString("id-ID", { maximumFractionDigits: 3 })}</span>}
                   {showKerahManset && <span className="text-right font-mono">{g.mansetKg.toLocaleString("id-ID", { maximumFractionDigits: 3 })}</span>}
                   <span className="text-right font-mono">{g.rollEstimate}</span>
-                  <span className="font-mono">{VENDOR_PRODUKSI[g.vendorDefault]?.name ?? g.vendorDefault}</span>
+                  <span className="flex flex-col gap-0.5 font-mono">
+                    {vendorsOfGroup(g.id).length === 0 && <span className="text-text-muted">—</span>}
+                    {vendorsOfGroup(g.id).map((v) => (
+                      <span key={v.code}>
+                        {VENDOR_PRODUKSI[v.code]?.name ?? v.code}
+                        <span className="ml-1 text-[10.5px] text-text-muted">
+                          {formatPcs(v.qty)} pcs · {v.roll} roll
+                        </span>
+                      </span>
+                    ))}
+                  </span>
                 </div>
               ))}
             </div>

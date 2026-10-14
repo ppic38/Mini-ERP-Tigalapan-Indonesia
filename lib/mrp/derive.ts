@@ -607,6 +607,9 @@ export type MrpWarnaBreakdown = {
   mansetPanjang: number;
   mansetPendek: number;
   mansetTotal: number;
+  /** Vendor yang mengerjakan warna ini (dari baris aduan pola MRP): satu warna bisa dibagi ke beberapa vendor sekaligus
+   *  (revisi 2026-10-14, owner: "PPIC bisa lihat vendor-vendor apa saja yang mengerjakan warna yang sama"). Urut qty terbesar. */
+  vendors: { vendor: string; qty: number; roll: number }[];
   /** Item BAGIAN 1 (histori qty=0) — true kalau SEMUA lengan warna ini qty 0 (tidak ada
    *  pemesanan/produksi sama sekali) -- dipakai UI untuk penanda visual "Tidak ada pemesanan" &
    *  oleh `includeZeroQty: false` untuk membuang baris ini dari tampilan "Menunggu approval". */
@@ -645,6 +648,7 @@ export function mrpWarnaBreakdown(detail: MrpDetail | undefined, opts?: { includ
       mansetPanjang: 0,
       mansetPendek: 0,
       mansetTotal: 0,
+      vendors: [],
       isEmpty: false,
     };
     if (g.lengan === "PANJANG") {
@@ -667,7 +671,24 @@ export function mrpWarnaBreakdown(detail: MrpDetail | undefined, opts?: { includ
     cur.mansetTotal += g.mansetKg;
     map.set(g.warna, cur);
   }
-  const all = Array.from(map.values()).map((w) => ({ ...w, isEmpty: w.qtyTotal === 0 }));
+  // Vendor per warna dari baris aduan pola (qty + roll yang dipegang tiap vendor).
+  const vendorsByWarna = new Map<string, Map<string, { qty: number; roll: number }>>();
+  for (const a of detail.aduanRows) {
+    if (!a.vendor || a.vendor === "-") continue;
+    const byV = vendorsByWarna.get(a.warna) ?? new Map<string, { qty: number; roll: number }>();
+    const cur = byV.get(a.vendor) ?? { qty: 0, roll: 0 };
+    cur.qty += a.qty;
+    cur.roll += a.qtyRoll;
+    byV.set(a.vendor, cur);
+    vendorsByWarna.set(a.warna, byV);
+  }
+  const all = Array.from(map.values()).map((w) => ({
+    ...w,
+    vendors: Array.from(vendorsByWarna.get(w.warna) ?? [])
+      .map(([code, x]) => ({ vendor: VENDOR_PRODUKSI[code]?.name ?? code, qty: x.qty, roll: x.roll }))
+      .sort((p, q) => q.qty - p.qty),
+    isEmpty: w.qtyTotal === 0,
+  }));
   return includeZeroQty ? all : all.filter((w) => w.qtyTotal !== 0);
 }
 

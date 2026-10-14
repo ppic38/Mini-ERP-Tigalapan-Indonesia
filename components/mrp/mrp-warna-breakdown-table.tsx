@@ -65,6 +65,9 @@ export function MrpWarnaBreakdownTable({ breakdown }: { breakdown: MrpWarnaBreak
                   </th>
                 </>
               )}
+              <th rowSpan={2} className="border-l border-[#E4E8EE] px-3 py-2 text-left align-bottom">
+                Vendor produksi
+              </th>
             </tr>
             <tr className="border-b border-[#E4E8EE] bg-[#F2F4F7] font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
               <th className="border-l border-[#E4E8EE] px-3 py-1.5 text-right">Panjang</th>
@@ -129,11 +132,29 @@ export function MrpWarnaBreakdownTable({ breakdown }: { breakdown: MrpWarnaBreak
                     </td>
                   </>
                 )}
+                {/* Vendor yang mengerjakan warna ini (satu warna bisa dibagi ke beberapa vendor): nama, pcs, dan roll tiap vendor. */}
+                <td className="border-l border-[#F1F4F7] px-3 py-2 align-top">
+                  {w.vendors.length === 0 ? (
+                    <span className="text-text-muted">—</span>
+                  ) : (
+                    <div className="flex flex-col gap-0.5">
+                      {w.vendors.map((v) => (
+                        <div key={v.vendor} className="flex items-baseline gap-1.5 whitespace-nowrap">
+                          <span className="font-medium">{v.vendor}</span>
+                          <span className="font-mono text-[10.5px] text-text-muted">
+                            {formatPcs(v.qty)} pcs · {v.roll.toLocaleString("id-ID")} roll
+                          </span>
+                        </div>
+                      ))}
+                      {w.vendors.length > 1 && <span className="mt-0.5 font-sans text-[10px] font-semibold text-info-fg">{w.vendors.length} vendor</span>}
+                    </div>
+                  )}
+                </td>
               </tr>
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={showKerahManset ? 19 : 10} className="px-3 py-4 text-center font-sans text-[11.5px] text-text-muted">
+                <td colSpan={showKerahManset ? 20 : 11} className="px-3 py-4 text-center font-sans text-[11.5px] text-text-muted">
                   Tidak ada warna yang cocok dengan filter.
                 </td>
               </tr>
@@ -174,6 +195,7 @@ export function MrpWarnaBreakdownTable({ breakdown }: { breakdown: MrpWarnaBreak
                     </td>
                   </>
                 )}
+                <td className="border-l border-accent-blue/20 px-3 py-2" />
               </tr>
             )}
           </tbody>
