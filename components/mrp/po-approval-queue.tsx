@@ -13,7 +13,13 @@ import { VENDOR_PRODUKSI, ROLL_KG_ESTIMATE } from "@/lib/mrp/seed";
 import { APPROVAL_LEVEL_TABLE, APPROVAL_ROLE_LABEL, APPROVAL_STEP_LABEL, poApprovalState, poApprovalSummary, type ApprovalRole, type PoApprovalState } from "@/lib/mrp/poApproval";
 import type { MaklonPO, MaterialPO } from "@/lib/mrp/types";
 
-type Item = { type: "MATERIAL" | "MAKLON"; id: string; mrpId: string; vendor: string; supplier?: string; amount: number; po: MaterialPO | MaklonPO; state: PoApprovalState };
+/** `members`: PO Material satu supplier dalam satu MRP digabung jadi SATU baris (approval PO Material berlaku per supplier,
+ *  levelnya dari total supplier); `id` = PO pertama (target aksi -- server menerapkannya ke semua PO satu supplier). */
+type Item = { type: "MATERIAL" | "MAKLON"; id: string; mrpId: string; vendor: string; supplier?: string; amount: number; po: MaterialPO | MaklonPO; state: PoApprovalState; members?: Item[] };
+
+function itemTitle(item: Item): string {
+  return item.members && item.members.length > 1 ? `${item.mrpId} · ${item.supplier}` : item.id;
+}
 
 function fmtTime(iso: string): string {
   const d = new Date(iso);
@@ -80,6 +86,9 @@ function MatrixReference() {
               })}
             </tbody>
           </table>
+          <div className="border-t border-[#F1F4F7] bg-[#FBFCFD] px-3 py-2 font-sans text-[11px] text-text-muted">
+            Level PO Produksi dihitung dari nilai PO tiap vendor produksi. Level PO Material dihitung dari TOTAL semua PO satu supplier dalam MRP yang sama, dan approval-nya berlaku sekaligus untuk semua PO supplier itu.
+          </div>
         </div>
       )}
     </div>
@@ -94,26 +103,38 @@ function ItemDetail({ item }: { item: Item }) {
       <div>
         <div className="mb-1.5 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Rincian PO</div>
         {item.type === "MATERIAL" ? (
-          <table className="w-full border-collapse font-sans text-[11.5px]">
-            <thead>
-              <tr className="text-left text-text-muted">
-                <th className="py-1">Warna · lengan</th>
-                <th className="py-1 text-right">Roll</th>
-                <th className="py-1 text-right">Kg (est.)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(item.po as MaterialPO).colorBreakdown.map((c) => (
-                <tr key={c.warna + c.lengan} className="border-t border-[#F1F4F7]">
-                  <td className="py-1">
-                    {c.warna} · {c.lengan}
-                  </td>
-                  <td className="py-1 text-right font-mono">{c.rollCount.toLocaleString("id-ID", { maximumFractionDigits: 1 })}</td>
-                  <td className="py-1 text-right font-mono">{(c.rollCount * ROLL_KG_ESTIMATE).toLocaleString("id-ID", { maximumFractionDigits: 0 })}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="flex flex-col gap-3">
+            {(item.members ?? [item]).map((m) => (
+              <div key={m.id}>
+                <div className="mb-1 flex items-baseline justify-between font-sans text-[11px] font-semibold text-text-primary">
+                  <span>
+                    {m.vendor} <span className="font-mono text-[10px] font-normal text-text-muted">{m.id}</span>
+                  </span>
+                  <span className="font-mono text-[10.5px] font-normal text-text-muted">{formatRupiah(m.amount)}</span>
+                </div>
+                <table className="w-full border-collapse font-sans text-[11.5px]">
+                  <thead>
+                    <tr className="text-left text-text-muted">
+                      <th className="py-1">Warna · lengan</th>
+                      <th className="py-1 text-right">Roll</th>
+                      <th className="py-1 text-right">Kg (est.)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(m.po as MaterialPO).colorBreakdown.map((c) => (
+                      <tr key={c.warna + c.lengan} className="border-t border-[#F1F4F7]">
+                        <td className="py-1">
+                          {c.warna} · {c.lengan}
+                        </td>
+                        <td className="py-1 text-right font-mono">{c.rollCount.toLocaleString("id-ID", { maximumFractionDigits: 1 })}</td>
+                        <td className="py-1 text-right font-mono">{(c.rollCount * ROLL_KG_ESTIMATE).toLocaleString("id-ID", { maximumFractionDigits: 0 })}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
         ) : (
           <div className="font-sans text-[11.5px] text-[#31414F]">
             <div>Total qty: <span className="font-mono font-semibold">{(item.po as MaklonPO).qty.toLocaleString("id-ID")} pcs</span></div>
@@ -176,9 +197,26 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
   // filter `!po.approved` yang ditambah di `others`).
   const items = useMemo<Item[]>(() => {
     const out: Item[] = [];
+    const groups = new Map<string, Item>();
     for (const p of materialPOs) {
       if (p.status === "CANCELLED") continue;
-      out.push({ type: "MATERIAL", id: p.id, mrpId: p.mrpId, vendor: VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi, supplier: p.supplier, amount: p.amount, po: p, state: poApprovalState(p) });
+      const state = poApprovalState(p);
+      const it: Item = { type: "MATERIAL", id: p.id, mrpId: p.mrpId, vendor: VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi, supplier: p.supplier, amount: p.amount, po: p, state };
+      if (state.legacy) {
+        out.push(it);
+        continue;
+      }
+      // Satu baris per MRP + supplier + posisi approval yang sama.
+      const key = [p.mrpId, p.supplier, p.approved, state.rejected, state.currentStep, state.pendingRoles.join("+"), state.level].join("|");
+      const g = groups.get(key);
+      if (!g) {
+        const grouped: Item = { ...it, members: [it] };
+        groups.set(key, grouped);
+        out.push(grouped);
+      } else {
+        g.members!.push(it);
+        g.amount += it.amount;
+      }
     }
     for (const p of maklonPOs) {
       out.push({ type: "MAKLON", id: p.id, mrpId: p.mrpId, vendor: VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi, amount: p.amount, po: p, state: poApprovalState(p) });
@@ -229,7 +267,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
   }
 
   function openDownload(item: Item) {
-    if (item.type === "MATERIAL") setDownload({ kind: "material", pos: [item.po as MaterialPO], baseName: `PO-${item.id}` });
+    if (item.type === "MATERIAL") setDownload({ kind: "material", pos: (item.members ?? [item]).map((m) => m.po as MaterialPO), baseName: `PO-${itemTitle(item).replace(/[^A-Za-z0-9]+/g, "-")}` });
     else setDownload({ kind: "maklon", pos: [item.po as MaklonPO], baseName: `PO-${item.id}` });
   }
 
@@ -243,10 +281,11 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
             <StatusPill tone={item.type === "MATERIAL" ? "info" : "neutral"}>{item.type === "MATERIAL" ? "MATERIAL" : "PRODUKSI"}</StatusPill>
           </span>
           <button onClick={() => setExpanded(open ? null : item.id)} className="text-left">
-            <div className="font-mono text-[11.5px] font-semibold text-text-primary">{item.id}</div>
+            <div className="font-mono text-[11.5px] font-semibold text-text-primary">{itemTitle(item)}</div>
             <div className="text-[10.5px] text-text-muted">
-              {item.mrpId} · {item.vendor}
-              {item.supplier ? ` · ${item.supplier}` : ""}
+              {item.members && item.members.length > 1
+                ? `${item.members.length} vendor produksi: ${item.members.map((m) => m.vendor).join(", ")}`
+                : `${item.mrpId} · ${item.vendor}${item.supplier ? ` · ${item.supplier}` : ""}`}
             </div>
           </button>
           <span>
@@ -276,7 +315,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
            tempat ini menutup ketiganya. `empty:hidden` -- wadah tidak makan ruang kalau bukan Sysadmin
            (SysadminActionsBar tidak merender apa pun). */}
         <div className="px-4 pb-2 empty:hidden">
-          <SysadminPanel actions={item.type === "MATERIAL" ? materialPoCorrections(item.po as MaterialPO) : maklonPoCorrections(item.po as MaklonPO)} />
+          {item.type === "MATERIAL" ? (item.members ?? [item]).map((m) => <SysadminPanel key={m.id} actions={materialPoCorrections(m.po as MaterialPO)} />) : <SysadminPanel actions={maklonPoCorrections(item.po as MaklonPO)} />}
         </div>
         {open && <ItemDetail item={item} />}
       </div>
@@ -408,7 +447,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
       {rejecting && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={() => setRejecting(null)}>
           <div className="w-full max-w-[440px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
-            <div className="border-b border-border-subtle px-5 py-3.5 font-sans text-[13px] font-semibold text-text-primary">Tolak PO {rejecting.id}</div>
+            <div className="border-b border-border-subtle px-5 py-3.5 font-sans text-[13px] font-semibold text-text-primary">Tolak PO {itemTitle(rejecting)}</div>
             <div className="px-5 py-4">
               <div className="font-sans text-[11.5px] text-text-muted">PO kembali ke Procurement untuk diperbaiki; approval mulai lagi dari awal setelah diajukan ulang. Alasan wajib diisi.</div>
               <textarea value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} rows={3} className="input mt-2 w-full" placeholder="Alasan penolakan…" autoFocus />

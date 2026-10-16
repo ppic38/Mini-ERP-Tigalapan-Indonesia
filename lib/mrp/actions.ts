@@ -609,7 +609,20 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
   // Matriks Approval PO (migration 0055): level dari NILAI PO; pengajuan ini = langkah 1 (Procurement).
   const submittedAt = new Date().toISOString();
   for (const p of maklonPOs) Object.assign(p, initialApprovalFields(p.amount, submittedAt, submitter.actorName));
-  for (const p of materialPOs) Object.assign(p, initialApprovalFields(p.amount, submittedAt, submitter.actorName));
+  // PO Material: LEVEL dari TOTAL per supplier di MRP ini (PO lama yang belum dibatalkan + PO baru), bukan nilai tiap PO.
+  // PO lama yang belum disetujui di supplier yang sama ikut dinaikkan bila totalnya melewati batas level berikutnya.
+  const supplierTotals = new Map<string, number>();
+  {
+    const { data: existingMat, error: existingMatErr } = await db.from("material_pos").select("supplier,amount").eq("mrp_id", mrpId).neq("status", "CANCELLED");
+    if (existingMatErr) throw new Error(existingMatErr.message);
+    for (const r of existingMat ?? []) supplierTotals.set(r.supplier, (supplierTotals.get(r.supplier) ?? 0) + Number(r.amount ?? 0));
+    for (const p of materialPOs) supplierTotals.set(p.supplier, (supplierTotals.get(p.supplier) ?? 0) + p.amount);
+    for (const [supplier, total] of supplierTotals) {
+      const lvl = approvalLevelForAmount(total);
+      await db.from("material_pos").update({ approval_level: lvl }).eq("mrp_id", mrpId).eq("supplier", supplier).eq("approved", false).neq("status", "CANCELLED").lt("approval_level", lvl);
+    }
+  }
+  for (const p of materialPOs) Object.assign(p, initialApprovalFields(p.amount, submittedAt, submitter.actorName, supplierTotals.get(p.supplier)));
 
   // PERFORMA: maklon_pos & material_pos independen satu sama lain (tabel beda, tidak ada FK
   // antar keduanya) -- dulu ditulis berurutan (await, await), sekarang paralel. Insert
@@ -3615,7 +3628,8 @@ export async function reassignMaterialToSupplierAction(poId: string, warna: stri
     .eq("id", poId);
 
   // PO pengganti supplier ikut Matriks Approval PO (migration 0055) -- pengajuan ulang oleh Procurement.
-  const newPoApproval = initialApprovalFields(newPoAmount, new Date().toISOString(), submitter.actorName);
+  const newSupplierTotal = (await materialSupplierTotal(db, po.mrpId, newSupplier)) + newPoAmount;
+  const newPoApproval = initialApprovalFields(newPoAmount, new Date().toISOString(), submitter.actorName, newSupplierTotal);
   await db.from("material_pos").insert({
     id: newPoId,
     mrp_id: po.mrpId,
@@ -6617,13 +6631,49 @@ async function createMigrationMrp(db: SupabaseClient, m: MigrationMrp, hargaMakl
 type PoType = "MATERIAL" | "MAKLON";
 const PO_TABLE = { MATERIAL: "material_pos", MAKLON: "maklon_pos" } as const;
 
-function initialApprovalFields(amount: number, at: string, actorName?: string) {
+/** `levelAmount` (opsional): nilai yang menentukan LEVEL kalau beda dari nilai PO-nya sendiri -- PO Material memakai TOTAL
+ *  semua PO satu supplier dalam MRP yang sama (revisi 2026-10-16, mengikuti skema company); PO Produksi tetap per vendor. */
+function initialApprovalFields(amount: number, at: string, actorName?: string, levelAmount?: number) {
   return {
-    approvalLevel: approvalLevelForAmount(amount) as number,
+    approvalLevel: approvalLevelForAmount(levelAmount ?? amount) as number,
     // actorName = PIC Procurement yang mengajukan (tampil di cetakan PO); opsional supaya pemanggil lain tetap valid.
     approvalLog: [{ step: 1, role: "procurement", action: "APPROVED", at, note: "Diajukan", ...(actorName ? { actorName } : {}) }] as PoApprovalEntry[],
     approvalSubmittedAt: at,
   };
+}
+
+/** Total nilai semua PO Material (belum dibatalkan) satu supplier dalam satu MRP -- dasar LEVEL approval PO Material. */
+async function materialSupplierTotal(db: SupabaseClient, mrpId: string, supplier: string): Promise<number> {
+  const { data, error } = await db.from("material_pos").select("amount").eq("mrp_id", mrpId).eq("supplier", supplier).neq("status", "CANCELLED");
+  if (error) throw new Error(error.message);
+  return (data ?? []).reduce((sum, r) => sum + Number(r.amount ?? 0), 0);
+}
+
+/** PO Material yang BELUM disetujui penuh dan satu grup dengan PO `id` (MRP + supplier sama), termasuk PO itu sendiri.
+ *  Approval PO Material berlaku per supplier (bukan per vendor produksi), jadi satu aksi menyetujui/menolak semuanya. */
+async function materialGroupSubjects(db: SupabaseClient, id: string): Promise<ApprovalSubject[]> {
+  const { data: base, error: baseErr } = await db.from("material_pos").select("mrp_id,supplier").eq("id", id).maybeSingle();
+  if (baseErr) throw new Error(baseErr.message);
+  if (!base) return [];
+  const { data, error } = await db
+    .from("material_pos")
+    .select("id,mrp_id,amount,approved,status,approval_level,approval_log,approval_submitted_at")
+    .eq("mrp_id", base.mrp_id)
+    .eq("supplier", base.supplier)
+    .neq("status", "CANCELLED")
+    .eq("approved", false)
+    .order("id");
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((d) => ({
+    id: d.id,
+    mrpId: d.mrp_id,
+    amount: Number(d.amount),
+    approved: d.approved,
+    status: d.status,
+    approvalLevel: d.approval_level ?? undefined,
+    approvalLog: (d.approval_log ?? []) as PoApprovalEntry[],
+    approvalSubmittedAt: d.approval_submitted_at ?? undefined,
+  }));
 }
 
 /** Persetujuan FINAL PO Material: dipecah per entitas + approved=true (logika lama approve Finance). */
@@ -6687,7 +6737,8 @@ async function recordApprovalStep(
   role: ApprovalRole,
   action: "APPROVED" | "REJECTED",
   note?: string,
-  actorName?: string
+  actorName?: string,
+  notify = true
 ): Promise<void> {
   const state = poApprovalState(subject);
   if (state.currentStep == null) throw new Error("PO ini tidak sedang menunggu approval.");
@@ -6704,14 +6755,14 @@ async function recordApprovalStep(
   if (error) throw new Error(error.message);
   const next = poApprovalState({ ...subject, approvalLog: log });
   if (action === "REJECTED") {
-    await insertNotification(notif(`PO ${subject.id} (${subject.mrpId}) DITOLAK ${APPROVAL_ROLE_LABEL[role]} — alasan: ${note?.trim()}. Perbaiki lalu ajukan ulang dari menu Approval PO.`, ["procurement"]));
+    if (notify) await insertNotification(notif(`PO ${subject.id} (${subject.mrpId}) DITOLAK ${APPROVAL_ROLE_LABEL[role]} — alasan: ${note?.trim()}. Perbaiki lalu ajukan ulang dari menu Approval PO.`, ["procurement"]));
     return;
   }
   if (next.approved) {
     if (type === "MATERIAL") await finalizeMaterialPo(db, subject.id);
     else await finalizeMaklonPo(db, subject.id);
-    await insertNotification(notif(`PO ${subject.id} (${subject.mrpId}) DISETUJUI penuh (Level ${next.level})`, ["procurement"]));
-  } else {
+    if (notify) await insertNotification(notif(`PO ${subject.id} (${subject.mrpId}) DISETUJUI penuh (Level ${next.level})`, ["procurement"]));
+  } else if (notify) {
     await notifyNextApprovers(subject, next);
   }
 }
@@ -6769,7 +6820,20 @@ async function poStepImpl(type: PoType, id: string, asRole: ApprovalRole, action
     throw new Error(`Bukan giliran ${APPROVAL_ROLE_LABEL[asRole]} -- PO menunggu ${APPROVAL_STEP_LABEL[state.currentStep ?? 0] ?? "langkah lain"}.`);
   }
   if (action === "REJECTED" && !note?.trim()) throw new Error("Alasan penolakan wajib diisi.");
-  await recordApprovalStep(db, type, subject, asRole, action, note, actor.actorName);
+  if (type === "MATERIAL") {
+    // Approval PO Material berlaku PER SUPPLIER (MRP + supplier sama): satu aksi diterapkan ke semua PO vendor produksi
+    // di grup itu yang SEDANG menunggu peran ini di langkah yang sama; PO lain di grup (mis. sudah beda langkah) dilewati.
+    const group = await materialGroupSubjects(db, id);
+    for (const sub of group) {
+      if (sub.id !== id) {
+        const st = poApprovalState(sub);
+        if (st.legacy || st.rejected || !st.pendingRoles.includes(asRole)) continue;
+      }
+      await recordApprovalStep(db, type, sub, asRole, action, note, actor.actorName, sub.id === id);
+    }
+  } else {
+    await recordApprovalStep(db, type, subject, asRole, action, note, actor.actorName);
+  }
   await logInternalAction(actor, `${action === "APPROVED" ? "Setujui" : "Tolak"} PO ${id}`, type === "MATERIAL" ? "material_pos" : "maklon_pos", id);
 }
 
@@ -6792,17 +6856,28 @@ export async function resubmitPoAction(type: PoType, id: string): Promise<Action
     if (!subject) throw new Error("PO tidak ditemukan.");
     const state = poApprovalState(subject);
     if (!state.rejected) throw new Error("Hanya PO yang ditolak yang bisa diajukan ulang.");
+    // PO Material: semua PO satu supplier (MRP sama) yang ditolak diajukan ulang bersama, level dari total supplier.
+    let targets: ApprovalSubject[] = [subject];
+    let levelAmount: number | undefined;
+    if (type === "MATERIAL") {
+      const group = await materialGroupSubjects(db, id);
+      targets = group.filter((g) => g.id === id || poApprovalState(g).rejected);
+      const { data: base } = await db.from("material_pos").select("supplier").eq("id", id).maybeSingle();
+      if (base) levelAmount = await materialSupplierTotal(db, subject.mrpId, base.supplier);
+    }
     const at = new Date().toISOString();
-    const f = initialApprovalFields(subject.amount, at, submitter.actorName);
-    const log = [...(subject.approvalLog ?? []), { ...f.approvalLog[0], note: "Diajukan ulang" }];
-    const { error } = await db.from(PO_TABLE[type]).update({ approval_level: f.approvalLevel, approval_log: log, approval_submitted_at: at }).eq("id", id);
-    if (error) throw new Error(error.message);
-    const next = poApprovalState({ ...subject, approvalLevel: f.approvalLevel, approvalLog: log, approvalSubmittedAt: at });
-    if (next.approved || f.approvalLevel === 1) {
-      if (type === "MATERIAL") await finalizeMaterialPo(db, id);
-      else await finalizeMaklonPo(db, id);
-    } else {
-      await notifyNextApprovers(subject, next);
+    for (const t of targets) {
+      const f = initialApprovalFields(t.amount, at, submitter.actorName, levelAmount);
+      const log = [...(t.approvalLog ?? []), { ...f.approvalLog[0], note: "Diajukan ulang" }];
+      const { error } = await db.from(PO_TABLE[type]).update({ approval_level: f.approvalLevel, approval_log: log, approval_submitted_at: at }).eq("id", t.id);
+      if (error) throw new Error(error.message);
+      const next = poApprovalState({ ...t, approvalLevel: f.approvalLevel, approvalLog: log, approvalSubmittedAt: at });
+      if (next.approved || f.approvalLevel === 1) {
+        if (type === "MATERIAL") await finalizeMaterialPo(db, t.id);
+        else await finalizeMaklonPo(db, t.id);
+      } else if (t.id === id) {
+        await notifyNextApprovers(t, next);
+      }
     }
   });
 }
