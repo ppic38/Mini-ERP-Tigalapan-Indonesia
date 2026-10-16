@@ -187,9 +187,29 @@ export function poApprovalSummary(state: PoApprovalState): string {
 }
 
 /** Teks blok "Disetujui oleh" pada cetakan PO (PDF/Excel): PO lama = Finance; PO bermatriks = level & jabatan. */
-export function poApprovalPrintInfo(po: PoApprovalSubject): { role: string; name: string; pendingText: string } {
+export type PoApprovalPrintInfo = {
+  role: string;
+  name: string;
+  pendingText: string;
+  /** Nama PIC yang mengajukan (langkah 1, siklus berjalan). Kosong untuk entri lama tanpa actorName. */
+  submitter?: string;
+  /** Nama PIC yang sudah menyetujui, mis. "Budi (Finance) + Siti (SCM)". Kosong kalau belum ada / entri lama. */
+  approverNames?: string;
+};
+
+const PRINT_ROLE_SHORT: Record<ApprovalRole, string> = { procurement: "Procurement", finance: "Finance", scm: "SCM", gm: "GM" };
+
+export function poApprovalPrintInfo(po: PoApprovalSubject): PoApprovalPrintInfo {
   const state = poApprovalState(po);
   if (state.legacy || state.level == null) return { role: "Finance", name: "Finance", pendingText: "Belum disetujui Finance" };
   const row = APPROVAL_LEVEL_TABLE[Math.min(3, Math.max(0, state.level - 1))];
-  return { role: `Level ${state.level}`, name: row.approver, pendingText: poApprovalSummary(state) };
+  // Nama PIC dari log siklus berjalan (revisi 2026-10-16: owner minta nama PIC tampil di cetakan PO).
+  const submitter = state.cycle.find((e) => e.step === 1 && e.action === "APPROVED")?.actorName?.trim() || undefined;
+  const names: string[] = [];
+  for (const e of state.cycle) {
+    if (e.step < 2 || e.action !== "APPROVED" || !e.actorName?.trim()) continue;
+    const label = `${e.actorName.trim()} (${PRINT_ROLE_SHORT[e.role]})`;
+    if (!names.includes(label)) names.push(label);
+  }
+  return { role: `Level ${state.level}`, name: row.approver, pendingText: poApprovalSummary(state), submitter, approverNames: names.length > 0 ? names.join(" + ") : undefined };
 }

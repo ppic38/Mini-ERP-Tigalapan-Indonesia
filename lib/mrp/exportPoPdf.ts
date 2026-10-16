@@ -1,5 +1,6 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import type { CellHookData } from "jspdf-autotable";
 import { formatDate, formatDecimal, formatPcs, localDateString, materialKgPerRollForGroup, mrpDetailFor, type AduanMaterialKind } from "./derive";
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "./seed";
 import type { MrpDetail } from "./store";
@@ -220,6 +221,12 @@ const TABLE_BASE = {
   styles: { fontSize: 8.5, textColor: INK, lineColor: TABLE_LINE, lineWidth: 0.5 },
   headStyles: { fillColor: TEAL, textColor: [255, 255, 255] as [number, number, number], fontStyle: "bold" as const },
   footStyles: { fillColor: [240, 243, 246] as [number, number, number], textColor: INK, fontStyle: "bold" as const },
+  // Rata kolom angka juga di header & baris TOTAL (columnStyles bawaan hanya berlaku di baris isi).
+  didParseCell: (data: CellHookData) => {
+    if (data.section === "body") return;
+    const h = ((data.table.settings as unknown as { columnStyles?: Record<number, { halign?: string }> }).columnStyles as Record<number, { halign?: string }> | undefined)?.[data.column.index]?.halign;
+    if (h === "left" || h === "center" || h === "right") data.cell.styles.halign = h;
+  },
 };
 
 // ---- Blok "Diajukan oleh / Disetujui oleh" ----
@@ -255,7 +262,13 @@ function drawApprovalBox(
   doc.setLineWidth(0.6);
   doc.line(x + 24, y + APPROVAL_H - 30, x + w - 24, y + APPROVAL_H - 30);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(9.5);
+  // Nama bisa panjang (beberapa PIC): kecilkan huruf sampai muat di lebar kotak.
+  let nameSize = 9.5;
+  doc.setFontSize(nameSize);
+  while (nameSize > 6 && doc.getTextWidth(o.name) > w - 16) {
+    nameSize -= 0.5;
+    doc.setFontSize(nameSize);
+  }
   doc.setTextColor(...INK);
   doc.text(o.name, x + w / 2, y + APPROVAL_H - 18, { align: "center" });
   doc.setFont("helvetica", "normal");
@@ -265,7 +278,7 @@ function drawApprovalBox(
   doc.setLineWidth(0.2);
 }
 
-function drawApprovalBoxes(doc: jsPDF, y: number, o: { submittedDate?: string; approved: boolean; approvedDate?: string; approver?: { role: string; name: string; pendingText: string } }) {
+function drawApprovalBoxes(doc: jsPDF, y: number, o: { submittedDate?: string; approved: boolean; approvedDate?: string; approver?: { role: string; name: string; pendingText: string; submitter?: string; approverNames?: string } }) {
   const gap = 16;
   const w = (CONTENT_W - gap) / 2;
   drawApprovalBox(doc, MARGIN, y, w, {
@@ -273,7 +286,7 @@ function drawApprovalBoxes(doc: jsPDF, y: number, o: { submittedDate?: string; a
     role: "Procurement",
     status: "DIAJUKAN",
     statusColor: TEAL,
-    name: "Tim Procurement",
+    name: o.approver?.submitter ?? "Tim Procurement",
     meta: o.submittedDate ? `Tanggal pengajuan: ${formatDate(o.submittedDate)}` : "Tanggal pengajuan: —",
   });
   drawApprovalBox(doc, MARGIN + w + gap, y, w, {
@@ -281,7 +294,7 @@ function drawApprovalBoxes(doc: jsPDF, y: number, o: { submittedDate?: string; a
     role: o.approver?.role ?? "Finance",
     status: o.approved ? "DISETUJUI" : "MENUNGGU PERSETUJUAN",
     statusColor: o.approved ? GREEN : AMBER,
-    name: o.approver?.name ?? "Finance",
+    name: o.approver?.approverNames ?? o.approver?.name ?? "Finance",
     meta: o.approved ? (o.approvedDate ? `Tanggal persetujuan: ${formatDate(o.approvedDate)}` : "Sudah disetujui") : (o.approver?.pendingText ?? "Belum disetujui Finance"),
   });
 }

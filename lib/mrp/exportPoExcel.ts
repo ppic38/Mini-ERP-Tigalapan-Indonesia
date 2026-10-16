@@ -180,7 +180,7 @@ function drawTable(ws: Worksheet, row: number, spec: TableSpec): number {
   return r + 1;
 }
 
-function drawApproval(ws: Worksheet, row: number, o: { submittedDate?: string; approved: boolean; approvedDate?: string; approver?: { role: string; name: string; pendingText: string } }): number {
+function drawApproval(ws: Worksheet, row: number, o: { submittedDate?: string; approved: boolean; approvedDate?: string; approver?: { role: string; name: string; pendingText: string; submitter?: string; approverNames?: string } }): number {
   const boxes: { c1: number; c2: number; heading: string; role: string; status: string; color: string; name: string; meta: string }[] = [
     {
       c1: 1,
@@ -189,7 +189,7 @@ function drawApproval(ws: Worksheet, row: number, o: { submittedDate?: string; a
       role: "Procurement",
       status: "DIAJUKAN",
       color: TEAL,
-      name: "Tim Procurement",
+      name: o.approver?.submitter ?? "Tim Procurement",
       meta: o.submittedDate ? `Tanggal pengajuan: ${formatDate(o.submittedDate)}` : "Tanggal pengajuan: —",
     },
     {
@@ -199,7 +199,7 @@ function drawApproval(ws: Worksheet, row: number, o: { submittedDate?: string; a
       role: o.approver?.role ?? "Finance",
       status: o.approved ? "DISETUJUI" : "MENUNGGU PERSETUJUAN",
       color: o.approved ? GREEN : AMBER,
-      name: o.approver?.name ?? "Finance",
+      name: o.approver?.approverNames ?? o.approver?.name ?? "Finance",
       meta: o.approved ? (o.approvedDate ? `Tanggal persetujuan: ${formatDate(o.approvedDate)}` : "Sudah disetujui") : (o.approver?.pendingText ?? "Belum disetujui Finance"),
     },
   ];
