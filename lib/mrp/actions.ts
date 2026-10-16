@@ -408,7 +408,7 @@ export async function rejectPpicMrpAction(mrpId: string, reason: string): Promis
 // sudah 100% diketahui begitu insert sukses (tidak ada nilai turunan lain yang baru dihitung
 // trigger/RPC di server), jadi aman dikembalikan apa adanya.
 export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPOs: MaterialPO[]; maklonPOs: MaklonPO[]; mrpFullySent: boolean }> {
-  await requireInternalRole(await requireSession(), "procurement");
+  const submitter = await requireInternalRoleWithActor("procurement");
   const db = supabaseServer();
   // Targeted (bukan getFlowSnapshot() penuh): aduanRows/materialRows di-scope ke mrpId ini saja;
   // hargaMaklon/hargaKain/hargaKainPks/entitasList tabel lookup GLOBAL kecil, tetap di-fetch
@@ -608,8 +608,8 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
 
   // Matriks Approval PO (migration 0055): level dari NILAI PO; pengajuan ini = langkah 1 (Procurement).
   const submittedAt = new Date().toISOString();
-  for (const p of maklonPOs) Object.assign(p, initialApprovalFields(p.amount, submittedAt));
-  for (const p of materialPOs) Object.assign(p, initialApprovalFields(p.amount, submittedAt));
+  for (const p of maklonPOs) Object.assign(p, initialApprovalFields(p.amount, submittedAt, submitter.actorName));
+  for (const p of materialPOs) Object.assign(p, initialApprovalFields(p.amount, submittedAt, submitter.actorName));
 
   // PERFORMA: maklon_pos & material_pos independen satu sama lain (tabel beda, tidak ada FK
   // antar keduanya) -- dulu ditulis berurutan (await, await), sekarang paralel. Insert
@@ -3588,7 +3588,7 @@ export async function closePoWithReasonAction(poId: string, reason: string, warn
 }
 
 export async function reassignMaterialToSupplierAction(poId: string, warna: string, lengan: Lengan, moveQty: number, newSupplier: string, reason: string): Promise<void> {
-  await requireInternalRole(await requireSession(), "procurement");
+  const submitter = await requireInternalRoleWithActor("procurement");
   const db = supabaseServer();
   const po = await fetchOneMaterialPo(db, poId);
   if (!po) return;
@@ -3615,7 +3615,7 @@ export async function reassignMaterialToSupplierAction(poId: string, warna: stri
     .eq("id", poId);
 
   // PO pengganti supplier ikut Matriks Approval PO (migration 0055) -- pengajuan ulang oleh Procurement.
-  const newPoApproval = initialApprovalFields(newPoAmount, new Date().toISOString());
+  const newPoApproval = initialApprovalFields(newPoAmount, new Date().toISOString(), submitter.actorName);
   await db.from("material_pos").insert({
     id: newPoId,
     mrp_id: po.mrpId,
@@ -6617,10 +6617,11 @@ async function createMigrationMrp(db: SupabaseClient, m: MigrationMrp, hargaMakl
 type PoType = "MATERIAL" | "MAKLON";
 const PO_TABLE = { MATERIAL: "material_pos", MAKLON: "maklon_pos" } as const;
 
-function initialApprovalFields(amount: number, at: string) {
+function initialApprovalFields(amount: number, at: string, actorName?: string) {
   return {
     approvalLevel: approvalLevelForAmount(amount) as number,
-    approvalLog: [{ step: 1, role: "procurement", action: "APPROVED", at, note: "Diajukan" }] as PoApprovalEntry[],
+    // actorName = PIC Procurement yang mengajukan (tampil di cetakan PO); opsional supaya pemanggil lain tetap valid.
+    approvalLog: [{ step: 1, role: "procurement", action: "APPROVED", at, note: "Diajukan", ...(actorName ? { actorName } : {}) }] as PoApprovalEntry[],
     approvalSubmittedAt: at,
   };
 }
@@ -6785,14 +6786,14 @@ export async function rejectPoStepAction(type: PoType, id: string, asRole: Appro
 /** Procurement mengajukan ulang PO yang ditolak: level dihitung ulang dari nilai PO sekarang, approval mulai lagi. */
 export async function resubmitPoAction(type: PoType, id: string): Promise<ActionResult<void>> {
   return toActionResult(async () => {
-    requireInternalRole(await requireSession(), "procurement");
+    const submitter = await requireInternalRoleWithActor("procurement");
     const db = supabaseServer();
     const subject = await loadApprovalSubject(db, type, id);
     if (!subject) throw new Error("PO tidak ditemukan.");
     const state = poApprovalState(subject);
     if (!state.rejected) throw new Error("Hanya PO yang ditolak yang bisa diajukan ulang.");
     const at = new Date().toISOString();
-    const f = initialApprovalFields(subject.amount, at);
+    const f = initialApprovalFields(subject.amount, at, submitter.actorName);
     const log = [...(subject.approvalLog ?? []), { ...f.approvalLog[0], note: "Diajukan ulang" }];
     const { error } = await db.from(PO_TABLE[type]).update({ approval_level: f.approvalLevel, approval_log: log, approval_submitted_at: at }).eq("id", id);
     if (error) throw new Error(error.message);

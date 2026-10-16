@@ -3,7 +3,7 @@ import { formatDate, localDateString, materialKgPerRollForGroup, mrpDetailFor, t
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "./seed";
 import type { MrpDetail } from "./store";
 import type { MaklonPO, MaterialPO } from "./types";
-import { poApprovalPrintInfo } from "./poApproval";
+import { poApprovalSignBoxes, type PoApprovalSignBox } from "./poApproval";
 import type { PoExportVariant } from "./exportPoPdf";
 
 // Export PO ke Excel (owner 2026-09-26: "download PO dalam bentuk excel atau pdf ... excelnya ada template
@@ -180,59 +180,61 @@ function drawTable(ws: Worksheet, row: number, spec: TableSpec): number {
   return r + 1;
 }
 
-function drawApproval(ws: Worksheet, row: number, o: { submittedDate?: string; approved: boolean; approvedDate?: string; approver?: { role: string; name: string; pendingText: string; submitter?: string; approverNames?: string } }): number {
-  const boxes: { c1: number; c2: number; heading: string; role: string; status: string; color: string; name: string; meta: string }[] = [
-    {
-      c1: 1,
-      c2: 3,
-      heading: "DIAJUKAN OLEH",
-      role: "Procurement",
-      status: "DIAJUKAN",
-      color: TEAL,
-      name: o.approver?.submitter ?? "Tim Procurement",
-      meta: o.submittedDate ? `Tanggal pengajuan: ${formatDate(o.submittedDate)}` : "Tanggal pengajuan: —",
-    },
-    {
-      c1: 4,
-      c2: 6,
-      heading: "DISETUJUI OLEH",
-      role: o.approver?.role ?? "Finance",
-      status: o.approved ? "DISETUJUI" : "MENUNGGU PERSETUJUAN",
-      color: o.approved ? GREEN : AMBER,
-      name: o.approver?.approverNames ?? o.approver?.name ?? "Finance",
-      meta: o.approved ? (o.approvedDate ? `Tanggal persetujuan: ${formatDate(o.approvedDate)}` : "Sudah disetujui") : (o.approver?.pendingText ?? "Belum disetujui Finance"),
-    },
-  ];
-  const rows = [row, row + 1, row + 2, row + 3];
-  ws.getRow(rows[0]).height = 20;
-  ws.getRow(rows[1]).height = 40;
-  ws.getRow(rows[2]).height = 20;
-  ws.getRow(rows[3]).height = 18;
-  for (const b of boxes) {
-    for (const r of rows) {
-      ws.mergeCells(r, b.c1, r, b.c2);
-      for (let c = b.c1; c <= b.c2; c++) ws.getCell(r, c).border = BORDER;
+const RED = "FFB91C1C";
+
+function drawApproval(ws: Worksheet, row: number, boxes: PoApprovalSignBox[]): number {
+  // 1 kotak per orang/slot persetujuan; 2 kotak per baris (tiap kotak 3 kolom).
+  let cur = row;
+  for (let start = 0; start < boxes.length; start += 2) {
+    const rowBoxes = boxes.slice(start, start + 2).map((b, k) => {
+      const st =
+        b.state === "SUBMITTED" ? { text: "DIAJUKAN", color: TEAL, label: "Tanggal pengajuan" }
+        : b.state === "APPROVED" ? { text: "DISETUJUI", color: GREEN, label: "Tanggal persetujuan" }
+        : b.state === "REJECTED" ? { text: "DITOLAK", color: RED, label: "Tanggal penolakan" }
+        : { text: "BELUM DISETUJUI", color: AMBER, label: "" };
+      return {
+        c1: k === 0 ? 1 : 4,
+        c2: k === 0 ? 3 : 6,
+        heading: b.heading,
+        role: b.role,
+        status: st.text,
+        color: st.color,
+        name: b.name,
+        meta: b.state === "PENDING" ? "Menunggu persetujuan" : `${st.label}: ${b.date ? formatDate(b.date) : "—"}`,
+      };
+    });
+    const rows = [cur, cur + 1, cur + 2, cur + 3];
+    ws.getRow(rows[0]).height = 20;
+    ws.getRow(rows[1]).height = 40;
+    ws.getRow(rows[2]).height = 20;
+    ws.getRow(rows[3]).height = 18;
+    for (const b of rowBoxes) {
+      for (const r of rows) {
+        ws.mergeCells(r, b.c1, r, b.c2);
+        for (let c = b.c1; c <= b.c2; c++) ws.getCell(r, c).border = BORDER;
+      }
+      const head = ws.getCell(rows[0], b.c1);
+      head.value = `${b.heading}  ·  ${b.role}`;
+      head.font = { name: FONT, size: 9, bold: true, color: { argb: INK } };
+      head.fill = { type: "pattern", pattern: "solid", fgColor: { argb: SOFT } };
+      head.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
+      const status = ws.getCell(rows[1], b.c1);
+      status.value = b.status;
+      status.font = { name: FONT, size: 11, bold: true, color: { argb: b.color } };
+      status.alignment = { vertical: "middle", horizontal: "center" };
+      const nm = ws.getCell(rows[2], b.c1);
+      nm.value = b.name;
+      nm.font = { name: FONT, size: 10, bold: true, color: { argb: INK } };
+      nm.alignment = { vertical: "middle", horizontal: "center", shrinkToFit: true };
+      nm.border = { ...BORDER, top: { style: "thin", color: { argb: INK } } };
+      const meta = ws.getCell(rows[3], b.c1);
+      meta.value = b.meta;
+      meta.font = { name: FONT, size: 8, color: { argb: GRAY } };
+      meta.alignment = { vertical: "middle", horizontal: "center" };
     }
-    const head = ws.getCell(rows[0], b.c1);
-    head.value = `${b.heading}  ·  ${b.role}`;
-    head.font = { name: FONT, size: 9, bold: true, color: { argb: INK } };
-    head.fill = { type: "pattern", pattern: "solid", fgColor: { argb: SOFT } };
-    head.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
-    const status = ws.getCell(rows[1], b.c1);
-    status.value = b.status;
-    status.font = { name: FONT, size: 11, bold: true, color: { argb: b.color } };
-    status.alignment = { vertical: "middle", horizontal: "center" };
-    const nm = ws.getCell(rows[2], b.c1);
-    nm.value = b.name;
-    nm.font = { name: FONT, size: 10, bold: true, color: { argb: INK } };
-    nm.alignment = { vertical: "middle", horizontal: "center" };
-    nm.border = { ...BORDER, top: { style: "thin", color: { argb: INK } } };
-    const meta = ws.getCell(rows[3], b.c1);
-    meta.value = b.meta;
-    meta.font = { name: FONT, size: 8, color: { argb: GRAY } };
-    meta.alignment = { vertical: "middle", horizontal: "center" };
+    cur += 5;
   }
-  return row + 5;
+  return cur;
 }
 
 function materialSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: MaterialPO, mrpDetails: MrpDetail[], variant: PoExportVariant = "internal") {
@@ -331,7 +333,7 @@ function materialSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: Mater
             align: ["center", "left", "right", "right"],
           });
   }
-  drawApproval(ws, r + 1, { submittedDate: mrpDetail?.dates.poSent, approved: po.approved, approvedDate: mrpDetail?.dates.poApproved, approver: poApprovalPrintInfo(po) });
+  drawApproval(ws, r + 1, poApprovalSignBoxes(po, mrpDetail?.dates.poSent, mrpDetail?.dates.poApproved));
 }
 
 function maklonSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: MaklonPO, mrpDetails: MrpDetail[], variant: PoExportVariant = "internal") {
@@ -391,7 +393,7 @@ function maklonSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: MaklonP
     c.font = { name: FONT, size: 9, italic: true, color: { argb: GRAY } };
     r += 2;
   }
-  drawApproval(ws, r + 1, { submittedDate: detail?.dates.poSent, approved: po.approved, approvedDate: detail?.dates.poApproved, approver: poApprovalPrintInfo(po) });
+  drawApproval(ws, r + 1, poApprovalSignBoxes(po, detail?.dates.poSent, detail?.dates.poApproved));
 }
 
 async function download(wb: Workbook, fileName: string) {

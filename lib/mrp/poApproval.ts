@@ -187,6 +187,68 @@ export function poApprovalSummary(state: PoApprovalState): string {
 }
 
 /** Teks blok "Disetujui oleh" pada cetakan PO (PDF/Excel): PO lama = Finance; PO bermatriks = level & jabatan. */
+/** Satu kotak tanda tangan di cetakan PO: 1 kotak per orang/slot persetujuan (revisi 2026-10-16). */
+export type PoApprovalSignBox = {
+  heading: string;
+  role: string;
+  state: "SUBMITTED" | "APPROVED" | "PENDING" | "REJECTED";
+  name: string;
+  /** Tanggal lokal yyyy-mm-dd (kosong kalau belum ada tindakan). */
+  date?: string;
+};
+
+function localDateOf(iso?: string | null): string | undefined {
+  if (!iso) return undefined;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+const SLOT_TITLE: Record<ApprovalRole, string> = { procurement: "Procurement", finance: "FAT Manager", scm: "SCM", gm: "General Manager" };
+const SLOT_SHORT: Record<ApprovalRole, string> = { procurement: "Procurement", finance: "FAT", scm: "SCM", gm: "GM" };
+
+/** Daftar kotak tanda tangan: "Diajukan oleh" lalu SATU kotak untuk tiap penyetuju yang dibutuhkan (mis. Level 3 =
+ *  SCM L2, FAT, SCM L3). Yang sudah setuju terisi nama + tanggal; yang belum tetap muncul sebagai kotak kosong
+ *  berstatus "BELUM DISETUJUI". `submittedDate`/`approvedDate` (yyyy-mm-dd) dipakai bila log tidak punya waktu. */
+export function poApprovalSignBoxes(po: PoApprovalSubject, submittedDate?: string, approvedDate?: string): PoApprovalSignBox[] {
+  const state = poApprovalState(po);
+  const submitEntry = state.cycle.find((e) => e.step === 1 && e.action === "APPROVED");
+  const boxes: PoApprovalSignBox[] = [
+    {
+      heading: "DIAJUKAN OLEH",
+      role: "Procurement",
+      state: "SUBMITTED",
+      name: submitEntry?.actorName?.trim() || "Tim Procurement",
+      date: localDateOf(submitEntry?.at) ?? submittedDate,
+    },
+  ];
+  if (state.legacy || state.level == null || state.level <= 1) {
+    const title = state.legacy || state.level == null ? "Finance" : "Procurement Staff";
+    boxes.push({ heading: "DISETUJUI OLEH", role: state.legacy || state.level == null ? "Finance" : "Level 1", state: po.approved ? "APPROVED" : "PENDING", name: title, date: po.approved ? approvedDate : undefined });
+    return boxes;
+  }
+  const last = state.cycle[state.cycle.length - 1];
+  for (let s = 2; s <= state.level; s++) {
+    for (const role of APPROVAL_STEP_ROLES[s] ?? []) {
+      const accepted: ApprovalRole[] = [role, ...(APPROVAL_STEP_LEGACY_ROLES[s] ?? [])];
+      const hit = state.cycle.find((e) => e.step === s && e.action === "APPROVED" && accepted.includes(e.role));
+      const title = role === "scm" && s === 3 ? "SCM Manager" : SLOT_TITLE[role];
+      const heading = "DISETUJUI OLEH";
+      const roleText = `Level ${s} · ${SLOT_SHORT[role]}`;
+      if (hit) {
+        boxes.push({ heading, role: roleText, state: "APPROVED", name: hit.actorName?.trim() || title, date: localDateOf(hit.at) });
+      } else if (po.approved) {
+        boxes.push({ heading, role: roleText, state: "APPROVED", name: title, date: approvedDate });
+      } else if (state.rejected && last && last.step === s && last.role === role) {
+        boxes.push({ heading, role: roleText, state: "REJECTED", name: last.actorName?.trim() || title, date: localDateOf(last.at) });
+      } else {
+        boxes.push({ heading, role: roleText, state: "PENDING", name: title });
+      }
+    }
+  }
+  return boxes;
+}
+
 export type PoApprovalPrintInfo = {
   role: string;
   name: string;

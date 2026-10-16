@@ -5,7 +5,7 @@ import { formatDate, formatDecimal, formatPcs, localDateString, materialKgPerRol
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "./seed";
 import type { MrpDetail } from "./store";
 import type { MaklonPO, MaterialPO } from "./types";
-import { poApprovalPrintInfo } from "./poApproval";
+import { poApprovalSignBoxes, type PoApprovalSignBox } from "./poApproval";
 
 // Revisi 2026-09-28 (owner: "versi internal pake sekarang dan versi eksternal (untuk ke supplier
 // dan vendor produksi) itu bedanya tidak ada dibagi yang pendek dan panjang, langsung totalan") --
@@ -35,6 +35,7 @@ const TABLE_LINE: [number, number, number] = [160, 165, 175];
 const INK: [number, number, number] = [26, 26, 31];
 const GREEN: [number, number, number] = [22, 128, 61];
 const AMBER: [number, number, number] = [180, 110, 0];
+const RED: [number, number, number] = [185, 28, 28];
 
 // Logo kop: file gambar di `public/tigalapan-logo-kop.png`. Kalau ada, dipakai di kiri nama perusahaan;
 // kalau tidak ada / gagal dimuat, kop cukup teks (tidak pernah bikin download PO gagal). Dimuat sekali di
@@ -224,7 +225,7 @@ const TABLE_BASE = {
   // Rata kolom angka juga di header & baris TOTAL (columnStyles bawaan hanya berlaku di baris isi).
   didParseCell: (data: CellHookData) => {
     if (data.section === "body") return;
-    const h = ((data.table.settings as unknown as { columnStyles?: Record<number, { halign?: string }> }).columnStyles as Record<number, { halign?: string }> | undefined)?.[data.column.index]?.halign;
+    const h = (data.table.styles.columnStyles as Record<number, { halign?: string }> | undefined)?.[data.column.index]?.halign;
     if (h === "left" || h === "center" || h === "right") data.cell.styles.halign = h;
   },
 };
@@ -278,42 +279,51 @@ function drawApprovalBox(
   doc.setLineWidth(0.2);
 }
 
-function drawApprovalBoxes(doc: jsPDF, y: number, o: { submittedDate?: string; approved: boolean; approvedDate?: string; approver?: { role: string; name: string; pendingText: string; submitter?: string; approverNames?: string } }) {
-  const gap = 16;
-  const w = (CONTENT_W - gap) / 2;
-  drawApprovalBox(doc, MARGIN, y, w, {
-    heading: "DIAJUKAN OLEH",
-    role: "Procurement",
-    status: "DIAJUKAN",
-    statusColor: TEAL,
-    name: o.approver?.submitter ?? "Tim Procurement",
-    meta: o.submittedDate ? `Tanggal pengajuan: ${formatDate(o.submittedDate)}` : "Tanggal pengajuan: —",
-  });
-  drawApprovalBox(doc, MARGIN + w + gap, y, w, {
-    heading: "DISETUJUI OLEH",
-    role: o.approver?.role ?? "Finance",
-    status: o.approved ? "DISETUJUI" : "MENUNGGU PERSETUJUAN",
-    statusColor: o.approved ? GREEN : AMBER,
-    name: o.approver?.approverNames ?? o.approver?.name ?? "Finance",
-    meta: o.approved ? (o.approvedDate ? `Tanggal persetujuan: ${formatDate(o.approvedDate)}` : "Sudah disetujui") : (o.approver?.pendingText ?? "Belum disetujui Finance"),
+const APPROVAL_GAP = 16;
+const APPROVAL_PER_ROW = 3;
+
+function approvalRows(boxes: PoApprovalSignBox[]): number {
+  return Math.max(1, Math.ceil(boxes.length / APPROVAL_PER_ROW));
+}
+
+function drawApprovalBoxes(doc: jsPDF, y: number, boxes: PoApprovalSignBox[]) {
+  const w = (CONTENT_W - APPROVAL_GAP * (APPROVAL_PER_ROW - 1)) / APPROVAL_PER_ROW;
+  boxes.forEach((b, idx) => {
+    const row = Math.floor(idx / APPROVAL_PER_ROW);
+    const col = idx % APPROVAL_PER_ROW;
+    const status =
+      b.state === "SUBMITTED" ? { text: "DIAJUKAN", color: TEAL, metaLabel: "Tanggal pengajuan" }
+      : b.state === "APPROVED" ? { text: "DISETUJUI", color: GREEN, metaLabel: "Tanggal persetujuan" }
+      : b.state === "REJECTED" ? { text: "DITOLAK", color: RED, metaLabel: "Tanggal penolakan" }
+      : { text: "BELUM DISETUJUI", color: AMBER, metaLabel: "" };
+    const meta = b.state === "PENDING" ? "Menunggu persetujuan" : `${status.metaLabel}: ${b.date ? formatDate(b.date) : "—"}`;
+    drawApprovalBox(doc, MARGIN + col * (w + APPROVAL_GAP), y + row * (APPROVAL_H + APPROVAL_GAP), w, {
+      heading: b.heading,
+      role: b.role,
+      status: status.text,
+      statusColor: status.color,
+      name: b.name,
+      meta,
+    });
   });
 }
 
-function footerY(doc: jsPDF): number {
+function footerY(doc: jsPDF, rows = 1): number {
   const pageH = doc.internal.pageSize.getHeight();
-  return pageH - 40 - APPROVAL_H; // ruang tanda tangan selalu di bagian bawah halaman
+  return pageH - 40 - rows * APPROVAL_H - (rows - 1) * APPROVAL_GAP; // ruang tanda tangan selalu di bagian bawah halaman
 }
 
 /** Item 8(d): kalau `y` (posisi setelah tabel) sudah lewat footerY halaman saat ini (tabel spill ke
  *  halaman 2+), mulai halaman BARU dan gambar blok tanda tangan di footerY halaman baru itu supaya
  *  tidak pernah menimpa baris tabel terakhir. */
-function drawApprovalBoxesSafe(doc: jsPDF, y: number, o: Parameters<typeof drawApprovalBoxes>[2]) {
+function drawApprovalBoxesSafe(doc: jsPDF, y: number, boxes: PoApprovalSignBox[]) {
+  const rows = approvalRows(boxes);
   let targetY = y;
-  if (y > footerY(doc)) {
+  if (y > footerY(doc, rows)) {
     doc.addPage();
-    targetY = footerY(doc);
+    targetY = footerY(doc, rows);
   }
-  drawApprovalBoxes(doc, targetY, o);
+  drawApprovalBoxes(doc, targetY, boxes);
 }
 
 /** Badan 1 halaman PO Material (header, info, rincian, RIB/Kerah/Manset, tanda tangan). TIDAK
@@ -446,7 +456,7 @@ function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[
   const manset = materialRowsForKind("manset");
   if (manset.totalKg > 0) drawMaterialSection("MANSET", manset.rows, manset.totalKg);
 
-  drawApprovalBoxesSafe(doc, y, { submittedDate: mrpDetail?.dates.poSent, approved: po.approved, approvedDate: mrpDetail?.dates.poApproved, approver: poApprovalPrintInfo(po) });
+  drawApprovalBoxesSafe(doc, y, poApprovalSignBoxes(po, mrpDetail?.dates.poSent, mrpDetail?.dates.poApproved));
 }
 
 /** Generate & download PDF Proposal Purchase Order Material Bahan untuk SATU PO. */
@@ -539,7 +549,7 @@ function renderMaklonPoPage(doc: jsPDF, po: MaklonPO, mrpDetails: MrpDetail[], v
     y += 36;
   }
 
-  drawApprovalBoxesSafe(doc, y, { submittedDate: detail?.dates.poSent, approved: po.approved, approvedDate: detail?.dates.poApproved, approver: poApprovalPrintInfo(po) });
+  drawApprovalBoxesSafe(doc, y, poApprovalSignBoxes(po, detail?.dates.poSent, detail?.dates.poApproved));
 }
 
 export function exportMaklonPoPdf(po: MaklonPO, mrpDetails: MrpDetail[], variant: PoExportVariant = "internal") {
