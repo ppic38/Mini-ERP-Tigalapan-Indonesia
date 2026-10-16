@@ -17,6 +17,7 @@ import {
   vendorDepositCreditForClaim,
   vendorDepositEntriesFor,
   isSyntheticSupplier,
+  poDisplayNo,
 } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { mergeColorEntriesByWarna } from "@/lib/mrp/mergeColorEntries";
@@ -315,7 +316,9 @@ export function PaymentPanel() {
   const columns: ColumnDef<RawMaterialInvoice>[] = [
     { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (i) => <SysadminActionsBar compact actions={materialInvoicePaymentCorrections(i, vendorDeposits)} /> },
     { key: "noMrp", label: "No MRP", default: true, render: (i) => <span className="font-mono">{i.mrpId}</span> },
-    { key: "noPo", label: "No PO", default: true, render: (i) => <span className="font-mono font-medium">{i.poId}</span> },
+    // "No PO" = nama PO tanpa akhiran entitas (PO yang dipecah per entitas terbaca sama); "No PO ID" = primary key asli, disembunyikan lewat Kolom.
+    { key: "noPo", label: "No PO", default: true, render: (i) => <span className="font-mono font-medium">{poDisplayNo(i.poId, i.entity)}</span> },
+    { key: "noPoId", label: "No PO ID", default: false, render: (i) => <span className="font-mono">{i.poId}</span> },
     // Revisi 2026-09-06 (v2): "PO Reference" ke invoice LAMA yang diretur (cuma terisi untuk PV
     // pengganti hasil klaim, lihat sourceClaimId di types.ts) -- "—" untuk invoice biasa.
     {
@@ -643,7 +646,7 @@ export function PaymentPanel() {
             </span>
           )}
           filterDefs={[
-            { label: "No PO", options: Array.from(new Set(scopedReadyInvoices.map((i) => i.poId))), test: (i, v) => i.poId === v },
+            { label: "No PO", options: Array.from(new Set(scopedReadyInvoices.map((i) => poDisplayNo(i.poId, i.entity)))), test: (i, v) => poDisplayNo(i.poId, i.entity) === v },
             { label: "Supplier", options: Array.from(new Set(scopedReadyInvoices.map((i) => i.supplier))), test: (i, v) => i.supplier === v },
             { label: "Entitas", options: Array.from(new Set(scopedReadyInvoices.map((i) => i.entity))), test: (i, v) => i.entity === v },
           ]}
@@ -884,7 +887,7 @@ export function PaymentPanel() {
                                         ) : null
                                       }
                                       filterDefs={[
-                                        { label: "No PO", options: Array.from(new Set(s.list.map((i) => i.poId))), test: (i, v) => i.poId === v },
+                                        { label: "No PO", options: Array.from(new Set(s.list.map((i) => poDisplayNo(i.poId, i.entity)))), test: (i, v) => poDisplayNo(i.poId, i.entity) === v },
                                         { label: "Entitas", options: Array.from(new Set(s.list.map((i) => i.entity))), test: (i, v) => i.entity === v },
                                         { label: "Status", options: Array.from(new Set(s.list.map((i) => i.status))), test: (i, v) => i.status === v },
                                       ]}

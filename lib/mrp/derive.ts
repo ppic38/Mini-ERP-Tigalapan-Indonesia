@@ -720,6 +720,22 @@ export function effectiveMrpQty(mrpId: string, fallbackQty: number, maklonPOs: M
   return related.reduce((s, p) => s + p.qty, 0);
 }
 
+/** "No PO" tampilan: nomor PO Material yang dipecah per entitas (splitMaterialPoByEntitas) berakhiran nama entitas
+ *  (mis. "PO-SUP-W38-MKS-MKS-KNITTO-PT-ASPIRASI-SUKSES-APPAREL") -- primary key-nya harus unik, tapi untuk dibaca
+ *  PO yang satu supplier/MRP/vendor tujuan cukup satu nama. Fungsi ini membuang akhiran entitas (+ penghitung "-2")
+ *  dari id; id aslinya ("No PO ID") tetap dipakai sebagai kunci. Tanpa entitas yang cocok = id apa adanya. */
+export function poDisplayNo(id: string, entity?: string | null): string {
+  if (!entity) return id;
+  const seg = entity.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  if (!seg) return id;
+  const marker = "-" + seg;
+  const at = id.lastIndexOf(marker);
+  if (at <= 0) return id;
+  const tail = id.slice(at + marker.length);
+  if (tail !== "" && !/^-\d+$/.test(tail)) return id;
+  return id.slice(0, at);
+}
+
 export function formatDate(iso?: string): string {
   if (!iso) return "—";
   const [y, m, d] = iso.split("-");
