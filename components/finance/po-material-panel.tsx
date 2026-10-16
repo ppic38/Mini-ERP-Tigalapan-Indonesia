@@ -9,6 +9,7 @@ import { useMrpStore } from "@/lib/mrp/store";
 import {
   formatPcs,
   formatRupiah,
+  hargaKainRate,
   hargaKainRateInfo,
   maklonFeeForColorLine,
   materialPoFullStatus,
@@ -62,6 +63,15 @@ function hargaPerKgForColor(supplier: string, c: ColorBreakdown, hargaKain: Para
   const kg = c.rollCount * ROLL_KG_ESTIMATE;
   const info = hargaKainRateInfo(hargaKain, hargaKainPks, supplier, c.warna, kg);
   return info.source === "Estimasi" ? null : info.rate;
+}
+
+/** Nilai material per baris warna = roll × ROLL_KG_ESTIMATE × harga/kg warna itu -- rumus yang SAMA dengan total PO
+ *  (materialAmountForPo: tarif ditentukan dari total kg SEMUA lengan warna yang sama dalam PO ini), jadi penjumlahan
+ *  baris selalu cocok dengan nilai PO. Dulu: total PO dibagi rata per roll sehingga semua warna tampil sama. */
+function materialLineValue(po: MaterialPO, c: ColorBreakdown, hargaKain: Parameters<typeof hargaKainRate>[0], hargaKainPks: Parameters<typeof hargaKainRate>[1]): number {
+  const kgWarna = po.colorBreakdown.filter((x) => x.warna === c.warna).reduce((sum, x) => sum + x.rollCount * ROLL_KG_ESTIMATE, 0);
+  const rate = hargaKainRate(hargaKain, hargaKainPks, po.supplier, c.warna, kgWarna);
+  return Math.round(c.rollCount * ROLL_KG_ESTIMATE * rate);
 }
 
 /** Panel "PO Material" — konten diekstrak dari halaman lama /finance/po-material,
@@ -519,7 +529,7 @@ export function PoMaterialPanel() {
                                 <span className="text-right font-mono">{mansetKgForColor(po.mrpId, c, mrpDetails).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>
                               )}
                               <span className="text-right font-mono">{hargaPerKg != null ? formatRupiah(hargaPerKg) : "—"}</span>
-                              <span className="text-right font-mono">{formatRupiah((po.amount / po.rollCount) * c.rollCount)}</span>
+                              <span className="text-right font-mono">{formatRupiah(materialLineValue(po, c, hargaKain, hargaKainPks))}</span>
                               <span className="text-right font-mono">{formatRupiah(maklonFeeForColorLine(po, c, maklonPOs, mrpDetails))}</span>
                               <select
                                 value={touchedEntitas.has(colorEntitasKey(po.id, c.warna, c.lengan)) ? c.entitas ?? "" : ""}
@@ -706,7 +716,7 @@ export function PoMaterialPanel() {
                                                       <span className="text-right font-mono">{mansetKgForColor(p.mrpId, c, mrpDetails).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>
                                                     )}
                                                     <span className="text-right font-mono">{hargaPerKg != null ? formatRupiah(hargaPerKg) : "—"}</span>
-                                                    <span className="text-right font-mono">{formatRupiah(p.rollCount > 0 ? (p.amount / p.rollCount) * c.rollCount : 0)}</span>
+                                                    <span className="text-right font-mono">{formatRupiah(materialLineValue(p, c, hargaKain, hargaKainPks))}</span>
                                                     <span className="text-right font-mono">{formatRupiah(maklonFeeForColorLine(p, c, maklonPOs, mrpDetails))}</span>
                                                     <span>{c.entitas ?? "—"}</span>
                                                   </div>
