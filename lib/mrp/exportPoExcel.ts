@@ -251,9 +251,10 @@ function materialSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: Mater
       ? po.colorBreakdown
       : Array.from(
           po.colorBreakdown.reduce((map, c) => {
-            const cur = map.get(c.warna);
+            const key = `${c.warna}|${c.entitas ?? ""}`;
+            const cur = map.get(key);
             if (cur) cur.rollCount += c.rollCount;
-            else map.set(c.warna, { warna: c.warna, lengan: c.lengan, rollCount: c.rollCount, entitas: c.entitas });
+            else map.set(key, { warna: c.warna, lengan: c.lengan, rollCount: c.rollCount, entitas: c.entitas });
             return map;
           }, new Map<string, (typeof po.colorBreakdown)[number]>()).values()
         );
@@ -280,11 +281,11 @@ function materialSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: Mater
 
   r = drawSection(ws, r, `1. Rincian Bahan — ${po.supplier}`);
   r = drawTable(ws, r, {
-    head: ["No", "Kategori", "Warna", "Roll", "Kg"],
-    body: colorBreakdown.map((c, i) => [i + 1, kategori, variant === "internal" && c.lengan ? `${c.warna} · ${c.lengan}` : c.warna, c.rollCount, c.rollCount * ROLL_KG_ESTIMATE]),
-    foot: ["", "", "TOTAL", totalRoll, totalKg],
-    numFmt: [undefined, undefined, undefined, "#,##0.0", "#,##0.0"],
-    align: ["center", "left", "left", "right", "right"],
+    head: ["No", "Kategori", "Warna", "Roll", "Kg", "Entitas"],
+    body: colorBreakdown.map((c, i) => [i + 1, kategori, variant === "internal" && c.lengan ? `${c.warna} · ${c.lengan}` : c.warna, c.rollCount, c.rollCount * ROLL_KG_ESTIMATE, po.approved ? (c.entitas ?? po.entity) : "—"]),
+    foot: ["", "", "TOTAL", totalRoll, totalKg, ""],
+    numFmt: [undefined, undefined, undefined, "#,##0.0", "#,##0.0", undefined],
+    align: ["center", "left", "left", "right", "right", "left"],
   });
 
   let section = 1;
@@ -297,18 +298,20 @@ function materialSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: Mater
     const rawList = po.colorBreakdown.map((c) => {
       const group = mrpDetail?.lenganGroups.find((g) => g.warna === c.warna && g.lengan === c.lengan);
       const kgPerRoll = group ? materialKgPerRollForGroup(group, kind) : 0;
-      return { warna: c.warna, lengan: c.lengan, roll: c.rollCount, kgPerRoll, kg: kgPerRoll * c.rollCount };
+      // Entitas pilihan Finance; sebelum PO disetujui masih nilai bawaan sistem, jadi belum ditampilkan ("—").
+      return { warna: c.warna, lengan: c.lengan, roll: c.rollCount, kgPerRoll, kg: kgPerRoll * c.rollCount, entitas: po.approved ? (c.entitas ?? po.entity) : "—" };
     });
     const list =
       variant === "internal"
         ? rawList
         : Array.from(
             rawList.reduce((map, x) => {
-              const cur = map.get(x.warna);
+              const key = `${x.warna}|${x.entitas}`;
+              const cur = map.get(key);
               if (cur) {
                 cur.roll += x.roll;
                 cur.kg += x.kg;
-              } else map.set(x.warna, { ...x });
+              } else map.set(key, { ...x });
               return map;
             }, new Map<string, (typeof rawList)[number]>()).values()
           );
@@ -319,18 +322,19 @@ function materialSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: Mater
     r =
       variant === "internal"
         ? drawTable(ws, r, {
-            head: ["No", "Warna", "Lengan", "Roll", `${label}/roll (kg)`, `Total ${label} (kg)`],
-            body: list.map((x, i) => [i + 1, x.warna, x.lengan, x.roll, x.kgPerRoll, x.kg]),
-            foot: ["", "", "TOTAL", list.reduce((s, x) => s + x.roll, 0), "", totalKgKind],
-            numFmt: [undefined, undefined, undefined, "#,##0.0", "#,##0.00", "#,##0.00"],
-            align: ["center", "left", "left", "right", "right", "right"],
+            // Lengan digabung ke kolom Warna ("TOSCA 24S · PANJANG", seperti tabel Rincian Bahan) supaya kolom Entitas muat di 6 kolom lembar.
+            head: ["No", "Warna", "Roll", `${label}/roll (kg)`, `Total ${label} (kg)`, "Entitas"],
+            body: list.map((x, i) => [i + 1, x.lengan ? `${x.warna} · ${x.lengan}` : x.warna, x.roll, x.kgPerRoll, x.kg, x.entitas]),
+            foot: ["", "TOTAL", list.reduce((s, x) => s + x.roll, 0), "", totalKgKind, ""],
+            numFmt: [undefined, undefined, "#,##0.0", "#,##0.00", "#,##0.00", undefined],
+            align: ["center", "left", "right", "right", "right", "left"],
           })
         : drawTable(ws, r, {
-            head: ["No", "Warna", "Roll", `Total ${label} (kg)`],
-            body: list.map((x, i) => [i + 1, x.warna, x.roll, x.kg]),
-            foot: ["", "TOTAL", list.reduce((s, x) => s + x.roll, 0), totalKgKind],
-            numFmt: [undefined, undefined, "#,##0.0", "#,##0.00"],
-            align: ["center", "left", "right", "right"],
+            head: ["No", "Warna", "Roll", `Total ${label} (kg)`, "Entitas"],
+            body: list.map((x, i) => [i + 1, x.warna, x.roll, x.kg, x.entitas]),
+            foot: ["", "TOTAL", list.reduce((s, x) => s + x.roll, 0), totalKgKind, ""],
+            numFmt: [undefined, undefined, "#,##0.0", "#,##0.00", undefined],
+            align: ["center", "left", "right", "right", "left"],
           });
   }
   drawApproval(ws, r + 1, poApprovalSignBoxes(po, mrpDetail?.dates.poSent, mrpDetail?.dates.poApproved));

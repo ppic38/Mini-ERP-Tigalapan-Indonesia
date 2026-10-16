@@ -342,9 +342,10 @@ function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[
       ? po.colorBreakdown
       : Array.from(
           po.colorBreakdown.reduce((map, c) => {
-            const cur = map.get(c.warna);
+            const key = `${c.warna}|${c.entitas ?? ""}`;
+            const cur = map.get(key);
             if (cur) cur.rollCount += c.rollCount;
-            else map.set(c.warna, { warna: c.warna, lengan: c.lengan, rollCount: c.rollCount, entitas: c.entitas });
+            else map.set(key, { warna: c.warna, lengan: c.lengan, rollCount: c.rollCount, entitas: c.entitas });
             return map;
           }, new Map<string, (typeof po.colorBreakdown)[number]>()).values()
         );
@@ -378,19 +379,22 @@ function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[
     variant === "internal" && c.lengan ? `${c.warna} · ${c.lengan}` : c.warna,
     formatDecimal(c.rollCount, 1),
     formatDecimal(c.rollCount * ROLL_KG_ESTIMATE, 1),
+    // Entitas pilihan Finance per warna; sebelum PO disetujui nilainya masih bawaan sistem, jadi belum ditampilkan.
+    po.approved ? (c.entitas ?? po.entity) : "—",
   ]);
 
   autoTable(doc, {
     ...TABLE_BASE,
     startY: y,
-    head: [["No", "Kategori", "Warna", "Roll", "Kg"]],
+    head: [["No", "Kategori", "Warna", "Roll", "Kg", "Entitas"]],
     body: rows,
-    foot: [["", "", "TOTAL", formatDecimal(totalRoll, 1), formatDecimal(totalKg, 1)]],
+    foot: [["", "", "TOTAL", formatDecimal(totalRoll, 1), formatDecimal(totalKg, 1), ""]],
     showFoot: "lastPage",
     columnStyles: {
       0: { cellWidth: 28, halign: "center" },
-      3: { halign: "right", cellWidth: 70 },
-      4: { halign: "right", cellWidth: 80 },
+      3: { halign: "right", cellWidth: 50 },
+      4: { halign: "right", cellWidth: 60 },
+      5: { cellWidth: 140 },
     },
   });
   y = lastAutoTableY(doc) + 22;
@@ -403,17 +407,19 @@ function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[
     const list = po.colorBreakdown.map((c) => {
       const group = mrpDetail?.lenganGroups.find((g) => g.warna === c.warna && g.lengan === c.lengan);
       const kgPerRoll = group ? materialKgPerRollForGroup(group, kind) : 0;
-      return { warna: c.warna, lengan: c.lengan, rollCount: c.rollCount, kgPerRoll, kgForLine: kgPerRoll * c.rollCount };
+      // Entitas pilihan Finance; sebelum PO disetujui masih nilai bawaan sistem, jadi belum ditampilkan ("—").
+      return { warna: c.warna, lengan: c.lengan, rollCount: c.rollCount, kgPerRoll, kgForLine: kgPerRoll * c.rollCount, entitas: po.approved ? (c.entitas ?? po.entity) : "—" };
     });
     if (variant === "internal") return { rows: list, totalKg: list.reduce((s, r) => s + r.kgForLine, 0) };
     // external -- gabung PENDEK+PANJANG warna yang sama; kolom "kg/roll" TIDAK ikut (rate-nya beda
     // per lengan, digabung jadi tidak bermakna) -- cukup Total Kg per warna.
     const merged = list.reduce((map, r) => {
-      const cur = map.get(r.warna);
+      const key = `${r.warna}|${r.entitas}`;
+      const cur = map.get(key);
       if (cur) {
         cur.rollCount += r.rollCount;
         cur.kgForLine += r.kgForLine;
-      } else map.set(r.warna, { ...r });
+      } else map.set(key, { ...r });
       return map;
     }, new Map<string, (typeof list)[number]>());
     const rows = Array.from(merged.values());
@@ -423,15 +429,15 @@ function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[
   function drawMaterialSection(label: string, list: ReturnType<typeof materialRowsForKind>["rows"], totalKgForKind: number) {
     sectionCounter += 1;
     y = drawSectionHeading(doc, y, `${sectionCounter}. Permintaan ${label}`);
-    const head = variant === "internal" ? ["No", "Warna", "Lengan", "Roll", `${label}/roll (kg)`, `Total ${label} (kg)`] : ["No", "Warna", "Roll", `Total ${label} (kg)`];
+    const head = variant === "internal" ? ["No", "Warna", "Lengan", "Roll", `${label}/roll (kg)`, `Total ${label} (kg)`, "Entitas"] : ["No", "Warna", "Roll", `Total ${label} (kg)`, "Entitas"];
     const body =
       variant === "internal"
-        ? list.map((r, i) => [String(i + 1), r.warna, r.lengan, formatDecimal(r.rollCount, 1), formatDecimal(r.kgPerRoll, 2), formatDecimal(r.kgForLine, 2)])
-        : list.map((r, i) => [String(i + 1), r.warna, formatDecimal(r.rollCount, 1), formatDecimal(r.kgForLine, 2)]);
+        ? list.map((r, i) => [String(i + 1), r.warna, r.lengan, formatDecimal(r.rollCount, 1), formatDecimal(r.kgPerRoll, 2), formatDecimal(r.kgForLine, 2), r.entitas])
+        : list.map((r, i) => [String(i + 1), r.warna, formatDecimal(r.rollCount, 1), formatDecimal(r.kgForLine, 2), r.entitas]);
     const foot =
       variant === "internal"
-        ? ["", "", "TOTAL", formatDecimal(list.reduce((s, r) => s + r.rollCount, 0), 1), "", formatDecimal(totalKgForKind, 2)]
-        : ["", "TOTAL", formatDecimal(list.reduce((s, r) => s + r.rollCount, 0), 1), formatDecimal(totalKgForKind, 2)];
+        ? ["", "", "TOTAL", formatDecimal(list.reduce((s, r) => s + r.rollCount, 0), 1), "", formatDecimal(totalKgForKind, 2), ""]
+        : ["", "TOTAL", formatDecimal(list.reduce((s, r) => s + r.rollCount, 0), 1), formatDecimal(totalKgForKind, 2), ""];
     autoTable(doc, {
       ...TABLE_BASE,
       startY: y,
@@ -441,8 +447,8 @@ function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[
       showFoot: "lastPage",
       columnStyles:
         variant === "internal"
-          ? { 0: { cellWidth: 28, halign: "center" }, 3: { halign: "right", cellWidth: 50 }, 4: { halign: "right", cellWidth: 85 }, 5: { halign: "right", cellWidth: 90 } }
-          : { 0: { cellWidth: 28, halign: "center" }, 2: { halign: "right", cellWidth: 70 }, 3: { halign: "right", cellWidth: 100 } },
+          ? { 0: { cellWidth: 28, halign: "center" }, 3: { halign: "right", cellWidth: 40 }, 4: { halign: "right", cellWidth: 70 }, 5: { halign: "right", cellWidth: 80 }, 6: { cellWidth: 120 } }
+          : { 0: { cellWidth: 28, halign: "center" }, 2: { halign: "right", cellWidth: 50 }, 3: { halign: "right", cellWidth: 90 }, 4: { cellWidth: 140 } },
     });
     y = lastAutoTableY(doc) + 22;
   }
