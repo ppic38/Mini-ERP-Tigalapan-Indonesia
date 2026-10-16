@@ -4,13 +4,24 @@ import { useMemo, useState } from "react";
 import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
+import { Tabs } from "@/components/ui/tabs";
 import { PoDownloadModal, type PoDownloadRequest } from "@/components/procurement/po-download-modal";
 import { SysadminPanel } from "@/components/sysadmin/correction-dialog";
 import { maklonPoCorrections, materialPoCorrections } from "@/components/sysadmin/procurement-corrections";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatRupiah, formatDate, mrpDetailFor } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI, ROLL_KG_ESTIMATE } from "@/lib/mrp/seed";
-import { APPROVAL_LEVEL_TABLE, APPROVAL_ROLE_LABEL, APPROVAL_STEP_LABEL, poApprovalState, poApprovalSummary, type ApprovalRole, type PoApprovalState } from "@/lib/mrp/poApproval";
+import {
+  APPROVAL_LEVEL_TABLE,
+  APPROVAL_ROLE_LABEL,
+  APPROVAL_STEP_LABEL,
+  poApprovalSignBoxes,
+  poApprovalState,
+  poApprovalSummary,
+  type ApprovalRole,
+  type PoApprovalSignBox,
+  type PoApprovalState,
+} from "@/lib/mrp/poApproval";
 import type { MaklonPO, MaterialPO } from "@/lib/mrp/types";
 
 /** `members`: PO Material satu supplier dalam satu MRP digabung jadi SATU baris (approval PO Material berlaku per supplier,
@@ -18,7 +29,13 @@ import type { MaklonPO, MaterialPO } from "@/lib/mrp/types";
 type Item = { type: "MATERIAL" | "MAKLON"; id: string; mrpId: string; vendor: string; supplier?: string; amount: number; po: MaterialPO | MaklonPO; state: PoApprovalState; members?: Item[] };
 
 function itemTitle(item: Item): string {
-  return item.members && item.members.length > 1 ? `${item.mrpId} · ${item.supplier}` : item.id;
+  return item.type === "MATERIAL" ? `${item.mrpId} · ${item.supplier}` : `${item.mrpId} · ${item.vendor}`;
+}
+
+function itemSubtitle(item: Item): string {
+  if (item.type === "MAKLON") return item.id;
+  const members = item.members ?? [item];
+  return members.length > 1 ? `${members.length} vendor: ${members.map((m) => m.vendor).join(", ")}` : `${item.vendor} · ${item.id}`;
 }
 
 function fmtTime(iso: string): string {
@@ -27,7 +44,8 @@ function fmtTime(iso: string): string {
   return d.toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
-/** Bagan langkah approval (Level 1..N) -- hijau = selesai, kuning = sedang menunggu, abu = belum. */
+/** Bagan langkah approval (Level 1..N) -- hijau = selesai, kuning = sedang menunggu, abu = belum.
+ *  Dipakai halaman Finance (po-material-panel, po-maklon-panel); antrean approval memakai ApprovalProgress di bawah. */
 export function ApprovalChain({ state }: { state: PoApprovalState }) {
   if (state.legacy || state.level == null) return <span className="font-sans text-[10.5px] text-text-muted">{poApprovalSummary(state)}</span>;
   const steps = Array.from({ length: state.level }, (_, i) => i + 1);
@@ -43,6 +61,51 @@ export function ApprovalChain({ state }: { state: PoApprovalState }) {
           <span key={s} title={APPROVAL_STEP_LABEL[s]} className={"rounded px-1.5 py-[2px] font-mono text-[10px] font-semibold " + cls}>
             L{s} {rejectedHere ? "✕" : done ? "✓" : current ? "…" : ""}
             {partial}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function boxTone(b: PoApprovalSignBox, state: PoApprovalState): "done" | "current" | "todo" | "rejected" {
+  if (b.state === "REJECTED") return "rejected";
+  if (b.state === "SUBMITTED" || b.state === "APPROVED") return "done";
+  return !state.rejected && b.step === state.currentStep ? "current" : "todo";
+}
+
+const TONE_CLASS = {
+  done: "bg-success-bg text-success-fg",
+  current: "bg-warning-bg text-warning-fg",
+  todo: "bg-[#EEF1F4] text-text-muted",
+  rejected: "bg-danger-bg text-danger-fg",
+} as const;
+
+const TONE_ICON = { done: "✓", current: "…", todo: "○", rejected: "✕" } as const;
+
+function approvalBoxes(po: MaterialPO | MaklonPO, state: PoApprovalState): PoApprovalSignBox[] {
+  const boxes = poApprovalSignBoxes(po);
+  // Level 1 selesai begitu diajukan -- tidak ada penyetuju lain untuk ditampilkan.
+  return !state.legacy && state.level != null && state.level <= 1 ? boxes.slice(0, 1) : boxes;
+}
+
+/** Bagan ringkas siapa saja yang harus menyetujui: "Procurement ✓ › SCM ✓ › SCM … FAT … › GM ○" (nama + tanggal di tooltip). */
+function ApprovalProgress({ po, state }: { po: MaterialPO | MaklonPO; state: PoApprovalState }) {
+  const boxes = approvalBoxes(po, state);
+  return (
+    <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
+      {boxes.map((b, i) => {
+        const tone = boxTone(b, state);
+        const prev = boxes[i - 1];
+        return (
+          <span key={i} className="flex items-center gap-1">
+            {prev && (prev.step !== b.step ? <span className="text-[10px] text-text-muted">›</span> : <span className="text-[10px] text-text-muted">+</span>)}
+            <span
+              title={`${b.role} — ${b.name}${b.date ? ` · ${formatDate(b.date)}` : ""}`}
+              className={"rounded px-1.5 py-[2px] font-sans text-[10.5px] font-semibold " + TONE_CLASS[tone]}
+            >
+              {TONE_ICON[tone]} {b.short}
+            </span>
           </span>
         );
       })}
@@ -95,82 +158,138 @@ function MatrixReference() {
   );
 }
 
-function ItemDetail({ item }: { item: Item }) {
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return <div className="mb-2 font-sans text-[10.5px] font-semibold uppercase tracking-wider text-text-muted">{children}</div>;
+}
+
+/** Jendela "Lihat detail": ringkasan, alur approval (siapa/kapan), dan rincian PO. */
+function DetailModal({ item, onClose }: { item: Item; onClose: () => void }) {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const detail = mrpDetailFor(item.mrpId, mrpDetails);
+  const st = item.state;
+  const boxes = approvalBoxes(item.po, st);
+  const members = item.members ?? [item];
+  const totalRoll = item.type === "MATERIAL" ? members.reduce((sum, m) => sum + (m.po as MaterialPO).rollCount, 0) : 0;
   return (
-    <div className="grid gap-4 border-t border-[#F1F4F7] bg-[#FBFCFD] px-4 py-3 md:grid-cols-2">
-      <div>
-        <div className="mb-1.5 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Rincian PO</div>
-        {item.type === "MATERIAL" ? (
-          <div className="flex flex-col gap-3">
-            {(item.members ?? [item]).map((m) => (
-              <div key={m.id}>
-                <div className="mb-1 flex items-baseline justify-between font-sans text-[11px] font-semibold text-text-primary">
-                  <span>
-                    {m.vendor} <span className="font-mono text-[10px] font-normal text-text-muted">{m.id}</span>
-                  </span>
-                  <span className="font-mono text-[10.5px] font-normal text-text-muted">{formatRupiah(m.amount)}</span>
-                </div>
-                <table className="w-full border-collapse font-sans text-[11.5px]">
-                  <thead>
-                    <tr className="text-left text-text-muted">
-                      <th className="py-1">Warna · lengan</th>
-                      <th className="py-1 text-right">Roll</th>
-                      <th className="py-1 text-right">Kg (est.)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(m.po as MaterialPO).colorBreakdown.map((c) => (
-                      <tr key={c.warna + c.lengan} className="border-t border-[#F1F4F7]">
-                        <td className="py-1">
-                          {c.warna} · {c.lengan}
-                        </td>
-                        <td className="py-1 text-right font-mono">{c.rollCount.toLocaleString("id-ID", { maximumFractionDigits: 1 })}</td>
-                        <td className="py-1 text-right font-mono">{(c.rollCount * ROLL_KG_ESTIMATE).toLocaleString("id-ID", { maximumFractionDigits: 0 })}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={onClose}>
+      <div className="flex max-h-[88vh] w-full max-w-[760px] flex-col rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 border-b border-border-subtle px-5 py-3.5">
+          <div>
+            <div className="font-sans text-[14px] font-semibold text-text-primary">{itemTitle(item)}</div>
+            <div className="mt-0.5 font-sans text-[11.5px] text-text-muted">{item.type === "MATERIAL" ? "PO Material" : "PO Produksi"} · {itemSubtitle(item)}</div>
+          </div>
+          <button onClick={onClose} className="rounded-md border border-[#CBD5DF] bg-white px-2.5 py-1 font-sans text-[11px] font-semibold text-action-primary">
+            Tutup
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            {[
+              ["Nilai PO", formatRupiah(item.amount)],
+              ["Level approval", st.legacy || st.level == null ? "Alur lama" : `Level ${st.level}`],
+              ["Tanggal PO", detail?.dates.poSent ? formatDate(detail.dates.poSent) : "—"],
+              [item.type === "MATERIAL" ? "Total roll" : "Total qty", item.type === "MATERIAL" ? `${totalRoll.toLocaleString("id-ID", { maximumFractionDigits: 1 })} roll` : `${(item.po as MaklonPO).qty.toLocaleString("id-ID")} pcs`],
+            ].map(([k, v]) => (
+              <div key={k} className="rounded-md border border-[#E4E8EE] bg-[#FBFCFD] px-3 py-2">
+                <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">{k}</div>
+                <div className="mt-0.5 font-mono text-[12.5px] font-semibold text-text-primary">{v}</div>
               </div>
             ))}
           </div>
-        ) : (
-          <div className="font-sans text-[11.5px] text-[#31414F]">
-            <div>Total qty: <span className="font-mono font-semibold">{(item.po as MaklonPO).qty.toLocaleString("id-ID")} pcs</span></div>
-            <div>Kategori: {detail?.mrp.kategori ?? "—"}</div>
+          <div className="mt-2 font-sans text-[11.5px] text-text-muted">
+            Status: <span className="font-semibold text-text-primary">{poApprovalSummary(st)}</span>
+            {st.slaDueAt && (
+              <span className={st.overdue ? " font-semibold text-danger-fg" : ""}>
+                {" "}
+                · {st.overdue ? "Lewat SLA" : "Batas SLA"} {fmtTime(st.slaDueAt)}
+              </span>
+            )}
           </div>
-        )}
-        <div className="mt-2 font-sans text-[11px] text-text-muted">Tanggal PO: {detail?.dates.poSent ? formatDate(detail.dates.poSent) : "—"}</div>
-      </div>
-      <div>
-        <div className="mb-1.5 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Riwayat approval</div>
-        {item.state.cycle.length === 0 ? (
-          <div className="font-sans text-[11.5px] text-text-muted">Belum ada riwayat.</div>
-        ) : (
-          <ul className="flex flex-col gap-1 font-sans text-[11.5px] text-[#31414F]">
-            {item.state.cycle.map((e, i) => (
-              <li key={i}>
-                <span className={e.action === "APPROVED" ? "text-success-fg" : "font-semibold text-danger-fg"}>{e.action === "APPROVED" ? "✓" : "✕"}</span> {APPROVAL_STEP_LABEL[e.step] ?? `Langkah ${e.step}`} — {APPROVAL_ROLE_LABEL[e.role]}
-                {/* Item revisi 2026-09-29 (migration 0060, owner: "biar tau siapa PIC-nya") --
-                   nama orang yang klik, kalau ada (entri lama sebelum revisi ini tidak punya field
-                   ini sama sekali, jadi cukup disembunyikan, bukan tampil "undefined"). */}
-                {e.actorName && <span className="font-medium text-text-primary"> ({e.actorName})</span>}
-                <span className="text-text-muted"> · {fmtTime(e.at)}</span>
-                {e.note && <span className="text-text-muted"> · “{e.note}”</span>}
-              </li>
-            ))}
-          </ul>
-        )}
+          {st.rejected && st.rejectNote && (
+            <div className="mt-2 rounded-md border border-[#EFC9C4] bg-danger-bg px-3 py-1.5 font-sans text-[11.5px] text-danger-fg">
+              Ditolak {st.rejectedBy ? APPROVAL_ROLE_LABEL[st.rejectedBy] : ""}: {st.rejectNote}
+            </div>
+          )}
+
+          <div className="mt-5">
+            <SectionLabel>Alur approval</SectionLabel>
+            <ol className="flex flex-col">
+              {boxes.map((b, i) => {
+                const tone = boxTone(b, st);
+                return (
+                  <li key={i} className="flex items-start gap-3 border-t border-[#F1F4F7] py-2 first:border-t-0">
+                    <span className={"mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full font-sans text-[11px] font-bold " + TONE_CLASS[tone]}>{TONE_ICON[tone]}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-sans text-[12px] font-semibold text-text-primary">{b.step === 1 && b.state === "SUBMITTED" ? "Diajukan · Procurement" : b.role}</div>
+                      <div className="font-sans text-[11.5px] text-[#31414F]">
+                        {b.state === "PENDING" ? <span className="text-text-muted">Belum disetujui — menunggu {b.name}</span> : b.name}
+                      </div>
+                    </div>
+                    <div className="shrink-0 font-sans text-[11px] text-text-muted">{b.date ? formatDate(b.date) : ""}</div>
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
+
+          <div className="mt-5">
+            <SectionLabel>Rincian PO</SectionLabel>
+            {item.type === "MATERIAL" ? (
+              <div className="flex flex-col gap-4">
+                {members.map((m) => (
+                  <div key={m.id} className="overflow-hidden rounded-md border border-[#E4E8EE]">
+                    <div className="flex items-baseline justify-between bg-[#F2F5F8] px-3 py-1.5 font-sans text-[11.5px]">
+                      <span className="font-semibold text-text-primary">
+                        {m.vendor} <span className="ml-1 font-mono text-[10px] font-normal text-text-muted">{m.id}</span>
+                      </span>
+                      <span className="font-mono text-[11px] text-text-muted">{formatRupiah(m.amount)}</span>
+                    </div>
+                    <table className="w-full border-collapse font-sans text-[11.5px]">
+                      <thead>
+                        <tr className="text-left text-text-muted">
+                          <th className="px-3 py-1 font-medium">Warna · lengan</th>
+                          <th className="px-3 py-1 text-right font-medium">Roll</th>
+                          <th className="px-3 py-1 text-right font-medium">Kg (est.)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(m.po as MaterialPO).colorBreakdown.map((c) => (
+                          <tr key={c.warna + c.lengan} className="border-t border-[#F1F4F7]">
+                            <td className="px-3 py-1">
+                              {c.warna} · {c.lengan}
+                            </td>
+                            <td className="px-3 py-1 text-right font-mono">{c.rollCount.toLocaleString("id-ID", { maximumFractionDigits: 1 })}</td>
+                            <td className="px-3 py-1 text-right font-mono">{(c.rollCount * ROLL_KG_ESTIMATE).toLocaleString("id-ID", { maximumFractionDigits: 0 })}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-md border border-[#E4E8EE] px-3 py-2 font-sans text-[11.5px] text-[#31414F]">
+                <div>
+                  Vendor produksi: <span className="font-semibold">{item.vendor}</span>
+                </div>
+                <div>
+                  Total qty: <span className="font-mono font-semibold">{(item.po as MaklonPO).qty.toLocaleString("id-ID")} pcs</span>
+                </div>
+                <div>Kategori: {detail?.mrp.kategori ?? "—"}</div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
 /** Antrean approval PO untuk satu portal (Procurement Level 2 / SCM & Finance Level 3 / GM Level 4).
- *  Menampilkan: (1) menunggu persetujuan portal ini, (2) khusus Procurement -- PO ditolak yang perlu
- *  diajukan ulang, (3) PO yang sedang berjalan di langkah lain (info). Aksi lewat approvePoStep /
- *  rejectPoStep / resubmitPo (Matriks Approval PO, migration 0055). */
+ *  Dua sub-tab (PO Material / PO Produksi); tiap tab: (1) menunggu persetujuan portal ini, (2) khusus Procurement --
+ *  PO ditolak yang perlu diajukan ulang, (3) sedang berjalan di langkah lain (info), (4) sudah selesai. Aksi lewat
+ *  approvePoStep / rejectPoStep / resubmitPo (Matriks Approval PO, migration 0055). */
 export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
   const materialPOs = useMrpStore((s) => s.materialPOs);
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
@@ -179,22 +298,16 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
   const rejectPoStep = useMrpStore((s) => s.rejectPoStep);
   const resubmitPo = useMrpStore((s) => s.resubmitPo);
 
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [tab, setTab] = useState<"MATERIAL" | "MAKLON">("MATERIAL");
+  const [detailItem, setDetailItem] = useState<Item | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<Item | null>(null);
   const [rejectNote, setRejectNote] = useState("");
   const [download, setDownload] = useState<PoDownloadRequest | null>(null);
-  // Section "Sudah selesai" (revisi 2026-09-28) default TERTUTUP -- bisa berisi banyak PO seiring
-  // waktu, tidak perlu selalu terbuka penuh seperti 3 section lain yang memang perlu aksi/perhatian.
+  // Section "Sudah selesai" default TERTUTUP -- bisa berisi banyak PO seiring waktu.
   const [doneOpen, setDoneOpen] = useState(false);
 
-  // Revisi 2026-09-28 (owner: "kita bisa tau juga siapa2 sudah approve, karena berlapis") -- DULU
-  // PO yang sudah `approved` (semua level tuntas) SAMA SEKALI tidak masuk `items` (dianggap sudah
-  // "keluar" dari antrean). Sekarang tetap diikutkan supaya bisa ditampilkan di section "Sudah
-  // selesai" di bawah (siapa approve di level mana, lewat ApprovalChain) -- TIDAK mengubah `mine`/
-  // `rejected`/`others` sama sekali (ketiganya masih tetap exclude PO yang sudah approved, lihat
-  // filter `!po.approved` yang ditambah di `others`).
   const items = useMemo<Item[]>(() => {
     const out: Item[] = [];
     const groups = new Map<string, Item>();
@@ -203,7 +316,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
       const state = poApprovalState(p);
       const it: Item = { type: "MATERIAL", id: p.id, mrpId: p.mrpId, vendor: VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi, supplier: p.supplier, amount: p.amount, po: p, state };
       if (state.legacy) {
-        out.push(it);
+        out.push({ ...it, members: [it] });
         continue;
       }
       // Satu baris per MRP + supplier + posisi approval yang sama.
@@ -224,13 +337,15 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
     return out;
   }, [materialPOs, maklonPOs]);
 
-  const mine = items.filter((i) => !i.po.approved && !i.state.legacy && !i.state.rejected && i.state.pendingRoles.includes(role));
-  const rejected = role === "procurement" ? items.filter((i) => !i.po.approved && i.state.rejected) : [];
-  const others = items.filter((i) => !i.po.approved && !i.state.legacy && !i.state.rejected && !i.state.pendingRoles.includes(role));
-  // Sudah tuntas SEMUA level (approved=true) -- terlepas level berapa yang menyudahinya (1/2/3/4),
-  // supaya kelihatan juga PO Level 1-2 yang selesai di Procurement TANPA pernah mampir ke FAT/SCM/GM.
-  // Legacy (PO sebelum matriks ini ada) TIDAK ikut -- tidak ada chain-nya untuk ditampilkan.
-  const done = items.filter((i) => i.po.approved && !i.state.legacy);
+  const isMine = (i: Item) => !i.po.approved && !i.state.legacy && !i.state.rejected && i.state.pendingRoles.includes(role);
+  const mineCount = (type: Item["type"]) => items.filter((i) => i.type === type && isMine(i)).length;
+
+  const tabItems = items.filter((i) => i.type === tab);
+  const mine = tabItems.filter(isMine);
+  const rejected = role === "procurement" ? tabItems.filter((i) => !i.po.approved && i.state.rejected) : [];
+  const others = tabItems.filter((i) => !i.po.approved && !i.state.legacy && !i.state.rejected && !i.state.pendingRoles.includes(role));
+  // Sudah tuntas SEMUA level (approved=true). Legacy (PO sebelum matriks ini ada) TIDAK ikut -- tidak ada chain-nya.
+  const done = tabItems.filter((i) => i.po.approved && !i.state.legacy);
   const totalMine = mine.reduce((s, i) => s + i.amount, 0);
 
   async function run(item: Item, fn: () => Promise<void>) {
@@ -272,39 +387,35 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
   }
 
   function renderRow(item: Item, actions: React.ReactNode) {
-    const open = expanded === item.id;
     const st = item.state;
     return (
       <div key={item.id} className="border-b border-[#F1F4F7] last:border-b-0">
-        <div className="grid items-center gap-x-3 px-4 py-3 font-sans text-xs text-[#31414F]" style={{ gridTemplateColumns: "88px minmax(190px,1.2fr) 1fr 120px 1fr auto" }}>
-          <span>
-            <StatusPill tone={item.type === "MATERIAL" ? "info" : "neutral"}>{item.type === "MATERIAL" ? "MATERIAL" : "PRODUKSI"}</StatusPill>
-          </span>
-          <button onClick={() => setExpanded(open ? null : item.id)} className="text-left">
-            <div className="font-mono text-[11.5px] font-semibold text-text-primary">{itemTitle(item)}</div>
-            <div className="text-[10.5px] text-text-muted">
-              {item.members && item.members.length > 1
-                ? `${item.members.length} vendor produksi: ${item.members.map((m) => m.vendor).join(", ")}`
-                : `${item.mrpId} · ${item.vendor}${item.supplier ? ` · ${item.supplier}` : ""}`}
+        <div className="grid items-center gap-x-4 gap-y-2 px-4 py-3 font-sans text-xs text-[#31414F]" style={{ gridTemplateColumns: "minmax(200px,1.3fr) minmax(230px,1.5fr) 130px auto" }}>
+          <div className="min-w-0">
+            <div className="truncate text-[12.5px] font-semibold text-text-primary">{itemTitle(item)}</div>
+            <div className="truncate text-[11px] text-text-muted" title={itemSubtitle(item)}>
+              {itemSubtitle(item)}
             </div>
-          </button>
-          <span>
-            <ApprovalChain state={st} />
+          </div>
+          <div>
+            <ApprovalProgress po={item.po} state={st} />
             {st.slaDueAt && (
-              <div className={"mt-0.5 text-[10px] " + (st.overdue ? "font-semibold text-danger-fg" : "text-text-muted")}>
+              <div className={"mt-1 text-[10px] " + (st.overdue ? "font-semibold text-danger-fg" : "text-text-muted")}>
                 {st.overdue ? "⚠ Lewat SLA · " : "Batas SLA · "}
                 {fmtTime(st.slaDueAt)}
               </div>
             )}
-          </span>
-          <span className="text-right font-mono font-semibold text-text-primary">{formatRupiah(item.amount)}</span>
-          <span className="text-[10.5px] text-text-muted">{poApprovalSummary(st)}</span>
-          <span className="flex items-center justify-end gap-1.5">
+          </div>
+          <div className="text-right font-mono text-[12.5px] font-semibold text-text-primary">{formatRupiah(item.amount)}</div>
+          <div className="flex items-center justify-end gap-1.5">
+            <Button onClick={() => setDetailItem(item)} variant="ghost" size="xs">
+              Lihat detail
+            </Button>
             <Button onClick={() => openDownload(item)} variant="ghost" size="xs">
               PO
             </Button>
             {actions}
-          </span>
+          </div>
         </div>
         {st.rejected && st.rejectNote && (
           <div className="mx-4 mb-2 rounded-md border border-[#EFC9C4] bg-danger-bg px-3 py-1.5 font-sans text-[11px] text-danger-fg">
@@ -317,7 +428,6 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
         <div className="px-4 pb-2 empty:hidden">
           {item.type === "MATERIAL" ? (item.members ?? [item]).map((m) => <SysadminPanel key={m.id} actions={materialPoCorrections(m.po as MaterialPO)} />) : <SysadminPanel actions={maklonPoCorrections(item.po as MaklonPO)} />}
         </div>
-        {open && <ItemDetail item={item} />}
       </div>
     );
   }
@@ -333,9 +443,19 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
     </div>
   );
 
+  const noun = tab === "MATERIAL" ? "PO Material" : "PO Produksi";
+
   return (
     <div className="flex flex-col gap-4">
       <MatrixReference />
+      <Tabs
+        items={[
+          { key: "MATERIAL", label: "PO Material", badge: mineCount("MATERIAL") },
+          { key: "MAKLON", label: "PO Produksi", badge: mineCount("MAKLON") },
+        ]}
+        active={tab}
+        onChange={(key) => setTab(key as "MATERIAL" | "MAKLON")}
+      />
       {error && <div className="rounded-md border border-danger bg-danger-bg px-4 py-2.5 font-sans text-[12px] text-danger-fg">{error}</div>}
 
       {renderSection(
@@ -343,37 +463,37 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
         mine.length,
         mine.length > 0 ? `Total ${formatRupiah(totalMine)}` : undefined,
         mine.length === 0 ? (
-          <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Tidak ada PO yang menunggu persetujuan Anda.</div>
+          <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Tidak ada {noun} yang menunggu persetujuan Anda.</div>
         ) : (
           <>
             {mine.map((it) =>
               renderRow(
                 it,
                 <>
-                    <Button
-                      onClick={() =>
-                        run(it, async () => {
-                          await approvePoStep(it.type, it.id, role);
-                        })
-                      }
-                      disabled={busyId != null}
-                      variant="primary"
-                      size="xs"
-                    >
-                      {busyId === it.id ? "…" : "Setujui"}
-                    </Button>
-                    <Button
-                      onClick={() => {
-                        setRejecting(it);
-                        setRejectNote("");
-                      }}
-                      disabled={busyId != null}
-                      variant="danger"
-                      size="xs"
-                    >
-                      Tolak
-                    </Button>
-                  </>
+                  <Button
+                    onClick={() =>
+                      run(it, async () => {
+                        await approvePoStep(it.type, it.id, role);
+                      })
+                    }
+                    disabled={busyId != null}
+                    variant="primary"
+                    size="xs"
+                  >
+                    {busyId === it.id ? "…" : "Setujui"}
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      setRejecting(it);
+                      setRejectNote("");
+                    }}
+                    disabled={busyId != null}
+                    variant="danger"
+                    size="xs"
+                  >
+                    Tolak
+                  </Button>
+                </>
               )
             )}
             {mine.length > 1 && (
@@ -393,23 +513,23 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
           rejected.length,
           undefined,
           rejected.length === 0 ? (
-            <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Tidak ada PO yang ditolak.</div>
+            <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Tidak ada {noun} yang ditolak.</div>
           ) : (
             rejected.map((it) =>
               renderRow(
                 it,
                 <Button
-                    onClick={() =>
-                      run(it, async () => {
-                        await resubmitPo(it.type, it.id);
-                      })
-                    }
-                    disabled={busyId != null}
-                    variant="primary"
-                    size="xs"
-                  >
-                    {busyId === it.id ? "…" : "Ajukan ulang"}
-                  </Button>
+                  onClick={() =>
+                    run(it, async () => {
+                      await resubmitPo(it.type, it.id);
+                    })
+                  }
+                  disabled={busyId != null}
+                  variant="primary"
+                  size="xs"
+                >
+                  {busyId === it.id ? "…" : "Ajukan ulang"}
+                </Button>
               )
             )
           )
@@ -422,11 +542,8 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
         others.length === 0 ? <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Tidak ada.</div> : others.map((it) => renderRow(it, null))
       )}
 
-      {/* Revisi 2026-09-28 (owner: "kita bisa tau juga siapa2 sudah approve, karena berlapis") --
-         PO yang sudah TUNTAS semua level (termasuk Level 1-2 yang selesai di Procurement tanpa
-         pernah mampir ke FAT/SCM/GM) tetap kelihatan di sini, lengkap dengan ApprovalChain-nya --
-         bukan cuma menghilang begitu approved=true. Default tertutup (collapsible, pola sama
-         seperti MatrixReference) supaya tidak bikin halaman penuh begitu datanya sudah banyak. */}
+      {/* PO yang sudah TUNTAS semua level tetap kelihatan di sini, lengkap dengan siapa yang menyetujui -- bukan cuma
+         menghilang begitu approved=true. Default tertutup supaya halaman tidak penuh begitu datanya banyak. */}
       <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
         <button onClick={() => setDoneOpen((v) => !v)} className="flex w-full items-center gap-2 px-4 py-3 text-left">
           <span className="font-sans text-[13px] font-semibold text-text-primary">Sudah selesai (semua level)</span>
@@ -436,7 +553,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
         {doneOpen && (
           <div className="border-t border-border-subtle">
             {done.length === 0 ? (
-              <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Belum ada PO yang selesai lewat matriks approval ini.</div>
+              <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Belum ada {noun} yang selesai lewat matriks approval ini.</div>
             ) : (
               done.map((it) => renderRow(it, null))
             )}
@@ -444,10 +561,12 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
         )}
       </div>
 
+      {detailItem && <DetailModal item={detailItem} onClose={() => setDetailItem(null)} />}
+
       {rejecting && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={() => setRejecting(null)}>
           <div className="w-full max-w-[440px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
-            <div className="border-b border-border-subtle px-5 py-3.5 font-sans text-[13px] font-semibold text-text-primary">Tolak PO {itemTitle(rejecting)}</div>
+            <div className="border-b border-border-subtle px-5 py-3.5 font-sans text-[13px] font-semibold text-text-primary">Tolak {noun} {itemTitle(rejecting)}</div>
             <div className="px-5 py-4">
               <div className="font-sans text-[11.5px] text-text-muted">PO kembali ke Procurement untuk diperbaiki; approval mulai lagi dari awal setelah diajukan ulang. Alasan wajib diisi.</div>
               <textarea value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} rows={3} className="input mt-2 w-full" placeholder="Alasan penolakan…" autoFocus />

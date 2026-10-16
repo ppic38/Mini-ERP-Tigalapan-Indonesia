@@ -191,6 +191,10 @@ export function poApprovalSummary(state: PoApprovalState): string {
 export type PoApprovalSignBox = {
   heading: string;
   role: string;
+  /** Singkatan peran untuk bagan ringkas ("Procurement", "SCM", "FAT", "GM"). */
+  short: string;
+  /** Nomor langkah/level (1 = pengajuan). */
+  step: number;
   state: "SUBMITTED" | "APPROVED" | "PENDING" | "REJECTED";
   name: string;
   /** Tanggal lokal yyyy-mm-dd (kosong kalau belum ada tindakan). */
@@ -217,6 +221,8 @@ export function poApprovalSignBoxes(po: PoApprovalSubject, submittedDate?: strin
     {
       heading: "DIAJUKAN OLEH",
       role: "Procurement",
+      short: "Procurement",
+      step: 1,
       state: "SUBMITTED",
       name: submitEntry?.actorName?.trim() || "Tim Procurement",
       date: localDateOf(submitEntry?.at) ?? submittedDate,
@@ -224,7 +230,7 @@ export function poApprovalSignBoxes(po: PoApprovalSubject, submittedDate?: strin
   ];
   if (state.legacy || state.level == null || state.level <= 1) {
     const title = state.legacy || state.level == null ? "Finance" : "Procurement Staff";
-    boxes.push({ heading: "DISETUJUI OLEH", role: state.legacy || state.level == null ? "Finance" : "Level 1", state: po.approved ? "APPROVED" : "PENDING", name: title, date: po.approved ? approvedDate : undefined });
+    boxes.push({ heading: "DISETUJUI OLEH", role: state.legacy || state.level == null ? "Finance" : "Level 1", short: state.legacy || state.level == null ? "Finance" : "Procurement", step: state.legacy || state.level == null ? 3 : 1, state: po.approved ? "APPROVED" : "PENDING", name: title, date: po.approved ? approvedDate : undefined });
     return boxes;
   }
   const last = state.cycle[state.cycle.length - 1];
@@ -236,13 +242,13 @@ export function poApprovalSignBoxes(po: PoApprovalSubject, submittedDate?: strin
       const heading = "DISETUJUI OLEH";
       const roleText = `Level ${s} · ${SLOT_SHORT[role]}`;
       if (hit) {
-        boxes.push({ heading, role: roleText, state: "APPROVED", name: hit.actorName?.trim() || title, date: localDateOf(hit.at) });
+        boxes.push({ heading, role: roleText, short: SLOT_SHORT[role], step: s, state: "APPROVED", name: hit.actorName?.trim() || title, date: localDateOf(hit.at) });
       } else if (po.approved) {
-        boxes.push({ heading, role: roleText, state: "APPROVED", name: title, date: approvedDate });
+        boxes.push({ heading, role: roleText, short: SLOT_SHORT[role], step: s, state: "APPROVED", name: title, date: approvedDate });
       } else if (state.rejected && last && last.step === s && last.role === role) {
-        boxes.push({ heading, role: roleText, state: "REJECTED", name: last.actorName?.trim() || title, date: localDateOf(last.at) });
+        boxes.push({ heading, role: roleText, short: SLOT_SHORT[role], step: s, state: "REJECTED", name: last.actorName?.trim() || title, date: localDateOf(last.at) });
       } else {
-        boxes.push({ heading, role: roleText, state: "PENDING", name: title });
+        boxes.push({ heading, role: roleText, short: SLOT_SHORT[role], step: s, state: "PENDING", name: title });
       }
     }
   }
