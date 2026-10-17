@@ -1446,7 +1446,7 @@ export async function setInvoicesPaidAction(invoiceIds: string[], paid: boolean,
   // tanpa lewat UI). Sekarang ditegakkan ULANG di sini: menandai PAID (bukan "Batalkan Bayar")
   // WAJIB menyertakan bukti, dan disimpan dalam operasi yang SAMA (bukan 2 round-trip terpisah
   // lagi) supaya tidak ada celah invoice sempat PAID tanpa bukti walau cuma sesaat.
-  if (paid && !proof?.dataUrl) throw new Error("Bukti pembayaran (PDF) wajib diupload sebelum invoice bisa ditandai lunas.");
+  if (paid && !proof?.dataUrl) throw new Error("Bukti pembayaran (PDF/JPG/PNG) wajib diupload sebelum invoice bisa ditandai lunas.");
   const db = supabaseServer();
   const { data: invoices } = await db.from("raw_material_invoices").select("id,status,po_id").in("id", invoiceIds);
   const uploadedAt = nowIso();

@@ -32,32 +32,10 @@ import { getInvoicePaymentProofAction } from "@/lib/mrp/actions";
 // Revisi 2026-09-06: preview+download konsisten di semua modul -- lihat komentar di file ini.
 // Revisi 2026-09-08 (bug fix popup blocked): openPreviewWindow/fillPreviewWindow -- lihat
 // catatan panjang di lib/mrp/clientFiles.ts.
-import { openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
+import { openPreviewWindow, fillPreviewWindow, readProofAsDataUrl } from "@/lib/mrp/clientFiles";
 import { viewInvoiceBuktiPv } from "@/lib/mrp/viewInvoicePv";
 
-// Round-2 fix (Tester bug 2): batas HARUS dicek pada ukuran hasil ENCODE base64, bukan
-// `file.size` mentah -- base64 menggembungkan ukuran kira-kira +33%, jadi file 1.5 MB mentah jadi
-// sekitar 2.05 MB ter-encode, nyaris SAMA/LEBIH BESAR dari body limit Server Action 2 MB
-// (next.config.ts) dan tidak menyisakan margin buat prefix data URI, fileName, array invoiceIds,
-// serta overhead JSON/RSC lain.
-//
-// Round-3 fix (Reviewer should-fix #1): iterasi Round-2 sebelumnya salah hitung -- fungsinya
-// (disalin dari `dataUrlApproxBytes` di production-cutting-tab.tsx) itu MEMBALIK inflasi base64
-// (`b64.length * 0.75`), jadi hasilnya estimasi ukuran file MENTAH sebelum encode, BUKAN ukuran
-// hasil-encode yang sebenarnya dikirim lewat body Server Action. Akibatnya batas
-// `MAX_PROOF_ENCODED_BYTES` yang namanya "encoded" itu sebenarnya cuma membatasi file mentah ke
-// ~1.4 MB, yang ukuran ter-encode aslinya ~1.87 MB -- margin nyata di bawah limit 2 MB cuma
-// ~136 KB, bukan ~614 KB yang dikira sebelumnya (aman untuk sekarang, tapi kalau angka
-// MAX_PROOF_ENCODED_BYTES ini dinaikkan lagi nanti berdasar komentar yang salah, bug boundary yang
-// sama seperti Round-1 bisa muncul lagi tanpa disadari). Sekarang dibetulkan: `dataUrlEncodedBytes`
-// mengukur PANJANG STRING BASE64 APA ADANYA (1 karakter base64 = 1 byte ASCII di payload yang
-// benar2 dikirim), tanpa pembagian 0.75 apa pun, lalu dibandingkan LANGSUNG ke batas ter-encode.
-function dataUrlEncodedBytes(dataUrl: string): number {
-  const commaIdx = dataUrl.indexOf(",");
-  const b64 = commaIdx === -1 ? dataUrl : dataUrl.slice(commaIdx + 1);
-  return b64.length;
-}
-const MAX_PROOF_ENCODED_BYTES = 1.5 * 1024 * 1024; // batas ASLI hasil-encode -- margin ~500 KB di bawah limit 2 MB body Server Action
+// Batas ukuran & pembacaan file bukti (PDF/JPG/PNG) ada di readProofAsDataUrl (lib/mrp/clientFiles.ts) -- batas dicek pada ukuran hasil encode base64, di bawah body limit Server Action 2 MB.
 
 async function viewPaymentProof(invoiceId: string) {
   const win = openPreviewWindow();
@@ -211,31 +189,23 @@ export function PaymentPanel() {
   // ukuran dicek SETELAH readAsDataURL selesai, terhadap ukuran ENCODED (lihat komentar
   // MAX_PROOF_ENCODED_BYTES di atas) -- bukan `file.size` mentah sebelum encode, yang tidak
   // menyisakan margin cukup di bawah body limit Server Action 2 MB.
-  function handleProofFileChange(file: File | null) {
+  async function handleProofFileChange(file: File | null) {
     setProofError("");
     if (!file) {
       setProofDataUrl(undefined);
       setProofFileName(undefined);
       return;
     }
-    if (file.type !== "application/pdf") {
-      setProofError("File harus berformat PDF.");
+    // Revisi 2026-10-17 (owner): bukti pembayaran boleh PDF, JPG, atau PNG (gambar besar dikecilkan otomatis).
+    const r = await readProofAsDataUrl(file);
+    if ("error" in r) {
+      setProofError(r.error);
+      setProofDataUrl(undefined);
+      setProofFileName(undefined);
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      if (dataUrlEncodedBytes(dataUrl) > MAX_PROOF_ENCODED_BYTES) {
-        setProofError("File terlalu besar — kompres dulu PDF-nya.");
-        setProofDataUrl(undefined);
-        setProofFileName(undefined);
-        return;
-      }
-      setProofDataUrl(dataUrl);
-      setProofFileName(file.name);
-    };
-    reader.onerror = () => setProofError("Gagal membaca file, coba lagi.");
-    reader.readAsDataURL(file);
+    setProofDataUrl(r.dataUrl);
+    setProofFileName(r.fileName);
   }
 
   // Item revisi 2026-09-06: bukti pembayaran SEKARANG WAJIB sebelum tombol "Bayar" bisa diklik --
@@ -285,25 +255,16 @@ export function PaymentPanel() {
     setUploadingFor(invoiceId);
   }
 
-  function handleRowProofFileChange(invoiceId: string, file: File | null) {
+  async function handleRowProofFileChange(invoiceId: string, file: File | null) {
     setRowProofError("");
     if (!file) return;
-    if (file.type !== "application/pdf") {
-      setRowProofError("File harus berformat PDF.");
+    const r = await readProofAsDataUrl(file);
+    if ("error" in r) {
+      setRowProofError(r.error);
       return;
     }
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const dataUrl = reader.result as string;
-      if (dataUrlEncodedBytes(dataUrl) > MAX_PROOF_ENCODED_BYTES) {
-        setRowProofError("File terlalu besar — kompres dulu PDF-nya.");
-        return;
-      }
-      await setInvoicePaymentProof([invoiceId], dataUrl, file.name);
-      setUploadingFor(null);
-    };
-    reader.onerror = () => setRowProofError("Gagal membaca file, coba lagi.");
-    reader.readAsDataURL(file);
+    await setInvoicePaymentProof([invoiceId], r.dataUrl, r.fileName);
+    setUploadingFor(null);
   }
 
   // Revisi 2026-09-07: susunan default diminta ulang jadi fokus ke rekonsiliasi klaim -- No MRP,
@@ -404,7 +365,7 @@ export function PaymentPanel() {
             <div className="flex flex-col items-start gap-1">
               <input
                 type="file"
-                accept="application/pdf"
+                accept="application/pdf,image/jpeg,image/png"
                 onChange={(e) => handleRowProofFileChange(i.id, e.target.files?.[0] ?? null)}
                 className="w-40 text-[10.5px] file:mr-1.5 file:rounded file:border-0 file:bg-info-bg file:px-2 file:py-0.5 file:font-sans file:text-[10.5px] file:font-semibold file:text-info-fg"
               />
@@ -688,11 +649,11 @@ export function PaymentPanel() {
               <div className={"mt-3 grid gap-3 " + (depositSupplier && depositBalance > 0 ? "lg:grid-cols-2" : "")}>
                 <div className="flex h-full flex-col gap-1.5 rounded-md border border-dashed border-[#CBD5DF] bg-[#FAFBFC] px-4 py-3.5">
                   <label className="font-sans text-[11px] font-semibold uppercase tracking-wider text-text-primary">
-                    Bukti Pembayaran (PDF) <span className="text-danger-fg">*wajib</span>
+                    Bukti Pembayaran (PDF / JPG / PNG) <span className="text-danger-fg">*wajib</span>
                   </label>
                   <input
                     type="file"
-                    accept="application/pdf"
+                    accept="application/pdf,image/jpeg,image/png"
                     onChange={(e) => handleProofFileChange(e.target.files?.[0] ?? null)}
                     className="w-full text-[11.5px] file:mr-2 file:rounded-md file:border-0 file:bg-[#EEF1F4] file:px-3 file:py-1.5 file:font-sans file:text-[11.5px] file:font-semibold file:text-text-primary"
                   />

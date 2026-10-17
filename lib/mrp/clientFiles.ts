@@ -101,6 +101,64 @@ export function dataUrlEncodedBytes(dataUrl: string): number {
  *  (next.config.ts), sama nilainya dengan MAX_PROOF_ENCODED_BYTES di payment-panel.tsx. */
 export const MAX_PDF_ENCODED_BYTES = 1.5 * 1024 * 1024;
 
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("Gagal membaca file, coba lagi."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImageElement(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Gambar tidak bisa dibaca -- coba file JPG/PNG lain."));
+    img.src = src;
+  });
+}
+
+/** Perkecil gambar (JPEG) sampai ukuran ter-encode-nya di bawah batas Server Action: sisi terpanjang dikecilkan bertahap
+ *  dan kualitas diturunkan. Latar putih supaya PNG transparan tidak jadi hitam. */
+async function compressImageToLimit(dataUrl: string, maxEncodedBytes: number): Promise<string | null> {
+  const img = await loadImageElement(dataUrl);
+  for (const maxSide of [2000, 1600, 1280, 1000, 800]) {
+    const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    for (const quality of [0.85, 0.7, 0.55]) {
+      const out = canvas.toDataURL("image/jpeg", quality);
+      if (dataUrlEncodedBytes(out) <= maxEncodedBytes) return out;
+    }
+  }
+  return null;
+}
+
+/** Baca file bukti (PDF, JPG, atau PNG) jadi data URI. PDF yang terlalu besar ditolak (tidak bisa dikecilkan di browser);
+ *  gambar yang terlalu besar otomatis dikecilkan jadi JPEG. Resolve {error} kalau gagal, {dataUrl, fileName} kalau berhasil. */
+export async function readProofAsDataUrl(file: File): Promise<{ dataUrl: string; fileName: string } | { error: string }> {
+  const isPdf = file.type === "application/pdf";
+  const isImage = file.type === "image/jpeg" || file.type === "image/png";
+  if (!isPdf && !isImage) return { error: "File harus berformat PDF, JPG, atau PNG." };
+  try {
+    const raw = await readFileAsDataUrl(file);
+    if (dataUrlEncodedBytes(raw) <= MAX_PDF_ENCODED_BYTES) return { dataUrl: raw, fileName: file.name };
+    if (isPdf) return { error: "File terlalu besar — kompres dulu PDF-nya." };
+    const compressed = await compressImageToLimit(raw, MAX_PDF_ENCODED_BYTES);
+    if (!compressed) return { error: "Gambar terlalu besar — perkecil resolusinya dulu." };
+    return { dataUrl: compressed, fileName: file.name.replace(/\.[^.]+$/, "") + ".jpg" };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Gagal membaca file, coba lagi." };
+  }
+}
+
 /** Baca 1 file PDF jadi data URI, dengan validasi tipe + ukuran -- dipakai claim-replacement-modal.tsx
  *  untuk upload "Bukti Invoice". Resolve dengan pesan error (string) kalau gagal, atau
  *  {dataUrl, fileName} kalau berhasil -- caller tinggal cek `"error" in result`. */
