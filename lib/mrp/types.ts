@@ -320,6 +320,8 @@ export type RawMaterialInvoice = {
    *  cuma flag `bukti_bayar_at` yang ikut. */
   buktiBayarAt?: string;
   buktiBayarFileName?: string;
+  /** Nama file dokumen pendukung pembayaran (mis. nota sementara) -- isinya diambil on-demand (migration 0070). */
+  supportFileName?: string;
   /** Revisi 2026-09-06: terisi kalau invoice ini adalah PV PENGGANTI hasil klaim selisih berat
    *  yang diselesaikan lewat "retur + pesan ulang" (lihat createClaimReplacementInvoiceAction &
    *  MaterialClaimHistory.replacementInvoiceId) -- nilainya claim key asal ("invoiceId|warna|

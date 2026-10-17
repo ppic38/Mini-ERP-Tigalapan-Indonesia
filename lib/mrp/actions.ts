@@ -1437,8 +1437,13 @@ export async function withdrawVendorProductionAction(mrpId: string, fromVendor: 
   await insertNotification(notif(`Anda menerima tambahan produksi untuk ${mrpId} (vendor sebelumnya berhenti produksi) — cek tab Cutting/Finish Good.`, ["vendorMaklon"], toVendor));
 }
 
-export async function setInvoicesPaidAction(invoiceIds: string[], paid: boolean, proof?: { dataUrl: string; fileName?: string }): Promise<void> {
-  await requireInternalRole(await requireSession(), "finance");
+export async function setInvoicesPaidAction(
+  invoiceIds: string[],
+  paid: boolean,
+  proof?: { dataUrl: string; fileName?: string },
+  extra?: { transferAmount?: number; depositUsed?: number; support?: { dataUrl: string; fileName?: string } }
+): Promise<void> {
+  const actor = await requireInternalRoleWithActor("finance");
   // Item revisi 2026-09-17 (owner: "action payment invoice tidak bisa dilakukan kalau tidak
   // upload bukti pembayaran"): dulu action ini & setInvoicePaymentProofAction dipanggil terpisah
   // dari client (payment-panel.tsx) -- client SUDAH menggerbang lewat canPay (!!proofDataUrl),
@@ -1448,8 +1453,37 @@ export async function setInvoicesPaidAction(invoiceIds: string[], paid: boolean,
   // lagi) supaya tidak ada celah invoice sempat PAID tanpa bukti walau cuma sesaat.
   if (paid && !proof?.dataUrl) throw new Error("Bukti pembayaran (PDF/JPG/PNG) wajib diupload sebelum invoice bisa ditandai lunas.");
   const db = supabaseServer();
-  const { data: invoices } = await db.from("raw_material_invoices").select("id,status,po_id").in("id", invoiceIds);
+  const { data: invoices } = await db.from("raw_material_invoices").select("id,status,po_id,total_biaya,supplier,entity,kode_transaksi").in("id", invoiceIds);
   const uploadedAt = nowIso();
+
+  // Revisi 2026-10-17 (owner: nota sementara vs final): Finance boleh mengisi "Nominal ditransfer". Kurang dari tagihan = ditolak;
+  // lebih = selisihnya dicatat sebagai saldo deposit (CREDIT) supplier itu setelah invoice ditandai lunas. Semua pemeriksaan
+  // dilakukan SEBELUM ada invoice yang diubah, supaya penolakan tidak meninggalkan data setengah jalan.
+  const payable = paid ? (invoices ?? []).filter((i) => i.status === "INVOICED") : [];
+  let overpay = 0;
+  if (paid && payable.length > 0 && extra?.transferAmount !== undefined) {
+    const { data: debitRows, error: debitErr } = await db.from("vendor_deposits").select("amount").eq("kind", "DEBIT").in("source_invoice_id", payable.map((i) => i.id));
+    if (debitErr) throw new Error(debitErr.message);
+    const alreadyApplied = (debitRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
+    const due = Math.max(0, payable.reduce((s, i) => s + Number(i.total_biaya), 0) - alreadyApplied - (extra.depositUsed ?? 0));
+    if (extra.transferAmount < due - 0.5) {
+      throw new Error(`Nominal ditransfer (Rp ${Math.round(extra.transferAmount).toLocaleString("id-ID")}) kurang dari tagihan (Rp ${Math.round(due).toLocaleString("id-ID")}). Pembayaran sebagian belum didukung.`);
+    }
+    overpay = Math.round(extra.transferAmount - due);
+    if (overpay > 0 && new Set(payable.map((i) => i.supplier)).size > 1) {
+      throw new Error("Kelebihan bayar hanya bisa dicatat kalau semua invoice terpilih dari satu supplier yang sama.");
+    }
+  }
+  // Dokumen pendukung disimpan lebih dulu: kalau gagal (mis. migration 0070 belum dijalankan), pembayaran tidak diproses.
+  if (paid && payable.length > 0 && extra?.support?.dataUrl) {
+    for (const inv of payable) {
+      const { error: supErr } = await db.from("invoice_support_files").upsert({ invoice_id: inv.id, data_url: extra.support.dataUrl, file_name: extra.support.fileName ?? null, uploaded_at: uploadedAt });
+      if (supErr) throw new Error(`Gagal menyimpan dokumen pendukung (sudah menjalankan migration 0070?): ${supErr.message}`);
+      const { error: supNameErr } = await db.from("raw_material_invoices").update({ support_file_name: extra.support.fileName ?? "dokumen-pendukung" }).eq("id", inv.id);
+      if (supNameErr) throw new Error(`Gagal menyimpan dokumen pendukung (sudah menjalankan migration 0070?): ${supNameErr.message}`);
+    }
+  }
+
   for (const inv of invoices ?? []) {
     if (paid && inv.status === "INVOICED") {
       await db.from("raw_material_invoices").update({ status: "PAID", paid_at: today() }).eq("id", inv.id);
@@ -1465,6 +1499,19 @@ export async function setInvoicesPaidAction(invoiceIds: string[], paid: boolean,
     // audit yang sudah pernah diserahkan, dan Status pill sudah cukup menunjukkan status aslinya
     // sekarang (INVOICED lagi). Menghapusnya cuma menghilangkan jejak tanpa manfaat.
     if (!paid && inv.status === "PAID") await db.from("raw_material_invoices").update({ status: "INVOICED", paid_at: null }).eq("id", inv.id);
+  }
+  if (overpay > 0 && payable.length > 0) {
+    const refs = payable.map((i) => i.kode_transaksi || i.id).join(", ");
+    const depositId = await nextReadableId("VDP");
+    const { error: overErr } = await db.from("vendor_deposits").insert({
+      id: depositId,
+      supplier: payable[0].supplier,
+      kind: "CREDIT",
+      amount: overpay,
+      note: `Kelebihan bayar ${refs} (entitas ${payable[0].entity || "—"}): ditransfer Rp ${Math.round(extra!.transferAmount!).toLocaleString("id-ID")}, tagihan Rp ${Math.round(extra!.transferAmount! - overpay).toLocaleString("id-ID")}. Dicatat ${actor.actorName}.`,
+    });
+    if (overErr) throw new Error(`Invoice sudah ditandai lunas, tetapi gagal mencatat kelebihan bayar sebagai saldo deposit: ${overErr.message}`);
+    await logInternalAction(actor, `Bayar invoice ${refs} dengan kelebihan bayar Rp ${overpay.toLocaleString("id-ID")} menjadi saldo deposit`, "raw_material_invoices", payable[0].id);
   }
   if (paid && invoices && invoices.length > 0) {
     const { data: po } = await db.from("material_pos").select("mrp_id").eq("id", invoices[0].po_id).single();
@@ -1497,6 +1544,14 @@ export async function setInvoicePaymentProofAction(invoiceIds: string[], dataUrl
       .eq("id", invoiceId);
     if (invErr) throw new Error(invErr.message);
   }
+}
+
+/** Dokumen pendukung pembayaran (mis. nota sementara) -- diambil on-demand (migration 0070), hanya untuk peran internal. */
+export async function getInvoiceSupportFileAction(invoiceId: string): Promise<{ dataUrl: string; fileName?: string } | null> {
+  requireAnyInternalRole(await requireSession(), ["finance", "procurement", "sysadmin"]);
+  const { data } = await supabaseServer().from("invoice_support_files").select("data_url,file_name").eq("invoice_id", invoiceId).maybeSingle();
+  if (!data) return null;
+  return { dataUrl: data.data_url, fileName: data.file_name ?? undefined };
 }
 
 /** Item 2.5: ambil BYTE bukti pembayaran 1 invoice on-demand -- `invoice_payment_proofs` sengaja

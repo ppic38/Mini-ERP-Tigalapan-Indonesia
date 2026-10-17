@@ -28,7 +28,7 @@ import type { RawMaterialInvoice } from "@/lib/mrp/types";
 // -- sama pola dengan getMaterialClaimPhotoAction (material-claims/page.tsx), payload PDF-nya
 // sengaja dikeluarkan dari snapshot (migration 0017), jadi cuma fetch on-demand saat user klik
 // "Lihat bukti".
-import { getInvoicePaymentProofAction } from "@/lib/mrp/actions";
+import { getInvoicePaymentProofAction, getInvoiceSupportFileAction } from "@/lib/mrp/actions";
 // Revisi 2026-09-06: preview+download konsisten di semua modul -- lihat komentar di file ini.
 // Revisi 2026-09-08 (bug fix popup blocked): openPreviewWindow/fillPreviewWindow -- lihat
 // catatan panjang di lib/mrp/clientFiles.ts.
@@ -46,6 +46,21 @@ async function viewPaymentProof(invoiceId: string) {
       return;
     }
     fillPreviewWindow(win, proof.dataUrl);
+  } catch (err) {
+    win?.close();
+    throw err;
+  }
+}
+
+async function viewSupportFile(invoiceId: string) {
+  const win = openPreviewWindow();
+  try {
+    const file = await getInvoiceSupportFileAction(invoiceId);
+    if (!file) {
+      win?.close();
+      return;
+    }
+    fillPreviewWindow(win, file.dataUrl);
   } catch (err) {
     win?.close();
     throw err;
@@ -88,6 +103,12 @@ export function PaymentPanel() {
   // seleksi berikutnya yang beda supplier/tagihan.
   const [depositAmount, setDepositAmount] = useState(0);
   const [showDepositDetail, setShowDepositDetail] = useState(false);
+  // Revisi 2026-10-17 (owner: nota sementara vs final): nominal yang benar-benar ditransfer (0 = sama dengan tagihan) dan
+  // dokumen pendukung opsional (mis. nota awal). Lebih dari tagihan -> selisih jadi saldo deposit supplier.
+  const [transferAmount, setTransferAmount] = useState(0);
+  const [supportDataUrl, setSupportDataUrl] = useState<string | undefined>(undefined);
+  const [supportFileName, setSupportFileName] = useState<string | undefined>(undefined);
+  const [supportError, setSupportError] = useState("");
   // B2: increment ini setelah "Bayar" sukses untuk memaksa DataTable menutup baris yang sedang
   // ter-expand (lihat collapseSignal di data-table.tsx) -- TIDAK mereset filter/kolom tabel.
   const [collapseSignal, setCollapseSignal] = useState(0);
@@ -183,6 +204,25 @@ export function PaymentPanel() {
     // Ganti seleksi -- reset jumlah saldo deposit yang mau dipakai, supaya tidak kebawa nyangkut
     // ke tagihan/supplier baru (bisa jadi cap-nya sudah beda).
     setDepositAmount(0);
+    setTransferAmount(0);
+  }
+
+  async function handleSupportFileChange(file: File | null) {
+    setSupportError("");
+    if (!file) {
+      setSupportDataUrl(undefined);
+      setSupportFileName(undefined);
+      return;
+    }
+    const r = await readProofAsDataUrl(file);
+    if ("error" in r) {
+      setSupportError(r.error);
+      setSupportDataUrl(undefined);
+      setSupportFileName(undefined);
+      return;
+    }
+    setSupportDataUrl(r.dataUrl);
+    setSupportFileName(r.fileName);
   }
 
   // Validasi sama seperti handleBuktiPvChange di paying-voucher-wizard.tsx (PDF only). Batas
@@ -213,7 +253,13 @@ export function PaymentPanel() {
   // dibalik supaya tidak ada invoice yang ke-PAID tanpa bukti transfer sama sekali. Upload
   // belakangan lewat kolom di tabel (openRowUpload) TETAP ada untuk kasus invoice lama yang
   // terlanjur PAID sebelum aturan ini berlaku.
-  const canPay = !!proofDataUrl && selectableToPay.length > 0;
+  // Nominal ditransfer: kosong/0 = sama dengan tagihan. Kurang dari tagihan ditolak; lebih = selisih jadi saldo deposit supplier.
+  const dueNet = Math.max(0, totalTagihan - Math.min(depositAmount, depositCap));
+  const transferNum = transferAmount > 0 ? transferAmount : undefined;
+  const underpay = transferNum !== undefined && transferNum < dueNet - 0.5;
+  const overpay = transferNum !== undefined && !underpay ? Math.round(transferNum - dueNet) : 0;
+  const overpayBlocked = overpay > 0 && paySuppliers.size > 1;
+  const canPay = !!proofDataUrl && selectableToPay.length > 0 && !underpay && !overpayBlocked;
 
   async function handlePay() {
     if (!proofDataUrl) return;
@@ -223,12 +269,17 @@ export function PaymentPanel() {
     // bukan 2 round-trip terpisah lagi) -- server (setInvoicesPaidAction) menolak menandai PAID
     // sama sekali kalau proof-nya kosong, jadi tidak ada lagi celah invoice sempat PAID tanpa
     // bukti walau cuma sesaat di antara 2 await terpisah.
-    await setInvoicesPaid(ids, true, { dataUrl: proofDataUrl, fileName: proofFileName });
     // Revisi 2026-09-06: pakai saldo deposit HANYA kalau Finance benar-benar mengisi jumlahnya
     // (default 0, tidak pernah auto) -- di-clamp lagi ke depositCap di sini sebagai jaring
     // pengaman terakhir sebelum dikirim (server sendiri tetap validasi ulang, lihat
     // applyVendorDepositAction), untuk jaga-jaga kalau cap sempat berubah antara input & klik.
     const amountToApply = Math.min(depositAmount, depositCap);
+    await setInvoicesPaid(
+      ids,
+      true,
+      { dataUrl: proofDataUrl, fileName: proofFileName },
+      { transferAmount: transferNum, depositUsed: amountToApply, support: supportDataUrl ? { dataUrl: supportDataUrl, fileName: supportFileName } : undefined }
+    );
     if (depositSupplier && amountToApply > 0) {
       await applyVendorDeposit(depositSupplier, amountToApply, ids);
     }
@@ -237,6 +288,10 @@ export function PaymentPanel() {
     setProofFileName(undefined);
     setProofError("");
     setDepositAmount(0);
+    setTransferAmount(0);
+    setSupportDataUrl(undefined);
+    setSupportFileName(undefined);
+    setSupportError("");
     // B2: seluruh await di atas sukses (tidak throw) -- picu auto-collapse baris yang sedang
     // ter-expand (lihat collapseSignal di data-table.tsx). Kalau salah satu await di atas throw,
     // fungsi ini berhenti lebih awal & baris tidak (t)erkolaps.
@@ -274,12 +329,14 @@ export function PaymentPanel() {
   // pertama yang kelihatan). Status Klaim (badge "Deposit +Rp...") DIHAPUS sebagai kolom terpisah
   // -- badge-nya sekarang menyatu di kolom "Status" (lihat render "status" di bawah) supaya
   // langsung kelihatan baris mana yang jadi saldo deposit tanpa buka kolom tambahan.
+  const vendorProduksiName = (i: RawMaterialInvoice) => VENDOR_PRODUKSI[i.destinationVendor]?.name ?? i.destinationVendor;
   const columns: ColumnDef<RawMaterialInvoice>[] = [
     { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (i) => <SysadminActionsBar compact actions={materialInvoicePaymentCorrections(i, vendorDeposits)} /> },
     { key: "noMrp", label: "No MRP", default: true, render: (i) => <span className="font-mono">{i.mrpId}</span> },
     // "No PO" = nama PO tanpa akhiran entitas (PO yang dipecah per entitas terbaca sama); "No PO ID" = primary key asli, disembunyikan lewat Kolom.
     { key: "noPo", label: "No PO", default: true, render: (i) => <span className="font-mono font-medium">{poDisplayNo(i.poId, i.entity)}</span> },
     { key: "noPoId", label: "No PO ID", default: false, render: (i) => <span className="font-mono">{i.poId}</span> },
+    { key: "vendorProduksi", label: "Vendor Produksi", default: true, render: (i) => vendorProduksiName(i) },
     // Revisi 2026-09-06 (v2): "PO Reference" ke invoice LAMA yang diretur (cuma terisi untuk PV
     // pengganti hasil klaim, lihat sourceClaimId di types.ts) -- "—" untuk invoice biasa.
     {
@@ -332,7 +389,8 @@ export function PaymentPanel() {
       },
     },
     { key: "kodeTransaksi", label: "Kode Transaksi", default: false, render: (i) => <span className="font-mono font-medium">{i.kodeTransaksi}</span> },
-    { key: "supplier", label: "Supplier / Vendor", default: false, render: (i) => `${i.supplier} → ${VENDOR_PRODUKSI[i.destinationVendor]?.name ?? i.destinationVendor}` },
+    // Revisi 2026-10-17 (owner): kolom "Supplier / Vendor" dipisah jadi dua kolom; Vendor Produksi tampil default.
+    { key: "supplier", label: "Supplier", default: false, render: (i) => i.supplier },
     { key: "noInvVendor", label: "No Invoice Supplier", default: false, render: (i) => i.noInvoiceVendor || "—" },
     {
       key: "sumber",
@@ -385,6 +443,11 @@ export function PaymentPanel() {
               <button onClick={() => openRowUpload(i.id)} className="font-sans text-[11px] text-text-muted underline">
                 Ganti
               </button>
+              {i.supportFileName && (
+                <button onClick={() => viewSupportFile(i.id)} className="font-sans text-[11px] font-semibold text-action-primary underline" title={i.supportFileName}>
+                  Nota pendukung
+                </button>
+              )}
             </div>
           );
         }
@@ -609,6 +672,7 @@ export function PaymentPanel() {
           filterDefs={[
             { label: "No PO", options: Array.from(new Set(scopedReadyInvoices.map((i) => poDisplayNo(i.poId, i.entity)))), test: (i, v) => poDisplayNo(i.poId, i.entity) === v },
             { label: "Supplier", options: Array.from(new Set(scopedReadyInvoices.map((i) => i.supplier))), test: (i, v) => i.supplier === v },
+            { label: "Vendor Produksi", options: Array.from(new Set(scopedReadyInvoices.map(vendorProduksiName))), test: (i, v) => vendorProduksiName(i) === v },
             { label: "Entitas", options: Array.from(new Set(scopedReadyInvoices.map((i) => i.entity))), test: (i, v) => i.entity === v },
           ]}
           emptyText="Tidak ada invoice siap dibayar untuk MRP ini."
@@ -660,6 +724,19 @@ export function PaymentPanel() {
                   {proofFileName && !proofError && <span className="font-sans text-[11px] font-medium text-success-fg">✓ {proofFileName} terupload.</span>}
                   {!proofFileName && !proofError && <span className="font-sans text-[11px] text-text-muted">Belum ada file dipilih.</span>}
                   {proofError && <span className="font-sans text-[11px] font-medium text-danger-fg">{proofError}</span>}
+                  <div className="mt-2 border-t border-dashed border-[#CBD5DF] pt-2">
+                    <label className="font-sans text-[10.5px] font-semibold uppercase tracking-wider text-text-primary">
+                      Nota / dokumen pendukung <span className="font-normal normal-case text-text-muted">(opsional, mis. nota sementara)</span>
+                    </label>
+                    <input
+                      type="file"
+                      accept="application/pdf,image/jpeg,image/png"
+                      onChange={(e) => handleSupportFileChange(e.target.files?.[0] ?? null)}
+                      className="mt-1 w-full text-[11.5px] file:mr-2 file:rounded-md file:border-0 file:bg-[#EEF1F4] file:px-3 file:py-1.5 file:font-sans file:text-[11.5px] file:font-semibold file:text-text-primary"
+                    />
+                    {supportFileName && !supportError && <span className="font-sans text-[11px] font-medium text-success-fg">✓ {supportFileName} terlampir.</span>}
+                    {supportError && <span className="font-sans text-[11px] font-medium text-danger-fg">{supportError}</span>}
+                  </div>
                 </div>
 
                 {/* Saldo deposit vendor (dari klaim yang diselesaikan lewat "retur + pesan ulang")
@@ -744,6 +821,19 @@ export function PaymentPanel() {
               </div>
 
               <div className="mt-3 flex flex-col gap-2">
+                <div className="flex flex-col gap-1 rounded-md border border-[#E4E8EE] bg-[#FAFBFC] px-4 py-3">
+                  <label className="font-sans text-[10.5px] font-semibold uppercase tracking-wider text-text-primary">
+                    Nominal ditransfer <span className="font-normal normal-case text-text-muted">(opsional -- isi kalau berbeda dari tagihan, sesuai bukti transfer)</span>
+                  </label>
+                  <NumberInput value={transferAmount} onChange={(v) => setTransferAmount(Math.max(0, v))} currency placeholder={formatRupiah(dueNet)} className="input w-full text-[11px]" />
+                  {underpay && <span className="font-sans text-[11px] font-medium text-danger-fg">Kurang dari tagihan ({formatRupiah(dueNet)}). Pembayaran sebagian belum didukung.</span>}
+                  {overpay > 0 && !overpayBlocked && (
+                    <span className="font-sans text-[11px] font-medium text-success-fg">
+                      Lebih bayar {formatRupiah(overpay)} → otomatis masuk Saldo Deposit {depositSupplier ?? [...paySuppliers][0]}.
+                    </span>
+                  )}
+                  {overpayBlocked && <span className="font-sans text-[11px] font-medium text-danger-fg">Kelebihan bayar hanya bisa dicatat untuk invoice dari satu supplier yang sama.</span>}
+                </div>
                 <div className="flex items-baseline justify-between gap-3 font-sans text-[12px] text-text-muted">
                   <span>
                     Total tagihan <span className="font-mono font-semibold text-text-primary">{formatRupiah(totalTagihan)}</span>
@@ -849,6 +939,7 @@ export function PaymentPanel() {
                                       }
                                       filterDefs={[
                                         { label: "No PO", options: Array.from(new Set(s.list.map((i) => poDisplayNo(i.poId, i.entity)))), test: (i, v) => poDisplayNo(i.poId, i.entity) === v },
+                                        { label: "Vendor Produksi", options: Array.from(new Set(s.list.map(vendorProduksiName))), test: (i, v) => vendorProduksiName(i) === v },
                                         { label: "Entitas", options: Array.from(new Set(s.list.map((i) => i.entity))), test: (i, v) => i.entity === v },
                                         { label: "Status", options: Array.from(new Set(s.list.map((i) => i.status))), test: (i, v) => i.status === v },
                                       ]}

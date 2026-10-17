@@ -703,6 +703,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
       buktiPvFileName: inv.bukti_pv_file_name ?? undefined,
       buktiBayarAt: inv.bukti_bayar_at ?? undefined,
       buktiBayarFileName: inv.bukti_bayar_file_name ?? undefined,
+      supportFileName: inv.support_file_name ?? undefined,
       sourceClaimId: inv.source_claim_id ?? undefined,
       paidAt: inv.paid_at ?? undefined,
       deliveredAt: inv.delivered_at ?? undefined,
