@@ -1,11 +1,31 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { Button } from "@/components/ui/button";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { changeMyVendorPasswordAction, getMyVendorProfileAction, type VendorProfile } from "@/lib/mrp/vendorProfileActions";
+
+/** Kolom password dengan tombol mata (tampilkan/sembunyikan) -- tiap kolom punya status tampil sendiri. */
+function PasswordInput({ value, onChange, autoComplete, placeholder }: { value: string; onChange: (v: string) => void; autoComplete: string; placeholder?: string }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <input type={show ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)} autoComplete={autoComplete} placeholder={placeholder} className="input w-full !pr-9" />
+      <button
+        type="button"
+        onClick={() => setShow((v) => !v)}
+        tabIndex={-1}
+        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
+        aria-label={show ? "Sembunyikan password" : "Tampilkan password"}
+      >
+        {show ? <EyeOff size={15} /> : <Eye size={15} />}
+      </button>
+    </div>
+  );
+}
 
 /** Profil Saya portal Vendor Produksi -- akun utama dan anggota tim. Username/nama hanya dilihat (tidak bisa diubah, supaya
  *  jejak nama vendor/anggota tidak berubah); yang bisa diubah hanya password. */
@@ -92,15 +112,15 @@ function ProfilContent({ vendorId }: { vendorId: string }) {
               <div className="flex flex-col gap-3 px-4 py-4">
                 <div>
                   <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Password Saat Ini</div>
-                  <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} autoComplete="current-password" className="input w-full" />
+                  <PasswordInput value={currentPassword} onChange={setCurrentPassword} autoComplete="current-password" />
                 </div>
                 <div>
                   <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Password Baru</div>
-                  <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" placeholder="Minimal 6 karakter" className="input w-full" />
+                  <PasswordInput value={newPassword} onChange={setNewPassword} autoComplete="new-password" placeholder="Minimal 6 karakter" />
                 </div>
                 <div>
                   <div className="mb-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Konfirmasi Password Baru</div>
-                  <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} autoComplete="new-password" className="input w-full" />
+                  <PasswordInput value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password" />
                 </div>
               </div>
             </div>

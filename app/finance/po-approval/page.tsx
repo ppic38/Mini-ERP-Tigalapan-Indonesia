@@ -39,7 +39,7 @@ export default function FinancePoApprovalPage() {
       />
       {waitingElsewhere > 0 && (
         <div className="rounded-md border border-border-subtle bg-info-bg px-3 py-2 font-sans text-[11.5px] text-info-fg">
-          {waitingElsewhere} PO lain masih menunggu approval level lain (Procurement / SCM / GM) — muncul di sini begitu giliran Finance (FAT Manager, Level 3).
+          {waitingElsewhere} PO lain masih menunggu approval level lain (Procurement / SCM / GM) — tetap terlihat di Riwayat dengan status menunggu, dan masuk daftar approval begitu giliran Finance (FAT Manager, Level 3).
         </div>
       )}
       <KeepAliveTab active={tab === "material"}><PoMaterialPanel /></KeepAliveTab>

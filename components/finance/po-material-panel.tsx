@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
 import { StatusPill } from "@/components/ui/status-pill";
-import { poApprovalState } from "@/lib/mrp/poApproval";
+import { poApprovalState, poApprovalSummary } from "@/lib/mrp/poApproval";
 import { ApprovalChain } from "@/components/mrp/po-approval-queue";
 import { useMrpStore } from "@/lib/mrp/store";
 import {
@@ -179,7 +179,9 @@ export function PoMaterialPanel() {
   // Matriks Approval PO (migration 0055): Finance (FAT Manager) hanya menyetujui PO yang SEDANG GILIRAN-nya
   // (langkah Level 3) -- PO yang masih menunggu Procurement/SCM/GM belum muncul di sini.
   const pending = openPOs.filter((po) => !po.approved && poApprovalState(po).pendingRoles.includes("finance"));
-  const approved = openPOs.filter((po) => po.approved);
+  // Riwayat = PO yang sudah disetujui penuh + PO yang belum final dan BUKAN sedang giliran Finance (Finance sudah lewat tapi masih
+  // menunggu SCM/GM, atau belum sampai giliran Finance, atau ditolak) -- tetap tampil dengan status menunggu, tidak "menghilang".
+  const approved = openPOs.filter((po) => po.approved || (!poApprovalState(po).legacy && !poApprovalState(po).pendingRoles.includes("finance")));
 
   const pendingMrpIds = Array.from(new Set(pending.map((p) => p.mrpId)));
   const selectable = mrpDetails.filter((d) => pendingMrpIds.includes(d.mrp.id));
@@ -586,9 +588,9 @@ export function PoMaterialPanel() {
       )}
 
       <div className="overflow-hidden border border-border-subtle bg-surface-card">
-        <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">PO Material disetujui</div>
+        <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Riwayat PO Material (disetujui &amp; sedang berjalan)</div>
         {approvedMrpSummaries.length === 0 && (
-          <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada PO material disetujui.</div>
+          <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada riwayat PO material.</div>
         )}
         {approvedMrpSummaries.length > 0 && (
           <div className="overflow-x-auto">
@@ -657,7 +659,8 @@ export function PoMaterialPanel() {
                               {supplierActive &&
                                 s.pos.map((p) => {
                                   const poActive = expandedPoApproved === p.id;
-                                  const badge = approvedStatusBadge(p);
+                                  // PO yang belum final: tampilkan posisi approval-nya (mis. "Menunggu Level 4 (General Manager)").
+                                  const badge = p.approved ? approvedStatusBadge(p) : { tone: "warning" as const, label: poApprovalSummary(poApprovalState(p)) };
                                   const showKerahManset = poHasKerahManset(p, mrpDetails);
                                   const gridColsClass = showKerahManset ? "grid-cols-9" : "grid-cols-7";
                                   return (
