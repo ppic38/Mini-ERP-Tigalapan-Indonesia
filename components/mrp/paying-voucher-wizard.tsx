@@ -77,9 +77,25 @@ export function PayingVoucherWizard({
   mrpDetails,
   onSubmit,
   onCancel,
+  autoFile,
+  onQueue,
+  queueInfo,
+  onSkipQueued,
+  onCancelQueue,
+  onBookDirect,
+  onBatchDone,
 }: {
   po: MaterialPO;
   mrpDetails: MrpDetail[];
+  /** Upload banyak invoice: file yang langsung dibaca (lanjutan antrean), penyimpan antrean, dan info posisi antrean. */
+  autoFile?: File | null;
+  onQueue?: (rest: File[]) => void;
+  queueInfo?: { position: number; total: number; remaining: number } | null;
+  onSkipQueued?: () => void;
+  onCancelQueue?: () => void;
+  /** Upload banyak invoice (ringkasan): simpan satu PV langsung, dan dipanggil saat ringkasan selesai (sisa file = antrean satu per satu). */
+  onBookDirect?: (input: import("@/components/mrp/invoice-batch-review").PvBookInput) => Promise<void>;
+  onBatchDone?: (leftover: File[]) => void;
   onSubmit: (input: {
     colorEntries: ColorEntry[];
     addBuys: AddBuyItem[];
@@ -408,6 +424,27 @@ export function PayingVoucherWizard({
         )}
       </div>
 
+      {queueInfo && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-[#CFE0EF] bg-info-bg px-3 py-2 font-sans text-[11.5px] text-info-fg">
+          <span className="font-semibold">
+            Antrean upload invoice: ke-{queueInfo.position} dari {queueInfo.total}
+          </span>
+          <span className="text-text-muted">{queueInfo.remaining > 0 ? `${queueInfo.remaining} invoice lagi menunggu — otomatis dibuka setelah PV ini tersimpan.` : "ini invoice terakhir di antrean."}</span>
+          <span className="ml-auto flex gap-2">
+            {onSkipQueued && queueInfo.remaining > 0 && (
+              <button type="button" onClick={onSkipQueued} className="rounded border border-[#CBD5DF] bg-white px-2 py-0.5 text-[11px] font-semibold text-action-primary">
+                Lewati invoice ini
+              </button>
+            )}
+            {onCancelQueue && (
+              <button type="button" onClick={onCancelQueue} className="rounded border border-[#CBD5DF] bg-white px-2 py-0.5 text-[11px] font-semibold text-danger-fg">
+                Batalkan antrean
+              </button>
+            )}
+          </span>
+        </div>
+      )}
+
       {/* Panel upload tetap ter-mount (cuma disembunyikan) saat pindah ke tab "Input manual", supaya hasil baca
           & pemetaan yang sedang dicek tidak hilang kalau tab diklik tidak sengaja. */}
       {invoiceAdapter && (
@@ -418,6 +455,10 @@ export function PayingVoucherWizard({
             existingInvoices={existingInvoices}
             hasExistingEntries={entries.length > 0 || addBuys.length > 0}
             onApply={applyUpload}
+            autoFile={autoFile}
+            onQueue={onQueue}
+            onBookDirect={onBookDirect}
+            onBatchDone={onBatchDone}
           />
         </div>
       )}

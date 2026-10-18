@@ -21,6 +21,9 @@ export type ParsedInvoice = {
   customer: string;
   /** Dari NAMA FILE (NOINVOICE.KODETRANSAKSI.pdf) -- tidak ada di isi invoice. */
   kodeTransfer: string;
+  /** Bagian TENGAH nama file ("OH131026179.YOGI01.5393.pdf" -> ["YOGI01"]); dipakai hanya untuk memperingatkan kalau
+   *  menyebut vendor produksi LAIN daripada vendor PO yang dibuka. Tidak memengaruhi apa pun yang dibaca. */
+  fileNameParts?: string[];
   groups: ParsedInvoiceGroup[];
   totals: {
     subtotal: number;

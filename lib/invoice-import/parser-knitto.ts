@@ -48,7 +48,7 @@ export const normColor = (s: string) => String(s).toUpperCase().replace(/\s+/g, 
  * bagian tengah diabaikan (tujuan tidak lagi dipakai -- vendor tujuan ditentukan oleh PO yang dibuka).
  * Nama file yang bukan format ini (bagian pertama bukan No Penjualan) dibiarkan kosong, bukan ditebak.
  */
-export function parseFileName(name: string): { noPenjualan: string; kodeTransfer: string } {
+export function parseFileName(name: string): { noPenjualan: string; kodeTransfer: string; middleParts: string[] } {
   const base = String(name || "")
     .replace(/^.*[\\/]/, "")
     .replace(/\.pdf$/i, "")
@@ -58,8 +58,8 @@ export function parseFileName(name: string): { noPenjualan: string; kodeTransfer
   const no = parts[0] ?? "";
   const kode = parts.length > 1 ? parts[parts.length - 1] : "";
   const noPenjualan = no.trim().toUpperCase();
-  if (!/^[A-Z]{2}\d{6,}$/.test(noPenjualan)) return { noPenjualan: "", kodeTransfer: "" };
-  return { noPenjualan, kodeTransfer: kode.trim().toUpperCase() };
+  if (!/^[A-Z]{2}\d{6,}$/.test(noPenjualan)) return { noPenjualan: "", kodeTransfer: "", middleParts: [] };
+  return { noPenjualan, kodeTransfer: kode.trim().toUpperCase(), middleParts: parts.length > 2 ? parts.slice(1, -1).map((p) => p.trim()).filter(Boolean) : [] };
 }
 
 function parseDate(text: string) {
@@ -91,6 +91,7 @@ export function parseKnittoInvoice(text: string, fileName = ""): ParsedInvoice {
   // Nama file NOINVOICE.KODETRANSAKSI.pdf -> kode transaksi
   const fn = parseFileName(fileName);
   inv.kodeTransfer = fn.kodeTransfer;
+  inv.fileNameParts = fn.middleParts;
   if (!inv.noPenjualan) inv.noPenjualan = fn.noPenjualan;
   else if (fn.noPenjualan && fn.noPenjualan !== inv.noPenjualan) {
     inv.warnings.push(`No Penjualan di nama file (${fn.noPenjualan}) berbeda dengan yang terbaca di invoice (${inv.noPenjualan}) — cek.`);

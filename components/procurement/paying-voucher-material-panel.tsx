@@ -63,6 +63,17 @@ export function PayingVoucherMaterialPanel() {
   const [selectedPoId, setSelectedPoId] = useState<string | null>(null);
   const [afterSubmitPoId, setAfterSubmitPoId] = useState<string | null>(null);
   const [closingPoId, setClosingPoId] = useState<string | null>(null);
+  // Upload banyak invoice (2026-10-18): antrean PDF untuk SATU PO. Invoice diproses satu per satu -- begitu PV tersimpan,
+  // wizard dibuka lagi untuk PO yang sama dengan file berikutnya (sisa roll PO sudah diperbarui). `current` = file yang
+  // sedang dikerjakan; `seq` memaksa wizard di-remount (key) supaya state-nya segar tiap invoice.
+  const [queue, setQueue] = useState<{ poId: string; files: File[]; total: number; done: number; current: File | null; seq: number } | null>(null);
+  // Antrean dibuang saat wizard dibatalkan atau "Buat PV" dibuka lagi (lihat onCancel & tombol Buat PV).
+  function advanceQueue(poId: string): boolean {
+    if (!queue || queue.poId !== poId || queue.files.length === 0) return false;
+    const [next, ...rest] = queue.files;
+    setQueue({ ...queue, files: rest, done: queue.done + 1, current: next, seq: queue.seq + 1 });
+    return true;
+  }
 
   // Pohon "Belum Invoice": No MRP -> Supplier -> leaf = 1 PO material (sama pola grouping dengan
   // materialMrpSummaries/supplierSummariesForMrp di po-approval/page.tsx).
@@ -307,6 +318,7 @@ export function PayingVoucherMaterialPanel() {
                                             <Button
                                               onClick={(e) => {
                                                 e.stopPropagation();
+                                                setQueue(null);
                                                 setSelectedPoId(p.id);
                                                 setAfterSubmitPoId(null);
                                               }}
@@ -400,16 +412,39 @@ export function PayingVoucherMaterialPanel() {
                 // warna PO A yang tidak ada di PO B, jadi form pilih warna/harga per roll tidak
                 // muncul sama sekali (harus mulai dari PO paling atas dulu baru "kepancing" state
                 // segar).
-                key={selectedPo.id}
+                key={`${selectedPo.id}:${queue?.poId === selectedPo.id ? queue.seq : 0}`}
                 po={selectedPo}
                 mrpDetails={mrpDetails}
-                onCancel={() => setSelectedPoId(null)}
+                onCancel={() => {
+                  setQueue(null);
+                  setSelectedPoId(null);
+                }}
+                autoFile={queue?.poId === selectedPo.id ? queue.current : null}
+                onQueue={(rest) => setQueue({ poId: selectedPo.id, files: rest, total: rest.length + 1, done: 0, current: null, seq: 0 })}
+                queueInfo={queue?.poId === selectedPo.id ? { position: queue.done + 1, total: queue.total, remaining: queue.files.length } : null}
+                onSkipQueued={() => {
+                  advanceQueue(selectedPo.id);
+                }}
+                onCancelQueue={() => setQueue(null)}
+                onBookDirect={(input) => bookInvoice(selectedPo.id, input)}
+                onBatchDone={(leftover) => {
+                  // Ringkasan banyak invoice selesai: sisa yang belum tersimpan dikerjakan satu per satu; kalau tidak ada, tutup wizard.
+                  if (leftover.length > 0) {
+                    const [first, ...rest] = leftover;
+                    setQueue({ poId: selectedPo.id, files: rest, total: leftover.length, done: 0, current: first, seq: 1 });
+                  } else {
+                    setAfterSubmitPoId(selectedPo.id);
+                    setSelectedPoId(null);
+                  }
+                }}
                 onSubmit={async (input) => {
                   // WAJIB di-await -- lihat catatan panjang di paying-voucher-wizard.tsx. Kalau
                   // bookInvoice gagal (throw), biarkan error itu naik ke try/catch wizard (JANGAN
                   // ditangkap di sini) supaya wizard TIDAK ikut-ikutan pindah ke state "sukses"
                   // kalau sebenarnya gagal.
                   await bookInvoice(selectedPo.id, input);
+                  // Masih ada invoice di antrean untuk PO ini -> buka wizard lagi dengan file berikutnya (tanpa menutup).
+                  if (advanceQueue(selectedPo.id)) return;
                   setAfterSubmitPoId(selectedPo.id);
                   setSelectedPoId(null);
                 }}

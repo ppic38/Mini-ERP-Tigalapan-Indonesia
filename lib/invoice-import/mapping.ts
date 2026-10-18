@@ -307,6 +307,24 @@ export function evaluateMapping(inv: ParsedInvoice, mappings: GroupMapping[], po
 
 // ---------- Cek silang konteks PO ----------
 
+/** Nama vendor di tengah nama file ("OH131026179.YOGI01.5393.pdf") menyebut vendor produksi LAIN daripada vendor PO yang
+ *  dibuka? Hanya bagian yang cocok dengan nama/kode vendor lain yang dihitung (bagian seperti "NAVY" diabaikan), dan tidak ada
+ *  peringatan kalau salah satu bagian cocok dengan vendor PO ini. Mengembalikan nama vendor yang tersebut di file, atau null. */
+export function findFileNameVendorMismatch(parts: string[] | undefined, poVendorId: string, vendors: Record<string, { name: string }>): string | null {
+  if (!parts || parts.length === 0) return null;
+  const keysOf = (id: string) => [compact(id), compact(vendors[id]?.name ?? "")].filter(Boolean);
+  const own = new Set(keysOf(poVendorId));
+  const cleaned = parts.map((p) => compact(p)).filter(Boolean);
+  if (cleaned.some((p) => own.has(p))) return null;
+  for (const p of cleaned) {
+    for (const id of Object.keys(vendors)) {
+      if (id !== poVendorId && keysOf(id).includes(p)) return vendors[id]?.name ?? id;
+    }
+  }
+  return null;
+}
+
+
 export type DuplicateInvoice = { id: string; poId: string };
 
 /** Invoice supplier dengan nomor yang sama sudah pernah dibuat PV-nya (supplier yang sama)? */

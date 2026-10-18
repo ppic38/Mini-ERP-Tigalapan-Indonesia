@@ -12,11 +12,12 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, "..", "..");
 const out = fs.mkdtempSync(path.join(os.tmpdir(), "inv-import-"));
-execSync(`npx tsc lib/invoice-import/adapters.ts lib/invoice-import/mapping.ts lib/invoice-import/parser-knitto.ts lib/invoice-import/types.ts --outDir "${out}" --module commonjs --moduleResolution node10 --target es2020 --skipLibCheck --strict`, { cwd: root, stdio: "inherit" });
+execSync(`npx tsc lib/invoice-import/adapters.ts lib/invoice-import/batch.ts lib/invoice-import/mapping.ts lib/invoice-import/parser-knitto.ts lib/invoice-import/types.ts --outDir "${out}" --module commonjs --moduleResolution node10 --target es2020 --skipLibCheck --strict`, { cwd: root, stdio: "inherit" });
 const require = createRequire(import.meta.url);
 const P = require(path.join(out, "parser-knitto.js"));
 const M = require(path.join(out, "mapping.js"));
 const A = require(path.join(out, "adapters.js"));
+const B = require(path.join(out, "batch.js"));
 
 const src = fs.readFileSync(path.join(here, "OH300726111.knitto.txt"), "utf8");
 const FILE = "OH300726111.MANUAL.pdf";
@@ -59,10 +60,10 @@ assert.equal(P.normalizeNoPenjualan("OHO10826001"), "OH010826001");
 assert.equal(P.normalizeNoPenjualan("0H300726111"), "OH300726111");
 assert.equal(P.parseKnittoInvoice(src.replace("0H300726111", "OH3OO726111"), FILE).noPenjualan, "OH300726111");
 // nama file
-assert.deepEqual(P.parseFileName("C:\\x\\OH300726111.7295 (1).pdf"), { noPenjualan: "OH300726111", kodeTransfer: "7295" });
-assert.deepEqual(P.parseFileName("OH300726111.YOGI01.7295.pdf"), { noPenjualan: "OH300726111", kodeTransfer: "7295" });
-assert.deepEqual(P.parseFileName("OH300726111.pdf"), { noPenjualan: "OH300726111", kodeTransfer: "" });
-assert.deepEqual(P.parseFileName("scan-001.pdf"), { noPenjualan: "", kodeTransfer: "" });
+assert.deepEqual(P.parseFileName("C:\\x\\OH300726111.7295 (1).pdf"), { noPenjualan: "OH300726111", kodeTransfer: "7295", middleParts: [] });
+assert.deepEqual(P.parseFileName("OH300726111.YOGI01.7295.pdf"), { noPenjualan: "OH300726111", kodeTransfer: "7295", middleParts: ["YOGI01"] });
+assert.deepEqual(P.parseFileName("OH300726111.pdf"), { noPenjualan: "OH300726111", kodeTransfer: "", middleParts: [] });
+assert.deepEqual(P.parseFileName("scan-001.pdf"), { noPenjualan: "", kodeTransfer: "", middleParts: [] });
 console.log("nama file: OK");
 
 // ---------- 2. Adapter ----------
@@ -182,6 +183,75 @@ const existing = [{ id: "INV-1", poId: "PO-1", supplier: "KNITTO", noInvoiceVend
 assert.equal(M.findDuplicateInvoices("oh300726111", "KNITTO", existing).length, 1);
 assert.equal(M.findDuplicateInvoices("OH300726999", "KNITTO", existing).length, 0);
 console.log("cek duplikat: OK");
+
+// ---------- 6. Peringatan nama vendor di nama file ----------
+const VENDORS = { "GI-01": { name: "YOGI 01" }, "GI-02": { name: "YOGI 02" }, KK: { name: "KOKO" } };
+assert.equal(M.findFileNameVendorMismatch(["YOGI01"], "GI-01", VENDORS), null);
+assert.equal(M.findFileNameVendorMismatch(["YOGI01"], "GI-02", VENDORS), "YOGI 01");
+assert.equal(M.findFileNameVendorMismatch(["NAVY"], "GI-01", VENDORS), null);
+assert.equal(M.findFileNameVendorMismatch(["YOGI-01", "NAVY"], "GI-01", VENDORS), null);
+console.log("nama vendor di nama file: OK");
+
+// ---------- 7. Upload banyak invoice (penilaian kumulatif) ----------
+const knitto = A.adapterForSupplier("KNITTO");
+const poB = { colorBreakdown: [], invoicedByColor: {} };
+for (let i = 1; i <= 40; i++) poB.colorBreakdown.push({ warna: `WARNA${String(i).padStart(2, "0")} 24S`, lengan: "PENDEK", rollCount: 2 });
+const invFile = (no, code, from, to) => {
+  const lines = [`No Penjualan :${no}`, "Tanggal :01-08-2026"];
+  let sub = 0, n = 0;
+  for (let i = from; i <= to; i++) {
+    lines.push(`COMBED 24S - WARNA${String(i).padStart(2, "0")}`);
+    for (let r = 0; r < 2; r++) { lines.push("25 KG    100,000   2,500,000"); sub += 2500000; n++; }
+  }
+  lines.push(`SUBTOTAL: Rp ${sub.toLocaleString("en-US")}`, `Total Bayar Rp. ${sub.toLocaleString("en-US")}`, `Total Roll-an:   ${n * 25}.00 Kg (${n})`);
+  const name = `${no}.${code}.pdf`;
+  return { file: { name, size: 300_000 }, parsed: P.parseKnittoInvoice(lines.join("\n"), name) };
+};
+const colorsB = M.poColorsFromPo(poB);
+const run = (items) =>
+  B.assessBatch({ items, poColors: colorsB, aliases: {}, adapter: knitto, supplier: "KNITTO", poVendorId: "GI-01", vendors: VENDORS, existing: [] });
+
+// 3 invoice berbeda warna: semua Siap, sisa PO dikurangi kumulatif
+let res = run([invFile("OH010826001", "1111", 1, 13), invFile("OH010826002", "2222", 14, 26), invFile("OH010826003", "3333", 27, 39)]);
+assert.deepEqual(res.map((r) => r.status), ["READY", "READY", "READY"], JSON.stringify(res.map((r) => r.reasons)));
+
+// invoice ke-2 mengulang warna invoice ke-1 (WARNA01..13 sudah penuh di invoice 1) -> Bermasalah (melebihi sisa PO)
+res = run([invFile("OH010826001", "1111", 1, 13), invFile("OH010826002", "2222", 1, 13)]);
+assert.equal(res[0].status, "READY");
+assert.equal(res[1].status, "BLOCKED");
+assert.ok(res[1].reasons.some((x) => /sisa|melebihi/i.test(x)), JSON.stringify(res[1].reasons));
+
+// nomor invoice sama di dalam batch -> yang kedua Bermasalah (duplikat)
+res = run([invFile("OH010826001", "1111", 1, 5), invFile("OH010826001", "2222", 6, 10)]);
+assert.equal(res[0].status, "READY");
+assert.equal(res[1].status, "BLOCKED");
+assert.ok(res[1].reasons.some((x) => /sudah dipakai/i.test(x)), JSON.stringify(res[1].reasons));
+
+// kode transaksi tidak valid di nama file / vendor lain di nama file -> Perlu ditinjau (tidak disimpan otomatis)
+res = run([invFile("OH010826001", "MANUAL", 1, 3)]);
+assert.equal(res[0].status, "REVIEW");
+res = run([invFile("OH010826001", "1111", 1, 3)]);
+assert.equal(res[0].status, "READY");
+const withVendor = invFile("OH010826001", "1111", 1, 3);
+withVendor.parsed.fileNameParts = ["YOGI02"];
+res = run([withVendor]);
+assert.equal(res[0].status, "REVIEW");
+
+// file terlalu besar untuk dilampirkan otomatis -> Perlu ditinjau
+const big = invFile("OH010826001", "1111", 1, 3);
+big.file.size = 2_000_000;
+assert.equal(run([big])[0].status, "REVIEW");
+
+// Nomor invoice yang sudah ada di sistem -> Bermasalah
+res = B.assessBatch({ items: [invFile("OH010826001", "1111", 1, 3)], poColors: colorsB, aliases: {}, adapter: knitto, supplier: "KNITTO", poVendorId: "GI-01", vendors: VENDORS, existing: [{ id: "INV-9", poId: "PO-1", supplier: "KNITTO", noInvoiceVendor: "OH010826001" }] });
+assert.equal(res[0].status, "BLOCKED");
+
+// susunan draft sekuensial: invoice ke-2 memakai sisa lengan setelah invoice ke-1 (poAfterDraft)
+const d1 = M.buildPvDraft(invFile("OH010826001", "1111", 1, 2).parsed, res.length ? M.autoMap(invFile("OH010826001", "1111", 1, 2).parsed, colorsB, {}) : [], poB);
+const po2 = B.poAfterDraft(poB, d1.colorEntries);
+assert.equal(po2.invoicedByColor["WARNA01 24S|PENDEK"], 2);
+assert.equal(poB.invoicedByColor["WARNA01 24S|PENDEK"], undefined, "PO asli tidak boleh diubah");
+console.log("upload banyak invoice (penilaian kumulatif): OK");
 
 fs.rmSync(out, { recursive: true, force: true });
 console.log("\nSEMUA UJI LULUS");

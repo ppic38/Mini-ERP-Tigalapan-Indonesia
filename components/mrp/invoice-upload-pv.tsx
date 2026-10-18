@@ -2,12 +2,15 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { aliasesToSave, autoMap, buildPvDraft, evaluateMapping, findDuplicateInvoices, poColorsFromPo, type AliasMap, type GroupMapping, aliasKey } from "@/lib/invoice-import/mapping";
+import { InvoiceBatchReview, type BatchReadFailure, type BatchReviewItem, type PvBookInput } from "@/components/mrp/invoice-batch-review";
+import { assessBatch } from "@/lib/invoice-import/batch";
+import { aliasesToSave, autoMap, buildPvDraft, evaluateMapping, findDuplicateInvoices, findFileNameVendorMismatch, poColorsFromPo, type AliasMap, type GroupMapping, aliasKey } from "@/lib/invoice-import/mapping";
 import { lineOk, parseMoney, parseWeight, round2 } from "@/lib/invoice-import/parser-knitto";
 import { pdfToText, terminateOcr } from "@/lib/invoice-import/pdf-text";
 import type { AppliedImport, InvoiceAdapter, ParsedInvoice } from "@/lib/invoice-import/types";
 import { listSupplierColorAliasesAction } from "@/lib/mrp/supplierColorAliasActions";
 import { formatRupiah } from "@/lib/mrp/derive";
+import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { AddBuyItem, ColorEntry, Lengan, MaterialPO, RawMaterialInvoice } from "@/lib/mrp/types";
 
 export type UploadApplyPayload = {
@@ -34,12 +37,24 @@ export function InvoiceUploadPanel({
   existingInvoices,
   hasExistingEntries,
   onApply,
+  autoFile,
+  onQueue,
+  onBookDirect,
+  onBatchDone,
 }: {
   po: MaterialPO;
   adapter: InvoiceAdapter;
   existingInvoices: RawMaterialInvoice[];
   hasExistingEntries: boolean;
   onApply: (payload: UploadApplyPayload) => void;
+  /** File yang langsung dibaca begitu panel muncul (lanjutan dari antrean upload banyak invoice). */
+  autoFile?: File | null;
+  /** Dipanggil kalau user memilih/menarik >1 PDF: file pertama dibaca sekarang, sisanya masuk antrean (diproses satu per satu). */
+  onQueue?: (rest: File[]) => void;
+  /** Simpan satu Paying Voucher langsung (tanpa form wizard) -- dipakai ringkasan upload banyak invoice. */
+  onBookDirect?: (input: PvBookInput) => Promise<void>;
+  /** Ringkasan upload banyak invoice selesai; `leftover` = file yang belum tersimpan (dikerjakan satu per satu). */
+  onBatchDone?: (leftover: File[]) => void;
 }) {
   const poColors = useMemo(() => poColorsFromPo(po), [po]);
   const [phase, setPhase] = useState<"idle" | "busy" | "review">("idle");
@@ -49,11 +64,14 @@ export function InvoiceUploadPanel({
   const [parsed, setParsed] = useState<ParsedInvoice | null>(null);
   const [mappings, setMappings] = useState<GroupMapping[]>([]);
   const [ackDup, setAckDup] = useState(false);
+  const [ackVendor, setAckVendor] = useState(false);
   const [showOk, setShowOk] = useState(false);
   const [detailGroup, setDetailGroup] = useState<number | null>(null);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [applying, setApplying] = useState(false);
+  // Upload banyak invoice: membaca semua file dulu, lalu satu ringkasan (lihat InvoiceBatchReview).
+  const [batch, setBatch] = useState<null | { phase: "reading"; index: number; total: number; name: string } | { phase: "review"; items: BatchReviewItem[]; failures: BatchReadFailure[] }>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const aliasPromise = useRef<Promise<AliasMap>>(Promise.resolve({}));
   const aliasesRef = useRef<AliasMap>({});
@@ -84,6 +102,56 @@ export function InvoiceUploadPanel({
     };
   }, [po.supplier]);
 
+  // Banyak file sekaligus: yang pertama langsung dibaca, sisanya diantrekan ke induk (diproses satu per satu setelah PV sebelumnya disimpan).
+  function handleFiles(list: FileList | File[] | null | undefined) {
+    const all = Array.from(list ?? []);
+    if (all.length === 0) return;
+    const pdfs = all.filter((f) => /\.pdf$/i.test(f.name) || f.type === "application/pdf");
+    if (pdfs.length === 0) {
+      setError("File harus berformat PDF.");
+      return;
+    }
+    // Urut sesuai nama supaya antreannya terduga (OH...1, OH...2, ...).
+    pdfs.sort((a, b) => a.name.localeCompare(b.name, "id-ID", { numeric: true }));
+    // Ada penyimpan langsung (wizard) -> ringkasan banyak invoice; kalau tidak, antrean satu per satu.
+    if (pdfs.length > 1 && onBookDirect) {
+      void startBatch(pdfs);
+      return;
+    }
+    if (pdfs.length > 1 && onQueue) onQueue(pdfs.slice(1));
+    void handleFile(pdfs[0]);
+  }
+
+  async function startBatch(files: File[]) {
+    setError("");
+    const read: { file: File; parsed: ParsedInvoice }[] = [];
+    const failures: BatchReadFailure[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      setBatch({ phase: "reading", index: i + 1, total: files.length, name: f.name });
+      setStatus({ msg: "Membuka PDF…", frac: 0.01 });
+      try {
+        const { text } = await pdfToText(f, (msg, frac) => setStatus({ msg, frac }));
+        read.push({ file: f, parsed: adapter.parse(text, f.name) });
+      } catch (err) {
+        failures.push({ file: f, error: "Gagal membaca PDF: " + (err instanceof Error ? err.message : String(err)) });
+      }
+    }
+    const aliases = await aliasPromise.current;
+    const assessed = assessBatch({
+      items: read,
+      poColors,
+      aliases,
+      adapter,
+      supplier: po.supplier,
+      poVendorId: po.vendorProduksi,
+      vendors: VENDOR_PRODUKSI,
+      existing: existingInvoices.map((i) => ({ id: i.id, poId: i.poId, supplier: i.supplier, noInvoiceVendor: i.noInvoiceVendor })),
+    });
+    setBatch({ phase: "review", items: read.map((r, i) => ({ ...r, assess: assessed[i] })), failures });
+    if (fileInput.current) fileInput.current.value = "";
+  }
+
   async function handleFile(f: File | null | undefined) {
     if (!f) return;
     if (!/\.pdf$/i.test(f.name) && f.type !== "application/pdf") {
@@ -101,6 +169,7 @@ export function InvoiceUploadPanel({
       setParsed(inv);
       setMappings(autoMap(inv, poColors, aliases));
       setAckDup(false);
+      setAckVendor(false);
       setPhase("review");
     } catch (err) {
       console.error(err);
@@ -110,6 +179,16 @@ export function InvoiceUploadPanel({
       if (fileInput.current) fileInput.current.value = "";
     }
   }
+
+  // Lanjutan antrean: baca otomatis file berikutnya begitu panel baru muncul (sekali per file).
+  const autoRead = useRef<File | null>(null);
+  useEffect(() => {
+    if (autoFile && autoRead.current !== autoFile) {
+      autoRead.current = autoFile;
+      void handleFile(autoFile);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoFile]);
 
   function reset() {
     setPhase("idle");
@@ -194,8 +273,10 @@ export function InvoiceUploadPanel({
     () => (parsed ? findDuplicateInvoices(parsed.noPenjualan, po.supplier, existingInvoices.map((i) => ({ id: i.id, poId: i.poId, supplier: i.supplier, noInvoiceVendor: i.noInvoiceVendor }))) : []),
     [parsed, po.supplier, existingInvoices]
   );
+  // Nama vendor di nama file berbeda dari vendor PO yang dibuka -> peringatan + harus dikonfirmasi (cegah salah buka PO).
+  const fileVendorMismatch = useMemo(() => (parsed ? findFileNameVendorMismatch(parsed.fileNameParts, po.vendorProduksi, VENDOR_PRODUKSI) : null), [parsed, po.vendorProduksi]);
   const blockingChecks = checks.filter((c) => c.blocking && !c.ok);
-  const canApply = !!parsed && !!evalResult?.ok && blockingChecks.length === 0 && (duplicates.length === 0 || ackDup) && !applying;
+  const canApply = !!parsed && !!evalResult?.ok && blockingChecks.length === 0 && (duplicates.length === 0 || ackDup) && (!fileVendorMismatch || ackVendor) && !applying;
 
   async function handleApply() {
     if (!parsed || !file || !evalResult) return;
@@ -231,6 +312,37 @@ export function InvoiceUploadPanel({
   }
 
   // ---------- render ----------
+  if (batch?.phase === "reading") {
+    return (
+      <div className="mt-3 rounded-md border-2 border-dashed border-[#CFE0EF] bg-white px-5 py-8 text-center font-sans">
+        <div className="text-xs font-semibold text-info-fg">
+          Membaca invoice {batch.index} dari {batch.total}: <span className="font-mono">{batch.name}</span>
+        </div>
+        <div className="mt-1 text-[11.5px] text-text-muted">{status.msg}</div>
+        {status.frac != null && (
+          <div className="mx-auto mt-2 h-1.5 w-64 overflow-hidden rounded-full bg-[#DCE6F0]">
+            <div className="h-full bg-accent-blue transition-all" style={{ width: Math.round(status.frac * 100) + "%" }} />
+          </div>
+        )}
+        <div className="mt-2 text-[11px] text-text-muted">Biarkan tab ini tetap terbuka di depan sampai semua invoice selesai dibaca.</div>
+      </div>
+    );
+  }
+  if (batch?.phase === "review" && onBookDirect) {
+    return (
+      <InvoiceBatchReview
+        items={batch.items}
+        failures={batch.failures}
+        po={po}
+        onBook={onBookDirect}
+        onFinish={(left) => {
+          setBatch(null);
+          onBatchDone?.(left);
+        }}
+        onCancel={() => setBatch(null)}
+      />
+    );
+  }
   if (phase !== "review" || !parsed || !evalResult) {
     return (
       <div className="mt-3">
@@ -243,7 +355,7 @@ export function InvoiceUploadPanel({
           onDrop={(e) => {
             e.preventDefault();
             setDragOver(false);
-            if (phase !== "busy") void handleFile(e.dataTransfer.files?.[0]);
+            if (phase !== "busy") handleFiles(e.dataTransfer.files);
           }}
           onClick={() => phase !== "busy" && fileInput.current?.click()}
           className={
@@ -252,7 +364,7 @@ export function InvoiceUploadPanel({
             (phase === "busy" ? " cursor-wait" : "")
           }
         >
-          <input ref={fileInput} type="file" accept="application/pdf" className="hidden" onChange={(e) => void handleFile(e.target.files?.[0])} />
+          <input ref={fileInput} type="file" accept="application/pdf" multiple className="hidden" onChange={(e) => handleFiles(e.target.files)} />
           {phase === "busy" ? (
             <>
               <div className="text-xs font-semibold text-info-fg">{status.msg}</div>
@@ -268,6 +380,7 @@ export function InvoiceUploadPanel({
           ) : (
             <>
               <div className="text-[13px] font-semibold text-text-primary">Tarik &amp; lepas PDF invoice {adapter.label} di sini, atau klik untuk memilih file</div>
+              <div className="mt-1 text-[11.5px] font-medium text-info-fg">Bisa banyak file sekaligus — dibaca semua, lalu ringkasan menunjukkan yang siap disimpan (tiap invoice jadi Paying Voucher sendiri).</div>
               <div className="mt-1.5 text-[11.5px] text-text-muted">
                 Nama file: <span className="font-mono">NOINVOICE.KODETRANSAKSI.pdf</span> — mis. <span className="font-mono">OH300726111.1234.pdf</span>
               </div>
@@ -499,7 +612,7 @@ export function InvoiceUploadPanel({
           ))}
         </div>
 
-        {uniqueBlockers.length > 0 || duplicates.length > 0 ? (
+        {uniqueBlockers.length > 0 || duplicates.length > 0 || fileVendorMismatch ? (
           <div className="border-t border-[#F0C4C4] bg-danger-bg/60 px-4 py-2.5">
             <div className="text-[11.5px] font-semibold text-danger-fg">Perlu diselesaikan sebelum dipakai</div>
             <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11.5px] text-danger-fg">
@@ -507,6 +620,14 @@ export function InvoiceUploadPanel({
                 <li key={k}>{b}</li>
               ))}
             </ul>
+            {fileVendorMismatch && (
+              <label className="mt-2 flex items-start gap-2 text-[11.5px] text-danger-fg">
+                <input type="checkbox" className="mt-0.5" checked={ackVendor} onChange={(e) => setAckVendor(e.target.checked)} />
+                <span>
+                  Nama file menyebut vendor <b>{fileVendorMismatch}</b>, tetapi PO yang dibuka milik <b>{VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi}</b>. Pastikan PO-nya benar, lalu centang kalau memang sudah sesuai.
+                </span>
+              </label>
+            )}
             {duplicates.length > 0 && (
               <label className="mt-2 flex items-start gap-2 text-[11.5px] text-danger-fg">
                 <input type="checkbox" className="mt-0.5" checked={ackDup} onChange={(e) => setAckDup(e.target.checked)} />
