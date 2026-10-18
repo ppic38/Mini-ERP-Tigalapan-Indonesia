@@ -279,8 +279,8 @@ export function PayingVoucherMaterialPanel() {
                                     const poActive = expandedPoBelum === p.id;
                                     const remaining = p.rollCount - p.invoicedRolls;
                                     return (
+                                      <Fragment key={p.id}>
                                       <tr
-                                        key={p.id}
                                         onClick={() => {
                                           setExpandedPoBelum(poActive ? null : p.id);
                                           // Kalau wizard sedang terbuka untuk PO LAIN, klik baris PO
@@ -328,6 +328,54 @@ export function PayingVoucherMaterialPanel() {
                                           </div>
                                         </td>
                                       </tr>
+                                      {/* Revisi 2026-10-18 (owner: "ketika card di click itu bisa ketahuan warna apa saja yang ada di situ"):
+                                         rincian warna PO -- total roll, yang sudah di-PV-kan, sisa, dan entitasnya. */}
+                                      {poActive && (
+                                        <tr>
+                                          <td colSpan={6} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
+                                            <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
+                                              <table className="w-full border-collapse font-sans text-[11.5px] text-[#31414F]">
+                                                <thead>
+                                                  <tr className="bg-[#F2F4F7] text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                                                    <th className="px-3 py-1.5 text-left">Warna · lengan</th>
+                                                    <th className="px-3 py-1.5 text-right">Roll total</th>
+                                                    <th className="px-3 py-1.5 text-right">Sudah di-PV</th>
+                                                    <th className="px-3 py-1.5 text-right">Sisa</th>
+                                                    <th className="px-3 py-1.5 text-left">Entitas</th>
+                                                  </tr>
+                                                </thead>
+                                                <tbody>
+                                                  {p.colorBreakdown.map((c) => {
+                                                    const done = p.invoicedByColor[`${c.warna}|${c.lengan}`] ?? 0;
+                                                    const sisa = Math.max(0, c.rollCount - done);
+                                                    return (
+                                                      <tr key={c.warna + c.lengan} className="border-t border-[#F1F4F7]">
+                                                        <td className="px-3 py-1.5 font-medium text-text-primary">
+                                                          {c.warna} · {c.lengan}
+                                                        </td>
+                                                        <td className="px-3 py-1.5 text-right font-mono tabular-nums">{c.rollCount}</td>
+                                                        <td className="px-3 py-1.5 text-right font-mono tabular-nums text-text-muted">{done}</td>
+                                                        <td className={"px-3 py-1.5 text-right font-mono tabular-nums " + (sisa === 0 ? "text-success-fg" : "font-semibold text-text-primary")}>{sisa}</td>
+                                                        <td className="px-3 py-1.5 text-text-muted">{c.entitas ?? "—"}</td>
+                                                      </tr>
+                                                    );
+                                                  })}
+                                                </tbody>
+                                                <tfoot>
+                                                  <tr className="border-t-2 border-accent-blue bg-info-bg font-semibold text-info-fg">
+                                                    <td className="px-3 py-1.5">{p.colorBreakdown.length} baris warna</td>
+                                                    <td className="px-3 py-1.5 text-right font-mono tabular-nums">{p.rollCount}</td>
+                                                    <td className="px-3 py-1.5 text-right font-mono tabular-nums">{p.invoicedRolls}</td>
+                                                    <td className="px-3 py-1.5 text-right font-mono tabular-nums">{remaining}</td>
+                                                    <td className="px-3 py-1.5" />
+                                                  </tr>
+                                                </tfoot>
+                                              </table>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      )}
+                                      </Fragment>
                                     );
                                   })}
                               </Fragment>
