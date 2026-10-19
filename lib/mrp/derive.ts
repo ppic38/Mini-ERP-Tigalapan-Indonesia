@@ -736,6 +736,17 @@ export function poDisplayNo(id: string, entity?: string | null): string {
   return id.slice(0, at);
 }
 
+/** Pembanding "terbaru di atas": tanggal PO (yyyy-mm-dd) menurun; tanpa tanggal = paling bawah; tanggal sama -> No MRP menurun
+ *  (urutan alami, jadi W39 di atas W38). Dipakai daftar PO di portal Vendor Produksi. */
+export function compareNewestFirst(aDate: string | undefined, aKey: string, bDate: string | undefined, bKey: string): number {
+  if (aDate !== bDate) {
+    if (!aDate) return 1;
+    if (!bDate) return -1;
+    return aDate < bDate ? 1 : -1;
+  }
+  return bKey.localeCompare(aKey, "id-ID", { numeric: true });
+}
+
 export function formatDate(iso?: string): string {
   if (!iso) return "—";
   const [y, m, d] = iso.split("-");

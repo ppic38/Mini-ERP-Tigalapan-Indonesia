@@ -10,7 +10,7 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { useMrpStore } from "@/lib/mrp/store";
-import { addDays, formatDate, formatPcs, formatRupiah, maklonPoBadgeWithApproval, maklonPoDisplayStatus, materialReceivedForMaklon, mrpDetailFor } from "@/lib/mrp/derive";
+import { addDays, formatDate, formatPcs, formatRupiah, maklonPoBadgeWithApproval, maklonPoDisplayStatus, materialReceivedForMaklon, mrpDetailFor, compareNewestFirst } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { AduanPolaRow, MaklonPO } from "@/lib/mrp/types";
 import { seenPoKey, useMarkPoSeen } from "@/lib/shell/seen-po";
@@ -178,7 +178,10 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
     }
   }
 
-  const myPOs = maklonPOs.filter((p) => p.vendorProduksi === vendorId && p.approved);
+  // Terbaru di atas (revisi 2026-10-18): urut Tanggal PO menurun, lalu No MRP menurun.
+  const myPOs = maklonPOs
+    .filter((p) => p.vendorProduksi === vendorId && p.approved)
+    .sort((a, b) => compareNewestFirst(mrpDetailFor(a.mrpId, mrpDetails)?.dates.poSent, a.mrpId, mrpDetailFor(b.mrpId, mrpDetails)?.dates.poSent, b.mrpId));
   // Badge sidebar "PO Produksi Saya" hilang begitu halaman ini dibuka (lib/shell/seen-po.ts).
   useMarkPoSeen(seenPoKey(vendorId, "po-produksi"), myPOs.map((p) => p.id));
   // Revisi 2026-09-06: kapasitas produksi PER MINGGU vendor ini sendiri (data asli dari

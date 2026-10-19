@@ -21,6 +21,7 @@ import {
   totalRollCountForColor,
   vendorItemSizeProgress,
 } from "@/lib/mrp/derive";
+import { exportMonitoringProduksiExcel, type MonitoringExportGroup } from "@/lib/mrp/exportMonitoringProduksiExcel";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { Lengan, MaklonPO, RawMaterialInvoice } from "@/lib/mrp/types";
 
@@ -49,6 +50,74 @@ function deadlineInfoFor(mrpId: string, vendorProduksi: string, warna: string, i
   const deadline = targetDoneProduksiForGroup(mrpId, vendorProduksi, warna, invoices);
   const daysLeft = deadline ? Math.round((new Date(deadline + "T00:00:00").getTime() - new Date(new Date().toDateString()).getTime()) / 86400000) : null;
   return { deadline, daysLeft };
+}
+
+/** Susun baris export Excel (lib/mrp/exportMonitoringProduksiExcel.ts) dari PO vendor -- angka memakai fungsi turunan yang sama
+ *  dengan tampilan layar, jadi Excel selalu sama dengan yang terlihat. */
+function buildExportGroups(
+  pos: MaklonPO[],
+  mrpDetails: ReturnType<typeof useMrpStore.getState>["mrpDetails"],
+  batches: ReturnType<typeof useMrpStore.getState>["productionBatches"],
+  results: ReturnType<typeof useMrpStore.getState>["productionResults"],
+  invoices: RawMaterialInvoice[]
+): MonitoringExportGroup[] {
+  const out: MonitoringExportGroup[] = [];
+  for (const po of pos) {
+    const rows = vendorItemSizeProgress(po.mrpId, po.vendorProduksi, mrpDetails, batches, results);
+    const byGroup = new Map<string, typeof rows>();
+    for (const r of rows) {
+      const key = r.warna + "|" + r.lengan;
+      if (!byGroup.has(key)) byGroup.set(key, []);
+      byGroup.get(key)!.push(r);
+    }
+    for (const groupRows of byGroup.values()) {
+      const { warna, lengan } = groupRows[0];
+      const s = groupRows.reduce((a, r) => ({ target: a.target + r.target, cutting: a.cutting + r.cutting, finishGood: a.finishGood + r.finishGood }), { target: 0, cutting: 0, finishGood: 0 });
+      const info = deadlineInfoFor(po.mrpId, po.vendorProduksi, warna, invoices);
+      out.push({
+        mrpId: po.mrpId,
+        vendor: VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi,
+        warna,
+        lengan,
+        deadline: info.deadline ?? "",
+        daysLeft: info.daysLeft,
+        status: statusFor(s.finishGood, s.cutting > 0 ? s.cutting : s.target, s.cutting > 0, info).label,
+        rollReceived: completedRollCountForColor(po.mrpId, po.vendorProduksi, warna, lengan as Lengan, batches),
+        rollTotal: totalRollCountForColor(po.mrpId, po.vendorProduksi, warna, lengan as Lengan, invoices),
+        yieldCuttingPct: cuttingYieldForGroup(po.mrpId, po.vendorProduksi, warna, lengan as Lengan, mrpDetails, batches).yieldPct,
+        shiftNote: sizeShiftsForGroup(po.mrpId, po.vendorProduksi, warna, lengan as Lengan, batches)
+          .map((sh) => `${sh.codeRoll}: ${sh.qty} pcs ${sh.from} → ${sh.to}`)
+          .join("; "),
+        sizes: groupRows.map((r) => ({ size: r.size, target: r.target, cutting: r.cutting, finishGood: r.finishGood, reject: r.reject, rework: r.rework })),
+      });
+    }
+  }
+  return out;
+}
+
+function ExportExcelButton({ pos, fileName, label = "⤓ Download Excel" }: { pos: MaklonPO[]; fileName: string; label?: string }) {
+  const mrpDetails = useMrpStore((s) => s.mrpDetails);
+  const productionBatches = useMrpStore((s) => s.productionBatches);
+  const productionResults = useMrpStore((s) => s.productionResults);
+  const invoices = useMrpStore((s) => s.invoices);
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={busy || pos.length === 0}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          await exportMonitoringProduksiExcel(buildExportGroups(pos, mrpDetails, productionBatches, productionResults, invoices), fileName);
+        } finally {
+          setBusy(false);
+        }
+      }}
+      className="rounded-md border border-[#CBD5DF] bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-semibold text-action-primary disabled:opacity-50"
+    >
+      {busy ? "Menyiapkan…" : label}
+    </button>
+  );
 }
 
 function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
@@ -278,11 +347,20 @@ function MrpVendorDrilldown({ group }: { group: MrpGroup }) {
 
   return (
     <div className="flex flex-col gap-2">
-      {selected && (
-        <button onClick={() => setSelectedId(null)} className="self-start font-sans text-[11.5px] font-semibold text-action-primary underline">
-          ← Ganti vendor ({group.vendorPOs.length} vendor mengerjakan MRP ini)
-        </button>
-      )}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {selected ? (
+          <button onClick={() => setSelectedId(null)} className="font-sans text-[11.5px] font-semibold text-action-primary underline">
+            ← Ganti vendor ({group.vendorPOs.length} vendor mengerjakan MRP ini)
+          </button>
+        ) : (
+          <span className="font-sans text-[11px] text-text-muted">Pilih vendor untuk melihat progres per warna · lengan · size</span>
+        )}
+        <ExportExcelButton
+          pos={selected ? [selected] : group.vendorPOs}
+          fileName={`Monitoring-Produksi-${group.mrpId}${selected ? "-" + (VENDOR_PRODUKSI[selected.vendorProduksi]?.name ?? selected.vendorProduksi).replace(/\s+/g, "-") : ""}.xlsx`}
+          label={selected ? "⤓ Excel vendor ini" : "⤓ Excel MRP ini"}
+        />
+      </div>
       {!selected ? (
         <div className="flex flex-col gap-1.5">
           {group.vendorPOs.map((po) => (
@@ -394,6 +472,7 @@ export default function ProduksiMonitoringPage() {
         columns={columns}
         rows={rows}
         keyOf={(g) => g.mrpId}
+        headerActions={<ExportExcelButton pos={approved} fileName={`Monitoring-Produksi-${new Date().toISOString().slice(0, 10)}.xlsx`} label="⤓ Download Excel (semua MRP)" />}
         firstColumnLabel="No. MRP"
         firstColumnRender={(g) => <span className="font-mono">{g.mrpId}</span>}
         renderExpanded={(g) => <MrpVendorDrilldown group={g} />}

@@ -1,19 +1,25 @@
 import { getInvoiceBuktiPvAction } from "./actions";
-import { fillPreviewWindow, openPreviewWindow } from "./clientFiles";
+import { downloadDataUrl, fillPreviewWindow, openPreviewWindow } from "./clientFiles";
 
 /** Buka lampiran Paying Voucher sebuah invoice. PDF-nya tidak ikut snapshot (migration 0066) jadi diambil saat
- *  diklik; tab dibuka SEKARANG (sebelum await) supaya tidak diblokir popup blocker -- pola sama bukti pembayaran. */
+ *  diklik; tab dibuka SEKARANG (sebelum await) supaya tidak diblokir popup blocker -- pola sama bukti pembayaran.
+ *
+ *  Revisi 2026-10-19 (owner: lampiran "tidak bisa diklik"): dulu semua kegagalan (file tidak ada, server menolak,
+ *  tab diblokir) DIAM-DIAM -- tab ditutup lagi dan tombol terlihat tidak berfungsi. Sekarang kegagalan selalu
+ *  ditampilkan lewat pesan, dan kalau tab preview diblokir browser, file diunduh sebagai cadangan. */
 export async function viewInvoiceBuktiPv(invoiceId: string): Promise<void> {
   const win = openPreviewWindow();
   try {
     const file = await getInvoiceBuktiPvAction(invoiceId);
     if (!file) {
       win?.close();
+      window.alert("Lampiran invoice ini tidak ditemukan di server.");
       return;
     }
-    fillPreviewWindow(win, file.dataUrl);
+    if (win) fillPreviewWindow(win, file.dataUrl);
+    else downloadDataUrl(file.dataUrl, file.fileName ?? `lampiran-${invoiceId}.pdf`);
   } catch (err) {
     win?.close();
-    throw err;
+    window.alert("Gagal membuka lampiran invoice: " + (err instanceof Error ? err.message : String(err)));
   }
 }

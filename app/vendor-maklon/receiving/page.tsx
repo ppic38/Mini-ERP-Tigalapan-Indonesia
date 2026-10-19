@@ -608,6 +608,9 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                             ○ Belum{g.itemTotal > 0 ? ` (${g.itemReceived}/${g.itemTotal} item)` : ""}
                           </span>
                         )}
+                        {!disabled && (
+                          <span className="ml-2 rounded border border-[#CBD5DF] bg-white px-2 py-0.5 text-[10.5px] font-semibold text-action-primary">{g.complete ? "Lihat" : "Terima"} ›</span>
+                        )}
                       </span>
                     </button>
                   );
@@ -633,10 +636,16 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
             // roll kedua lengan digabung jadi 1 list, dipaginasi ROLL_PAGE_SIZE baris/halaman.
             // Revisi 2026-09-29 (owner: "hapus saja yang kolom lengan di menu good receive"): kolom
             // "Lengan" dihapus dari tabel roll (lengan tetap dipakai internal untuk key/aksi per roll).
-            <div className="w-full overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-              <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">
-                Terima Material
-                {selectedWarna ? ` — ${warnaLabel(selectedWarna)}` : ""}
+            // Revisi 2026-10-18 (owner): kartu ini sekarang POPUP yang terbuka saat baris warna di tabel atas diklik (tombol
+            // "Terima"/"Lihat" di baris itu) -- roll yang harus diterima dan yang sudah diterima ada di satu tempat. Ditutup
+            // lewat tombol Tutup atau klik di luar popup.
+            <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0B131B]/45 p-4 sm:p-8" onClick={closeTerimaMaterial}>
+            <div className="my-auto w-full max-w-[1000px] overflow-hidden rounded-lg border border-border-subtle bg-surface-card shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between gap-3 border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">
+                <span>Terima Material{selectedWarna ? ` — ${warnaLabel(selectedWarna)}` : ""}</span>
+                <button type="button" onClick={closeTerimaMaterial} className="rounded-md border border-[#CBD5DF] bg-white px-2.5 py-1 font-sans text-[11px] font-semibold text-action-primary">
+                  Tutup
+                </button>
                 {/* Revisi 2026-09-23 (owner: "untuk close dan open itu berdasarkan click list tabelnya
                     ... jika diklik lagi maka akan close tabelnya"): kartu ini ditutup dengan klik ULANG
                     baris warna yang sama di tabel "Pilih warna" (pickWarna toggle) -- tidak perlu
@@ -868,6 +877,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                   <RollCodeEditor invoice={selectedInvoice} />
                 </div>
               )}
+            </div>
             </div>
           )}
         </>

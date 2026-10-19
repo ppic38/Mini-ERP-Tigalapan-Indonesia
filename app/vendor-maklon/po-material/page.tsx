@@ -7,7 +7,7 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { useMrpStore } from "@/lib/mrp/store";
-import { addDays, formatDate, formatDecimal, invoiceBadge, receivedNotYetProducedRows } from "@/lib/mrp/derive";
+import { addDays, compareNewestFirst, formatDate, formatDecimal, invoiceBadge, mrpDetailFor, receivedNotYetProducedRows } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { Lengan, RawMaterialInvoice } from "@/lib/mrp/types";
 import { seenPoKey, useMarkPoSeen } from "@/lib/shell/seen-po";
@@ -208,6 +208,7 @@ function InvoiceListExpanded({ vendorId, group }: { vendorId: string; group: Row
 
 function PoMaterialContent({ vendorId }: { vendorId: string }) {
   const materialPOs = useMrpStore((s) => s.materialPOs);
+  const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const invoices = useMrpStore((s) => s.invoices);
   const productionBatches = useMrpStore((s) => s.productionBatches);
 
@@ -279,6 +280,9 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
       pos,
     };
   });
+
+  // Terbaru di atas (revisi 2026-10-18): urut Tanggal PO MRP menurun, lalu No MRP menurun.
+  rows.sort((a, b) => compareNewestFirst(mrpDetailFor(a.mrpId, mrpDetails)?.dates.poSent, a.mrpId, mrpDetailFor(b.mrpId, mrpDetails)?.dates.poSent, b.mrpId));
 
   // Item revisi 2026-09-17: kolom sekarang di level No. MRP (bukan per PO/invoice lagi, lihat
   // catatan Row/PoRow/InvoiceSub di atas) -- rincian per PO & per invoice dipindah ke expand.

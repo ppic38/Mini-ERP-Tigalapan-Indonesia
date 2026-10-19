@@ -85,6 +85,20 @@ export function fillPreviewWindow(win: Window | null, dataUrl: string) {
   setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
 }
 
+/** Cadangan kalau tab preview tidak bisa dibuka (popup diblokir browser): unduh file lewat tautan `<a download>`.
+ *  Unduhan tidak diperlakukan sebagai popup, jadi tetap jalan walau dipanggil setelah `await`. */
+export function downloadDataUrl(dataUrl: string, fileName: string) {
+  const blobUrl = dataUrlToBlobUrl(dataUrl) ?? dataUrl;
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = fileName;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  if (blobUrl.startsWith("blob:")) setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+}
+
 /** Ukuran string base64 APA ADANYA (1 karakter base64 = 1 byte ASCII di payload yang benar-benar
  *  dikirim) -- dipakai untuk cek batas ukuran file yang di-encode ke data URI SEBELUM dikirim ke
  *  Server Action, bukan `file.size` mentah (base64 menggembungkan ukuran ~33%). Disalin dari

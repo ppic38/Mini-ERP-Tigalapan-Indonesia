@@ -346,6 +346,15 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
     setLines([]);
     closePick();
     setRestingError(null);
+    // Revisi 2026-10-18 (owner): langsung buka popup "Tambah roll" -- tidak ada container kosong dulu. Container List roll baru
+    // muncul setelah ada roll yang disimpan ke list (lihat builderPanel).
+    const g = groups.get(key);
+    const opts = g ? g.rows.filter((r) => r.available > 0).sort((a, b) => b.available - a.available).map((r) => r.warna) : [];
+    if (opts.length > 0) {
+      setPickOpen(true);
+      setPickWarnas(opts);
+      setPickChecked(new Set());
+    }
   }
 
   // Popup form "Tambah roll": hanya warna yang bahannya SUDAH diterima & masih punya sisa yang bisa
@@ -624,7 +633,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   };
 
   // Panel "List roll" untuk aduan pola terpilih -- dirender tepat di bawah tabel lengan-nya.
-  const builderPanel = selectedGroup ? (
+  const builderPanel = selectedGroup && visibleLines.length > 0 ? (
             <div className="border-t border-[#CFE0EF] bg-info-bg p-4">
               <div className="font-sans text-xs font-semibold text-info-fg">
                 {selectedGroup.kode} · {selectedGroup.lengan} — roll yang akan di-resting
@@ -1405,7 +1414,14 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               )}
             </div>
             <div className="flex justify-end gap-2 border-t border-border-subtle px-5 py-3.5">
-              <button onClick={closePick} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary">
+              <button
+                onClick={() => {
+                  closePick();
+                  // Belum ada roll di list: batal = tidak jadi memilih aduan pola ini.
+                  if (visibleLines.length === 0) setSelectedGroupKey("");
+                }}
+                className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary"
+              >
                 Batal
               </button>
               <Button onClick={addPickedToList} disabled={pickChecked.size === 0} variant="primary" size="md">
