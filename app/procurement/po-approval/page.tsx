@@ -44,6 +44,7 @@ import { maklonPoCorrections, materialPoCorrections } from "@/components/sysadmi
 import { PoDownloadModal, type PoDownloadRequest } from "@/components/procurement/po-download-modal";
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { MaklonPO, MaterialPO } from "@/lib/mrp/types";
+import { poEntitasFinalized } from "@/lib/mrp/poApproval";
 
 /** Badge kecil "Standar"/"PKS"/"Estimasi" di sebelah nilai Rupiah — hover untuk lihat rincian
  *  per lengan/warna (kenapa dapat harga itu, tonase/kapasitas berapa). Dipakai di 3 tempat:
@@ -265,6 +266,7 @@ export default function PoApprovalPage() {
     for (const c of p.colorBreakdown) kgByWarna.set(c.warna, (kgByWarna.get(c.warna) ?? 0) + c.rollCount * ROLL_KG_ESTIMATE);
     const rateByWarna = new Map<string, number>();
     for (const [warna, kg] of kgByWarna) rateByWarna.set(warna, hargaKainRate(hargaKain, hargaKainPks, p.supplier, warna, kg));
+    const entitasShown = poEntitasFinalized(p);
     return (
       <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
         <div className="grid grid-cols-6 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
@@ -288,10 +290,11 @@ export default function PoApprovalPage() {
               {/* Fix 2026-09-05: dulu langsung render `c.entitas` -- karena colorBreakdown[].entitas
                  sudah diisi DEFAULT sejak PO dibuat (lihat sendPoToFinanceAction), Procurement
                  kelihatan seolah entitas per-warna sudah final padahal Finance belum input/approve
-                 apa-apa. Gating-nya disamakan persis dengan kolom "Entitas" level-PO (p.approved ?
-                 ... : "-") supaya konsisten. */}
-              <span className={p.approved ? undefined : "text-text-muted"} title={p.approved ? undefined : "Menunggu input dari Finance"}>
-                {p.approved ? (c.entitas ?? "—") : "-"}
+                 apa-apa. Revisi 2026-10-19 (owner): dulu menunggu `p.approved` (SELURUH approval, termasuk
+                 GM di Level 4); sekarang cukup Finance sudah approve (poEntitasFinalized) karena entitas
+                 sudah final sejak itu. */}
+              <span className={entitasShown ? undefined : "text-text-muted"} title={entitasShown ? undefined : "Menunggu input & approval dari Finance"}>
+                {entitasShown ? (c.entitas ?? "—") : "-"}
               </span>
             </div>
           );

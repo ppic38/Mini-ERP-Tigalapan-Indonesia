@@ -174,6 +174,17 @@ export function poApprovalState(po: PoApprovalSubject, now: Date = new Date()): 
   };
 }
 
+/** Apakah entitas PO sudah boleh ditampilkan di luar Finance (mis. Procurement): Finance sudah approve dan mengisinya.
+ *  Revisi 2026-10-19 (owner): dulu baru tampil setelah SELURUH approval selesai (termasuk GM di Level 4), padahal
+ *  entitas sudah final begitu Finance approve. PO lama (alur 1 approval Finance) = sama dengan `approved`. PO ditolak
+ *  kembali disembunyikan sampai diajukan ulang dan Finance approve lagi. */
+export function poEntitasFinalized(po: PoApprovalSubject): boolean {
+  const state = poApprovalState(po);
+  if (state.approved) return true;
+  if (state.legacy || state.rejected) return false;
+  return state.cycle.some((e) => e.role === "finance" && e.action === "APPROVED");
+}
+
 /** Ringkasan satu baris untuk badge/status, mis. "Menunggu Level 3 (FAT Manager)". */
 export function poApprovalSummary(state: PoApprovalState): string {
   if (state.approved) return "Disetujui";
