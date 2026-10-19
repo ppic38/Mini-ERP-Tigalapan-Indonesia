@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { exportMaklonPoExcel, exportMaklonPoRasioExcel } from "@/lib/mrp/exportPoExcel";
-import { exportMaterialPoExcel } from "@/lib/mrp/exportPoExcel";
+import { exportMaterialPoExcel, exportMaterialPoExcelSingleSheet } from "@/lib/mrp/exportPoExcel";
 import { exportMaklonPoPdf, exportMaklonPoPdfBatch, exportMaterialPoPdf, exportMaterialPoPdfBatch, type PoExportVariant } from "@/lib/mrp/exportPoPdf";
 import type { MrpDetail } from "@/lib/mrp/store";
 import type { MaklonPO, MaterialPO } from "@/lib/mrp/types";
@@ -23,6 +23,8 @@ export function PoDownloadModal({ request, mrpDetails, onClose }: { request: PoD
   const [variant, setVariant] = useState<PoExportVariant>("internal");
   const [busy, setBusy] = useState<"pdf" | "excel" | "rasio" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Susunan Excel PO Material: satu sheet per PO, atau semua PO digabung jadi satu sheet (kolom Vendor Tujuan).
+  const [layout, setLayout] = useState<"per-po" | "single">("per-po");
   const count = request.pos.length;
   const suffix = variant === "external" ? "-eksternal" : "";
 
@@ -38,7 +40,10 @@ export function PoDownloadModal({ request, mrpDetails, onClose }: { request: PoD
           else exportMaterialPoPdfBatch(request.pos, mrpDetails, `${request.baseName}${suffix}.pdf`, variant);
         } else if (count === 1) exportMaklonPoPdf(request.pos[0], mrpDetails, variant);
         else exportMaklonPoPdfBatch(request.pos, mrpDetails, `${request.baseName}${suffix}.pdf`, variant);
-      } else if (request.kind === "material") await exportMaterialPoExcel(request.pos, mrpDetails, `${request.baseName}${suffix}.xlsx`, variant);
+      } else if (request.kind === "material") {
+        if (layout === "single" && count > 1) await exportMaterialPoExcelSingleSheet(request.pos, mrpDetails, `${request.baseName}${suffix}-satu-sheet.xlsx`, variant);
+        else await exportMaterialPoExcel(request.pos, mrpDetails, `${request.baseName}${suffix}.xlsx`, variant);
+      }
       else await exportMaklonPoExcel(request.pos, mrpDetails, `${request.baseName}${suffix}.xlsx`, variant);
       onClose();
     } catch (e) {
@@ -107,6 +112,29 @@ export function PoDownloadModal({ request, mrpDetails, onClose }: { request: PoD
               <span className="text-[10.5px] text-text-muted">{busy === "excel" ? "Membuat file…" : ".xlsx, ber-kop logo"}</span>
             </button>
           </div>
+          {request.kind === "material" && count > 1 && (
+            <>
+              <div className="mt-4 font-sans text-[11px] font-semibold uppercase tracking-wider text-text-muted">Susunan Excel</div>
+              <div className="mt-1.5 grid grid-cols-2 gap-2">
+                {(
+                  [
+                    ["per-po", "Per PO", "Satu sheet untuk tiap PO"],
+                    ["single", "Satu sheet", "Semua PO digabung, ada kolom Vendor Tujuan"],
+                  ] as const
+                ).map(([key, title, desc]) => (
+                  <button
+                    key={key}
+                    onClick={() => setLayout(key)}
+                    disabled={busy != null}
+                    className={"rounded-md border px-3 py-2 text-left font-sans disabled:opacity-50 " + (layout === key ? "border-accent-blue bg-info-bg" : "border-[#DDE4EB] hover:border-accent-blue")}
+                  >
+                    <div className="text-[12px] font-semibold text-text-primary">{title}</div>
+                    <div className="text-[10px] text-text-muted">{desc}</div>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
           {request.kind === "maklon" && (
             <button
               onClick={() => run("rasio")}

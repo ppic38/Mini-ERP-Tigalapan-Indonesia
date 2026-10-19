@@ -60,18 +60,18 @@ function sheetName(wb: Workbook, base: string): string {
   return name;
 }
 
-function setupSheet(ws: Worksheet) {
-  COL_WIDTHS.forEach((w, i) => {
+function setupSheet(ws: Worksheet, widths: number[] = COL_WIDTHS, orientation: "portrait" | "landscape" = "portrait") {
+  widths.forEach((w, i) => {
     ws.getColumn(i + 1).width = w;
   });
   ws.views = [{ showGridLines: false }];
-  ws.pageSetup = { paperSize: 9, orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true, margins: { left: 0.5, right: 0.5, top: 0.6, bottom: 0.6, header: 0.3, footer: 0.3 } };
+  ws.pageSetup = { paperSize: 9, orientation, fitToPage: true, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true, margins: { left: 0.5, right: 0.5, top: 0.6, bottom: 0.6, header: 0.3, footer: 0.3 } };
   ws.headerFooter.oddFooter = "&L&8Tigalapan Indonesia&R&8Halaman &P dari &N";
 }
 
-function drawHeader(wb: Workbook, ws: Worksheet, logo: Logo | null, title: string): number {
+function drawHeader(wb: Workbook, ws: Worksheet, logo: Logo | null, title: string, cols: number = COLS): number {
   ws.getRow(1).height = 40;
-  ws.mergeCells(1, 2, 1, COLS);
+  ws.mergeCells(1, 2, 1, cols);
   const name = ws.getCell(1, 2);
   name.value = "TIGALAPAN INDONESIA";
   name.font = { name: FONT, size: 20, bold: true, color: { argb: INK } };
@@ -87,9 +87,9 @@ function drawHeader(wb: Workbook, ws: Worksheet, logo: Logo | null, title: strin
     const w = Math.min(64, (logo.w / logo.h) * h);
     ws.addImage(id, { tl: { col: 0.15, row: 0.1 }, ext: { width: w, height: h - 4 } });
   }
-  for (let c = 1; c <= COLS; c++) ws.getCell(2, c).border = { top: { style: "medium", color: { argb: TEAL } } };
+  for (let c = 1; c <= cols; c++) ws.getCell(2, c).border = { top: { style: "medium", color: { argb: TEAL } } };
   ws.getRow(2).height = 6;
-  ws.mergeCells(3, 1, 3, COLS);
+  ws.mergeCells(3, 1, 3, cols);
   const t = ws.getCell(3, 1);
   t.value = title;
   t.font = { name: FONT, size: 14, bold: true, color: { argb: INK } };
@@ -126,8 +126,8 @@ function drawInfo(ws: Worksheet, row: number, left: [string, string][], right: [
   return row + n + 1;
 }
 
-function drawSection(ws: Worksheet, row: number, text: string): number {
-  ws.mergeCells(row, 1, row, COLS);
+function drawSection(ws: Worksheet, row: number, text: string, cols: number = COLS): number {
+  ws.mergeCells(row, 1, row, cols);
   const c = ws.getCell(row, 1);
   c.value = text;
   c.font = { name: FONT, size: 11, bold: true, color: { argb: TEAL } };
@@ -426,6 +426,127 @@ export async function exportMaterialPoExcel(pos: MaterialPO[], mrpDetails: MrpDe
   if (pos.length === 0) return;
   const { wb, logo } = await newWorkbook();
   for (const po of pos) materialSheet(wb, wb.addWorksheet(sheetName(wb, `PO ${po.id.replace(/^PO-(SUP-)?/, "")}`)), logo, po, mrpDetails, variant);
+  await download(wb, fileName);
+}
+
+// Versi SATU SHEET (owner 2026-10-19: "download PO jadi satu sheet, ada kolom tambahan vendor tujuan"): semua PO
+// Material yang dipilih digabung jadi SATU lembar landscape -- baris tiap PO diberi kolom No. PO, Vendor Tujuan
+// (vendor produksi) dan Supplier. Isi & aturan variant SAMA dengan lembar per-PO (tanpa harga); kotak persetujuan
+// tidak dibuat karena status tiap PO bisa berbeda -- cetak per PO kalau butuh lembar tanda tangan.
+const SINGLE_WIDTHS = [6, 32, 22, 14, 16, 28, 10, 13, 26];
+const SINGLE_COLS = SINGLE_WIDTHS.length;
+
+export async function exportMaterialPoExcelSingleSheet(pos: MaterialPO[], mrpDetails: MrpDetail[], fileName: string, variant: PoExportVariant = "internal") {
+  if (pos.length === 0) return;
+  const { wb, logo } = await newWorkbook();
+  const ws = wb.addWorksheet("PO Material");
+  setupSheet(ws, SINGLE_WIDTHS, "landscape");
+  const vendorOf = (po: MaterialPO) => VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi;
+  const kategoriOf = (po: MaterialPO) => mrpDetailFor(po.mrpId, mrpDetails)?.mrp.kategori ?? "—";
+  const entOf = (po: MaterialPO, e?: string) => (po.approved ? (e ?? po.entity) : "—");
+
+  // Rincian bahan per PO (variant eksternal: PENDEK+PANJANG warna sama digabung, sama seperti lembar per-PO).
+  const bahan: (string | number)[][] = [];
+  let totalRoll = 0;
+  for (const po of pos) {
+    const list =
+      variant === "internal"
+        ? po.colorBreakdown
+        : Array.from(
+            po.colorBreakdown.reduce((map, c) => {
+              const key = `${c.warna}|${c.entitas ?? ""}`;
+              const cur = map.get(key);
+              if (cur) cur.rollCount += c.rollCount;
+              else map.set(key, { ...c });
+              return map;
+            }, new Map<string, (typeof po.colorBreakdown)[number]>()).values()
+          );
+    for (const c of list) {
+      totalRoll += c.rollCount;
+      bahan.push([bahan.length + 1, po.id, vendorOf(po), po.supplier, kategoriOf(po), variant === "internal" && c.lengan ? `${c.warna} · ${c.lengan}` : c.warna, c.rollCount, c.rollCount * ROLL_KG_ESTIMATE, entOf(po, c.entitas)]);
+    }
+  }
+  const totalKg = totalRoll * ROLL_KG_ESTIMATE;
+
+  let r = drawHeader(wb, ws, logo, "PROPOSAL PURCHASE ORDER MATERIAL BAHAN", SINGLE_COLS);
+  const mrpIds = Array.from(new Set(pos.map((p) => p.mrpId))).join(", ");
+  const info: [string, string, string, string][] = [
+    ["No. MRP", mrpIds, "Jumlah PO", String(pos.length)],
+    ["Tanggal Cetak", formatDate(localDateString(new Date())), "Total Roll", totalRoll.toLocaleString("id-ID", { maximumFractionDigits: 1 })],
+    ["Vendor Material (Supplier)", Array.from(new Set(pos.map((p) => p.supplier))).join(", "), "Total Kg (estimasi)", totalKg.toLocaleString("id-ID", { maximumFractionDigits: 1 })],
+  ];
+  for (const [l1, v1, l2, v2] of info) {
+    ws.mergeCells(r, 1, r, 2);
+    ws.mergeCells(r, 3, r, 5);
+    ws.mergeCells(r, 7, r, 9);
+    const cells: [number, string, boolean][] = [[1, l1, true], [3, v1, false], [6, l2, true], [7, v2, false]];
+    for (const [c, v, isLabel] of cells) {
+      const cell = ws.getCell(r, c);
+      cell.value = v;
+      cell.font = { name: FONT, size: 10, bold: isLabel, color: { argb: isLabel ? GRAY : INK } };
+      cell.alignment = { vertical: "middle", horizontal: "left", wrapText: true, indent: 1 };
+    }
+    for (let c = 1; c <= SINGLE_COLS; c++) ws.getCell(r, c).border = BORDER;
+    ws.getRow(r).height = String(v1).length > 60 ? 34 : 22;
+    r++;
+  }
+  r++;
+
+  r = drawSection(ws, r, "1. Rincian Bahan", SINGLE_COLS);
+  r = drawTable(ws, r, {
+    head: ["No", "No. PO", "Vendor Tujuan", "Supplier", "Kategori", "Warna", "Roll", "Kg", "Entitas"],
+    body: bahan,
+    foot: ["", "", "", "", "", "TOTAL", totalRoll, totalKg, ""],
+    numFmt: [undefined, undefined, undefined, undefined, undefined, undefined, "#,##0.0", "#,##0.0", undefined],
+    align: ["center", "left", "left", "left", "left", "left", "right", "right", "left"],
+  });
+
+  // Permintaan RIB / KERAH / MANSET, digabung semua PO (kolom sama dengan tabel di atas supaya lebar kolom pas).
+  const kinds: [AduanMaterialKind, string][] = [["rib", "RIB"], ["kerah", "KERAH"], ["manset", "MANSET"]];
+  let section = 1;
+  for (const [kind, label] of kinds) {
+    const rows: (string | number)[][] = [];
+    let kindRoll = 0;
+    let kindKg = 0;
+    for (const po of pos) {
+      const mrpDetail = mrpDetailFor(po.mrpId, mrpDetails);
+      const rawList = po.colorBreakdown.map((c) => {
+        const group = mrpDetail?.lenganGroups.find((g) => g.warna === c.warna && g.lengan === c.lengan);
+        const kgPerRoll = group ? materialKgPerRollForGroup(group, kind) : 0;
+        return { warna: c.warna, lengan: c.lengan, roll: c.rollCount, kg: kgPerRoll * c.rollCount, entitas: entOf(po, c.entitas) };
+      });
+      const list =
+        variant === "internal"
+          ? rawList
+          : Array.from(
+              rawList.reduce((map, x) => {
+                const key = `${x.warna}|${x.entitas}`;
+                const cur = map.get(key);
+                if (cur) {
+                  cur.roll += x.roll;
+                  cur.kg += x.kg;
+                } else map.set(key, { ...x });
+                return map;
+              }, new Map<string, (typeof rawList)[number]>()).values()
+            );
+      for (const x of list) {
+        if (x.kg <= 0) continue;
+        kindRoll += x.roll;
+        kindKg += x.kg;
+        rows.push([rows.length + 1, po.id, vendorOf(po), po.supplier, kategoriOf(po), variant === "internal" && x.lengan ? `${x.warna} · ${x.lengan}` : x.warna, x.roll, x.kg, x.entitas]);
+      }
+    }
+    if (rows.length === 0) continue;
+    section++;
+    r = drawSection(ws, r, `${section}. Permintaan ${label}`, SINGLE_COLS);
+    r = drawTable(ws, r, {
+      head: ["No", "No. PO", "Vendor Tujuan", "Supplier", "Kategori", "Warna", "Roll", `Total ${label} (kg)`, "Entitas"],
+      body: rows,
+      foot: ["", "", "", "", "", "TOTAL", kindRoll, kindKg, ""],
+      numFmt: [undefined, undefined, undefined, undefined, undefined, undefined, "#,##0.0", "#,##0.00", undefined],
+      align: ["center", "left", "left", "left", "left", "left", "right", "right", "left"],
+    });
+  }
   await download(wb, fileName);
 }
 
