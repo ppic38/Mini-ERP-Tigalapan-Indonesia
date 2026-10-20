@@ -30,6 +30,7 @@ function cabangFilterLabel(i: { noInvoiceVendor?: string | null }): string {
 }
 import { mergeColorEntriesByWarna } from "@/lib/mrp/mergeColorEntries";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
+import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { materialInvoicePaymentCorrections } from "@/components/sysadmin/finance-corrections";
 import type { RawMaterialInvoice } from "@/lib/mrp/types";
 // Item 2.7: getInvoicePaymentProofAction DIPANGGIL LANGSUNG dari komponen ini (bukan lewat store)
@@ -83,6 +84,8 @@ export function PaymentPanel() {
 
   const invoices = useMrpStore((s) => s.invoices);
   const setInvoicesPaid = useMrpStore((s) => s.setInvoicesPaid);
+  const setInvoicesTxnCreated = useMrpStore((s) => s.setInvoicesTxnCreated);
+  const sysadminView = useSysadminMode();
   const setInvoicePaymentProof = useMrpStore((s) => s.setInvoicePaymentProof);
   // Item revisi 2026-09-06: dipakai untuk detail biaya maklon terkait begitu baris invoice
   // di-expand (lihat renderExpanded di bawah) -- Finance minta lihat "detail maklon" juga, bukan
@@ -396,6 +399,35 @@ export function PaymentPanel() {
         );
       },
     },
+    // Penanda "transaksi sudah dibuat" (permintaan user Finance 2026-10-20, migration 0071): centang untuk invoice yang
+    // transaksinya sudah dibuat di bank/sistem pembayaran tapi bukti bayarnya belum ada. Invoice TETAP di tabel ini.
+    {
+      key: "txnCreated",
+      label: "Transaksi",
+      default: true,
+      render: (i) => {
+        if (i.status !== "INVOICED") return <span className="text-text-muted">—</span>;
+        const done = !!i.txnCreatedAt;
+        const info = done ? `Transaksi dibuat${i.txnCreatedBy ? ` oleh ${i.txnCreatedBy}` : ""}${i.txnCreatedAt ? ` pada ${formatDate(i.txnCreatedAt.slice(0, 10))}` : ""}` : "Belum ditandai -- klik kalau transaksi sudah dibuat";
+        return (
+          <button
+            type="button"
+            title={info}
+            disabled={sysadminView}
+            onClick={(e) => {
+              e.stopPropagation();
+              void setInvoicesTxnCreated([i.id], !done).catch(() => {});
+            }}
+            className={
+              "inline-flex items-center gap-1 rounded-md border px-2 py-[3px] font-sans text-[10.5px] font-semibold disabled:cursor-default " +
+              (done ? "border-[#B7DFC5] bg-[#EAF7EF] text-success-fg" : "border-[#CBD5DF] bg-white text-text-muted hover:border-accent-blue hover:text-action-primary")
+            }
+          >
+            {done ? "✓ Dibuat" : "Belum"}
+          </button>
+        );
+      },
+    },
     { key: "kodeTransaksi", label: "Kode Transaksi", default: false, render: (i) => <span className="font-mono font-medium">{i.kodeTransaksi}</span> },
     // Revisi 2026-10-17 (owner): kolom "Supplier / Vendor" dipisah jadi dua kolom; Vendor Produksi tampil default.
     { key: "supplier", label: "Supplier", default: false, render: (i) => i.supplier },
@@ -700,6 +732,7 @@ export function PaymentPanel() {
             { label: "Vendor Produksi", options: Array.from(new Set(scopedReadyInvoices.map(vendorProduksiName))), test: (i, v) => vendorProduksiName(i) === v },
             { label: "Entitas", options: Array.from(new Set(scopedReadyInvoices.map((i) => i.entity))), test: (i, v) => i.entity === v },
             { label: "Kode Cabang", options: Array.from(new Set(scopedReadyInvoices.map(cabangFilterLabel))), test: (i, v) => cabangFilterLabel(i) === v },
+            { label: "Transaksi", options: ["Sudah dibuat", "Belum dibuat"], test: (i, v) => (v === "Sudah dibuat" ? !!i.txnCreatedAt : !i.txnCreatedAt) },
           ]}
           emptyText="Tidak ada invoice siap dibayar untuk MRP ini."
           collapseSignal={collapseSignal}
@@ -711,6 +744,26 @@ export function PaymentPanel() {
         <div className="rounded-lg border border-border-subtle bg-surface-card p-4">
           <div className="flex items-center justify-between">
             <span className="font-sans text-[13px] font-semibold text-text-primary">{selected.size} dipilih</span>
+            {!sysadminView && selectableToPay.length > 0 && (
+              <span className="flex items-center gap-2">
+                {selectableToPay.some((i) => !i.txnCreatedAt) && (
+                  <button
+                    onClick={() => void setInvoicesTxnCreated(selectableToPay.filter((i) => !i.txnCreatedAt).map((i) => i.id), true).catch(() => {})}
+                    className="rounded-md border border-[#B7DFC5] bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-semibold text-success-fg"
+                  >
+                    ✓ Tandai transaksi dibuat ({selectableToPay.filter((i) => !i.txnCreatedAt).length})
+                  </button>
+                )}
+                {selectableToPay.some((i) => !!i.txnCreatedAt) && (
+                  <button
+                    onClick={() => void setInvoicesTxnCreated(selectableToPay.filter((i) => !!i.txnCreatedAt).map((i) => i.id), false).catch(() => {})}
+                    className="rounded-md border border-[#CBD5DF] bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-semibold text-text-muted"
+                  >
+                    Batal tandai ({selectableToPay.filter((i) => !!i.txnCreatedAt).length})
+                  </button>
+                )}
+              </span>
+            )}
             {selectableToUnpay.length > 0 && (
               <button
                 onClick={() => {

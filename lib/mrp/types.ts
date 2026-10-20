@@ -333,6 +333,9 @@ export type RawMaterialInvoice = {
    */
   sourceClaimId?: string;
   paidAt?: string;
+  /** Penanda Finance "transaksi sudah dibuat" (migration 0071) -- status invoice tidak berubah. */
+  txnCreatedAt?: string;
+  txnCreatedBy?: string;
   deliveredAt?: string;
   receivedAt?: string;
   productionStart?: string;

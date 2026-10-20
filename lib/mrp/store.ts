@@ -352,6 +352,8 @@ type FlowActions = {
    *  upload bukti pembayaran") -- `proof` WAJIB diisi kalau `paid` true (server menegakkan ulang,
    *  lihat setInvoicesPaidAction); tetap opsional/diabaikan kalau `paid` false ("Batalkan Bayar"
    *  tidak butuh bukti apa pun). */
+  /** Penanda Finance "transaksi sudah dibuat" (migration 0071) -- optimistic, status invoice tidak berubah. */
+  setInvoicesTxnCreated: (invoiceIds: string[], created: boolean) => Promise<void>;
   setInvoicesPaid: (
     invoiceIds: string[],
     paid: boolean,
@@ -1038,6 +1040,26 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // Patch di-cek dengan guard status yang PERSIS SAMA dengan setInvoicesPaidAction (cuma
   // transisi INVOICED->PAID / PAID->INVOICED yang valid) -- supaya tidak optimistically
   // mem-"bayar" invoice yang statusnya sebenarnya tidak akan berubah di server.
+  setInvoicesTxnCreated: async (invoiceIds, created) => {
+    const idSet = new Set(invoiceIds);
+    const previous = get().invoices;
+    const nowIsoStr = new Date().toISOString();
+    set({
+      invoices: previous.map((i) => {
+        if (!idSet.has(i.id) || i.status !== "INVOICED") return i;
+        if (created) return i.txnCreatedAt ? i : { ...i, txnCreatedAt: nowIsoStr, txnCreatedBy: "Anda" };
+        return { ...i, txnCreatedAt: undefined, txnCreatedBy: undefined };
+      }),
+    });
+    try {
+      unwrapAction(await actions.setInvoicesTxnCreatedAction(invoiceIds, created));
+    } catch (err) {
+      set({ invoices: previous });
+      notifyError("Gagal mengubah penanda transaksi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
   setInvoicesPaid: async (invoiceIds, paid, proof, extra) => {
     const idSet = new Set(invoiceIds);
     const previous = get().invoices;

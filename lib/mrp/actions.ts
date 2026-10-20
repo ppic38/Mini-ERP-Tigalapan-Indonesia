@@ -1480,6 +1480,30 @@ export async function withdrawVendorProductionAction(mrpId: string, fromVendor: 
   await insertNotification(notif(`Anda menerima tambahan produksi untuk ${mrpId} (vendor sebelumnya berhenti produksi) — cek tab Cutting/Finish Good.`, ["vendorMaklon"], toVendor));
 }
 
+/** Tandai / batalkan penanda "transaksi sudah dibuat" (migration 0071) pada invoice material yang masih INVOICED
+ *  (siap dibayar). Hanya Finance. TIDAK mengubah status invoice. Yang sudah ditandai orang lain tidak ditimpa (nama &
+ *  waktu penanda pertama dipertahankan); invoice yang sudah lunas dilewati. */
+export async function setInvoicesTxnCreatedAction(invoiceIds: string[], created: boolean): Promise<ActionResult<void>> {
+  try {
+    const actor = await requireInternalRoleWithActor("finance");
+    if (invoiceIds.length === 0) return { ok: true, data: undefined };
+    const db = supabaseServer();
+    const { data: rows, error: selErr } = await db.from("raw_material_invoices").select("id,status,txn_created_at,no_invoice_vendor").in("id", invoiceIds);
+    if (selErr) throw new Error(selErr.message.includes("txn_created") ? "Jalankan migration 0071 (kolom txn_created_at/txn_created_by) di Supabase dulu." : selErr.message);
+    const open = (rows ?? []).filter((r) => r.status === "INVOICED");
+    const targets = created ? open.filter((r) => !r.txn_created_at) : open.filter((r) => !!r.txn_created_at);
+    if (targets.length === 0) return { ok: true, data: undefined };
+    const patch = created ? { txn_created_at: nowIso(), txn_created_by: actor.actorName } : { txn_created_at: null, txn_created_by: null };
+    const { error } = await db.from("raw_material_invoices").update(patch).in("id", targets.map((r) => r.id));
+    if (error) throw new Error(error.message.includes("txn_created") ? "Jalankan migration 0071 (kolom txn_created_at/txn_created_by) di Supabase dulu." : error.message);
+    const refs = targets.map((r) => r.no_invoice_vendor || r.id).join(", ");
+    await logInternalAction(actor, `${created ? "Tandai transaksi dibuat" : "Batalkan tanda transaksi dibuat"}: ${refs}`, "raw_material_invoices", targets[0].id);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export async function setInvoicesPaidAction(
   invoiceIds: string[],
   paid: boolean,

@@ -706,6 +706,8 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
       supportFileName: inv.support_file_name ?? undefined,
       sourceClaimId: inv.source_claim_id ?? undefined,
       paidAt: inv.paid_at ?? undefined,
+      txnCreatedAt: inv.txn_created_at ?? undefined,
+      txnCreatedBy: inv.txn_created_by ?? undefined,
       deliveredAt: inv.delivered_at ?? undefined,
       receivedAt: inv.received_at ?? undefined,
       productionStart: inv.production_start ?? undefined,
