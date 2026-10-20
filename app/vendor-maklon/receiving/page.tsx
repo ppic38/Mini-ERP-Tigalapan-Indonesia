@@ -642,7 +642,10 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
             <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0B131B]/45 p-4 sm:p-8" onClick={closeTerimaMaterial}>
             <div className="my-auto w-full max-w-[1000px] overflow-hidden rounded-lg border border-border-subtle bg-surface-card shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between gap-3 border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">
-                <span>Terima Material{selectedWarna ? ` — ${warnaLabel(selectedWarna)}` : ""}</span>
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span>Terima Material{selectedWarna ? ` — ${warnaLabel(selectedWarna)}` : ""}</span>
+                  {selectedInvoice && <span className="rounded bg-[#EEF3F8] px-2 py-0.5 font-mono text-[11px] font-semibold text-info-fg">{selectedInvoice.id}</span>}
+                </span>
                 <button type="button" onClick={closeTerimaMaterial} className="rounded-md border border-[#CBD5DF] bg-white px-2.5 py-1 font-sans text-[11px] font-semibold text-action-primary">
                   Tutup
                 </button>
@@ -695,7 +698,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                             className="m-stack m-grid2 grid items-center gap-x-4 border-b border-[#F1F4F7] px-4 py-2 font-sans text-xs text-[#31414F] max-md:py-3"
                             style={{ gridTemplateColumns: RECEIVE_GRID + (sysadminMode ? " 150px" : "") }}
                           >
-                            <span className="font-mono font-medium max-md:text-[13px]">Roll {r.idx + 1}</span>
+                            <span className="font-mono font-medium max-md:text-[13px]">Roll {combinedRolls.indexOf(r) + 1}</span>
                             {arrival ? (
                               <span data-label="Code roll" className="font-mono text-[11px] max-md:col-span-full">{arrival.codeRoll || "—"}</span>
                             ) : (
