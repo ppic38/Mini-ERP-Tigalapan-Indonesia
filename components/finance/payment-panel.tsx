@@ -20,6 +20,14 @@ import {
   poDisplayNo,
 } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import { supplierBranchFromInvoiceNo } from "@/lib/mrp/supplierBranch";
+
+/** Teks pilihan filter "Kode Cabang", mis. "OH · Holis (Bandung)". */
+function cabangFilterLabel(i: { noInvoiceVendor?: string | null }): string {
+  const r = supplierBranchFromInvoiceNo(i.noInvoiceVendor);
+  if (!r) return "—";
+  return r.branch ? `${r.code} · ${r.branch.nama} (${r.branch.kota})` : `${r.code} · belum terdaftar`;
+}
 import { mergeColorEntriesByWarna } from "@/lib/mrp/mergeColorEntries";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { materialInvoicePaymentCorrections } from "@/components/sysadmin/finance-corrections";
@@ -392,6 +400,23 @@ export function PaymentPanel() {
     // Revisi 2026-10-17 (owner): kolom "Supplier / Vendor" dipisah jadi dua kolom; Vendor Produksi tampil default.
     { key: "supplier", label: "Supplier", default: false, render: (i) => i.supplier },
     { key: "noInvVendor", label: "No Invoice Supplier", default: false, render: (i) => i.noInvoiceVendor || "—" },
+    // Kode cabang supplier (owner 2026-10-20): dua huruf pertama No Invoice Supplier (OH = Holis Bandung, OR = Kebon Jukut
+    // Bandung, OB = Soekarno Surabaya) -- daftar kode di lib/mrp/supplierBranch.ts.
+    {
+      key: "kodeCabang",
+      label: "Kode Cabang",
+      default: true,
+      render: (i) => {
+        const r = supplierBranchFromInvoiceNo(i.noInvoiceVendor);
+        if (!r) return "—";
+        return (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="rounded bg-[#EEF3F8] px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-info-fg">{r.code}</span>
+            <span>{r.branch ? `${r.branch.nama} (${r.branch.kota})` : "belum terdaftar"}</span>
+          </span>
+        );
+      },
+    },
     {
       key: "sumber",
       label: "Sumber",
@@ -674,6 +699,7 @@ export function PaymentPanel() {
             { label: "Supplier", options: Array.from(new Set(scopedReadyInvoices.map((i) => i.supplier))), test: (i, v) => i.supplier === v },
             { label: "Vendor Produksi", options: Array.from(new Set(scopedReadyInvoices.map(vendorProduksiName))), test: (i, v) => vendorProduksiName(i) === v },
             { label: "Entitas", options: Array.from(new Set(scopedReadyInvoices.map((i) => i.entity))), test: (i, v) => i.entity === v },
+            { label: "Kode Cabang", options: Array.from(new Set(scopedReadyInvoices.map(cabangFilterLabel))), test: (i, v) => cabangFilterLabel(i) === v },
           ]}
           emptyText="Tidak ada invoice siap dibayar untuk MRP ini."
           collapseSignal={collapseSignal}
