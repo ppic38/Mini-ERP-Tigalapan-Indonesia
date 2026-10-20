@@ -323,6 +323,29 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   const selectedGroup = groups.get(selectedGroupKey) ?? null;
 
   const candidates = selectedMrpId ? restingCandidateRolls(selectedMrpId, vendorId, invoices, productionBatches, lockedKeys) : [];
+
+  // Petunjuk "salah lengan" (2026-10-20): roll yang sudah diterima tapi tercatat di lengan lain. Contoh nyata: aduan
+  // butuh 23 roll Panjang tapi hanya 19 tercatat Panjang, sementara Pendek kelebihan 4 -- label "Belum diterima"
+  // saja menyesatkan karena rollnya ada, hanya salah lengan saat invoice dibukukan.
+  const needByColor = new Map<string, number>();
+  for (const row of aduanRows) {
+    const k = row.warna + "|" + row.lengan;
+    needByColor.set(k, (needByColor.get(k) ?? 0) + Math.max(0, row.qtyRoll - startedRollsForAduan(row.id, productionBatches)));
+  }
+  const candByColor = new Map<string, number>();
+  for (const c of candidates) {
+    const k = c.warna + "|" + c.lengan;
+    candByColor.set(k, (candByColor.get(k) ?? 0) + 1);
+  }
+  function lenganMismatchHint(warna: string, lengan: Lengan): string | null {
+    const other: Lengan = lengan === "PENDEK" ? "PANJANG" : "PENDEK";
+    const short = (needByColor.get(warna + "|" + lengan) ?? 0) - (candByColor.get(warna + "|" + lengan) ?? 0);
+    const extra = (candByColor.get(warna + "|" + other) ?? 0) - (needByColor.get(warna + "|" + other) ?? 0);
+    if (short > 0 && extra > 0) {
+      return `${warna}: kurang ${short} roll di lengan ${lengan}, tetapi ada ${extra} roll berlebih di lengan ${other}. Kemungkinan roll salah lengan saat invoice dibukukan -- hubungi Procurement untuk koreksi.`;
+    }
+    return null;
+  }
   // Baris list yang rollnya sudah tidak tersedia lagi (mis. baru saja diklaim/terkunci) gugur otomatis.
   const visibleLines = lines.filter((l) => candidates.some((c) => c.claimKey === l.id));
 
@@ -1045,12 +1068,19 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 {gl.map((g) => {
                   const key = g.kode + "|" + g.lengan;
                   const isSel = selectedGroupKey === key;
+                  const mismatchHint = g.totalMissing > 0 ? (g.rows.map((r) => lenganMismatchHint(r.warna, g.lengan)).find((h) => !!h) ?? null) : null;
                   return (
                     <div key={key} className={"m-stack m-grid2 grid grid-cols-6 items-center gap-2 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0 " + (isSel ? "bg-[#F3F8FE]" : "")}>
                       <span className="font-mono font-medium">{g.kode}</span>
                       <span data-label="Roll aduan MRP" className="text-right font-mono font-semibold text-info-fg">{g.totalQty}</span>
                       <span data-label="Roll diterima" className={"text-right font-mono font-semibold " + (g.totalAvailable > 0 ? "text-info-fg" : "text-danger-fg")}>{g.totalAvailable}</span>
-                      <span data-label="Belum diterima" className={"text-right font-mono " + (g.totalMissing > 0 ? "font-semibold text-warning-fg" : "text-text-muted")}>{g.totalMissing}</span>
+                      <span data-label="Belum diterima" className={"text-right font-mono " + (g.totalMissing > 0 ? "font-semibold text-warning-fg" : "text-text-muted")}>{mismatchHint && (
+                          <span title={mismatchHint} aria-label={mismatchHint} className="mr-1 cursor-help text-warning-fg">
+                            ⚠
+                          </span>
+                        )}
+                        {g.totalMissing}
+                      </span>
                       <span data-label="Sudah diresting" className={"text-right font-mono " + (g.totalStarted > 0 ? "font-semibold text-success-fg" : "text-text-muted")}>{g.totalStarted}</span>
                       <span className="text-right">
                         <button

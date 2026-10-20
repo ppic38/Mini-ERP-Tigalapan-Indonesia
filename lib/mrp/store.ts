@@ -1032,7 +1032,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     backgroundRefresh();
   },
   bookInvoice: async (poId, input) => {
-    await actions.bookInvoiceAction(poId, input);
+    unwrapAction(await actions.bookInvoiceAction(poId, input));
     backgroundRefresh();
   },
   // Patch di-cek dengan guard status yang PERSIS SAMA dengan setInvoicesPaidAction (cuma

@@ -944,10 +944,21 @@ export async function getInvoiceBuktiPvAction(invoiceId: string): Promise<{ data
   return { dataUrl: old.bukti_pv_storage_path, fileName: old.bukti_pv_file_name ?? undefined };
 }
 
-export async function bookInvoiceAction(
-  poId: string,
-  input: { colorEntries: ColorEntry[]; addBuys: AddBuyItem[]; diskon: number; kodeTransaksi: string; noInvoiceVendor: string; buktiPvDataUrl?: string; buktiPvFileName?: string }
-): Promise<void> {
+type BookInvoiceInput = { colorEntries: ColorEntry[]; addBuys: AddBuyItem[]; diskon: number; kodeTransaksi: string; noInvoiceVendor: string; buktiPvDataUrl?: string; buktiPvFileName?: string };
+
+/** Revisi 2026-10-20: alasan penolakan dikembalikan sebagai NILAI ({ ok: false, error }) -- di production Next.js
+ *  menyembunyikan pesan Error yang di-throw Server Action, jadi pesan jatah PO di bawah tidak akan sampai ke
+ *  Procurement kalau dilempar. Store memanggil `unwrapAction` yang melempar ulang di sisi klien. */
+export async function bookInvoiceAction(poId: string, input: BookInvoiceInput): Promise<ActionResult<void>> {
+  try {
+    await bookInvoiceImpl(poId, input);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function bookInvoiceImpl(poId: string, input: BookInvoiceInput): Promise<void> {
   await requireInternalRole(await requireSession(), "procurement");
   // Item revisi 2026-09-17 (owner: "action create invoice/payment invoice tidak bisa dilakukan
   // kalau tidak upload lampiran invoice/bukti pembayaran"): dulu CUMA dicek client-side
@@ -958,6 +969,38 @@ export async function bookInvoiceAction(
   const db = supabaseServer();
   const { data: po, error: poErr } = await db.from("material_pos").select("*").eq("id", poId).single();
   if (poErr || !po) throw new Error("PO material tidak ditemukan.");
+
+  // Pengaman jatah PO (owner 2026-10-20): jumlah roll yang ditagihkan per warna·LENGAN tidak boleh melebihi sisa
+  // jatah PO. Kasus nyata (W38_MKS, BURGUNDY): dua invoice dibukukan berurutan memakai sisa jatah yang SAMA (data
+  // klien basi) sehingga 8 roll Pendek tercatat padahal PO hanya 4 -- vendor lalu melihat "belum diterima 4" di Panjang.
+  // Dicek ulang di sini dari data server, bukan dari hitungan klien.
+  {
+    const [{ data: breakdown }, { data: invoicedRows }] = await Promise.all([
+      db.from("material_po_color_breakdown").select("warna,lengan,roll_count").eq("material_po_id", poId),
+      db.from("material_po_invoiced_by_color").select("color_key,invoiced_rolls").eq("material_po_id", poId),
+    ]);
+    const invoicedByKey = new Map((invoicedRows ?? []).map((r) => [r.color_key as string, Number(r.invoiced_rolls)]));
+    const wanted = new Map<string, number>();
+    for (const c of input.colorEntries) {
+      const k = `${c.warna}|${c.lengan}`;
+      wanted.set(k, (wanted.get(k) ?? 0) + c.rolls.length);
+    }
+    for (const [k, qty] of wanted) {
+      if (qty <= 0) continue;
+      const [warna, lengan] = k.split("|");
+      const row = (breakdown ?? []).find((b) => b.warna === warna && b.lengan === lengan);
+      if (!row) throw new Error(`Warna ${warna} · ${lengan} tidak ada di PO ${poId}. Periksa lengan roll di invoice ini.`);
+      const ordered = Number(row.roll_count);
+      const invoiced = invoicedByKey.get(k) ?? 0;
+      const remaining = ordered - invoiced;
+      if (qty > remaining) {
+        throw new Error(
+          `Jatah PO ${poId} untuk ${warna} · ${lengan} hanya tersisa ${Math.max(0, remaining)} roll (dipesan ${ordered}, sudah ditagih ${invoiced}), tetapi invoice ini mengisi ${qty} roll. ` +
+            `Pindahkan kelebihannya ke lengan lain yang masih punya sisa jatah, lalu simpan ulang.`
+        );
+      }
+    }
+  }
 
   const qtyReady = input.colorEntries.reduce((a, c) => a + c.rolls.length, 0);
   const materialTotal = input.colorEntries.reduce((a, c) => a + c.hargaPerRoll * c.rolls.reduce((s, w) => s + w, 0), 0);
