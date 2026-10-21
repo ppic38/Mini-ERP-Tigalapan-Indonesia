@@ -1,7 +1,7 @@
 "use client";
 
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { alertDialog } from "@/components/ui/confirm-dialog";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
@@ -100,7 +100,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   // Revisi 2026-09-23 (owner: "hilangkan tampilkan/sembunyikan, tapi ada filter di header status"):
   // boolean toggle DIGANTI filter 3-opsi (Semua / Belum lengkap / Lengkap), gaya sama seperti filter
   // Status PO material di atasnya (tombol berjajar, bukan link teks).
-  const [colorStatusFilter, setColorStatusFilter] = useState<"ALL" | "BELUM" | "LENGKAP">("BELUM");
+  const [colorStatusFilter, setColorStatusFilter] = useState<"ALL" | "BELUM" | "LENGKAP">("ALL");
   const [colorWarnaQuery, setColorWarnaQuery] = useState("");
 
   const eligible = invoices.filter((i) => i.destinationVendor === vendorId && (i.status === "DELIVERY" || i.status === "RECEIVING"));
@@ -241,7 +241,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     setSelectedWarna(firstWarna ?? "");
     setDraftCode({});
     setRollPage(0);
-    setColorStatusFilter("BELUM");
+    setColorStatusFilter("ALL");
     setColorWarnaQuery("");
   }
 
@@ -312,7 +312,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     setSelectedWarna("");
     setDraftCode({});
     setRollPage(0);
-    setColorStatusFilter("BELUM");
+    setColorStatusFilter("ALL");
     setColorWarnaQuery("");
     advanceMaklonProduction(maklonPoId);
   }
@@ -413,117 +413,10 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     return invoiceBadge(i.status);
   }
 
-  return (
-    <AppShell
-      role="vendorMaklon"
-      vendorId={vendorId}
-      activeHref="/vendor-maklon/receiving"
-      breadcrumb={["Dashboard", "Good Receive"]}
-      title="Good Receive — Terima Material"
-      roleOverride={VENDOR_PRODUKSI[vendorId]?.name ?? vendorId}
-      entityOverride="Vendor Produksi"
-    >
-      <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
-        <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Pilih MRP</div>
-        <select
-          value={selectedMrpId}
-          onChange={(e) => pickMrp(e.target.value)}
-          className="mt-1 w-full max-w-[420px] rounded-md border border-[#DDE4EB] px-[11px] py-[9px] font-sans text-[12.5px] font-medium text-text-primary"
-        >
-          <option value="">— pilih MRP —</option>
-          {mrpIds.map((id) => (
-            <option key={id} value={id}>
-              {id} ({eligible.filter((i) => i.mrpId === id).length} PO)
-              {pendingMarker(countGoodReceiveEligibleForMrp(id, vendorId, invoices), "PO belum lengkap diterima")}
-            </option>
-          ))}
-        </select>
-        {mrpIds.length === 0 && <div className="mt-2 font-sans text-xs text-text-muted">Belum ada bahan berstatus DELIVERY menuju vendor Anda.</div>}
-      </div>
-
-      {selectedMrpId && (
-        <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle px-4 py-3">
-            <span className="font-sans text-[13px] font-semibold text-text-primary">PO material — {selectedMrpId}</span>
-            <div className="flex flex-wrap gap-1.5">
-              {(
-                [
-                  { key: "ALL" as const, label: `Semua (${mrpInvoicesAll.length})` },
-                  { key: "DELIVERY" as const, label: `Delivery (${deliveryCount})` },
-                  { key: "RECEIVING" as const, label: `Receiving (${receivingCount})` },
-                  { key: "PARSIAL" as const, label: `Parsial (${parsialCount})` },
-                ]
-              ).map((opt) => (
-                <button
-                  key={opt.key}
-                  onClick={() => setStatusFilter(opt.key)}
-                  className={
-                    "rounded-md border px-2.5 py-[6px] font-sans text-[11px] font-semibold " +
-                    (statusFilter === opt.key ? "border-action-primary bg-action-primary text-white" : "border-[#CBD5DF] bg-white text-action-primary")
-                  }
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          {/* Item revisi 2026-09-08 (owner: "Hilangkan saja untuk kolom warna" — terlalu padat
-              untuk PO multi-warna, apalagi sekarang detail per-warna sudah ada di ringkasan roll
-              + qty pendek/panjang begitu PO ini dipilih, lihat di bawah). */}
-          <div className="m-hide grid grid-cols-9 gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
-            <span>No PO</span>
-            <span>No. Invoice</span>
-            <span>Supplier</span>
-            <span>Status</span>
-            <span className="text-right">Roll diterima</span>
-            <span>Tanggal Kirim</span>
-            <span>Tanggal Terima</span>
-            <span>Target Selesai Produksi</span>
-            <span />
-          </div>
-          {mrpInvoices.length === 0 && (
-            <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Tidak ada PO dengan status ini.</div>
-          )}
-          {mrpInvoices.map((i) => {
-            const progress = rollArrivalProgress(i);
-            return (
-              <div key={i.id} className="m-stack m-grid2 grid grid-cols-9 items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0">
-                <span className="font-mono font-medium max-md:text-[13px]">{i.poId}</span>
-                {/* Revisi 2026-09-20 (owner): nomor invoice supplier yang diinput Procurement di Paying Voucher
-                    disematkan di daftar PO material ini. */}
-                <span data-label="No. invoice" className="break-all font-mono text-[11px] max-md:col-span-full">{i.noInvoiceVendor || "—"}</span>
-                <span data-label="Supplier">{i.supplier}</span>
-                {/* Item revisi 2026-09-06: sebelumnya 2 pill (status invoice + status kedatangan
-                    roll) tampil berdampingan di baris yang sama — dobel & membingungkan menurut
-                    owner ("tidak perlu ada dua statusnya tampil, buat saja jadi satu"). Cukup 1
-                    pill status invoice (DELIVERY/RECEIVING) yang jadi acuan alur PO; progres
-                    kedatangan roll per-warna sudah cukup terwakili kolom "Roll diterima" di
-                    sebelahnya (angka + warna teks). */}
-                <span data-label="Status">
-                  <StatusPill tone={invoiceStatusPill(i).tone}>{invoiceStatusPill(i).label}</StatusPill>
-                </span>
-                <span data-label="Roll diterima" className={"text-right font-mono " + (progress.arrived < progress.total ? "text-warning-fg" : "text-success-fg")}>
-                  {progress.arrived}/{progress.total} roll
-                </span>
-                <span data-label="Tgl kirim" className="font-mono text-[11px] text-text-muted">{formatDate(i.deliveredAt)}</span>
-                <span data-label="Tgl terima" className="font-mono text-[11px] text-text-muted">{formatDate(i.receivedAt)}</span>
-                <span data-label="Target selesai" className="font-mono text-[11px] text-text-muted">
-                  {i.receivedAt ? formatDate(addDays(i.receivedAt, VENDOR_PRODUKSI[vendorId]?.productionLeadDays ?? 7)) : "—"}
-                </span>
-                <span className="text-right max-md:[&>button]:w-full">
-                  <Button onClick={() => pickInvoice(i.id)} variant={selectedInvoiceId === i.id ? "muted" : "primary"} size="xs">
-                    {selectedInvoiceId === i.id ? "Tutup detail ✕" : "Lihat Detail →"}
-                  </Button>
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {selectedInvoice && (
-        <>
-          <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
+  // Kartu detail warna PO terpilih -- sekarang ditampilkan TEPAT di bawah baris PO yang diklik (owner 2026-10-21), bukan
+  // di bawah seluruh daftar.
+  const colorDetailInner = selectedInvoice ? (
+    <>
             {/* Revisi 2026-09-23 (owner: "yang ditabel PO-SUP-... apa tidak bisa diheader tabel
                 ditempatkan filternya? jadi di header status dan warna itu ada filternya"): filter
                 Status (Belum lengkap/Lengkap/Semua) + filter Warna (cari nama warna) DIPINDAH ke
@@ -622,8 +515,122 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                 Warna dengan 0 roll belum ada data roll dari Procurement untuk invoice ini — tidak bisa ditandai diterima di sini.
               </div>
             )}
-          </div>
+    </>
+  ) : null;
 
+  return (
+    <AppShell
+      role="vendorMaklon"
+      vendorId={vendorId}
+      activeHref="/vendor-maklon/receiving"
+      breadcrumb={["Dashboard", "Good Receive"]}
+      title="Good Receive — Terima Material"
+      roleOverride={VENDOR_PRODUKSI[vendorId]?.name ?? vendorId}
+      entityOverride="Vendor Produksi"
+    >
+      <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
+        <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Pilih MRP</div>
+        <select
+          value={selectedMrpId}
+          onChange={(e) => pickMrp(e.target.value)}
+          className="mt-1 w-full max-w-[420px] rounded-md border border-[#DDE4EB] px-[11px] py-[9px] font-sans text-[12.5px] font-medium text-text-primary"
+        >
+          <option value="">— pilih MRP —</option>
+          {mrpIds.map((id) => (
+            <option key={id} value={id}>
+              {id} ({eligible.filter((i) => i.mrpId === id).length} PO)
+              {pendingMarker(countGoodReceiveEligibleForMrp(id, vendorId, invoices), "PO belum lengkap diterima")}
+            </option>
+          ))}
+        </select>
+        {mrpIds.length === 0 && <div className="mt-2 font-sans text-xs text-text-muted">Belum ada bahan berstatus DELIVERY menuju vendor Anda.</div>}
+      </div>
+
+      {selectedMrpId && (
+        <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle px-4 py-3">
+            <span className="font-sans text-[13px] font-semibold text-text-primary">PO material — {selectedMrpId}</span>
+            <div className="flex flex-wrap gap-1.5">
+              {(
+                [
+                  { key: "ALL" as const, label: `Semua (${mrpInvoicesAll.length})` },
+                  { key: "DELIVERY" as const, label: `Delivery (${deliveryCount})` },
+                  { key: "RECEIVING" as const, label: `Receiving (${receivingCount})` },
+                  { key: "PARSIAL" as const, label: `Parsial (${parsialCount})` },
+                ]
+              ).map((opt) => (
+                <button
+                  key={opt.key}
+                  onClick={() => setStatusFilter(opt.key)}
+                  className={
+                    "rounded-md border px-2.5 py-[6px] font-sans text-[11px] font-semibold " +
+                    (statusFilter === opt.key ? "border-action-primary bg-action-primary text-white" : "border-[#CBD5DF] bg-white text-action-primary")
+                  }
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* Item revisi 2026-09-08 (owner: "Hilangkan saja untuk kolom warna" — terlalu padat
+              untuk PO multi-warna, apalagi sekarang detail per-warna sudah ada di ringkasan roll
+              + qty pendek/panjang begitu PO ini dipilih, lihat di bawah). */}
+          <div className="m-hide grid grid-cols-9 gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+            <span>No PO</span>
+            <span>No. Invoice</span>
+            <span>Supplier</span>
+            <span>Status</span>
+            <span className="text-right">Roll diterima</span>
+            <span>Tanggal Kirim</span>
+            <span>Tanggal Terima</span>
+            <span>Target Selesai Produksi</span>
+            <span />
+          </div>
+          {mrpInvoices.length === 0 && (
+            <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Tidak ada PO dengan status ini.</div>
+          )}
+          {mrpInvoices.map((i) => {
+            const progress = rollArrivalProgress(i);
+            return (
+              <Fragment key={i.id}>
+              <div className="m-stack m-grid2 grid grid-cols-9 items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0">
+                <span className="font-mono font-medium max-md:text-[13px]">{i.poId}</span>
+                {/* Revisi 2026-09-20 (owner): nomor invoice supplier yang diinput Procurement di Paying Voucher
+                    disematkan di daftar PO material ini. */}
+                <span data-label="No. invoice" className="break-all font-mono text-[11px] max-md:col-span-full">{i.noInvoiceVendor || "—"}</span>
+                <span data-label="Supplier">{i.supplier}</span>
+                {/* Item revisi 2026-09-06: sebelumnya 2 pill (status invoice + status kedatangan
+                    roll) tampil berdampingan di baris yang sama — dobel & membingungkan menurut
+                    owner ("tidak perlu ada dua statusnya tampil, buat saja jadi satu"). Cukup 1
+                    pill status invoice (DELIVERY/RECEIVING) yang jadi acuan alur PO; progres
+                    kedatangan roll per-warna sudah cukup terwakili kolom "Roll diterima" di
+                    sebelahnya (angka + warna teks). */}
+                <span data-label="Status">
+                  <StatusPill tone={invoiceStatusPill(i).tone}>{invoiceStatusPill(i).label}</StatusPill>
+                </span>
+                <span data-label="Roll diterima" className={"text-right font-mono " + (progress.arrived < progress.total ? "text-warning-fg" : "text-success-fg")}>
+                  {progress.arrived}/{progress.total} roll
+                </span>
+                <span data-label="Tgl kirim" className="font-mono text-[11px] text-text-muted">{formatDate(i.deliveredAt)}</span>
+                <span data-label="Tgl terima" className="font-mono text-[11px] text-text-muted">{formatDate(i.receivedAt)}</span>
+                <span data-label="Target selesai" className="font-mono text-[11px] text-text-muted">
+                  {i.receivedAt ? formatDate(addDays(i.receivedAt, VENDOR_PRODUKSI[vendorId]?.productionLeadDays ?? 7)) : "—"}
+                </span>
+                <span className="text-right max-md:[&>button]:w-full">
+                  <Button onClick={() => pickInvoice(i.id)} variant={selectedInvoiceId === i.id ? "muted" : "primary"} size="xs">
+                    {selectedInvoiceId === i.id ? "Tutup detail ✕" : "Lihat Detail →"}
+                  </Button>
+                </span>
+              </div>
+              {selectedInvoiceId === i.id && colorDetailInner && <div className="border-b border-[#F1F4F7] bg-[#F7F9FB] px-4 py-3.5">{colorDetailInner}</div>}
+              </Fragment>
+            );
+          })}
+        </div>
+      )}
+
+      {selectedInvoice && (
+        <>
           {(combinedRolls.length > 0 || selectedWarnaItems.length > 0) && (
             // Revisi 2026-09-20 (owner: "berantakan, susunan button tidak presisi, buat lebih simpel"):
             // kartu "Terima Material" disusun ulang jadi 2 bagian (Roll, Item Tambahan) yang berbagi
