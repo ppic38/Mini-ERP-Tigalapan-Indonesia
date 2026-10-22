@@ -735,6 +735,9 @@ export function mrpWeekNumber(mrpId: string): number | null {
  *  tanpa pola W<angka> tidak berubah. */
 export const STRICT_GOOD_RECEIVE_FROM_WEEK = 40;
 export function goodReceiveInputRequiredForMrp(mrpId: string): boolean {
+  // MRP simulasi vendor AWAL (akhiran _AWL, mis. W38_AWL) untuk video panduan: selalu wajib input, apa pun nomor minggunya,
+  // supaya rekaman memperlihatkan alur W40+ yang sebenarnya. MRP vendor nyata tidak terpengaruh.
+  if (/_AWL$/i.test(mrpId.trim())) return true;
   const w = mrpWeekNumber(mrpId);
   return w != null && w >= STRICT_GOOD_RECEIVE_FROM_WEEK;
 }

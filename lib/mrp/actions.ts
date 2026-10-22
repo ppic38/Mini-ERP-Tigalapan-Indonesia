@@ -928,14 +928,27 @@ async function saveInvoicePvFile(db: ReturnType<typeof supabaseServer>, invoiceI
 
 /** Ambil PDF lampiran PV 1 invoice on-demand (tidak ikut snapshot, lihat migration 0066) -- pola & hak akses SAMA
  *  dengan getInvoicePaymentProofAction: Finance/Procurement/Sysadmin, atau vendor tujuan invoice itu sendiri. */
-export async function getInvoiceBuktiPvAction(invoiceId: string): Promise<{ dataUrl: string; fileName?: string } | null> {
+export async function getInvoiceBuktiPvAction(invoiceId: string): Promise<ActionResult<{ dataUrl: string; fileName?: string } | null>> {
+  // Revisi 2026-10-22: alasan penolakan dikembalikan sebagai NILAI -- di production Next.js menyembunyikan pesan Error
+  // yang di-throw Server Action (klien hanya melihat "Minified React error #441"), jadi pengguna tidak tahu sebabnya.
+  try {
+    return { ok: true, data: await getInvoiceBuktiPvImpl(invoiceId) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function getInvoiceBuktiPvImpl(invoiceId: string): Promise<{ dataUrl: string; fileName?: string } | null> {
   const session = await requireSession();
   const db = supabaseServer();
-  if (session.vendorId) {
+  // Sesi bisa memuat login internal DAN login vendor sekaligus (satu browser, dua login). Akses internal diperiksa DULU:
+  // dulu sesi yang kebetulan juga login sebagai vendor selalu dicek sebagai vendor, sehingga Finance/Procurement yang
+  // masih punya login vendor di browser yang sama ditolak "bukan milik vendor Anda".
+  const internalOk = ["finance", "procurement", "sysadmin"].some((r) => session.internalRoles.includes(r as (typeof session.internalRoles)[number]));
+  if (!internalOk) {
+    if (!session.vendorId) requireAnyInternalRole(session, ["finance", "procurement", "sysadmin"]);
     const { data: inv } = await db.from("raw_material_invoices").select("destination_vendor").eq("id", invoiceId).maybeSingle();
     if (inv?.destination_vendor !== session.vendorId) throw new Error("Forbidden: invoice ini bukan milik vendor Anda.");
-  } else {
-    requireAnyInternalRole(session, ["finance", "procurement", "sysadmin"]);
   }
   const { data } = await db.from("invoice_pv_files").select("data_url,file_name").eq("invoice_id", invoiceId).maybeSingle();
   if (data) return { dataUrl: data.data_url, fileName: data.file_name ?? undefined };
@@ -1631,12 +1644,13 @@ export async function getInvoiceSupportFileAction(invoiceId: string): Promise<{ 
  *  bukan avainvoice manapun. */
 export async function getInvoicePaymentProofAction(invoiceId: string): Promise<{ dataUrl: string; fileName?: string } | null> {
   const session = await requireSession();
-  if (session.vendorId) {
+  // "sysadmin" ikut (baca-saja, sidebar bertumpuk Sysadmin melihat halaman Finance/Procurement). Akses internal diperiksa
+  // DULU (sesi bisa memuat login internal dan login vendor sekaligus), sama seperti getInvoiceBuktiPvAction.
+  const internalOk = ["finance", "procurement", "sysadmin"].some((r) => session.internalRoles.includes(r as (typeof session.internalRoles)[number]));
+  if (!internalOk) {
+    if (!session.vendorId) requireAnyInternalRole(session, ["finance", "procurement", "sysadmin"]);
     const { data: inv } = await supabaseServer().from("raw_material_invoices").select("destination_vendor").eq("id", invoiceId).maybeSingle();
     if (inv?.destination_vendor !== session.vendorId) throw new Error("Forbidden: invoice ini bukan milik vendor Anda.");
-  } else {
-    // "sysadmin" ikut (baca-saja, sidebar bertumpuk Sysadmin melihat halaman Finance/Procurement).
-    requireAnyInternalRole(session, ["finance", "procurement", "sysadmin"]);
   }
   const db = supabaseServer();
   const { data } = await db.from("invoice_payment_proofs").select("data_url,file_name").eq("invoice_id", invoiceId).maybeSingle();

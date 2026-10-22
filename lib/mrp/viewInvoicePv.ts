@@ -10,7 +10,13 @@ import { downloadDataUrl, fillPreviewWindow, openPreviewWindow } from "./clientF
 export async function viewInvoiceBuktiPv(invoiceId: string): Promise<void> {
   const win = openPreviewWindow();
   try {
-    const file = await getInvoiceBuktiPvAction(invoiceId);
+    const res = await getInvoiceBuktiPvAction(invoiceId);
+    if (!res.ok) {
+      win?.close();
+      window.alert("Gagal membuka lampiran invoice: " + res.error);
+      return;
+    }
+    const file = res.data;
     if (!file) {
       win?.close();
       window.alert("Lampiran invoice ini tidak ditemukan di server.");
