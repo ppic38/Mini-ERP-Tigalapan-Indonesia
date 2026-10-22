@@ -74,6 +74,8 @@ export const NAV: Record<RoleKey, RoleNav> = {
       // Sysadmin di halaman modulnya masing-masing (components/sysadmin/). Halaman lamanya
       // (/sysadmin/po, /sysadmin/invoice-status) masih ada & bisa dibuka lewat URL, hanya tidak
       // dipasang di menu.
+      // Panduan Vendor (owner 2026-10-22): kelola video/gambar/tautan tutorial yang tampil di halaman Panduan portal Vendor.
+      { label: "Panduan Vendor", href: "/sysadmin/panduan" },
       { label: "Log Audit", href: "/sysadmin/audit-log" },
     ],
   },

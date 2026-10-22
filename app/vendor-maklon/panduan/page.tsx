@@ -1,9 +1,13 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { MessageCircle } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import { GuideMedia } from "@/components/guide/guide-media";
+import { VENDOR_GUIDE_SECTIONS, type GuideItem } from "@/lib/guide/sections";
+import { listGuideItemsAction } from "@/lib/mrp/guideActions";
 
 const WHATSAPP_URL = "https://wa.me/6285395257703";
 const PHONE_LABEL = "0853-9525-7703";
@@ -93,6 +97,17 @@ const SECTIONS: Section[] = [
 ];
 
 function PanduanContent({ vendorId }: { vendorId: string }) {
+  // Media panduan (video/gambar/tautan) yang dikelola Sysadmin (migration 0073). Gagal memuat = halaman tetap tampil teks saja.
+  const [media, setMedia] = useState<GuideItem[]>([]);
+  useEffect(() => {
+    void listGuideItemsAction("vendor").then((res) => {
+      if (res.ok) setMedia(res.data);
+    });
+  }, []);
+  const mediaFor = (title: string) => {
+    const key = VENDOR_GUIDE_SECTIONS.find((s) => s.title === title)?.key;
+    return key ? media.filter((m) => m.sectionKey === key) : [];
+  };
   return (
     <AppShell
       role="vendorMaklon"
@@ -135,6 +150,13 @@ function PanduanContent({ vendorId }: { vendorId: string }) {
                   <li key={step}>{step}</li>
                 ))}
               </ul>
+              {mediaFor(s.title).length > 0 && (
+                <div className="mt-4 flex flex-col gap-4 border-t border-dashed border-border-subtle pt-3">
+                  {mediaFor(s.title).map((m) => (
+                    <GuideMedia key={m.id} item={m} />
+                  ))}
+                </div>
+              )}
             </div>
           </details>
         ))}
