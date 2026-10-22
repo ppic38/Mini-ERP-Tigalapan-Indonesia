@@ -151,6 +151,8 @@ export type MaklonPO = {
   approvalLevel?: number;
   approvalLog?: PoApprovalEntry[];
   approvalSubmittedAt?: string;
+  /** Migration 0072: warna|lengan yang sudah dimulai produksinya per warna (Good Receive). Kosong = semua warna ikut status PO. */
+  startedColors?: string[];
   cancelledLines: { note: string; rolls: number; warna?: string; lengan?: Lengan; pcs?: number; from?: string; time: string }[];
   /** Item 21 (migration 0016) — "Close PO" untuk siklus produksi parsial: begitu terisi, SEMUA
    *  warna/lengan PO Produksi ini terkunci (tidak ada FG/reject/rework baru) DAN semua Finish Good

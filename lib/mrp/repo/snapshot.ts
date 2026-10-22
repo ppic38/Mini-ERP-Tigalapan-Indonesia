@@ -589,6 +589,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
       approvalLevel: p.approval_level ?? undefined,
       approvalLog: (p.approval_log ?? []) as PoApprovalEntry[],
       approvalSubmittedAt: p.approval_submitted_at ?? undefined,
+      startedColors: Array.isArray(p.started_colors) && p.started_colors.length > 0 ? (p.started_colors as string[]) : undefined,
       cancelledLines: (cancelledByPo[p.id] ?? []).map((c) => ({
         note: c.note,
         rolls: Number(c.rolls),

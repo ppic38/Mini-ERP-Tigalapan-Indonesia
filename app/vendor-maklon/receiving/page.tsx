@@ -74,7 +74,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   const invoices = useMrpStore((s) => s.invoices);
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
-  const advanceMaklonProduction = useMrpStore((s) => s.advanceMaklonProduction);
+  const startProductionColors = useMrpStore((s) => s.startProductionColors);
   const markRollArrived = useMrpStore((s) => s.markRollArrived);
   const receiveRawMaterialAddBuy = useMrpStore((s) => s.receiveRawMaterialAddBuy);
   const receiveMaterialBatch = useMrpStore((s) => s.receiveMaterialBatch);
@@ -123,11 +123,14 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   // PO maklon untuk MRP ini yang masih menunggu bahan TAPI bahannya sudah mulai diterima —
   // aksi "Mulai Produksi" sengaja ditaruh di sini (bukan di PO Produksi Saya) supaya begitu
   // vendor selesai tandai roll diterima, langsung bisa lanjut produksi tanpa pindah halaman.
+  // Mulai produksi per warna (2026-10-22): PO yang sudah PRODUCTION dengan daftar warna (startedColors) juga tetap muncul di
+  // sini selama masih ada warna yang bahannya sudah diterima tapi belum dimulai.
   const readyMaklonPOs = maklonPOs.filter(
     (p) =>
       p.mrpId === selectedMrpId &&
       p.vendorProduksi === vendorId &&
-      (p.status === "FULL_WAITING_MATERIAL" || p.status === "PARTIAL_WAITING_MATERIAL") &&
+      ((p.status === "FULL_WAITING_MATERIAL" || p.status === "PARTIAL_WAITING_MATERIAL") ||
+        (p.status === "PRODUCTION" && (p.startedColors?.length ?? 0) > 0 && receivedItemsFor(p.mrpId).some((it) => !(p.startedColors ?? []).includes(it.warna + "|" + it.lengan)))) &&
       materialReceivedForMaklon(p.mrpId, p.vendorProduksi, invoices)
   );
   const colorOptions = selectedInvoice?.colorEntries ?? [];
@@ -318,7 +321,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     setRollPage(0);
     setColorStatusFilter("ALL");
     setColorWarnaQuery("");
-    advanceMaklonProduction(maklonPoId);
+    void startProductionColors(maklonPoId, "ALL").catch(() => {});
   }
 
   // Revisi 2026-09-19 (owner: "simpan semua untuk roll dan simpan semua untuk item tambahan (Rib,
@@ -921,6 +924,8 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
               const items = receivedItemsFor(p.mrpId);
               const estTotal = items.reduce((s, it) => s + it.estPcs, 0);
               const noCode = rollsWithoutCode(p.mrpId);
+              const perWarnaMode = p.status === "PRODUCTION" && (p.startedColors?.length ?? 0) > 0;
+              const colorStarted = (it: { warna: string; lengan: string }) => perWarnaMode && (p.startedColors ?? []).includes(it.warna + "|" + it.lengan);
               return (
                 <div key={p.id} className="overflow-hidden rounded-md border border-border-subtle bg-white">
                   <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 max-md:flex-col max-md:items-stretch">
@@ -930,7 +935,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                       <span className="text-text-muted">(total PO {formatPcs(p.qty)} pcs)</span>
                     </span>
                     <Button onClick={() => startProduction(p.id)} disabled={noCode.length > 0} variant="primary" size="xs">
-                      Mulai Produksi →
+                      {perWarnaMode ? "Mulai semua sisa →" : "Mulai Produksi (semua) →"}
                     </Button>
                   </div>
                   {noCode.length > 0 && (
@@ -978,6 +983,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                           <th className="px-3.5 py-1.5 text-left">Item diterima (warna · lengan)</th>
                           <th className="w-[22%] px-3 py-1.5 text-center">Roll diterima / rencana</th>
                           <th className="w-[22%] px-3 py-1.5 text-center">Estimasi (pcs)</th>
+                          <th className="w-[18%] px-3 py-1.5 text-center">Mulai per warna</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -990,6 +996,20 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                               {it.arrived}/{it.plannedRoll}
                             </td>
                             <td className="px-3 py-1.5 text-center font-mono">{formatPcs(it.estPcs)}</td>
+                            <td className="px-3 py-1.5 text-center">
+                              {colorStarted(it) ? (
+                                <span className="font-sans text-[11px] font-semibold text-success-fg">✓ Sudah dimulai</span>
+                              ) : (
+                                <Button
+                                  onClick={() => void startProductionColors(p.id, [{ warna: it.warna, lengan: it.lengan as Lengan }]).catch(() => {})}
+                                  disabled={noCode.some((r) => r.warna === it.warna && r.lengan === it.lengan)}
+                                  variant="accent"
+                                  size="xs"
+                                >
+                                  Mulai →
+                                </Button>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>

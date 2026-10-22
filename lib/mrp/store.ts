@@ -492,6 +492,8 @@ type FlowActions = {
   /** Vendor produksi berhenti mid-produksi -- lihat withdrawVendorProductionAction di actions.ts. */
   withdrawVendorProduction: (mrpId: string, fromVendor: string, toVendor: string) => Promise<void>;
   advanceMaklonProduction: (id: string) => Promise<void>;
+  /** Mulai produksi per warna (migration 0072): daftar warna|lengan, atau "ALL" untuk semua. */
+  startProductionColors: (poId: string, colors: { warna: string; lengan: Lengan }[] | "ALL") => Promise<void>;
   submitMaklonInvoice: (maklonPoId: string, input: { penalty: number; bonus: number; retentionPct: number; note: string }) => Promise<void>;
   /** Tahap 3 skema FOB (migration 0059) -- vendor ajukan invoice flat untuk 1 PO Produksi FOB.
    *  BEDA dari submitMaklonInvoice di atas (yang sudah no-op) -- ini jalur BARU, khusus FOB. */
@@ -2078,6 +2080,27 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   },
   withdrawVendorProduction: async (mrpId, fromVendor, toVendor) => {
     await actions.withdrawVendorProductionAction(mrpId, fromVendor, toVendor);
+    backgroundRefresh();
+  },
+  startProductionColors: async (poId, colors) => {
+    const previous = get().maklonPOs;
+    set({
+      maklonPOs: previous.map((p) => {
+        if (p.id !== poId) return p;
+        const waiting = p.status === "FULL_WAITING_MATERIAL" || p.status === "PARTIAL_WAITING_MATERIAL";
+        if (colors === "ALL") return { ...p, status: waiting ? "PRODUCTION" : p.status, startedColors: undefined };
+        if (!waiting && !p.startedColors) return p;
+        const keys = colors.map((c) => c.warna + "|" + c.lengan);
+        return { ...p, status: "PRODUCTION", startedColors: Array.from(new Set([...(waiting ? [] : (p.startedColors ?? [])), ...keys])) };
+      }),
+    });
+    try {
+      unwrapAction(await actions.startProductionColorsAction(poId, colors));
+    } catch (err) {
+      set({ maklonPOs: previous });
+      notifyError("Gagal memulai produksi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
     backgroundRefresh();
   },
   advanceMaklonProduction: async (id) => {

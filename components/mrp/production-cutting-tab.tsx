@@ -17,6 +17,7 @@ import {
   formatDecimal,
   formatDuration,
   lockedClaimKeys,
+  colorProductionStarted,
   materialClaimsList,
   materialClaimStage,
   materialReceivedForMaklon,
@@ -250,7 +251,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
             // masih butuh input cutting) tetap tampil apa pun status PO-nya.
             ((mrpProductionStarted(p.mrpId, vendorId, maklonPOs) &&
               ((activeStages.includes(p.status) && materialReceivedForMaklon(p.mrpId, vendorId, invoices)) ||
-                restingCandidateRolls(p.mrpId, vendorId, invoices, productionBatches, lockedKeys).length > 0)) ||
+                restingCandidateRolls(p.mrpId, vendorId, invoices, productionBatches, lockedKeys, maklonPOs).length > 0)) ||
               productionBatches.some((b) => b.mrpId === p.mrpId && b.vendorProduksi === vendorId && batchNeedsCuttingInput(b)))
         )
         .map((p) => p.mrpId)
@@ -302,7 +303,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
 
   // Dihitung SEKALIGUS untuk semua baris (bukan per-baris independen) -- baris dengan warna+lengan
   // sama berbagi satu pool roll fisik, lihat catatan di availableRollsByAduanRow.
-  const availableByRow = selectedMrpId ? availableRollsByAduanRow(aduanRows, invoices, productionBatches, selectedMrpId, lockedKeys) : {};
+  const availableByRow = selectedMrpId ? availableRollsByAduanRow(aduanRows, invoices, productionBatches, selectedMrpId, lockedKeys, maklonPOs) : {};
   const groups = new Map<string, AduanGroup>();
   for (const row of aduanRows) {
     const available = availableByRow[row.id] ?? 0;
@@ -322,7 +323,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   const groupList = Array.from(groups.values());
   const selectedGroup = groups.get(selectedGroupKey) ?? null;
 
-  const candidates = selectedMrpId ? restingCandidateRolls(selectedMrpId, vendorId, invoices, productionBatches, lockedKeys) : [];
+  const candidates = selectedMrpId ? restingCandidateRolls(selectedMrpId, vendorId, invoices, productionBatches, lockedKeys, maklonPOs) : [];
 
   // Petunjuk "salah lengan" (2026-10-20): roll yang sudah diterima tapi tercatat di lengan lain. Contoh nyata: aduan
   // butuh 23 roll Panjang tapi hanya 19 tercatat Panjang, sementara Pendek kelebihan 4 -- label "Belum diterima"
@@ -336,6 +337,12 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   for (const c of candidates) {
     const k = c.warna + "|" + c.lengan;
     candByColor.set(k, (candByColor.get(k) ?? 0) + 1);
+  }
+  // Mulai produksi per warna (2026-10-22): bahan sudah diterima tapi warna ini belum dimulai di Good Receive.
+  function notStartedHint(warna: string, lengan: Lengan): string | null {
+    if (!selectedMrpId || colorProductionStarted(selectedMrpId, vendorId, warna, lengan, maklonPOs)) return null;
+    const hasReceived = invoices.some((inv) => inv.mrpId === selectedMrpId && inv.destinationVendor === vendorId && (inv.rollArrivals[warna + "|" + lengan] ?? []).some((a) => !!a));
+    return hasReceived ? `${warna} · ${lengan}: bahan sudah diterima tetapi produksinya belum dimulai -- tekan "Mulai" untuk warna ini di Good Receive.` : null;
   }
   function lenganMismatchHint(warna: string, lengan: Lengan): string | null {
     const other: Lengan = lengan === "PENDEK" ? "PANJANG" : "PENDEK";
@@ -1068,7 +1075,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 {gl.map((g) => {
                   const key = g.kode + "|" + g.lengan;
                   const isSel = selectedGroupKey === key;
-                  const mismatchHint = g.totalMissing > 0 ? (g.rows.map((r) => lenganMismatchHint(r.warna, g.lengan)).find((h) => !!h) ?? null) : null;
+                  const mismatchHint = g.totalMissing > 0 ? (g.rows.map((r) => lenganMismatchHint(r.warna, g.lengan) ?? notStartedHint(r.warna, g.lengan)).find((h) => !!h) ?? null) : null;
                   return (
                     <div key={key} className={"m-stack m-grid2 grid grid-cols-6 items-center gap-2 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0 " + (isSel ? "bg-[#F3F8FE]" : "")}>
                       <span className="font-mono font-medium">{g.kode}</span>

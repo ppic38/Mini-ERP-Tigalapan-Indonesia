@@ -3811,6 +3811,76 @@ export async function receiveRawMaterialAddBuyAction(invoiceId: string, addBuyId
   }
 }
 
+/** Mulai produksi PER WARNA (owner 2026-10-22, migration 0072): vendor memilih warna|lengan yang bahannya sudah diterima
+ *  dan mau dimulai sekarang; warna lain tetap menunggu. `"ALL"` = mulai semua (juga warna yang belum diterima nanti), sama
+ *  seperti tombol "Mulai Produksi" lama. Hanya roll yang code rollnya terisi yang boleh dimulai. Alasan penolakan
+ *  dikembalikan sebagai nilai (pesan Error yang dilempar disembunyikan Next.js di production). */
+export async function startProductionColorsAction(poId: string, colors: { warna: string; lengan: Lengan }[] | "ALL"): Promise<ActionResult<void>> {
+  try {
+    const actor = await requireVendorSessionWithActor();
+    const db = supabaseServer();
+    const { data: po } = await db.from("maklon_pos").select("id,status,mrp_id,vendor_produksi,approved,closed_at").eq("id", poId).maybeSingle();
+    if (!po) throw new Error("PO Produksi tidak ditemukan.");
+    if (po.vendor_produksi !== actor.vendorId) throw new Error("PO Produksi ini bukan milik vendor Anda.");
+    if (!po.approved) throw new Error("PO Produksi ini belum disetujui.");
+    if (po.closed_at) throw new Error("PO Produksi ini sudah ditutup.");
+    const waiting = po.status === "FULL_WAITING_MATERIAL" || po.status === "PARTIAL_WAITING_MATERIAL";
+    if (!waiting && po.status !== "PRODUCTION") throw new Error("PO Produksi ini sudah tidak dalam tahap produksi.");
+
+    let existing: string[] | null = null;
+    if (!waiting) {
+      const { data: cur, error: curErr } = await db.from("maklon_pos").select("started_colors").eq("id", poId).maybeSingle();
+      if (!curErr && Array.isArray(cur?.started_colors) && cur.started_colors.length > 0) existing = cur.started_colors as string[];
+      // Status produksi tanpa daftar = semua warna sudah dimulai (perilaku lama) -- tidak ada yang perlu dikerjakan.
+      if (!existing) return { ok: true, data: undefined };
+    }
+
+    // Roll yang sudah diterima tapi code rollnya kosong menghalangi mulai produksi (per warna kalau mulai per warna).
+    const { data: invs } = await db.from("raw_material_invoices").select("id").eq("mrp_id", po.mrp_id).eq("destination_vendor", po.vendor_produksi);
+    const invIds = (invs ?? []).map((i) => i.id);
+    const { data: cols } = invIds.length > 0 ? await db.from("raw_material_invoice_colors").select("id,warna,lengan").in("invoice_id", invIds) : { data: [] as { id: string; warna: string; lengan: string }[] };
+    const colorMeta = new Map((cols ?? []).map((c) => [c.id, c]));
+    const { data: rolls } = (cols ?? []).length > 0
+      ? await db.from("raw_material_invoice_rolls").select("invoice_color_id,code_roll").in("invoice_color_id", (cols ?? []).map((c) => c.id)).not("received_at", "is", null)
+      : { data: [] as { invoice_color_id: string; code_roll: string | null }[] };
+    const receivedKeys = new Set<string>();
+    const noCodeKeys = new Set<string>();
+    for (const r of rolls ?? []) {
+      const m = colorMeta.get(r.invoice_color_id);
+      if (!m) continue;
+      const key = `${m.warna}|${m.lengan}`;
+      receivedKeys.add(key);
+      if (!r.code_roll || !String(r.code_roll).trim()) noCodeKeys.add(key);
+    }
+
+    if (colors === "ALL") {
+      if (noCodeKeys.size > 0) throw new Error("Belum bisa mulai produksi: ada roll yang sudah diterima tapi belum punya code roll.");
+      if (waiting) {
+        const { error } = await db.from("maklon_pos").update({ status: "PRODUCTION" }).eq("id", poId);
+        if (error) throw new Error(error.message);
+      }
+      // Hapus daftar warna (best-effort, kolom baru dari migration 0072) -- semua warna terbuka, termasuk yang diterima nanti.
+      await db.from("maklon_pos").update({ started_colors: null }).eq("id", poId);
+      await logVendorAction(actor, "Mulai Produksi (semua warna)", "maklon_pos", poId);
+      return { ok: true, data: undefined };
+    }
+
+    if (colors.length === 0) throw new Error("Pilih minimal satu warna.");
+    const keys = colors.map((c) => `${c.warna}|${c.lengan}`);
+    for (const k of keys) {
+      if (!receivedKeys.has(k)) throw new Error(`Bahan ${k.replace("|", " · ")} belum diterima di Good Receive.`);
+      if (noCodeKeys.has(k)) throw new Error(`Belum bisa mulai produksi ${k.replace("|", " · ")}: ada roll diterima yang belum punya code roll.`);
+    }
+    const next = Array.from(new Set([...(existing ?? []), ...keys]));
+    const { error } = await db.from("maklon_pos").update({ started_colors: next, ...(waiting ? { status: "PRODUCTION" } : {}) }).eq("id", poId);
+    if (error) throw new Error(error.message.includes("started_colors") ? "Jalankan migration 0072 (maklon_pos.started_colors) di Supabase dulu." : error.message);
+    await logVendorAction(actor, `Mulai Produksi per warna: ${keys.map((k) => k.replace("|", " · ")).join(", ")}`, "maklon_pos", poId);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export async function advanceMaklonProductionAction(id: string): Promise<void> {
   await requireVendorSession();
   const db = supabaseServer();
@@ -3834,6 +3904,8 @@ export async function advanceMaklonProductionAction(id: string): Promise<void> {
   }
   else if (po.status === "PRODUCTION") next = "DELIVERY";
   if (next) await db.from("maklon_pos").update({ status: next }).eq("id", id);
+  // Mulai produksi per warna (migration 0072): "Mulai Produksi" lama membuka SEMUA warna -- daftar warna dibersihkan (best-effort).
+  if (next === "PRODUCTION") await db.from("maklon_pos").update({ started_colors: null }).eq("id", id);
 }
 
 /** Tahap 3 skema FOB -- "hidupkan lagi" tabel maklon_invoices (jalur lama per-PO base-fee, sudah

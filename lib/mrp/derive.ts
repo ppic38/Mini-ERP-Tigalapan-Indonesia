@@ -1672,13 +1672,16 @@ export function restingCandidateRolls(
   vendorId: string,
   invoices: RawMaterialInvoice[],
   batches: ProductionBatch[],
-  lockedKeys: Set<string> = new Set()
+  lockedKeys: Set<string> = new Set(),
+  maklonPOs?: MaklonPO[]
 ): RestingCandidateRoll[] {
   const activeClaimKeys = new Set(materialClaimsList(invoices).map((c) => c.key));
   const out: RestingCandidateRoll[] = [];
   for (const inv of invoices) {
     if (inv.mrpId !== mrpId || inv.destinationVendor !== vendorId) continue;
     for (const c of inv.colorEntries) {
+      // Mulai produksi per warna (2026-10-22): kalau daftar PO diberikan, hanya warna yang sudah dimulai yang boleh diresting.
+      if (maklonPOs && !colorProductionStarted(mrpId, vendorId, c.warna, c.lengan, maklonPOs)) continue;
       const key = c.warna + "|" + c.lengan;
       const receipts = inv.rollReceipts[key] ?? [];
       const arrivals = inv.rollArrivals[key] ?? [];
@@ -2013,6 +2016,17 @@ export function mrpProductionStarted(mrpId: string, vendorId: string, maklonPOs:
   );
 }
 
+/** Apakah produksi warna|lengan ini SUDAH dimulai (owner 2026-10-22: mulai produksi per warna). PO masih menunggu bahan =
+ *  belum. PO berstatus produksi tanpa daftar `startedColors` = semua warna sudah (perilaku lama); dengan daftar = hanya
+ *  warna di daftar. Dipakai membatasi roll yang boleh masuk resting/cutting. */
+export function colorProductionStarted(mrpId: string, vendorId: string, warna: string, lengan: string, maklonPOs: MaklonPO[]): boolean {
+  const po = maklonPOs.find((p) => p.mrpId === mrpId && p.vendorProduksi === vendorId);
+  if (!po) return false;
+  if (po.status === "FULL_WAITING_MATERIAL" || po.status === "PARTIAL_WAITING_MATERIAL") return false;
+  if (po.startedColors && po.startedColors.length > 0) return po.startedColors.includes(warna + "|" + lengan);
+  return true;
+}
+
 export function pendingWeighRollsCount(
   vendorId: string,
   invoices: RawMaterialInvoice[],
@@ -2030,7 +2044,7 @@ export function pendingWeighRollsCount(
   for (const id of mrpIds) {
     // Kalau daftar PO Maklon diberikan, roll MRP yang produksinya BELUM dimulai tidak dihitung.
     if (maklonPOs && !mrpProductionStarted(id, vendorId, maklonPOs)) continue;
-    count += restingCandidateRolls(id, vendorId, invoices, batches, locked).length;
+    count += restingCandidateRolls(id, vendorId, invoices, batches, locked, maklonPOs).length;
   }
   return count;
 }
@@ -2055,14 +2069,16 @@ export function availableRollsByAduanRow(
   invoices: RawMaterialInvoice[],
   batches: ProductionBatch[],
   mrpId: string,
-  lockedKeys: Set<string> = new Set()
+  lockedKeys: Set<string> = new Set(),
+  maklonPOs?: MaklonPO[]
 ): Record<string, number> {
   const poolByColor = new Map<string, number>();
   const out: Record<string, number> = {};
   for (const row of aduanRows) {
     const colorKey = row.vendor + "|" + row.warna + "|" + row.lengan;
     if (!poolByColor.has(colorKey)) {
-      const received = receivedRollCountWithCodeForColor(mrpId, row.vendor, row.warna, row.lengan, invoices, lockedKeys);
+      const colorStarted = !maklonPOs || colorProductionStarted(mrpId, row.vendor, row.warna, row.lengan, maklonPOs);
+      const received = colorStarted ? receivedRollCountWithCodeForColor(mrpId, row.vendor, row.warna, row.lengan, invoices, lockedKeys) : 0;
       const sameColorRows = aduanRows.filter((a) => a.vendor === row.vendor && a.warna === row.warna && a.lengan === row.lengan);
       const startedForColor = sameColorRows.reduce((s, r) => s + startedRollsForAduan(r.id, batches), 0);
       poolByColor.set(colorKey, Math.max(0, received - startedForColor));

@@ -1798,6 +1798,8 @@ export async function sysadminRevertMaklonProductionStepAction(poId: string, rea
     }
     const { error: updErr } = await db.from("maklon_pos").update({ status: to }).eq("id", poId);
     if (updErr) throw new Error(updErr.message);
+    // Mulai produksi per warna (migration 0072): kembali menunggu bahan = daftar warna dimulai dikosongkan (best-effort).
+    if (to === "FULL_WAITING_MATERIAL" || to === "PARTIAL_WAITING_MATERIAL") await db.from("maklon_pos").update({ started_colors: null }).eq("id", poId);
     await writeAuditLog("REVERT_MAKLON_PRODUCTION_STEP", "maklon_pos", poId, reason.trim(), { status: po.status }, { status: to });
     if (po.vendor_produksi) {
       await notifyAffected(`Status PO Produksi ${poId} (${po.mrp_id}) dimundurkan Sysadmin dari ${po.status} ke ${to} — alasan: ${reason.trim()}.`, ["vendorMaklon"], po.vendor_produksi);
