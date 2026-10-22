@@ -724,6 +724,21 @@ export function effectiveMrpQty(mrpId: string, fallbackQty: number, maklonPOs: M
  *  (mis. "PO-SUP-W38-MKS-MKS-KNITTO-PT-ASPIRASI-SUKSES-APPAREL") -- primary key-nya harus unik, tapi untuk dibaca
  *  PO yang satu supplier/MRP/vendor tujuan cukup satu nama. Fungsi ini membuang akhiran entitas (+ penghitung "-2")
  *  dari id; id aslinya ("No PO ID") tetap dipakai sebagai kunci. Tanpa entitas yang cocok = id apa adanya. */
+/** Minggu MRP dari nomor MRP ("W40", "MRP_W36_MKS" -> 40); null kalau tidak berpola W<angka> (mis. MRP uji "TEST-AWL"). */
+export function mrpWeekNumber(mrpId: string): number | null {
+  const m = mrpId.toUpperCase().match(/(?:^|[^A-Z0-9])W(\d{1,3})(?![0-9])/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+/** Owner 2026-10-22: mulai MRP W40 dan seterusnya, Good Receive TIDAK lagi mengisi code roll otomatis (kolom mulai
+ *  kosong) dan roll baru bisa diterima hanya kalau code roll DAN code lot terisi. MRP lama (W39 ke bawah) dan MRP uji
+ *  tanpa pola W<angka> tidak berubah. */
+export const STRICT_GOOD_RECEIVE_FROM_WEEK = 40;
+export function goodReceiveInputRequiredForMrp(mrpId: string): boolean {
+  const w = mrpWeekNumber(mrpId);
+  return w != null && w >= STRICT_GOOD_RECEIVE_FROM_WEEK;
+}
+
 export function poDisplayNo(id: string, entity?: string | null): string {
   if (!entity) return id;
   const seg = entity.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");

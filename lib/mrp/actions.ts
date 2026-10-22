@@ -54,6 +54,7 @@ import {
   movableRollCountForInvoiceColor,
   warnaLenganGroupsWithFg,
   reworkSizeAllowed,
+  goodReceiveInputRequiredForMrp,
   reworkTargetSizeAllowed,
   KIDS_SIZES,
   rollRemainingBySizeForMrp,
@@ -1662,6 +1663,14 @@ export async function markRollArrivedAction(invoiceId: string, warna: string, le
   // Revisi 2026-09-19: code roll WAJIB terisi (jaring pengaman selain tombol UI yang sudah disabled).
   if (!codeRoll?.trim()) throw new Error("Code roll wajib diisi sebelum roll diterima.");
   await assertRollCodesUnique(db, [{ invoiceId, warna, lengan, rollIndex, codeRoll }]);
+  // W40+ (owner 2026-10-22): code lot WAJIB (diisi vendor sekarang atau sudah diisi Procurement di Paying Voucher).
+  {
+    const { data: invRow } = await db.from("raw_material_invoices").select("mrp_id").eq("id", invoiceId).maybeSingle();
+    if (invRow && goodReceiveInputRequiredForMrp(invRow.mrp_id)) {
+      const { data: existing } = await db.from("raw_material_invoice_rolls").select("code_lot,received_at").eq("invoice_color_id", colorId).eq("roll_index", rollIndex).maybeSingle();
+      if (existing && !existing.received_at && !codeLot?.trim() && !existing.code_lot?.trim()) throw new Error("Code lot wajib diisi sebelum roll diterima.");
+    }
+  }
   // Item revisi 2026-09-08: code_lot awalnya CUMA diinput Procurement saat Paying Voucher
   // (bookInvoiceAction) -- di sini SENGAJA TIDAK menyentuhnya kalau vendor tidak kirim apa pun,
   // supaya tidak MENIMPA nilai yang sudah benar dengan `null`.
@@ -1706,6 +1715,19 @@ export async function receiveMaterialBatchAction(
   const receivedAt = today();
   if (rolls.some((r) => !r.codeRoll?.trim())) throw new Error("Code roll wajib diisi untuk semua roll yang diterima.");
   await assertRollCodesUnique(db, rolls.map((r) => ({ invoiceId, warna, lengan, rollIndex: r.rollIndex, codeRoll: r.codeRoll! })));
+  // W40+ (owner 2026-10-22): code lot WAJIB untuk tiap roll baru (diisi vendor atau sudah ada dari Procurement).
+  if (rolls.length > 0) {
+    const { data: invRow } = await db.from("raw_material_invoices").select("mrp_id").eq("id", invoiceId).maybeSingle();
+    if (invRow && goodReceiveInputRequiredForMrp(invRow.mrp_id)) {
+      const { data: existingRolls } = await db.from("raw_material_invoice_rolls").select("roll_index,code_lot,received_at").eq("invoice_color_id", colorId).in("roll_index", rolls.map((r) => r.rollIndex));
+      const byIdx = new Map((existingRolls ?? []).map((x) => [Number(x.roll_index), x]));
+      const missing = rolls.filter((r) => {
+        const ex = byIdx.get(r.rollIndex);
+        return ex && !ex.received_at && !r.codeLot?.trim() && !ex.code_lot?.trim();
+      });
+      if (missing.length > 0) throw new Error(`Code lot wajib diisi untuk ${missing.length} roll sebelum diterima.`);
+    }
+  }
   // codeLot: sama aturan dengan markRollArrivedAction -- cuma disentuh kalau vendor mengisinya
   // (rollnya belum punya code_lot dari Procurement), TIDAK PERNAH ditimpa jadi null.
   const results = await Promise.all(
