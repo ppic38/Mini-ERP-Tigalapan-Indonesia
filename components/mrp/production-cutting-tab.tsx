@@ -395,17 +395,22 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
         .map((r) => ({ warna: r.warna, free: r.available - visibleLines.filter((l) => l.roll.warna === r.warna).length }))
         .filter((o) => o.free > 0)
     : [];
-  // Kandidat roll per warna (dibatasi kuota aduan pola warna itu), digabung berurutan sesuai urutan warna dipilih.
-  const pickCandidates = selectedGroup
+  // Roll BEBAS per warna (owner 2026-10-22): daftar menampilkan SEMUA roll yang masih bebas untuk warna itu (roll dipakai
+  // bersama semua kode aduan warna ini sampai di-resting), sedangkan jatah aduan pola hanya membatasi JUMLAH yang boleh
+  // dicentang per warna. Dulu daftar dipotong ke N roll pertama, sehingga operator tidak bisa memilih roll lain.
+  const pickGroupsData = selectedGroup
     ? pickWarnas.flatMap((w) => {
         const row = selectedGroup.rows.find((r) => r.warna === w);
         if (!row) return [];
         const cands = candidates.filter((c) => c.warna === w && c.lengan === selectedGroup.lengan && !visibleLines.some((l) => l.id === c.claimKey));
-        const quota = Math.max(0, row.available - visibleLines.filter((l) => l.roll.warna === w).length);
-        return cands.slice(0, quota);
+        const quota = Math.max(0, Math.min(cands.length, row.available - visibleLines.filter((l) => l.roll.warna === w).length));
+        return [{ warna: w, cands, quota }];
       })
     : [];
-  const pickMax = pickCandidates.length;
+  const pickCandidates = pickGroupsData.flatMap((g) => g.cands);
+  const pickQuotaOf = (w: string) => pickGroupsData.find((g) => g.warna === w)?.quota ?? 0;
+  const pickMax = pickGroupsData.reduce((sum, g) => sum + g.quota, 0);
+  const pickedCountOf = (w: string) => pickCandidates.filter((c) => c.warna === w && pickChecked.has(c.claimKey)).length;
 
   function openPick() {
     setPickOpen(true);
@@ -423,14 +428,23 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
     setPickChecked(new Set());
   }
   function setPickCount(n: number) {
-    const count = Math.max(0, Math.min(pickMax, Math.floor(n) || 0));
-    setPickChecked(new Set(pickCandidates.slice(0, count).map((c) => c.claimKey)));
+    let remaining = Math.max(0, Math.min(pickMax, Math.floor(n) || 0));
+    const keys: string[] = [];
+    for (const g of pickGroupsData) {
+      const take = Math.min(g.quota, remaining);
+      keys.push(...g.cands.slice(0, take).map((c) => c.claimKey));
+      remaining -= take;
+      if (remaining <= 0) break;
+    }
+    setPickChecked(new Set(keys));
   }
   function togglePick(key: string) {
+    const roll = pickCandidates.find((c) => c.claimKey === key);
+    if (!roll) return;
     setPickChecked((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
-      else if (next.size < pickMax) next.add(key);
+      else if (pickedCountOf(roll.warna) < pickQuotaOf(roll.warna)) next.add(key);
       return next;
     });
   }
@@ -1421,13 +1435,12 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                     <span className="font-sans text-[11px] text-text-muted">maks {pickMax} roll</span>
                   </div>
 
-                  <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Code roll terpilih (bisa disesuaikan)</div>
+                  <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Code roll (pilih maksimal {pickMax} · {pickChecked.size} dipilih · {pickCandidates.length} tersedia)</div>
+                  <div className="mt-0.5 font-sans text-[11px] text-text-muted">Roll dipakai bersama semua kode aduan warna ini sampai di-resting. Pilih roll mana pun yang akan dikerjakan.</div>
                   <div className="mt-1.5 flex flex-col gap-1.5">
-                    {/* Hanya roll yang dialokasikan ke aduan pola ini (sebanyak kuota/pickMax) -- roll
-                        sisa warna yang sama untuk aduan pola lain tidak ditampilkan di sini. */}
                     {pickCandidates.map((c) => {
                       const checked = pickChecked.has(c.claimKey);
-                      const disabled = !checked && pickChecked.size >= pickMax;
+                      const disabled = !checked && pickedCountOf(c.warna) >= pickQuotaOf(c.warna);
                       return (
                         <label
                           key={c.claimKey}
