@@ -378,11 +378,12 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
     setRestingError(null);
     // Revisi 2026-10-18 (owner): langsung buka popup "Tambah roll" -- tidak ada container kosong dulu. Container List roll baru
     // muncul setelah ada roll yang disimpan ke list (lihat builderPanel).
+    // Revisi 2026-10-22 (owner): popup dibuka TANPA warna terpilih -- user harus memilih warna dulu, baru jumlah dan code roll muncul.
     const g = groups.get(key);
-    const opts = g ? g.rows.filter((r) => r.available > 0).sort((a, b) => b.available - a.available).map((r) => r.warna) : [];
-    if (opts.length > 0) {
+    const hasOpts = !!g && g.rows.some((r) => r.available > 0);
+    if (hasOpts) {
       setPickOpen(true);
-      setPickWarnas(opts);
+      setPickWarnas([]);
       setPickChecked(new Set());
     }
   }
@@ -414,8 +415,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
 
   function openPick() {
     setPickOpen(true);
-    // Default: semua warna yang tersedia terpilih, yang rollnya paling banyak diprioritaskan dulu.
-    setPickWarnas([...warnaOptions].sort((a, b) => b.free - a.free).map((o) => o.warna));
+    // Default: belum ada warna terpilih (owner 2026-10-22) -- user memilih warna dulu.
+    setPickWarnas([]);
     setPickChecked(new Set());
   }
   function closePick() {
