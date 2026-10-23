@@ -12,12 +12,13 @@ import { listGuideItemsAction } from "@/lib/mrp/guideActions";
 const WHATSAPP_URL = "https://wa.me/6285395257703";
 const PHONE_LABEL = "0853-9525-7703";
 
-type Section = { title: string; intro?: string; steps: string[] };
+type Section = { key: string; title: string; intro?: string; steps: string[] };
 
 /** Panduan penggunaan portal Vendor Produksi, urut sesuai menu di sidebar. Isinya ringkas dan mengikuti alur kerja yang
  *  sebenarnya; kalau halaman berubah, perbarui bagian yang terkait di sini. */
 const SECTIONS: Section[] = [
   {
+    key: "po-produksi",
     title: "1. PO Produksi Saya",
     intro: "Daftar PO produksi yang sudah disetujui dan ditujukan ke vendor Anda.",
     steps: [
@@ -27,11 +28,13 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    key: "po-material",
     title: "2. PO Material Saya",
     intro: "Pantau material yang dikirim untuk PO Anda beserta status roll-nya.",
     steps: ["Lihat status tiap PO material: menunggu invoice, dibayar, dikirim, sampai roll diterima.", "Material yang sudah dikirim akan muncul di halaman Good Receive."],
   },
   {
+    key: "good-receive",
     title: "3. Good Receive",
     intro: "Catat roll material yang benar-benar Anda terima.",
     steps: [
@@ -41,19 +44,24 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    key: "produksi",
     title: "4. Produksi",
     intro: "Terdiri dari beberapa tab sesuai tahap kerja.",
     steps: [
-      "Cutting: pilih MRP, klik + Tambah roll, isi berat bersih tiap roll (gramasi dan setting boleh diisi sekalian atau pakai Gramasi semua), lalu klik Resting. Waktu mulai resting dicatat otomatis.",
-      "Setelah resting selesai, klik Input Hasil Cutting dan isi qty tiap size. Tombol Maks mengisi sebesar target, ▼ ▲ untuk kurang atau tambah satu. Waktu cutting dicatat otomatis saat Simpan.",
+      "Cutting: pilih MRP, lalu pilih lengan (Pendek atau Panjang) dan kode aduan. Anda bebas memulai dari kode aduan yang mana saja.",
+      "Klik + Tambah roll: pilih warna dulu (boleh lebih dari satu), tentukan jumlah roll, lalu pilih code roll yang dipakai. Roll dipakai bersama oleh semua kode aduan dengan warna yang sama, dan roll yang sudah diresting hilang dari daftar kode aduan lain.",
+      "Di List roll, isi berat bersih tiap roll (gramasi dan setting boleh diisi sekalian atau pakai Gramasi semua), lalu klik Resting. Waktu mulai resting dicatat otomatis.",
+      "Kalau ada masalah pada roll, klik Claim: pilih Selisih berat (berat bersih lebih ringan dari toleransi) atau Cacat fisik (wajib tulis keterangan). Foto bukti wajib. Roll yang diklaim terkunci dan keluar dari list.",
+      "Setelah resting selesai, klik Input Hasil Cutting dan isi qty tiap size. Tombol Maks mengisi sebesar target, ▼ ▲ untuk kurang atau tambah satu. Waktu cutting dicatat otomatis saat Simpan. Klik Edit untuk memperbaiki hasil sebelum grup Selesai Produksi.",
       "Kalau sisa kain cukup untuk size yang lebih kecil, gunakan alih size di modal hasil cutting.",
       "Bila akun utama mengaktifkan persetujuan hasil cutting, hasil dari anggota tim yang kurang dari target menunggu persetujuan akun utama dulu sebelum Finish Good bisa diisi.",
-      "Finish Good: isi hasil jadi per size untuk tiap roll, lalu Tutup Roll kalau roll itu sudah selesai. Roll yang sudah ditutup siap masuk Pengiriman.",
+      "Finish Good: isi hasil jadi per size (otomatis diisikan ke roll yang masih terbuka, mulai dari roll paling awal), lalu Tutup Roll kalau roll itu sudah selesai. Roll yang sudah ditutup siap masuk Pengiriman. Selesai Produksi pada grup warna menutup semua roll terbuka yang sudah punya Finish Good.",
       "Reject & Rework: sisa yang tidak jadi tercatat sebagai reject. Anda bisa memprosesnya menjadi rework di tab ini.",
       "Final Produksi: kunci grup warna setelah semua roll selesai. Buka kunci kalau masih perlu koreksi.",
     ],
   },
   {
+    key: "pengiriman",
     title: "5. Pengiriman",
     intro: "Kemas Finish Good menjadi koli dan kirim.",
     steps: [
@@ -63,11 +71,13 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    key: "invoice-payment",
     title: "6. Invoice & Payment",
     intro: "Pantau penagihan Anda.",
     steps: ["Invoice dibuat dari data resi pengiriman yang sama, jadi tidak perlu mengetik ulang.", "Lihat status persetujuan dan pembayaran, termasuk penyesuaian denda atau reward kalau ada."],
   },
   {
+    key: "tim-saya",
     title: "7. Tim Saya (khusus akun utama)",
     intro: "Kelola akun anggota tim Anda.",
     steps: [
@@ -78,6 +88,7 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    key: "profil",
     title: "8. Profil Saya & akun",
     steps: [
       "Klik nama Anda di pojok kanan atas, lalu Profil Saya untuk mengganti password. Username dan nama tidak bisa diubah.",
@@ -86,6 +97,7 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    key: "tips",
     title: "Tips bekerja bersama dalam satu tim",
     steps: [
       "Beberapa orang boleh bekerja bersamaan, tiap orang dengan akunnya sendiri.",
@@ -96,6 +108,70 @@ const SECTIONS: Section[] = [
   },
 ];
 
+function StepList({ steps }: { steps: string[] }) {
+  if (steps.length === 0) return null;
+  return (
+    <ul className="flex list-disc flex-col gap-1.5 pl-5 font-sans text-[12.5px] leading-[1.55] text-[#31414F]">
+      {steps.map((step) => (
+        <li key={step}>{step}</li>
+      ))}
+    </ul>
+  );
+}
+
+function MediaBlock({ items }: { items: GuideItem[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="mt-4 flex flex-col gap-4 border-t border-dashed border-border-subtle pt-3">
+      {items.map((m) => (
+        <GuideMedia key={m.id} item={m} />
+      ))}
+    </div>
+  );
+}
+
+/** Nama sub-tab = judul media yang diberi Sysadmin, tanpa awalan "Tutorial Mini ERP - " (mis. "Proses Resting", "Pengajuan Claim"). */
+function mediaTabLabel(m: GuideItem, index: number): string {
+  const t = m.title.replace(/^Tutorial\s+Mini\s+ERP\s*[-\u2013\u2014:]\s*/i, "").trim();
+  return t || `Media ${index + 1}`;
+}
+
+/** Satu media = tampil langsung. Dua media atau lebih dalam satu bagian = sub-tab, satu tab per media, supaya vendor
+ *  memilih topik yang dicari (mis. Resting, Claim) tanpa menggulir semua video. */
+function MediaTabs({ items }: { items: GuideItem[] }) {
+  const [activeId, setActiveId] = useState<string | null>(null);
+  if (items.length === 0) return null;
+  if (items.length === 1) return <MediaBlock items={items} />;
+  const active = items.find((m) => m.id === activeId) ?? items[0];
+  return (
+    <div className="mt-4 border-t border-dashed border-border-subtle pt-3">
+      <div role="tablist" className="flex flex-wrap gap-1.5 border-b border-border-subtle">
+        {items.map((m, i) => {
+          const on = m.id === active.id;
+          return (
+            <button
+              key={m.id}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              onClick={() => setActiveId(m.id)}
+              className={
+                "-mb-px rounded-t-md border border-b-0 px-3.5 py-2 font-sans text-[12px] font-semibold " +
+                (on ? "border-border-subtle bg-white text-action-primary" : "border-transparent text-text-muted hover:text-text-primary")
+              }
+            >
+              {mediaTabLabel(m, i)}
+            </button>
+          );
+        })}
+      </div>
+      <div role="tabpanel" className="pt-3">
+        <GuideMedia key={active.id} item={active} />
+      </div>
+    </div>
+  );
+}
+
 function PanduanContent({ vendorId }: { vendorId: string }) {
   // Media panduan (video/gambar/tautan) yang dikelola Sysadmin (migration 0073). Gagal memuat = halaman tetap tampil teks saja.
   const [media, setMedia] = useState<GuideItem[]>([]);
@@ -104,10 +180,7 @@ function PanduanContent({ vendorId }: { vendorId: string }) {
       if (res.ok) setMedia(res.data);
     });
   }, []);
-  const mediaFor = (title: string) => {
-    const key = VENDOR_GUIDE_SECTIONS.find((s) => s.title === title)?.key;
-    return key ? media.filter((m) => m.sectionKey === key) : [];
-  };
+  const mediaFor = (key: string) => (VENDOR_GUIDE_SECTIONS.some((s) => s.key === key) ? media.filter((m) => m.sectionKey === key) : []);
   return (
     <AppShell
       role="vendorMaklon"
@@ -137,7 +210,7 @@ function PanduanContent({ vendorId }: { vendorId: string }) {
         </a>
 
         {SECTIONS.map((s, i) => (
-          <details key={s.title} open={i === 0} className="group overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
+          <details key={s.key} open={i === 0} className="group overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
             <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 font-sans text-[13px] font-semibold text-text-primary marker:hidden [&::-webkit-details-marker]:hidden">
               <span className="flex-1">{s.title}</span>
               <span className="font-sans text-[11px] font-medium text-text-muted group-open:hidden">Buka</span>
@@ -145,18 +218,8 @@ function PanduanContent({ vendorId }: { vendorId: string }) {
             </summary>
             <div className="border-t border-border-subtle px-4 py-3">
               {s.intro && <p className="mb-2 font-sans text-[12.5px] text-text-muted">{s.intro}</p>}
-              <ul className="flex list-disc flex-col gap-1.5 pl-5 font-sans text-[12.5px] leading-[1.55] text-[#31414F]">
-                {s.steps.map((step) => (
-                  <li key={step}>{step}</li>
-                ))}
-              </ul>
-              {mediaFor(s.title).length > 0 && (
-                <div className="mt-4 flex flex-col gap-4 border-t border-dashed border-border-subtle pt-3">
-                  {mediaFor(s.title).map((m) => (
-                    <GuideMedia key={m.id} item={m} />
-                  ))}
-                </div>
-              )}
+              <StepList steps={s.steps} />
+              <MediaTabs items={mediaFor(s.key)} />
             </div>
           </details>
         ))}
