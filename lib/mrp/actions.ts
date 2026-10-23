@@ -2647,10 +2647,24 @@ async function updateBatchesToCuttingImpl(
   // client begitu saja (client bisa saja salah kirim campuran grup warna/lengan berbeda).
   const { data: batchRows, error: batchErr } = await db
     .from("production_batches")
-    .select("id,mrp_id,vendor_produksi,warna,lengan")
+    .select("id,mrp_id,vendor_produksi,warna,lengan,code_roll,closed_at")
     .in("id", batchIds);
   if (batchErr) throw new Error(batchErr.message);
   if (!batchRows || batchRows.length !== batchIds.length) throw new Error("Sebagian roll tidak ditemukan.");
+  // Aturan owner 2026-10-23: hasil cutting roll yang SUDAH punya Finish Good (>0) atau sudah ditutup tidak bisa diubah lagi,
+  // supaya angka cutting tidak bertentangan dengan Finish Good yang tercatat (mis. cutting diedit lebih kecil dari FG).
+  {
+    const { data: fgRows, error: fgErr } = await db.from("production_batch_fg_sizes").select("production_batch_id").in("production_batch_id", batchIds).gt("qty", 0);
+    if (fgErr) throw new Error(fgErr.message);
+    const withFg = new Set((fgRows ?? []).map((r) => r.production_batch_id as string));
+    const locked = batchRows.filter((b) => b.closed_at || withFg.has(b.id));
+    if (locked.length > 0) {
+      throw new Error(
+        `Hasil cutting roll ${locked.map((b) => b.code_roll || b.id).join(", ")} tidak bisa diedit karena Finish Good-nya sudah diisi atau roll sudah ditutup. ` +
+          `Buka lagi roll dan koreksi Finish Good-nya (Edit FG) di halaman Finish Good dulu, baru edit hasil cutting.`
+      );
+    }
+  }
   // Revisi 2026-09-19 (bug: "tidak bisa input hasil cutting"): modal Input Hasil Cutting bekerja
   // per SESI RESTING (kode aduan + lengan + jam resting, lihat restingSessionGroups) -- 1 sesi
   // bisa berisi roll dari BEBERAPA warna (mis. ORANGE BATA + TOFFEE), artinya beberapa grup

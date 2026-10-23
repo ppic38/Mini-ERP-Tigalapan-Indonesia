@@ -95,6 +95,13 @@ function batchNeedsCuttingInput(b: ProductionBatch): boolean {
   return Object.values(b.sizeQty).every((v) => !v || v <= 0);
 }
 
+/** Aturan owner 2026-10-23: hasil cutting sebuah roll hanya bisa diedit selama roll itu BELUM punya Finish Good (>0) dan BELUM
+ *  ditutup. Setelah itu terkunci supaya angka cutting dan Finish Good tidak bertentangan -- untuk mengubahnya, buka lagi roll
+ *  dan koreksi Finish Good-nya di halaman Finish Good dulu. Ditegakkan juga di server (updateBatchesToCuttingImpl). */
+function batchCuttingLocked(b: ProductionBatch): boolean {
+  return !!b.closedAt || Object.values(b.fgSizeQty ?? {}).some((q) => q > 0);
+}
+
 type AduanGroup = { kode: string; lengan: Lengan; rows: (AduanPolaRow & { available: number })[]; totalQty: number; totalAvailable: number; totalStarted: number; totalMissing: number };
 
 /** 1 baris di "List roll" (sebelum Resting): roll yang sudah dipilih lewat popup + isian per roll. */
@@ -599,7 +606,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   // tersimpan. Alur input baru mulai KOSONG (tidak lagi terisi otomatis dengan target).
   function openCuttingGroupModal(sessionKey: string, editAll = false) {
     const session = sessionGroups.find((g) => g.key === sessionKey);
-    const groupBatches = editAll ? (session?.batches ?? []) : (session?.batches ?? []).filter(batchNeedsCuttingInput);
+    const groupBatches = editAll ? (session?.batches ?? []).filter((b) => !batchCuttingLocked(b)) : (session?.batches ?? []).filter(batchNeedsCuttingInput);
     // Keadaan roll yang DILIHAT pemakai saat mulai mengedit -- dikirim ke server saat Simpan supaya hasil cutting yang
     // baru diisi tim lain tidak tertimpa (lihat assertBatchesUnchanged di actions.ts).
     setCuttingBase(Object.fromEntries(groupBatches.map((b) => [b.id, { cuttingAt: b.cuttingAt ?? null, sizeQty: { ...(b.sizeQty ?? {}) } }])));
@@ -1207,13 +1214,35 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                       {sessionComplete ? (
                         <span className="flex items-center gap-1.5">
                           {formatDateTime(earliestCuttingAt ?? g.restingAt)}
-                          <button
-                            onClick={() => openCuttingGroupModal(g.key, true)}
-                            title="Edit hasil cutting sesi ini"
-                            className="font-sans text-[10.5px] font-semibold text-action-primary underline"
-                          >
-                            Edit ✎
-                          </button>
+                          {(() => {
+                            const lockedCount = g.batches.filter(batchCuttingLocked).length;
+                            if (lockedCount === g.batches.length) {
+                              return (
+                                <span
+                                  title="Finish Good roll sudah diisi atau roll sudah ditutup. Untuk mengedit hasil cutting: Buka lagi roll dan koreksi Finish Good-nya (Edit FG) di halaman Finish Good dulu."
+                                  className="font-sans text-[10.5px] font-semibold text-text-muted"
+                                >
+                                  Terkunci 🔒
+                                </span>
+                              );
+                            }
+                            return (
+                              <>
+                                <button
+                                  onClick={() => openCuttingGroupModal(g.key, true)}
+                                  title="Edit hasil cutting sesi ini"
+                                  className="font-sans text-[10.5px] font-semibold text-action-primary underline"
+                                >
+                                  Edit ✎
+                                </button>
+                                {lockedCount > 0 && (
+                                  <span title="Roll yang Finish Good-nya sudah diisi atau sudah ditutup tidak bisa diedit hasil cuttingnya." className="font-sans text-[10px] text-text-muted">
+                                    {lockedCount} roll terkunci
+                                  </span>
+                                )}
+                              </>
+                            );
+                          })()}
                         </span>
                       ) : (
                         <Button onClick={() => openCuttingGroupModal(g.key)} variant="primary" size="xs">
@@ -1593,7 +1622,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
           const session = sessionGroups.find((g) => g.key === activeCuttingGroupKey);
           if (!session) return null;
           const { kode, lengan, partNo, partTotal } = session;
-          const groupBatches = cuttingGroupEditAll ? session.batches : session.batches.filter(batchNeedsCuttingInput);
+          const groupBatches = cuttingGroupEditAll ? session.batches.filter((b) => !batchCuttingLocked(b)) : session.batches.filter(batchNeedsCuttingInput);
+          const lockedInSession = cuttingGroupEditAll ? session.batches.length - groupBatches.length : 0;
           if (groupBatches.length === 0) return null;
           const byWarna = new Map<string, typeof groupBatches>();
           for (const b of groupBatches) byWarna.set(b.warna, [...(byWarna.get(b.warna) ?? []), b]);
@@ -1658,6 +1688,11 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                     </span>
                     <span>{groupBatches.length} roll</span>
                     <span>Waktu cutting dicatat otomatis saat Simpan</span>
+                    {lockedInSession > 0 && (
+                      <span className="text-warning-fg">
+                        {lockedInSession} roll tidak ditampilkan: Finish Good sudah diisi atau roll sudah ditutup
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="flex-1 overflow-y-auto px-5 py-3">
