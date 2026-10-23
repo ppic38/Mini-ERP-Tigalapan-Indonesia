@@ -41,6 +41,7 @@ import type { DeliveryKoli, DeliveryKoliItem, Lengan, ShippableKind } from "@/li
 const PRODUCT_KIND_OPTIONS: { value: ShippableKind; label: string }[] = [
   { value: "FG", label: "Finish Good" },
   { value: "REWORK", label: "Rework" },
+  { value: "REJECT", label: "Reject" },
 ];
 
 /** Kunci unik 1 baris "Isi koli" — kombinasi jenis produk + warna + lengan + size + usia. Dulu
@@ -232,6 +233,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   const availableByKind: Record<ShippableKind, ReturnType<typeof availableFgToShip>> = {
     FG: availableFor("FG"),
     REWORK: availableFor("REWORK"),
+    REJECT: availableFor("REJECT"),
   };
 
   // Satu baris tetap per kombinasi jenis produk+warna+lengan+size+usia yang benar-benar tersedia
@@ -681,7 +683,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
         {mrpId && anyAvailable && (
           <div className="mt-4">
             <div className="flex items-center justify-between gap-2">
-              <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Rework &amp; sisa FG lama</div>
+              <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Rework, Reject &amp; sisa FG lama</div>
               <ColumnMenu
                 columns={[
                   { key: "jenis", label: "Jenis produk" },

@@ -452,7 +452,10 @@ export type ProductionResult = {
 // (lihat PRODUCT_KIND_OPTIONS di app/vendor-maklon/pengiriman/page.tsx). DeliveryItemKind tetap
 // mengizinkan "REJECT" supaya koli LAMA yang sudah terlanjur berisi baris Reject (dari sebelum
 // perubahan ini) masih typecheck & tampil normal -- tidak ada migrasi/penghapusan data historis.
-export type ShippableKind = "FG" | "REWORK";
+// Revisi 2026-10-23 (owner): REJECT kembali boleh dikirim, TAPI hanya sisa reject warna·lengan yang remark-nya sudah dikonfirmasi
+// di tab Reject & Rework (lihat availableRejectToShip). Reject yang dikirim tidak ditagihkan, tidak ikut HPP/ongkir, dan tidak
+// dikirim ke WMS (lihat isBillableKoliItem di derive.ts + migration 0074).
+export type ShippableKind = "FG" | "REWORK" | "REJECT";
 export type DeliveryItemKind = ShippableKind | "REJECT";
 
 export type DeliveryKoliItem = {

@@ -24,6 +24,7 @@ import {
   formatDateTimeShort,
   productionGroupMetaFor,
   rejectGrossForGroup,
+  rejectShippedBySize,
   reworkBySizeForGroup,
   reworkedAwayBySize,
   reworkQtyForGroup,
@@ -131,6 +132,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const productionBatches = useMrpStore((s) => s.productionBatches);
   const productionResults = useMrpStore((s) => s.productionResults);
+  const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
   const productionGroupMeta = useMrpStore((s) => s.productionGroupMeta);
   const rawInvoices = useMrpStore((s) => s.invoices);
   const rejectRemarks = useMrpStore((s) => s.rejectRemarks);
@@ -463,7 +465,10 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                               return <div className="px-3 py-3 text-center font-sans text-[11px] text-text-muted">Tidak ada reject — finish good sudah mencapai target.</div>;
                             }
                             return rejectSizes.map((size) => {
-                              const sisa = recorded[size] ?? 0;
+                              const sisaReject = recorded[size] ?? 0;
+                              // Reject yang sudah masuk koli pengiriman tidak bisa dirework lagi.
+                              const shippedReject = rejectShippedBySize(selectedMrpId, vendorId, deliveryKolis).get(`${g.warna}|${g.lengan}|${size}|`) ?? 0;
+                              const sisa = Math.max(0, sisaReject - shippedReject);
                               const isOpen = reworkOpen?.groupKey === groupKey && reworkOpen.size === size;
                               // Rework butuh izin REWORK & grup belum dikunci Final Produksi (server menolak kalau sudah).
                               const canDoRework = canRework && !sysadmin && !isFinalDone && sisa > 0;
@@ -473,7 +478,10 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                     <span data-label="Size" className="font-mono font-medium">{size}</span>
                                     <span data-label="Reject (otomatis)" className="text-right font-mono">{grossPerSize[size] ?? 0}</span>
                                     <span data-label="Rework" className="text-right font-mono text-success-fg">{reworkPerSize[size] ?? 0}</span>
-                                    <span data-label="Sisa reject" className="text-right font-mono text-danger-fg">{sisa}</span>
+                                    <span data-label="Sisa reject" className="text-right font-mono text-danger-fg">
+                                      {sisaReject}
+                                      {shippedReject > 0 && <span className="ml-1 font-sans text-[10px] font-normal text-text-muted">({shippedReject} dikirim)</span>}
+                                    </span>
                                     <span className="text-right max-md:[&>button]:w-full">
                                       {canDoRework ? (
                                         isOpen ? (

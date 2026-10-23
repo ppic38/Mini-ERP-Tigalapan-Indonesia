@@ -48,7 +48,9 @@ import {
   actualCutSizesForGroup,
   reworkQtyForGroup,
   wasteQtyForGroup,
+  availableRejectToShip,
   cumulativeSizeQtyForGroup,
+  rejectShippedBySize,
   expectedRejectGrossForGroup,
   weightVariance,
   movableRollCountForInvoiceColor,
@@ -4689,6 +4691,19 @@ export async function reworkRejectSizeAction(input: { mrpId: string; vendorProdu
     );
   }
 
+  // Rework tidak boleh melebihi sisa reject yang BELUM dikirim (owner 2026-10-23: reject yang sudah masuk koli tidak bisa dirework lagi).
+  {
+    const snapshot = await getFlowSnapshot();
+    const sisa = cumulativeSizeQtyForGroup(sourceGroupKey, "REJECT", snapshot.productionResults)[input.fromSize] ?? 0;
+    const shipped = rejectShippedBySize(input.mrpId, input.vendorProduksi, snapshot.deliveryKolis).get(`${input.warna}|${input.lengan}|${input.fromSize}|`) ?? 0;
+    if (input.qty > sisa - shipped) {
+      throw new Error(
+        shipped > 0
+          ? `Reject size ${input.fromSize} yang bisa dirework tinggal ${Math.max(0, sisa - shipped)} pieces, karena ${shipped} pieces sudah masuk pengiriman.`
+          : `Rework size ${input.fromSize} melebihi sisa reject (${sisa}).`
+      );
+    }
+  }
   const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", input.mrpId).eq("vendor_produksi", input.vendorProduksi).maybeSingle();
   const rejectId = await nextReadableId("PR");
   const fgId = await nextReadableId("PR");
@@ -5017,12 +5032,27 @@ export async function reopenProductionPoAction(maklonPoId: string): Promise<void
  *  koli yang sudah ada tidak salah menganggap qty koli itu sendiri sebagai "sudah terpakai orang
  *  lain" (lihat pemanggil). Item TANPA `sourceBatchId` (Rework/legacy) tidak disentuh sama sekali. */
 async function clampDeliveryItemsBySourceBatch(items: DeliveryKoliItem[], mrpId: string, vendorProduksi: string, excludeKoliId: string | undefined): Promise<DeliveryKoliItem[]> {
-  if (!items.some((it) => it.sourceBatchId)) return items;
+  if (!items.some((it) => it.sourceBatchId || it.kind === "REJECT")) return items;
   const snapshot = await getFlowSnapshot();
   const remainingRows = rollRemainingBySizeForMrp(mrpId, vendorProduksi, snapshot.productionBatches, snapshot.deliveryKolis, snapshot.maklonPOs, snapshot.productionGroupMeta, excludeKoliId);
   const remainingByRoll = new Map(remainingRows.map((r) => [r.roll.id, { ...r.remaining }]));
+  // Reject (owner 2026-10-23): hanya sisa reject yang remark-nya sudah dikonfirmasi -- dihitung ULANG di server, bukan dari klien.
+  const maklonPO = snapshot.maklonPOs.find((p) => p.mrpId === mrpId && p.vendorProduksi === vendorProduksi);
+  const rejectRemaining = new Map<string, number>();
+  if (!maklonPO?.closedAt) {
+    for (const r of availableRejectToShip(mrpId, vendorProduksi, snapshot.productionResults, snapshot.deliveryKolis, snapshot.productionGroupMeta, excludeKoliId)) {
+      rejectRemaining.set(r.warna + "|" + r.lengan + "|" + r.size, r.available);
+    }
+  }
   return items
     .map((it) => {
+      if (it.kind === "REJECT") {
+        const key = it.warna + "|" + it.lengan + "|" + it.size;
+        const avail = rejectRemaining.get(key) ?? 0;
+        const qty = Math.min(it.qty, avail);
+        rejectRemaining.set(key, avail - qty);
+        return { ...it, qty, sourceBatchId: undefined };
+      }
       if (!it.sourceBatchId) return it;
       const remaining = remainingByRoll.get(it.sourceBatchId);
       const avail = remaining?.[it.size] ?? 0;

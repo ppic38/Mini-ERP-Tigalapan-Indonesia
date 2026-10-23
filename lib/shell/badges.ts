@@ -401,8 +401,8 @@ export function countVendorPengirimanReady(
   ]).size;
 }
 
-// Item 20: Reject bukan lagi shippable -- source cuma FG & REWORK, sama seperti mrpIdsWithUnpackedFg.
-const SHIPPABLE_SOURCES: ShippableKind[] = ["FG", "REWORK"];
+// Reject ikut (owner 2026-10-23, hanya yang remark-nya sudah dikonfirmasi), sama seperti mrpIdsWithUnpackedFg.
+const SHIPPABLE_SOURCES: ShippableKind[] = ["FG", "REWORK", "REJECT"];
 
 /** Item 3.2 — beda dari countVendorPengirimanReady di atas (yang cuma MENGHITUNG MRP), ini
  *  menjumlahkan PCS yang masih belum dikemas untuk SATU MRP, dipakai marker dropdown "pilih MRP"

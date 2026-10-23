@@ -2,7 +2,7 @@ import { MATERIAL_RATE_PER_ROLL, ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "./see
 import type { MrpDetail, PpicApprovalStatus } from "./store";
 import type { EkspedisiRateRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, SupplierRow, VendorProduksiMasterRow } from "./masterData";
 import { MIGRASI_SUPPLIER } from "./migrationTypes";
-import type { AduanPolaRow, ColorBreakdown, DeliveryItemKind, DeliveryKoli, Lengan, LenganGroup, MaklonInvoice, MaklonPO, MaterialPO, MaterialRow, Mrp, ProductionBatch, ProductionGroupMeta, ProductionResult, ProductionResultKind, ProductionYieldResolution, RawMaterialInvoice, ShippableKind, Usia, VendorDepositEntry, VendorInvoice, VendorInvoiceLine, WarehouseReceipt } from "./types";
+import type { AduanPolaRow, ColorBreakdown, DeliveryItemKind, DeliveryKoli, DeliveryKoliItem, Lengan, LenganGroup, MaklonInvoice, MaklonPO, MaterialPO, MaterialRow, Mrp, ProductionBatch, ProductionGroupMeta, ProductionResult, ProductionResultKind, ProductionYieldResolution, RawMaterialInvoice, ShippableKind, Usia, VendorDepositEntry, VendorInvoice, VendorInvoiceLine, WarehouseReceipt } from "./types";
 
 export function formatRupiah(n: number) {
   return "Rp " + Math.round(n).toLocaleString("id-ID");
@@ -2771,6 +2771,7 @@ function isRollClosureResult(r: ProductionResult): boolean {
 // Item 20: Reject bukan lagi produk yang bisa dikirim -- resultMatchesShippableKind sekarang cuma
 // membedakan FG "murni" (hasil cutting langsung) vs REWORK (reject yang dipotong ulang jadi FG).
 function resultMatchesShippableKind(r: ProductionResult, source: ShippableKind): boolean {
+  if (source === "REJECT") return false; // reject dihitung lewat availableRejectToShip, bukan dari baris FG
   if (source === "REWORK") return r.kind === "FG" && isReworkResult(r);
   return r.kind === "FG" && !isReworkResult(r) && !isRollClosureResult(r);
 }
@@ -2811,6 +2812,43 @@ export function fgPackedBySize(mrpId: string, vendorProduksi: string, kolis: Del
 // Yang MASIH bisa memblokir pengiriman: Close PO (item 21, `MaklonPO.closedAt`) -- begitu PO
 // Produksi (mrpId+vendorProduksi) ditutup, SEMUA Finish Good yang belum masuk koli langsung tidak
 // shippable lagi, termasuk yang sudah fgConfirmed sebelum ditutup.
+/** Item koli yang DITAGIHKAN & ikut HPP/ongkir. Reject yang dikirim (owner 2026-10-23) tidak ditagihkan, tidak ikut hitungan HPP,
+ *  dan tidak dikirim ke WMS -- hanya dicatat di pengiriman dan Warehouse. */
+export function isBillableKoliItem(it: Pick<DeliveryKoliItem, "kind">): boolean {
+  return (it.kind ?? "FG") !== "REJECT";
+}
+
+/** Reject yang boleh dikirim (owner 2026-10-23): sisa reject (reject otomatis dikurangi yang sudah dirework) per size, hanya untuk
+ *  warna·lengan yang REMARK sisa reject-nya sudah DIKONFIRMASI di tab Reject & Rework, dikurangi reject yang sudah masuk koli
+ *  lain. Remark dibatalkan = reject yang belum dikemas tidak tersedia lagi (yang sudah terkirim tetap tercatat). */
+export function availableRejectToShip(
+  mrpId: string,
+  vendorProduksi: string,
+  results: ProductionResult[],
+  kolis: DeliveryKoli[],
+  productionGroupMeta: ProductionGroupMeta[],
+  excludeKoliId?: string
+): AvailableFgRow[] {
+  const packed = fgPackedBySize(mrpId, vendorProduksi, kolis, excludeKoliId, "REJECT");
+  const groupKeys = new Set(results.filter((r) => r.mrpId === mrpId && r.vendorProduksi === vendorProduksi && r.kind === "REJECT").map((r) => r.groupKey));
+  const out: AvailableFgRow[] = [];
+  for (const groupKey of groupKeys) {
+    if (!productionGroupMetaFor(groupKey, productionGroupMeta)?.remarkSisaReject?.trim()) continue;
+    const [, warna, lengan] = groupKey.split("|");
+    for (const [size, qty] of Object.entries(cumulativeSizeQtyForGroup(groupKey, "REJECT", results))) {
+      const available = qty - (packed.get(warna + "|" + lengan + "|" + size + "|") ?? 0);
+      if (available > 0) out.push({ warna, lengan: lengan as Lengan, size, available });
+    }
+  }
+  return out;
+}
+
+/** Reject yang sudah masuk koli (selain koli `excludeKoliId`) per warna|lengan|size -- dipakai membatasi rework supaya reject yang
+ *  sudah dikirim tidak bisa dirework lagi. */
+export function rejectShippedBySize(mrpId: string, vendorProduksi: string, kolis: DeliveryKoli[]): Map<string, number> {
+  return fgPackedBySize(mrpId, vendorProduksi, kolis, undefined, "REJECT");
+}
+
 export function availableFgToShip(
   mrpId: string,
   vendorProduksi: string,
@@ -2823,6 +2861,7 @@ export function availableFgToShip(
 ): AvailableFgRow[] {
   const maklonPO = maklonPOs.find((p) => p.mrpId === mrpId && p.vendorProduksi === vendorProduksi);
   if (maklonPO?.closedAt) return [];
+  if (source === "REJECT") return availableRejectToShip(mrpId, vendorProduksi, results, kolis, productionGroupMeta, excludeKoliId);
   const produced = fgProducedBySize(mrpId, vendorProduksi, results, source);
   const packed = fgPackedBySize(mrpId, vendorProduksi, kolis, excludeKoliId, source);
   const out: AvailableFgRow[] = [];
@@ -2920,8 +2959,8 @@ export function mrpIdsWithUnpackedFg(
   productionGroupMeta: ProductionGroupMeta[],
   maklonPOs: MaklonPO[]
 ): string[] {
-  // Item 20: Reject bukan lagi shippable -- source cuma FG & REWORK.
-  const sources: ShippableKind[] = ["FG", "REWORK"];
+  // Reject ikut (owner 2026-10-23) selama remark sisa reject-nya sudah dikonfirmasi.
+  const sources: ShippableKind[] = ["FG", "REWORK", "REJECT"];
   const mrpIds = Array.from(new Set(results.filter((r) => r.vendorProduksi === vendorProduksi).map((r) => r.mrpId)));
   return mrpIds.filter((mrpId) =>
     sources.some((source) => availableFgToShip(mrpId, vendorProduksi, results, kolis, productionGroupMeta, maklonPOs, undefined, source).length > 0)
@@ -2961,7 +3000,7 @@ export function deliveredQtyByMrp(vendorProduksi: string, kolis: DeliveryKoli[])
   const map = new Map<string, DeliveredQtyRow>();
   for (const k of kolis) {
     if (k.vendorProduksi !== vendorProduksi || !k.deliveredAt) continue;
-    for (const it of k.items) {
+    for (const it of k.items.filter(isBillableKoliItem)) {
       const key = invoiceLineKey(k.mrpId, it.warna, it.lengan, it.usia);
       const cur = map.get(key) ?? { mrpId: k.mrpId, warna: it.warna, lengan: it.lengan, usia: it.usia, qty: 0 };
       cur.qty += it.qty;
@@ -2984,7 +3023,7 @@ export function resiGroupInvoiceLines(koliIds: string[], allKolis: DeliveryKoli[
   const map = new Map<string, DeliveredQtyRow>();
   for (const k of allKolis) {
     if (!idSet.has(k.id)) continue;
-    for (const it of k.items) {
+    for (const it of k.items.filter(isBillableKoliItem)) {
       const key = invoiceLineKey(k.mrpId, it.warna, it.lengan, it.usia);
       const cur = map.get(key) ?? { mrpId: k.mrpId, warna: it.warna, lengan: it.lengan, usia: it.usia, qty: 0 };
       cur.qty += it.qty;
@@ -3007,7 +3046,7 @@ export function koliBreakdownForLine(mrpId: string, warna: string, lengan: Lenga
   const out: KoliBreakdownRow[] = [];
   for (const k of kolis) {
     if (k.vendorProduksi !== vendorProduksi || k.mrpId !== mrpId || !k.deliveredAt) continue;
-    const qty = k.items.filter((it) => it.warna === warna && it.lengan === lengan && it.usia === usia).reduce((s, it) => s + it.qty, 0);
+    const qty = k.items.filter((it) => isBillableKoliItem(it) && it.warna === warna && it.lengan === lengan && it.usia === usia).reduce((s, it) => s + it.qty, 0);
     if (qty > 0) out.push({ koliId: k.id, noKoli: k.noKoli, deliveredAt: k.deliveredAt, qty });
   }
   return out;
@@ -3672,7 +3711,7 @@ export function hppRowsForInvoice(
   const mrpIdsInInvoice = Array.from(new Set(inv.lines.map((l) => l.mrpId)));
   const totalPcsInKoli = deliveryKolis
     .filter((k) => k.vendorProduksi === inv.vendorProduksi && mrpIdsInInvoice.includes(k.mrpId))
-    .flatMap((k) => k.items)
+    .flatMap((k) => k.items.filter(isBillableKoliItem))
     .reduce((s, it) => s + it.qty, 0);
 
   const denda = vendorInvoiceAdjustmentTotal(inv, "DENDA");
@@ -4069,7 +4108,7 @@ export function hppRowsForInvoicePerRoll(
       // begitu 1 roll+size dibawa >1 koli (bisa nemu koli yang salah, atau nemu koli PERTAMA saja
       // padahal chunk ini sedang mewakili koli LAIN).
       const koli = c.koli;
-      const totalPcsInKoli = koli.items.reduce((s, it) => s + it.qty, 0);
+      const totalPcsInKoli = koli.items.filter(isBillableKoliItem).reduce((s, it) => s + it.qty, 0);
       // Revisi 2026-09-10: field manual "Ongkir batch ini" (`ongkirBatch`) DIHAPUS dari aplikasi
       // (owner minta ongkir SELALU otomatis dari tarif ekspedisi x berat koli, lihat migration
       // 0024). Revisi 2026-09-11 (migration 0026): kalau koli ini bagian dari grup resi (>1 koli
@@ -4142,7 +4181,7 @@ export function hppRowsForInvoicePerRoll(
       if (takeEnd <= takeStart) continue;
       const takeQty = takeEnd - takeStart;
 
-      const totalPcsInKoli = c.koli.items.reduce((s, it) => s + it.qty, 0);
+      const totalPcsInKoli = c.koli.items.filter(isBillableKoliItem).reduce((s, it) => s + it.qty, 0);
       const koliOngkirTotal = koliOngkirShare(c.koli, deliveryKolis, ekspedisiRates);
       const ongkirPerPc = totalPcsInKoli > 0 ? koliOngkirTotal / totalPcsInKoli : 0;
 
@@ -4227,7 +4266,7 @@ export function hppRowsForInvoicePerRoll(
     let correctOngkirTotal = 0;
     let correctTotalPcs = 0;
     for (const k of relevantKolis) {
-      const totalPcsInKoli = k.items.reduce((s, it) => s + it.qty, 0);
+      const totalPcsInKoli = k.items.filter(isBillableKoliItem).reduce((s, it) => s + it.qty, 0);
       if (totalPcsInKoli <= 0) continue;
       const koliOngkirTotal = koliOngkirShare(k, deliveryKolis, ekspedisiRates);
       const rollCoveredPcs = Math.min(totalPcsInKoli, rollCoveredPcsForKoli(k, productionBatches));
@@ -4510,6 +4549,11 @@ export function warehouseReceivableGroups(
 
     for (const koli of kolis) {
       for (const it of koli.items) {
+        if (it.kind === "REJECT") {
+          // Reject (owner 2026-10-23): hanya dicatat -- tanpa HPP, tidak ikut gate invoice, tidak dikirim ke WMS.
+          items.push({ deliveryKoliId: koli.id, warna: it.warna, lengan: it.lengan, size: it.size, kind: it.kind, qty: it.qty, sourceBatchId: it.sourceBatchId, hppPerItem: 0 });
+          continue;
+        }
         const isRework = it.kind === "REWORK";
         const matches = hppRowsInGroup.filter(
           (r) => r.koliId === koli.id && r.warna === it.warna && r.lengan === it.lengan && r.jenis.slice(r.lengan.length + 1) === it.size && isReworkHppRow(r) === isRework
@@ -4529,7 +4573,11 @@ export function warehouseReceivableGroups(
     const invoiceIds = Array.from(invoiceIdSet);
 
     let gateReason: string | null = null;
-    if (invoiceIds.length === 0) {
+    const hasBillableItems = kolis.some((k) => k.items.some(isBillableKoliItem));
+    if (!hasBillableItems) {
+      // Resi yang HANYA berisi reject tidak punya invoice -- Warehouse boleh langsung mencatat penerimaannya.
+      gateReason = null;
+    } else if (invoiceIds.length === 0) {
       gateReason = "Belum ada invoice vendor untuk resi ini";
     } else {
       const invoicesInGroup = invoiceIds.map((id) => invoiceById.get(id)).filter((i): i is VendorInvoice => !!i);

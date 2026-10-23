@@ -272,7 +272,9 @@ export function GroupRemarkBox({ groupKey, fallback }: { groupKey: string; fallb
         </div>
       )}
       <div className="mt-1.5 font-sans text-[10.5px] leading-[1.5] text-text-muted">
-        {saved ? "Warna ini sudah ditandai ditangani — tidak lagi dihitung di badge." : "Setelah dikonfirmasi, sisa reject warna ini tidak lagi dihitung sebagai pekerjaan tertunda (badge padam)."}
+        {saved
+          ? "Warna ini sudah ditandai ditangani — tidak lagi dihitung di badge. Sisa reject-nya sekarang bisa dikirim lewat halaman Pengiriman."
+          : "Setelah dikonfirmasi, sisa reject warna ini tidak lagi dihitung sebagai pekerjaan tertunda (badge padam) dan bisa dikirim lewat halaman Pengiriman."}
       </div>
       {error && <div className="mt-1.5 font-sans text-[11px] text-danger-fg">{error}</div>}
     </div>

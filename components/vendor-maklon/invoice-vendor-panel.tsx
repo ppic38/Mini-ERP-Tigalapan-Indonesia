@@ -15,6 +15,7 @@ import {
   hargaMaklonRateInfo,
   invoiceProductionStatus,
   invoiceYieldSummary,
+  isBillableKoliItem,
   productionYieldByWarna,
   productionYieldBySize,
   resiGroupInvoiceLines,
@@ -92,7 +93,8 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
     return hargaMaklonRateInfo(hargaMaklon, vendorId, l.lengan, cumulativeByLengan[l.lengan] ?? 0).rate;
   }
   const deliveredMine = deliveryKolis.filter((k) => k.vendorProduksi === vendorId && k.deliveredAt);
-  const readyGroups = groupByResi(deliveredMine).filter(([, kolis]) => kolis.every((k) => !k.resiInvoicedAt));
+  // Resi yang HANYA berisi reject tidak ditagihkan (owner 2026-10-23) -- tidak muncul sebagai "siap diajukan invoice".
+  const readyGroups = groupByResi(deliveredMine).filter(([, kolis]) => kolis.every((k) => !k.resiInvoicedAt) && kolis.some((k) => k.items.some(isBillableKoliItem)));
 
   const [invoiceDialogKoliIds, setInvoiceDialogKoliIds] = useState<string[] | null>(null);
   const [invoiceSubmitting, setInvoiceSubmitting] = useState(false);

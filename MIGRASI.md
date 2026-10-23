@@ -1,5 +1,14 @@
 # Migrasi Project — Status & Riwayat
 
+## Reject boleh dikirim lewat Pengiriman -- migration 0074 (2026-10-23)
+Owner: sisa reject boleh masuk koli pengiriman, dengan syarat remark sisa reject warna·lengan itu sudah DIKONFIRMASI di tab Reject & Rework. Keputusan owner: boleh dicampur dengan Finish Good dalam satu koli; TIDAK ditagihkan di invoice vendor; Warehouse hanya mencatat (tanpa stok/HPP) dan TIDAK dikirim ke WMS.
+- `ShippableKind` kini "FG" | "REWORK" | "REJECT". `availableRejectToShip` (derive.ts): sisa reject per size (reject otomatis dikurangi rework) dikurangi reject yang sudah masuk koli, hanya untuk warna·lengan yang `remarkSisaReject`-nya terisi. Remark dibatalkan = reject yang belum dikemas tidak tersedia lagi (yang sudah terkirim tetap tercatat). Muncul di tabel "Rework, Reject & sisa FG lama" halaman Pengiriman dan ikut badge/dropdown MRP.
+- Server (`clampDeliveryItemsBySourceBatch`) menghitung ULANG reject yang boleh dikirim dari data segar; qty dari klien tidak dipercaya. Rework (`reworkRejectSizeAction`) ditolak kalau melebihi sisa reject yang belum dikirim; di UI "Sisa reject" menampilkan jumlah yang sudah dikirim dan tombol Rework memakai sisa yang belum dikirim.
+- `isBillableKoliItem` (derive.ts): item REJECT dikeluarkan dari penagihan (`deliveredQtyByMrp`, `resiGroupInvoiceLines`, `koliBreakdownForLine`), dari penyebut HPP/ongkir per pcs, dan dari daftar "Siap diajukan invoice" (resi yang isinya hanya reject tidak muncul).
+- Warehouse (`warehouseReceivableGroups`): item reject masuk daftar penerimaan dengan HPP 0 dan tidak membuat gate "HPP tidak bisa ditelusuri"; resi yang HANYA berisi reject boleh langsung dibongkar tanpa invoice (resi campuran tetap mengikuti gate invoice PAID). Tercatat di Riwayat sebagai item "Reject".
+- **Migration 0074** (`0074_wms_snapshot_exclude_reject.sql`, owner menjalankan manual SEBELUM vendor mengirim reject): `wms_resi_snapshot()` mengecualikan item reject dan koli yang isinya reject semua (supaya total koli yang dilihat WMS cocok).
+- Tidak ada data koli lama yang berisi reject (dicek 2026-10-23), jadi pengecualian dari penagihan tidak mengubah tagihan yang sudah ada.
+
 ## Approval PO Level 2: dari "Asisten Manager Procurement" ke SCM (2026-10-14, tanpa migration)
 Owner: tidak ada akun/jabatan "Asisten Manager" sehingga PO Level 2 (Rp 2 jt - 50 jt) tidak pernah ada yang menyetujui; minta diganti SCM. lib/mrp/poApproval.ts: `APPROVAL_STEP_ROLES[2] = ["scm"]` (dulu procurement), label "Level 2 · SCM". Persetujuan langkah 2 yang SUDAH tercatat oleh Procurement di data lama tetap dianggap sah (`APPROVAL_STEP_LEGACY_ROLES`) supaya PO yang sudah lewat Level 2 tidak mundur. Antrean Level 2 kini ada di SCM > Approval PO (14 PO W39 langsung muncul); tab Procurement berganti nama "Status Approval PO" (PO ditolak + pantauan). PO > Rp 50 jt: SCM menyetujui dua kali (Level 2 lalu Level 3 bersama Finance), sesuai matriks berlapis.
 

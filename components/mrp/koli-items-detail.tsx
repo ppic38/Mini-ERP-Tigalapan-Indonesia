@@ -10,6 +10,7 @@ import type { DeliveryKoliItem, Usia } from "@/lib/mrp/types";
 const PRODUCT_KIND_OPTIONS: { value: string; label: string }[] = [
   { value: "FG", label: "Finish Good" },
   { value: "REWORK", label: "Rework" },
+  { value: "REJECT", label: "Reject" },
 ];
 const LEGACY_KIND_LABELS: Record<string, string> = { REJECT: "Reject" };
 export const USIA_LABEL: Record<Usia, string> = { KIDS: "Kids", DEWASA: "Dewasa" };
