@@ -792,9 +792,14 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 <button
                   onClick={submitResting}
                   disabled={!canRest || submitting}
-                  className="rounded-md bg-action-primary px-3.5 py-2 font-sans text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-busy={submitting}
+                  className={
+                    "inline-flex items-center gap-2 rounded-md bg-action-primary px-3.5 py-2 font-sans text-xs font-semibold text-white " +
+                    (submitting ? "cursor-wait" : "disabled:cursor-not-allowed disabled:opacity-50")
+                  }
                 >
-                  Resting ({visibleLines.length})
+                  {submitting && <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />}
+                  {submitting ? "Memproses resting…" : `Resting (${visibleLines.length})`}
                 </button>
                 <button
                   onClick={() => {
@@ -806,7 +811,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 >
                   Batal
                 </button>
-                <span className="font-sans text-[11px] text-text-muted">Waktu mulai resting dicatat otomatis saat tombol Resting diklik.</span>
+                <span className="font-sans text-[11px] text-text-muted">
+                  {submitting ? "Menyimpan berat bersih dan memulai resting, mohon tunggu sebentar…" : "Waktu mulai resting dicatat otomatis saat tombol Resting diklik."}
+                </span>
               </div>
             </div>
   ) : null;
