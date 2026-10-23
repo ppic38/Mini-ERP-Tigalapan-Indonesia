@@ -1676,7 +1676,10 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                           return (
                             <div key={b.id} className="rounded-md border border-[#E4E8EE] bg-[#FAFBFC] px-3 py-2.5">
                               <div className="mb-2 flex items-center justify-between gap-2">
-                                <span className="font-mono text-[11.5px] font-semibold text-[#31414F]">{b.codeRoll || "—"}</span>
+                                <span className="flex items-baseline gap-1.5">
+                                  <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Code roll</span>
+                                  <span className="font-mono text-[11.5px] font-semibold text-[#31414F]">{b.codeRoll || "—"}</span>
+                                </span>
                                 <span className="font-mono text-[11px] text-text-muted">
                                   {actualTotal} / {targetTotal} pcs
                                 </span>
