@@ -74,6 +74,9 @@ function PanduanContent({ vendorId }: { vendorId: string }) {
     });
   }, []);
   const mediaFor = (key: string) => (VENDOR_GUIDE_SECTIONS.some((s) => s.key === key) ? media.filter((m) => m.sectionKey === key) : []);
+  // Satu bagian terbuka sekali waktu, dan isinya (video) HANYA dirender selagi bagian itu terbuka: menutup bagian atau
+  // membuka bagian lain membongkar iframe-nya sehingga video yang lupa dihentikan ikut berhenti (owner 2026-10-23).
+  const [openKey, setOpenKey] = useState<string | null>(null);
   return (
     <AppShell
       role="vendorMaklon"
@@ -103,19 +106,27 @@ function PanduanContent({ vendorId }: { vendorId: string }) {
         </a>
 
         {VENDOR_GUIDE_SECTIONS.map((s) => (
-          <details key={s.key} className="group overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-            <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 font-sans text-[13px] font-semibold text-text-primary marker:hidden [&::-webkit-details-marker]:hidden">
+          <details key={s.key} open={openKey === s.key} className="group overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
+            <summary
+              onClick={(e) => {
+                e.preventDefault();
+                setOpenKey((prev) => (prev === s.key ? null : s.key));
+              }}
+              className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 font-sans text-[13px] font-semibold text-text-primary marker:hidden [&::-webkit-details-marker]:hidden"
+            >
               <span className="flex-1">{s.title}</span>
               <span className="font-sans text-[11px] font-medium text-text-muted group-open:hidden">Buka</span>
               <span className="hidden font-sans text-[11px] font-medium text-text-muted group-open:inline">Tutup</span>
             </summary>
-            <div className="border-t border-border-subtle px-4 py-3">
-              {mediaFor(s.key).length === 0 ? (
-                <p className="font-sans text-[12px] text-text-muted">Panduan untuk bagian ini belum tersedia.</p>
-              ) : (
-                <MediaTabs items={mediaFor(s.key)} />
-              )}
-            </div>
+            {openKey === s.key && (
+              <div className="border-t border-border-subtle px-4 py-3">
+                {mediaFor(s.key).length === 0 ? (
+                  <p className="font-sans text-[12px] text-text-muted">Panduan untuk bagian ini belum tersedia.</p>
+                ) : (
+                  <MediaTabs items={mediaFor(s.key)} />
+                )}
+              </div>
+            )}
           </details>
         ))}
       </div>
