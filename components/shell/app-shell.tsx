@@ -34,6 +34,7 @@ import {
   countProductionYieldUnresolved,
   countVendorGoodReceiveEligible,
   countVendorInvoicePaymentUpdates,
+  countVendorResiReadyToInvoice,
   countVendorInvoicesAwaitingReview,
   countVendorPengirimanReady,
   countVendorProduksiActionable,
@@ -278,7 +279,9 @@ export function AppShell({
       "/vendor-maklon/pengiriman": countVendorPengirimanReady(vendorId, productionResults, deliveryKolis, productionGroupMeta, maklonPOs, productionBatches),
       // Invoice & Payment 100% arsip (tidak ada aksi), jadi badge = invoice BARU terbit / BERUBAH STATUS
       // (disetujui, revisi, lunas, dst.) sejak halamannya terakhir dibuka (revisi 2026-09-20).
-      "/vendor-maklon/invoice-payment": countVendorInvoicePaymentUpdates(vendorId, vendorInvoices, seenInvoicePayment),
+      // + resi yang sudah terkirim dan siap diajukan invoice (owner 2026-10-24): badge tetap ada sampai Submit Invoice diklik.
+      "/vendor-maklon/invoice-payment":
+        countVendorResiReadyToInvoice(vendorId, deliveryKolis) + countVendorInvoicePaymentUpdates(vendorId, vendorInvoices, seenInvoicePayment),
     };
   }
   return badgeOverrides;

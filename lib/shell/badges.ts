@@ -7,6 +7,7 @@ import {
   invoiceableMrpIds,
   vendorInvoicePaymentStatus,
   invoiceFullyArrived,
+  isBillableKoliItem,
   maklonPoInvoiceLockedBy,
   materialClaimsList,
   mrpIdsWithClosedRolls,
@@ -509,6 +510,25 @@ export function vendorInvoicePaymentTokens(vendorId: string, vendorInvoices: Ven
  *  sejak halamannya terakhir dibuka. Hilang begitu halaman Invoice & Payment dikunjungi. */
 export function countVendorInvoicePaymentUpdates(vendorId: string, vendorInvoices: VendorInvoice[], seen: Set<string>): number {
   return vendorInvoicePaymentTokens(vendorId, vendorInvoices).filter((t) => !seen.has(t)).length;
+}
+
+/** Badge Invoice & Payment (owner 2026-10-24): jumlah RESI yang sudah terkirim tetapi belum diajukan invoice-nya -- persis daftar
+ *  "Siap diajukan invoice" di halaman itu. Berbeda dari `countVendorInvoicePaymentUpdates` (berbasis "sudah dilihat"), angka ini
+ *  tetap tampil sampai Submit Invoice diklik. Resi yang isinya hanya reject tidak dihitung (tidak ditagihkan). */
+export function countVendorResiReadyToInvoice(vendorId: string, deliveryKolis: DeliveryKoli[]): number {
+  const groups = new Map<string, DeliveryKoli[]>();
+  for (const k of deliveryKolis) {
+    if (k.vendorProduksi !== vendorId || !k.deliveredAt) continue;
+    const key = k.resiGroupId ?? k.id;
+    const arr = groups.get(key);
+    if (arr) arr.push(k);
+    else groups.set(key, [k]);
+  }
+  let n = 0;
+  for (const kolis of groups.values()) {
+    if (kolis.every((k) => !k.resiInvoicedAt) && kolis.some((k) => k.items.some(isBillableKoliItem))) n++;
+  }
+  return n;
 }
 
 /** DEPRECATED (migration 0026) — dulu total badge untuk halaman gabungan Invoice & Payment.
