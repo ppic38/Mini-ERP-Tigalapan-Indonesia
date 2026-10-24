@@ -69,7 +69,7 @@ export function rollReopenCorrections(b: ProductionBatch, groupFinalDone: boolea
       title: `Buka lagi roll ${b.codeRoll ?? b.id} · ${b.warna}`,
       impact: [
         "Roll kembali terbuka; Finish Good yang sudah tersimpan tetap utuh, vendor bisa melanjutkan/mengoreksi lalu Tutup Roll lagi.",
-        "Ditolak server kalau roll sudah masuk koli pengiriman, atau reject grup sudah dirework/dibuang (aturan sama seperti tombol vendor).",
+        "Finish Good yang sudah masuk koli tidak berubah dan tidak bisa dikurangi. Ditolak server kalau reject grup sudah dirework/dibuang, atau roll terkirim lewat koli lama (aturan sama seperti tombol vendor).",
         "Reject grup dihitung ulang kalau grupnya sudah Selesai Produksi. Vendor menerima notifikasi.",
       ],
       confirmLabel: "Buka lagi roll",

@@ -33,6 +33,7 @@ import {
   cuttingSizesForGroup,
   warnaLenganGroupsWithFg,
   sizeShiftLabel,
+  rollShippedBySize,
 } from "@/lib/mrp/derive";
 import { countFgShortfallGroupsForMrp, countRejectActionableGroupsForMrp, pendingMarker } from "@/lib/shell/badges";
 import type { Lengan, ProductionResult } from "@/lib/mrp/types";
@@ -235,7 +236,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
     return confirmDialog({
       title: `Selesaikan Finish Good ${scope}?`,
       message:
-        'Roll yang sudah punya Finish Good akan ditutup dan langsung bisa dikirim; kekurangan qty-nya dihitung sebagai reject (bisa dirework). Roll yang belum diisi tetap terbuka, dan roll baru masih bisa ditambahkan nanti.\n\nKalau hanya ingin menyimpan progres, pilih Batal lalu klik "Simpan →".',
+        'Roll yang sudah punya Finish Good akan ditutup (Finish Good yang sudah diinput sudah bisa dikirim sebelumnya); kekurangan qty-nya dihitung sebagai reject (bisa dirework). Roll yang belum diisi tetap terbuka, dan roll baru masih bisa ditambahkan nanti.\n\nKalau hanya ingin menyimpan progres, pilih Batal lalu klik "Simpan →".',
       details: detail,
       detailsTitle: "Masih ada yang belum tuntas",
       confirmLabel: "Selesai Produksi",
@@ -755,6 +756,14 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                               <span className="rounded-full bg-white px-2 py-[1px] font-mono text-[10.5px] font-semibold text-info-fg">{groupBatches.length} roll</span>
                               <span className="font-sans text-[11px] text-text-muted">Resting → Finish Good</span>
                             </div>
+                            {(() => {
+                              const nOpenShipped = groupBatches.filter((x) => !x.closedAt && Object.values(rollShippedBySize(x, deliveryKolis)).some((q) => q > 0)).length;
+                              return nOpenShipped > 0 ? (
+                                <div className="border-b border-[#F0DFC2] bg-warning-bg px-4 py-2 font-sans text-[11px] text-warning-fg">
+                                  {nOpenShipped} roll masih terbuka tetapi sebagian Finish Good-nya sudah dikirim. Tutup roll atau klik Selesai Produksi supaya sisa dihitung reject dan HPP-nya final.
+                                </div>
+                              ) : null;
+                            })()}
                             <div className="m-hide grid grid-cols-[1.1fr_2.2fr_0.9fr_1.1fr_0.8fr_1.3fr] gap-x-3 border-b border-[#E4E8EE] bg-[#F7F9FB] px-4 py-2 font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
                               <span>Roll</span>
                               <span>Size &amp; qty (FG / hasil cutting)</span>
@@ -768,6 +777,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                               const totalTarget = Object.values(rollTarget).reduce((a, c) => a + c, 0);
                               const totalFg = Object.values(b.fgSizeQty ?? {}).reduce((a, c) => a + c, 0);
                               const closeKey = "close-" + b.id;
+                              const shippedTotal = Object.values(rollShippedBySize(b, deliveryKolis)).reduce((a, c) => a + c, 0);
                               // Reject roll ini = selisih target-vs-FG per size; baru final kalau roll sudah DITUTUP (angka resmi
                               // dihitung server saat "Selesai Produksi"). Roll terbuka belum punya reject.
                               const rollReject = b.closedAt
@@ -816,6 +826,11 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                   </span>
                                   <span data-label="Status" className="text-center">
                                     {b.closedAt ? <StatusPill tone="success">Ditutup</StatusPill> : <StatusPill tone="neutral">Terbuka</StatusPill>}
+                                    {!b.closedAt && shippedTotal > 0 && (
+                                      <span className="mt-0.5 block font-sans text-[9.5px] font-semibold text-warning-fg" title="Sebagian Finish Good roll ini sudah masuk koli pengiriman">
+                                        dikirim {shippedTotal} pcs
+                                      </span>
+                                    )}
                                   </span>
                                   <span className="flex items-center justify-end gap-2">
                                     <Button
@@ -841,7 +856,22 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                       ))}
                                     {!b.closedAt && (
                                       <Button
-                                        onClick={() => runAction(closeKey, closeProductionBatch(b.id, b.fgSizeQty ?? {}, { ...(b.fgSizeQty ?? {}) }))}
+                                        onClick={async () => {
+                                          if (totalFg < totalTarget) {
+                                            const sisa = Object.entries(rollTarget)
+                                              .map(([sz, t]) => [sz, Math.max(0, t - ((b.fgSizeQty ?? {})[sz] ?? 0))] as const)
+                                              .filter(([, v]) => v > 0)
+                                              .map(([sz, v]) => `${sz} ${v}`)
+                                              .join(", ");
+                                            const ok = await confirmDialog({
+                                              title: `Tutup roll ${b.codeRoll || b.id}?`,
+                                              message: `Finish Good roll ini dikunci. Sisa ${sisa} (${totalTarget - totalFg} pcs) akan dicatat sebagai reject saat Selesai Produksi. Finish Good yang sudah diinput tetap bisa dikirim.`,
+                                              confirmLabel: "Tutup Roll",
+                                            });
+                                            if (!ok) return;
+                                          }
+                                          runAction(closeKey, closeProductionBatch(b.id, b.fgSizeQty ?? {}, { ...(b.fgSizeQty ?? {}) }));
+                                        }}
                                         title={
                                           totalFg < totalTarget
                                             ? `Sisa ${totalTarget - totalFg} pcs roll ini akan tercatat reject saat grup "Selesai Produksi".`
@@ -860,7 +890,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                             {!isFinalDone && groupNeedsFinish(g) && (
                               <div className="flex items-center justify-between gap-4 border-t border-[#CFE0EF] bg-[#F3F8FD] px-4 py-3 max-md:flex-col max-md:items-stretch max-md:gap-2.5">
                                 <span className="font-sans text-[11px] leading-[1.5] text-text-muted">
-                                  Roll yang sudah punya Finish Good ditutup &amp; siap dikirim; kekurangan qty dihitung reject.
+                                  Roll yang sudah punya Finish Good ditutup; kekurangan qty dihitung reject. Finish Good yang sudah diinput sudah bisa dikirim tanpa menunggu ini.
                                 </span>
                                 <Button
                                   onClick={async () => {
@@ -1028,21 +1058,28 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
           const ebSizes = Object.keys(ebTarget);
           const ebTotal = ebSizes.reduce((sum, sz) => sum + (editFgDraft[sz] ?? 0), 0);
           const ebTargetTotal = ebSizes.reduce((sum, sz) => sum + (ebTarget[sz] ?? 0), 0);
+          const ebShipped = rollShippedBySize(eb, deliveryKolis);
+          const ebHasShipped = Object.values(ebShipped).some((q) => q > 0);
           return (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4">
               <div className="flex max-h-[88vh] w-full max-w-[560px] flex-col rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]">
                 <div className="border-b border-border-subtle px-5 py-3.5">
                   <div className="font-sans text-[13px] font-semibold text-text-primary">Edit Finish Good — {eb.codeRoll || eb.id}</div>
                   <div className="mt-0.5 font-sans text-[11px] text-text-muted">
-                    {eb.warna} · {eb.lengan} · {eb.closedAt ? "roll sudah ditutup" : "roll masih terbuka"} — angka boleh dinaikkan atau diturunkan (maksimal sebesar hasil cutting).
+                    {eb.warna} · {eb.lengan} · {eb.closedAt ? "roll sudah ditutup" : "roll masih terbuka"} — angka boleh dinaikkan atau diturunkan (maksimal sebesar hasil cutting, minimal sebesar yang sudah dikirim).
                   </div>
                 </div>
                 <div className="flex-1 overflow-y-auto px-5 py-4">
                   <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3">
                     {ebSizes.map((sz) => (
-                      <SizeQtyControl key={sz} size={sz} max={ebTarget[sz] ?? 0} value={editFgDraft[sz] ?? 0} onChange={(v) => setEditFgDraft((prev) => ({ ...prev, [sz]: v }))} />
+                      <SizeQtyControl key={sz} size={sz} max={ebTarget[sz] ?? 0} min={ebShipped[sz] ?? 0} value={editFgDraft[sz] ?? 0} onChange={(v) => setEditFgDraft((prev) => ({ ...prev, [sz]: v }))} />
                     ))}
                   </div>
+                  {ebHasShipped && (
+                    <div className="mt-3 rounded-md border border-[#CFE0EF] bg-info-bg px-3 py-2 font-sans text-[11px] text-info-fg">
+                      Sebagian Finish Good roll ini sudah masuk koli pengiriman ({Object.entries(ebShipped).filter(([, q]) => q > 0).map(([sz, q]) => `${sz} ${q}`).join(", ")}). Qty yang sudah dikirim tidak bisa dikurangi.
+                    </div>
+                  )}
                   {eb.closedAt && ebTotal < ebTargetTotal && (
                     <div className="mt-3 rounded-md border border-[#F0DFC2] bg-warning-bg px-3 py-2 font-sans text-[11px] text-warning-fg">
                       Roll ini sudah ditutup: kekurangan {ebTargetTotal - ebTotal} pcs akan tercatat sebagai reject sementara.

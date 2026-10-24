@@ -4337,6 +4337,7 @@ async function closeProductionBatchImpl(batchId: string, fgSizeQty: Record<strin
   if (!batch.cutting_at) throw new Error("Roll ini belum dicutting — isi Hasil Cutting dulu di tab Cutting.");
   if (batch.closed_at) return;
   await assertCuttingNotPending(db, batchId);
+  await assertFgBounds(db, batchId, fgSizeQty);
   if (expectedFg) await assertBatchesUnchanged(db, { [batchId]: { fgSizeQty: expectedFg } });
   const groupKey = `${batch.mrp_id}|${batch.warna}|${batch.lengan}`;
   // Revisi 2026-09-20: roll baru BOLEH ditutup walau warnanya sudah pernah "Selesai" (gelombang berikutnya) -- yang
@@ -4368,11 +4369,33 @@ async function closeProductionBatchImpl(batchId: string, fgSizeQty: Record<strin
 
 /** Revisi 2026-09-20 (owner: "Edit FG"): koreksi Finish Good AKTUAL 1 roll per size -- boleh MENAIKKAN maupun
  *  MENURUNKAN (salah input). Status roll (terbuka/tertutup) TIDAK berubah. Ditolak kalau grup warna/lengan-nya sudah
- *  "Selesai Produksi" (Buka kunci dulu), roll sudah masuk koli pengiriman, atau qty melebihi hasil cutting size itu.
+ *  "Selesai Produksi" (Buka kunci dulu), qty kurang dari yang sudah masuk koli pengiriman, atau qty melebihi hasil cutting size itu.
  *  Riwayat FG (production_results, dasar progres/reject) dikoreksi lewat 1 baris FG dengan selisih (bisa NEGATIF),
  *  catatan "Roll {code} (koreksi)" -- supaya jumlah kumulatif grup tetap sama dengan angka roll. */
 export async function editRollFgAction(batchId: string, sizeQty: Record<string, number>): Promise<ActionResult<void>> {
   return toActionResult(() => editRollFgImpl(batchId, sizeQty));
+}
+
+/** Batas Finish Good 1 roll (owner 2026-10-24: FG yang sudah diinput langsung bisa dikirim tanpa menutup roll): tidak boleh melebihi hasil
+ *  cutting size itu, dan tidak boleh KURANG dari qty yang sudah masuk koli (supaya data yang sudah dikirim tidak berubah/terdobel).
+ *  Roll yang terkirim lewat koli lama (level-koli, migration 0020) dianggap terkirim utuh -- FG-nya dikunci. */
+async function assertFgBounds(db: SupabaseClient, batchId: string, fg: Record<string, number>): Promise<void> {
+  const [{ data: sizes }, { data: items }, { data: legacy }] = await Promise.all([
+    db.from("production_batch_sizes").select("size,qty").eq("production_batch_id", batchId),
+    db.from("delivery_koli_items").select("size,qty").eq("source_batch_id", batchId),
+    db.from("delivery_koli_batches").select("production_batch_id").eq("production_batch_id", batchId).limit(1),
+  ]);
+  const target: Record<string, number> = {};
+  for (const t of sizes ?? []) target[t.size] = Number(t.qty);
+  for (const [size, qty] of Object.entries(fg)) {
+    if (size in target && qty > target[size]) throw new Error(`Size ${size}: Finish Good ${qty} melebihi hasil cutting roll ini (${target[size]}).`);
+  }
+  if ((legacy ?? []).length > 0) throw new Error("Roll ini sudah terkirim lewat koli lama -- Finish Good-nya tidak bisa diubah lagi.");
+  const shipped: Record<string, number> = {};
+  for (const it of items ?? []) shipped[it.size] = (shipped[it.size] ?? 0) + Number(it.qty);
+  for (const [size, sent] of Object.entries(shipped)) {
+    if ((fg[size] ?? 0) < sent) throw new Error(`Size ${size}: sudah dikirim ${sent} pcs di koli, jadi Finish Good tidak bisa kurang dari itu.`);
+  }
 }
 
 async function editRollFgImpl(batchId: string, sizeQty: Record<string, number>): Promise<void> {
@@ -4394,9 +4417,6 @@ async function editRollFgImpl(batchId: string, sizeQty: Record<string, number>):
   if (batch.closed_at && meta?.fg_confirmed_at && (await groupHasReworkOrWaste(db, groupKey, batch.vendor_produksi))) {
     throw new Error("Reject warna ini sudah dirework/dibuang -- FG roll yang sudah ditutup tidak bisa diubah lagi.");
   }
-  const { data: shipped } = await db.from("delivery_koli_items").select("delivery_koli_id").eq("source_batch_id", batchId).limit(1);
-  if ((shipped ?? []).length > 0) throw new Error("Roll ini sudah masuk koli pengiriman -- FG-nya tidak bisa diedit lagi.");
-
   const target: Record<string, number> = {};
   for (const t of batch.production_batch_sizes ?? []) target[t.size] = t.qty;
   const clean: Record<string, number> = {};
@@ -4407,6 +4427,8 @@ async function editRollFgImpl(batchId: string, sizeQty: Record<string, number>):
     if (n > target[size]) throw new Error(`Size ${size} melebihi hasil cutting roll ini (${target[size]}).`);
     if (n > 0) clean[size] = n;
   }
+  // FG yang sudah masuk koli tidak boleh dikurangi (naik tetap boleh).
+  await assertFgBounds(db, batchId, clean);
 
   // Koreksi riwayat FG: selisih terhadap baseline yang SUDAH tercatat (fg_logged_snapshot) -- bisa negatif.
   const baseline: Record<string, number> = batch.fg_logged_snapshot ?? {};
@@ -4458,7 +4480,7 @@ async function groupHasReworkOrWaste(db: SupabaseClient, groupKey: string, vendo
 }
 
 /** Revisi 2026-09-20 (owner: "sisa jadi reject" bisa dibatalkan): buka lagi roll yang sudah ditutup (Tutup Roll /
- *  penutupan otomatis), selama grup warna/lengannya BELUM "Selesai Produksi" dan roll belum masuk koli pengiriman.
+ *  penutupan otomatis), selama grup warna/lengannya BELUM "Selesai Produksi".
  *  FG yang sudah tersimpan tetap utuh; roll kembali bisa diisi. */
 export async function reopenProductionBatchAction(batchId: string): Promise<ActionResult<void>> {
   return toActionResult(() => reopenProductionBatchImpl(batchId));
@@ -4486,8 +4508,10 @@ async function reopenProductionBatchCore(batchId: string): Promise<void> {
   if (meta?.fg_confirmed_at && (await groupHasReworkOrWaste(db, groupKey, batch.vendor_produksi))) {
     throw new Error("Reject warna ini sudah dirework/dibuang -- roll tidak bisa dibuka lagi supaya hitungan reject tetap konsisten.");
   }
-  const { data: shipped } = await db.from("delivery_koli_items").select("delivery_koli_id").eq("source_batch_id", batchId).limit(1);
-  if ((shipped ?? []).length > 0) throw new Error("Roll ini sudah masuk koli pengiriman -- tidak bisa dibuka lagi.");
+  // Owner 2026-10-24: roll yang sebagian FG-nya sudah dikirim boleh dibuka lagi (Finish Good tidak bisa kurang dari yang terkirim, lihat
+  // assertFgBounds). Hanya roll yang terkirim lewat koli lama (utuh, level-koli) yang tetap dikunci.
+  const { data: legacyShipped } = await db.from("delivery_koli_batches").select("production_batch_id").eq("production_batch_id", batchId).limit(1);
+  if ((legacyShipped ?? []).length > 0) throw new Error("Roll ini sudah terkirim lewat koli lama -- tidak bisa dibuka lagi.");
   const { error } = await db.from("production_batches").update({ closed_at: null }).eq("id", batchId);
   if (error) throw new Error(error.message);
   // Reject warna yang sudah pernah "Selesai" dihitung ulang (roll ini tidak lagi dihitung sebagai roll tertutup).
@@ -4548,6 +4572,7 @@ async function saveFgProgressImpl(batchId: string, sizeQty: Record<string, numbe
   if (!batch.cutting_at) throw new Error("Roll ini belum dicutting — isi Hasil Cutting dulu di tab Cutting.");
   if (batch.closed_at) throw new Error("Roll ini sudah ditutup — tidak bisa diubah lagi.");
   await assertCuttingNotPending(db, batchId);
+  await assertFgBounds(db, batchId, sizeQty);
   // Dua tim mengisi Finish Good roll yang sama: tolak kalau angkanya sudah berubah sejak layar ini memuatnya.
   if (expectedFg) await assertBatchesUnchanged(db, { [batchId]: { fgSizeQty: expectedFg } });
 

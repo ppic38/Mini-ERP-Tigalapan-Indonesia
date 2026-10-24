@@ -18,14 +18,18 @@ export function SizeQtyControl({
   value,
   onChange,
   allowExceed = false,
+  min = 0,
 }: {
   size: string;
   max: number;
   value: number;
   onChange: (v: number) => void;
   allowExceed?: boolean;
+  /** Batas bawah (mis. qty yang sudah dikirim, tidak boleh dikurangi lagi). */
+  min?: number;
 }) {
-  const clamp = (n: number) => (allowExceed ? Math.max(0, Math.floor(n)) : Math.max(0, Math.min(max, Math.floor(n))));
+  const lo = Math.max(0, min);
+  const clamp = (n: number) => (allowExceed ? Math.max(lo, Math.floor(n)) : Math.max(lo, Math.min(max, Math.floor(n))));
   const over = allowExceed && value > max ? value - max : 0;
   return (
     <div className="flex flex-col gap-1">
@@ -33,6 +37,7 @@ export function SizeQtyControl({
         <span className="whitespace-nowrap font-sans text-[11px] font-semibold text-[#31414F]">{size}</span>
         <span className="whitespace-nowrap font-mono text-[10px] text-text-muted">
           {allowExceed ? "target" : "maks"} {max}
+          {lo > 0 && <span className="ml-1 font-semibold text-info-fg">min {lo}</span>}
           {over > 0 && <span className="ml-1 font-semibold text-warning-fg">+{over}</span>}
         </span>
       </div>
@@ -40,7 +45,7 @@ export function SizeQtyControl({
         <button
           type="button"
           onClick={() => onChange(clamp(value - 1))}
-          disabled={value <= 0}
+          disabled={value <= lo}
           aria-label={`Kurangi ${size}`}
           className="w-7 flex-none border-r border-[#DDE4EB] text-[9px] text-text-muted hover:bg-[#F2F4F7] disabled:cursor-not-allowed disabled:opacity-40"
         >

@@ -267,13 +267,13 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   const visibleRollSizeRows = activeWarnaFilter ? rollSizeRows.filter((r) => r.warna === activeWarnaFilter) : rollSizeRows;
 
   // Sumber Roll Finish Good: roll mana saja yang masih punya sisa untuk warna·lengan·size ini (code roll + sisa pcs).
-  const rollSourcesBySize = new Map<string, { code: string; qty: number }[]>();
+  const rollSourcesBySize = new Map<string, { code: string; qty: number; open: boolean }[]>();
   for (const row of rollRows) {
     for (const [size, qty] of Object.entries(row.remaining)) {
       if (qty <= 0) continue;
       const key = rollSizeKey(row.roll.warna, row.roll.lengan, size);
       const arr = rollSourcesBySize.get(key) ?? [];
-      arr.push({ code: row.roll.codeRoll || row.roll.id, qty });
+      arr.push({ code: row.roll.codeRoll || row.roll.id, qty, open: !row.roll.closedAt });
       rollSourcesBySize.set(key, arr);
     }
   }
@@ -298,10 +298,15 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
     }
     return Array.from(out.values());
   }
-  const sourceChip = (code: string, qty: number, extra?: string) => (
-    <span key={code + (extra ?? "")} className="rounded-md border border-[#DDE5EE] bg-[#F8FAFC] px-2 py-[2px] font-mono text-[10.5px] text-[#475569]">
+  const sourceChip = (code: string, qty: number, extra?: string, open?: boolean) => (
+    <span
+      key={code + (extra ?? "")}
+      title={open ? "Roll masih terbuka: Finish Good-nya masih bisa bertambah. Qty yang sudah masuk koli tidak bisa dikurangi lagi." : undefined}
+      className="rounded-md border border-[#DDE5EE] bg-[#F8FAFC] px-2 py-[2px] font-mono text-[10.5px] text-[#475569]"
+    >
       <b className="text-text-primary">{code}</b> · {extra ? extra + " " : ""}
       {qty}
+      {open && <span className="ml-1 font-sans text-[9.5px] font-semibold text-warning-fg">terbuka</span>}
     </span>
   );
 
@@ -311,6 +316,11 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
 
   function setRollQty(key: string, qty: number) {
     setRollQtyDraft((prev) => ({ ...prev, [key]: qty }));
+  }
+
+  // "Isi semua sisa": isi qty kirim semua baris yang tampil sebesar sisa bisa dikirimnya (permintaan vendor: input koli lebih cepat).
+  function fillAllRolls() {
+    setRollQtyDraft((prev) => ({ ...prev, ...Object.fromEntries(visibleRollSizeRows.map((r) => [r.key, r.available])) }));
   }
 
   function pickMrp(id: string) {
@@ -626,22 +636,27 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
             <div className="flex items-center justify-between gap-2">
               <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Finish Good — qty per size</div>
               {rollSizeRows.length > 0 && (
-                <ColumnMenu
-                  columns={[
-                    { key: "size", label: "Size" },
-                    { key: "sumber", label: "Sumber Roll" },
-                    { key: "sisa", label: "Sisa bisa dikirim" },
-                  ]}
-                  visible={fgCols}
-                  onToggle={toggleFgCol}
-                />
+                <div className="flex items-center gap-2">
+                  <Button onClick={fillAllRolls} disabled={!noKoli.trim()} title={noKoli.trim() ? "Isi qty semua baris sesuai sisa bisa dikirim" : "Isi No koli dulu"} variant="muted" size="xs">
+                    Isi semua sisa
+                  </Button>
+                  <ColumnMenu
+                    columns={[
+                      { key: "size", label: "Size" },
+                      { key: "sumber", label: "Sumber Roll" },
+                      { key: "sisa", label: "Sisa bisa dikirim" },
+                    ]}
+                    visible={fgCols}
+                    onToggle={toggleFgCol}
+                  />
+                </div>
               )}
             </div>
             {/* Item 2026-09-12 (user-reported): qty per size TIDAK BOLEH diketik sebelum No koli
                 diisi -- dulu bisa diisi begitu MRP dipilih meski No koli masih kosong, gampang
                 kepencet lupa ngisi No koli-nya baru sadar pas "Simpan koli" gagal. */}
             {rollSizeRows.length === 0 && (
-              <div className="mt-2 font-sans text-xs text-text-muted">Belum ada roll selesai untuk MRP ini.</div>
+              <div className="mt-2 font-sans text-xs text-text-muted">Belum ada Finish Good yang bisa dikirim untuk MRP ini. Isi Finish Good di tab Finish Good, lalu qty-nya langsung muncul di sini.</div>
             )}
             {warnaOptions.length > 1 && (
               <div className="mt-2 flex items-center gap-2">
@@ -690,7 +705,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                             if (c.key === "sumber")
                               return (
                                 <span key={c.key} data-label="Sumber roll" className="flex flex-wrap gap-1 max-md:order-4 max-md:col-span-full">
-                                  {sources.length === 0 ? <span className="text-text-muted">—</span> : sources.map((x) => sourceChip(x.code, x.qty))}
+                                  {sources.length === 0 ? <span className="text-text-muted">—</span> : sources.map((x) => sourceChip(x.code, x.qty, undefined, x.open))}
                                 </span>
                               );
                             if (c.key === "sisa")
@@ -719,6 +734,11 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                   </div>
                 );
               })()}
+            {rollRows.some((r) => !r.roll.closedAt) && (
+              <div className="mt-2 font-sans text-[11px] text-text-muted">
+                Roll berlabel <b className="text-warning-fg">terbuka</b>: Finish Good-nya masih bisa bertambah. Qty yang sudah masuk koli tidak bisa dikurangi lagi.
+              </div>
+            )}
           </div>
         )}
 

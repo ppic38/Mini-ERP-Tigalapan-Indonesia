@@ -2899,6 +2899,26 @@ export function availableFgToShip(
 
 export type RollRemainingRow = { roll: ProductionBatch; remaining: Record<string, number> };
 
+/** Roll sudah punya Finish Good (progres atau final) dan sudah dicutting. */
+export function rollHasFg(b: ProductionBatch): boolean {
+  return !!b.cuttingAt && Object.values(b.fgSizeQty ?? {}).some((q) => q > 0);
+}
+
+/** Qty per size yang sudah masuk koli dari 1 roll -- batas BAWAH Finish Good roll itu (owner 2026-10-24: FG yang sudah dikirim tidak
+ *  boleh dikurangi). Koli lama (level-koli, migration 0020) dianggap membawa roll itu utuh, jadi batas bawahnya = FG roll saat ini. */
+export function rollShippedBySize(roll: ProductionBatch, deliveryKolis: DeliveryKoli[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  let legacy = false;
+  for (const k of deliveryKolis) {
+    if ((k.sourceBatchIds ?? []).includes(roll.id)) legacy = true;
+    for (const it of k.items) {
+      if (it.sourceBatchId !== roll.id) continue;
+      out[it.size] = (out[it.size] ?? 0) + it.qty;
+    }
+  }
+  return legacy ? { ...(roll.fgSizeQty ?? {}) } : out;
+}
+
 /** Item 2026-09-10 (feedback: "input per size ... qty di roll yang telah ditentukan akan
  *  berkurang", dikonfirmasi lewat AskUserQuestion: 1 roll BOLEH dikirim SEBAGIAN): sisa qty FG
  *  yang BELUM masuk koli manapun, PER SIZE, untuk tiap roll (ProductionBatch) yang sudah "Tutup
@@ -2934,7 +2954,9 @@ export function rollRemainingBySizeForMrp(
   // lagi menunggu warna/lengannya berstatus "Selesai" (fgConfirmedAt). `productionGroupMeta` dipertahankan di signature
   // (dipanggil dengan argumen yang sama oleh banyak pemanggil) walau tidak dipakai lagi di sini.
   void productionGroupMeta;
-  const closedRolls = batches.filter((b) => b.mrpId === mrpId && b.vendorProduksi === vendorProduksi && b.closedAt);
+  // Owner 2026-10-24 (permintaan vendor: "FG yang sudah diinput langsung bisa masuk pengiriman"): roll TERBUKA yang sudah punya FG
+  // per size juga jadi sumber pengiriman; sisa kirim = FG roll dikurangi yang sudah masuk koli. Roll tidak lagi harus ditutup dulu.
+  const closedRolls = batches.filter((b) => b.mrpId === mrpId && b.vendorProduksi === vendorProduksi && (b.closedAt || rollHasFg(b)));
   const out: RollRemainingRow[] = [];
   for (const roll of closedRolls) {
     const fgSizeQty = roll.fgSizeQty ?? {};
@@ -3006,7 +3028,7 @@ export function mrpIdsWithClosedRolls(
   maklonPOs: MaklonPO[],
   productionGroupMeta: ProductionGroupMeta[]
 ): string[] {
-  const candidateMrpIds = Array.from(new Set(batches.filter((b) => b.vendorProduksi === vendorProduksi && b.closedAt).map((b) => b.mrpId)));
+  const candidateMrpIds = Array.from(new Set(batches.filter((b) => b.vendorProduksi === vendorProduksi && (b.closedAt || rollHasFg(b))).map((b) => b.mrpId)));
   return candidateMrpIds.filter((mrpId) => closedUnshippedRollsForMrp(mrpId, vendorProduksi, batches, deliveryKolis, maklonPOs, productionGroupMeta).length > 0);
 }
 
@@ -3685,6 +3707,9 @@ export type HppRow = {
   biayaProduksiPerItem: number;
   ongkirPerItem: number;
   totalOngkirRow: number;
+  /** Baris dari roll yang MASIH TERBUKA: kain per pcs = biaya roll / FG yang sudah diinput sejauh ini (sisa menggantung dianggap reject
+   *  dulu), jadi angkanya bisa turun sampai roll ditutup. Setelah roll ditutup baris ini final. */
+  sementara?: boolean;
   hppPerItem: number;
   /** Size ASLI baris ini (variabel yang sudah ada di scope tempat `item`/`jenis` dikonstruksi,
    *  BUKAN hasil parse ulang dari `jenis`) -- dipakai lookup `sellingPriceFor` di bawah. */
@@ -4016,7 +4041,6 @@ export function hppRowsForInvoicePerRoll(
         b.vendorProduksi === inv.vendorProduksi &&
         b.warna === line.warna &&
         b.lengan === line.lengan &&
-        b.closedAt &&
         b.fgSizeQty &&
         deliveryKolis.some((k) => (k.sourceBatchIds ?? []).includes(b.id) || k.items.some((it) => it.sourceBatchId === b.id))
     );
@@ -4040,7 +4064,8 @@ export function hppRowsForInvoicePerRoll(
       for (const [size, fgQtyRaw] of Object.entries(fgSizeQty)) {
         if (fgQtyRaw <= 0) continue;
         const cuttingQty = targetSizes[size] ?? fgQtyRaw;
-        const rejectRaw = Math.max(0, cuttingQty - fgQtyRaw);
+        // Roll terbuka: sisa yang belum diisi masih menggantung (belum reject) -- reject baru terbentuk setelah roll ditutup.
+        const rejectRaw = roll.closedAt ? Math.max(0, cuttingQty - fgQtyRaw) : 0;
         const reworkQty = Math.min(rejectRaw, reworkPoolRemaining[size] ?? 0);
         reworkPoolRemaining[size] = (reworkPoolRemaining[size] ?? 0) - reworkQty;
         const netRejectQty = rejectRaw - reworkQty;
@@ -4194,6 +4219,7 @@ export function hppRowsForInvoicePerRoll(
         biayaProduksiPerItem,
         ongkirPerItem: ongkirPerPc,
         totalOngkirRow: ongkirPerPc * fgQty,
+        sementara: !roll.closedAt,
         hppPerItem,
         size: c.size,
         sellingPricePerItem,

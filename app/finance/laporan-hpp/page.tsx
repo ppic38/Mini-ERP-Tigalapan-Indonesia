@@ -266,7 +266,17 @@ function MrpHppDetailTable({ rows }: { rows: HppTableRow[] }) {
               <td className="px-3 py-1.5 text-right font-mono">{formatRupiah(r.biayaProduksiPerItem)}</td>
               <td className="px-3 py-1.5 text-right font-mono">{formatRupiah(r.cogsBahanPerItem)}</td>
               <td className="px-3 py-1.5 text-right font-mono">{formatRupiah(r.ongkirPerItem)}</td>
-              <td className="px-3 py-1.5 text-right font-mono font-semibold text-text-primary">{formatRupiah(r.hppPerItem)}</td>
+              <td className="px-3 py-1.5 text-right font-mono font-semibold text-text-primary">
+                {formatRupiah(r.hppPerItem)}
+                {r.sementara && (
+                  <span
+                    className="ml-1.5 rounded border border-[#F0DFC2] bg-warning-bg px-1 py-[1px] font-sans text-[9px] font-semibold uppercase text-warning-fg"
+                    title="Roll asal belum ditutup: Finish Good-nya masih bisa bertambah, jadi angka ini bisa turun sampai roll ditutup."
+                  >
+                    Sementara
+                  </span>
+                )}
+              </td>
               <td className="px-3 py-1.5 text-right font-mono">{r.sellingPricePerItem != null ? formatRupiah(r.sellingPricePerItem) : "—"}</td>
               <td className="px-3 py-1.5 text-right font-mono">{r.hppPercentage != null ? r.hppPercentage.toFixed(1) + "%" : "—"}</td>
             </tr>
@@ -332,6 +342,7 @@ export default function FinanceLaporanHppPage() {
   const totalBiayaProduksi = cardRows.reduce((s, r) => s + r.biayaProduksiTotal, 0);
   const totalCogsBahan = cardRows.reduce((s, r) => s + r.cogsBahan, 0);
   const totalOngkir = cardRows.reduce((s, r) => s + r.totalOngkirRow, 0);
+  const nSementara = cardRows.filter((r) => r.sementara).length;
   // Item revisi 2026-09-18 (owner, lampiran "HPP MRP.xlsx"): tiru rumus di file itu persis --
   // per item, "Total Hpp" = Qty * Hpp(/pc) dan "Total Harga" = Qty * Harga Jual(/pc), lalu utk
   // seluruh MRP (baris ringkasan xlsx): Total Hpp = SUM(Total Hpp semua item), Total Harga =
@@ -494,7 +505,7 @@ export default function FinanceLaporanHppPage() {
         <KpiCard label="Total ongkir" value={formatRupiah(totalOngkir)} sub="otomatis" accent="blue" />
         {/* Item revisi 2026-09-18 (xlsx sel H2 = F2/G2) -- %HPP = Total Hpp / Total Harga, DIHITUNG
            GABUNGAN (bukan rata-rata persentase per item) -- lihat catatan hppPercentAgg di atas. */}
-        <KpiCard label="HPP (%)" value={hppPercentAgg != null ? hppPercentAgg.toFixed(1) + "%" : "—"} sub="Total HPP / Total Harga Jual" accent="success" />
+        <KpiCard label="HPP (%)" value={hppPercentAgg != null ? hppPercentAgg.toFixed(1) + "%" : "—"} sub={"Total HPP / Total Harga Jual" + (nSementara > 0 ? ` · ${nSementara} baris sementara` : "")} accent="success" />
       </div>
 
       <div className="overflow-hidden border border-border-subtle bg-surface-card">
