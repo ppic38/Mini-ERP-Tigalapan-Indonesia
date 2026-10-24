@@ -1134,9 +1134,15 @@ export function ekspedisiPrice(ekspedisi: string, beratKg: number, rates: Eksped
  *  seluruh app (autoOngkirForInvoice, hppRowsForInvoicePerRoll, halaman Pengiriman). */
 export function koliOngkirShare(koli: DeliveryKoli, allKolis: DeliveryKoli[], rates: EkspedisiRateRow[]): number {
   if (!koli.ekspedisi) return 0;
-  if (!koli.resiGroupId) return ekspedisiPrice(koli.ekspedisi, koli.beratKoli ?? 0, rates);
+  // Biaya ekspedisi AKTUAL per resi (migration 0077, dari nota ekspedisi) didahulukan; kosong = tarif per kg Master Data seperti dulu.
+  if (!koli.resiGroupId) return koli.biayaEkspedisi != null ? koli.biayaEkspedisi : ekspedisiPrice(koli.ekspedisi, koli.beratKoli ?? 0, rates);
   const group = allKolis.filter((k) => k.resiGroupId === koli.resiGroupId);
   const totalWeight = group.reduce((s, k) => s + (k.beratKoli ?? 0), 0);
+  const actualTotal = group.find((k) => k.biayaEkspedisi != null)?.biayaEkspedisi;
+  if (actualTotal != null) {
+    if (totalWeight <= 0) return actualTotal / group.length;
+    return actualTotal * ((koli.beratKoli ?? 0) / totalWeight);
+  }
   if (totalWeight <= 0) return 0;
   const totalOngkir = ekspedisiPrice(koli.ekspedisi, totalWeight, rates);
   return totalOngkir * ((koli.beratKoli ?? 0) / totalWeight);

@@ -5257,11 +5257,16 @@ export async function setKoliEkspedisiResiGroupAction(
   // Revisi 2026-09-19 (owner: "flow di ekspedisi harus timbang dulu baru keluar resinya"): berat
   // TIAP koli sekarang diinput di dialog ini (dulu di tabel "Sudah ada ekspedisi" sebelum Delivery)
   // dan disimpan bareng ekspedisi+resi. Wajib > 0 untuk SEMUA koli yang diproses.
-  beratByKoli: Record<string, number> = {}
+  beratByKoli: Record<string, number> = {},
+  // Migration 0077 (owner 2026-10-24): TOTAL biaya ekspedisi aktual resi ini (dari nota ekspedisi), opsional -- kosong = ongkir dari tarif per kg
+  // Master Data. Disimpan identik di semua koli grup resi; dibagi per koli menurut berat (koliOngkirShare).
+  biayaEkspedisi?: number
 ): Promise<void> {
   const actor = await requireVendorSessionWithActor();
   const vendorId = actor.vendorId;
   if (koliIds.length === 0) return;
+  const biaya = biayaEkspedisi != null && Number.isFinite(Number(biayaEkspedisi)) && Number(biayaEkspedisi) > 0 ? Math.round(Number(biayaEkspedisi)) : null;
+  if (biaya != null && biaya > 1_000_000_000) throw new Error("Biaya ekspedisi tidak masuk akal -- periksa kembali angkanya.");
   if (!ekspedisi.trim()) throw new Error("Pilih ekspedisi dulu.");
   if (!noResi.trim()) throw new Error("No resi wajib diisi.");
   if (koliIds.some((id) => !(Number(beratByKoli[id]) > 0))) throw new Error("Berat semua koli harus diisi (> 0) sebelum set ekspedisi & resi.");
@@ -5289,6 +5294,9 @@ export async function setKoliEkspedisiResiGroupAction(
     .update({ ekspedisi, ekspedisi_note: note.trim(), ekspedisi_note_at: notedAt, no_resi: noResi.trim(), resi_group_id: resiGroupId })
     .in("id", validIds);
   if (error) throw new Error(error.message);
+  // Biaya ekspedisi: ditulis TERPISAH supaya set ekspedisi tetap jalan kalau migration 0077 belum dijalankan (selama biaya tidak diisi).
+  const { error: biayaErr } = await db.from("delivery_kolis").update({ biaya_ekspedisi: biaya }).in("id", validIds);
+  if (biayaErr && biaya != null) throw new Error(/biaya_ekspedisi/.test(biayaErr.message) ? "Kolom biaya ekspedisi belum ada di database -- migration 0077 perlu dijalankan dulu." : biayaErr.message);
   // Revisi 2026-09-19 (owner: "hilangkan fitur Delivery -- begitu ekspedisi & resi disimpan langsung
   // masuk Riwayat Pengiriman, tinggal Submit Invoice"): berat koli + delivered_at + notifikasi
   // Warehouse yang dulu dikerjakan deliverKoliResiGroupAction (tombol Delivery, sekarang dihapus

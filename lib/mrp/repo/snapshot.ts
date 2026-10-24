@@ -844,6 +844,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
       sourceBatchId: it.source_batch_id ?? undefined,
     })),
     beratKoli: k.berat_koli == null ? undefined : Number(k.berat_koli),
+    biayaEkspedisi: k.biaya_ekspedisi == null ? undefined : Number(k.biaya_ekspedisi),
     deliveredAt: k.delivered_at ?? undefined,
     createdAt: k.created_at,
     sourceBatchIds: (batchIdsByKoli[k.id] ?? []).map((r) => r.production_batch_id),
