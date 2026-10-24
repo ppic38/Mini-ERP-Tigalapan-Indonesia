@@ -793,9 +793,12 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       for (const [size, qty] of Object.entries(r.sizeQty)) baseline[size] = (baseline[size] ?? 0) + qty;
     }
     const delta: Record<string, number> = {};
-    for (const [size, qty] of Object.entries(newSizeQty)) {
-      const d = qty - (baseline[size] ?? 0);
-      if (d > 0) delta[size] = d;
+    // Koreksi TURUN ikut dicatat (sama seperti server, logFgProgressDelta): baris sementara bernote "(koreksi)" kalau ada yang turun.
+    let hasDown = false;
+    for (const size of new Set([...Object.keys(baseline), ...Object.keys(newSizeQty)])) {
+      const d = (newSizeQty[size] ?? 0) - (baseline[size] ?? 0);
+      if (d !== 0) delta[size] = d;
+      if (d < 0) hasDown = true;
     }
     if (Object.keys(delta).length === 0) return null;
     const d = new Date();
@@ -804,7 +807,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     set({
       productionResults: [
         ...get().productionResults,
-        { id, groupKey, mrpId: b.mrpId, vendorProduksi: b.vendorProduksi, poId: "", warna: b.warna, lengan: b.lengan, kind: "FG", sizeQty: delta, recordedAt, note },
+        { id, groupKey, mrpId: b.mrpId, vendorProduksi: b.vendorProduksi, poId: "", warna: b.warna, lengan: b.lengan, kind: "FG", sizeQty: delta, recordedAt, note: hasDown ? note + " (koreksi)" : note },
       ],
     });
     return id;

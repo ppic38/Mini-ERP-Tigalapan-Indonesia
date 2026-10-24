@@ -4268,7 +4268,7 @@ export async function updateBatchRestingAtAction(batchIds: string[], restingAt: 
  *  target reject, HPP) MENJUMLAHKAN SEMUA baris production_results kind FG per groupKey -- kalau
  *  tiap "Simpan progres" insert FULL qty, lalu roll itu akhirnya ditutup dan insert FULL qty lagi,
  *  angkanya dobel. `batch.fg_logged_snapshot` (migration 0022) adalah baseline "apa yang sudah
- *  tercatat ke riwayat" per roll -- cuma SELISIH (delta positif) sejak baseline itu yang di-log
+ *  tercatat ke riwayat" per roll -- cuma SELISIH (positif = baris "Roll X", negatif = baris "Roll X (koreksi)") sejak baseline itu yang di-log
  *  sebagai baris baru, lalu baseline di-update ke `newSizeQty`.
  *
  *  Note format HARUS PERSIS `"Roll " + (codeRoll ?? batchId)` (sama utk delta antara maupun
@@ -4283,33 +4283,39 @@ async function logFgProgressDelta(
 ): Promise<void> {
   const baseline = batch.fg_logged_snapshot ?? {};
   const sizes = new Set([...Object.keys(baseline), ...Object.keys(newSizeQty)]);
-  const deltaRows = Array.from(sizes)
+  const allDeltas = Array.from(sizes)
     .map((size) => [size, (newSizeQty[size] ?? 0) - (baseline[size] ?? 0)] as const)
-    .filter(([, delta]) => delta > 0);
+    .filter(([, delta]) => delta !== 0);
 
-  if (deltaRows.length > 0) {
+  if (allDeltas.length > 0) {
     const groupKey = `${batch.mrp_id}|${batch.warna}|${batch.lengan}`;
     const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", batch.mrp_id).eq("vendor_produksi", batch.vendor_produksi).maybeSingle();
-    const resultId = await nextReadableId("PR");
-    const { error: resultErr } = await db.from("production_results").insert({
-      id: resultId,
-      group_key: groupKey,
-      mrp_id: batch.mrp_id,
-      vendor_produksi: batch.vendor_produksi,
-      po_id: maklon?.id ?? "",
-      warna: batch.warna,
-      lengan: batch.lengan,
-      kind: "FG",
-      recorded_at: nowIso(),
-      note: `Roll ${batch.code_roll ?? batch.id}`,
-    });
-    if (resultErr) throw new Error(resultErr.message);
-    const { error: sizeErr } = await db.from("production_result_sizes").insert(deltaRows.map(([size, qty]) => ({ production_result_id: resultId, size, qty })));
-    if (sizeErr) throw new Error(sizeErr.message);
+    const rollNote = `Roll ${batch.code_roll ?? batch.id}`;
+    // Kenaikan dicatat sebagai baris "Roll X"; koreksi TURUN (2026-10-24) dicatat sebagai baris "Roll X (koreksi)" ber-qty negatif --
+    // pola sama editRollFgAction. Dulu koreksi turun tidak dicatat sama sekali, jadi FG yang naik-turun-naik terhitung dua kali di riwayat.
+    const writeRow = async (rows: (readonly [string, number])[], note: string) => {
+      if (rows.length === 0) return;
+      const resultId = await nextReadableId("PR");
+      const { error: resultErr } = await db.from("production_results").insert({
+        id: resultId,
+        group_key: groupKey,
+        mrp_id: batch.mrp_id,
+        vendor_produksi: batch.vendor_produksi,
+        po_id: maklon?.id ?? "",
+        warna: batch.warna,
+        lengan: batch.lengan,
+        kind: "FG",
+        recorded_at: nowIso(),
+        note,
+      });
+      if (resultErr) throw new Error(resultErr.message);
+      const { error: sizeErr } = await db.from("production_result_sizes").insert(rows.map(([size, qty]) => ({ production_result_id: resultId, size, qty })));
+      if (sizeErr) throw new Error(sizeErr.message);
+    };
+    await writeRow(allDeltas.filter(([, d]) => d > 0), rollNote);
+    await writeRow(allDeltas.filter(([, d]) => d < 0), `${rollNote} (koreksi)`);
   }
-  // Baseline SELALU diupdate ke nilai baru (termasuk kalau ada size yang justru berkurang/koreksi
-  // -- tidak di-log sebagai riwayat negatif, cukup baseline-nya turun) supaya delta berikutnya
-  // dihitung dari kondisi TERKINI, bukan angka lama.
+  // Baseline SELALU diupdate ke nilai baru supaya delta berikutnya dihitung dari kondisi TERKINI, bukan angka lama.
   const { error: baselineErr } = await db.from("production_batches").update({ fg_logged_snapshot: newSizeQty }).eq("id", batch.id);
   if (baselineErr) throw new Error(baselineErr.message);
 }
