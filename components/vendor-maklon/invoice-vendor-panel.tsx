@@ -444,56 +444,24 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                   <span className="text-right">Rate/pc</span>
                   <span className="text-right">Nilai</span>
                 </div>
-                {(() => {
-                  // Satu tabel: baris per MRP/warna/lengan, subtotal per warna (semua lengan dijumlahkan; usia dipisah karena tarifnya bisa beda), lalu total invoice.
-                  const COLS = "grid-cols-[1fr_1.2fr_0.9fr_70px_100px_120px]";
-                  const groups: { key: string; warna: string; lines: typeof invoiceDialogLines }[] = [];
-                  for (const l of invoiceDialogLines) {
-                    const key = l.warna + "|" + (l.usia ?? "");
-                    let g = groups.find((x) => x.key === key);
-                    if (!g) {
-                      g = { key, warna: l.warna + (l.usia ? ` (${l.usia})` : ""), lines: [] };
-                      groups.push(g);
-                    }
-                    g.lines.push(l);
-                  }
-                  const totalQty = invoiceDialogLines.reduce((sum, l) => sum + l.qty, 0);
-                  return (
-                    <>
-                      {groups.map((g) => {
-                        const qty = g.lines.reduce((sum, l) => sum + l.qty, 0);
-                        const nilai = g.lines.reduce((sum, l) => sum + l.qty * rateForLine(l), 0);
-                        return (
-                          <Fragment key={g.key}>
-                            {g.lines.map((l) => (
-                              <div key={invoiceLineKeyLocal(l.mrpId, l.warna, l.lengan, l.usia)} className={`m-stack m-grid2 grid ${COLS} items-center gap-x-2 border-t border-[#EEF1F4] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F] max-md:py-2.5`}>
-                                <span className="font-mono">{l.mrpId}</span>
-                                <span data-label="Warna">
-                                  {l.warna}
-                                  {l.usia ? ` (${l.usia})` : ""}
-                                </span>
-                                <span data-label="Lengan">{l.lengan}</span>
-                                <span data-label="Qty" className="text-right font-mono">{l.qty} pcs</span>
-                                <span data-label="Rate/pc" className="text-right font-mono">{formatRupiah(rateForLine(l))}</span>
-                                <span data-label="Nilai" className="text-right font-mono">{formatRupiah(l.qty * rateForLine(l))}</span>
-                              </div>
-                            ))}
-                            <div className={`m-wrap grid ${COLS} gap-x-2 border-t border-[#EEF1F4] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[11.5px] font-semibold text-[#31414F] max-md:justify-between max-md:py-2.5`}>
-                              <span className="col-span-3">Total {g.warna}</span>
-                              <span className="text-right font-mono">{qty} pcs</span>
-                              <span className="col-span-2 text-right font-mono">{formatRupiah(nilai)}</span>
-                            </div>
-                          </Fragment>
-                        );
-                      })}
-                      <div className={`m-wrap grid ${COLS} gap-x-2 border-t-2 border-[#CFE0EF] bg-info-bg px-3 py-1.5 font-sans text-[11.5px] font-semibold text-info-fg max-md:justify-between max-md:py-2.5`}>
-                        <span className="col-span-3">Total invoice</span>
-                        <span className="text-right font-mono">{totalQty} pcs</span>
-                        <span className="col-span-2 text-right font-mono">{formatRupiah(invoiceDialogTotal)}</span>
-                      </div>
-                    </>
-                  );
-                })()}
+                {invoiceDialogLines.map((l) => (
+                  <div key={invoiceLineKeyLocal(l.mrpId, l.warna, l.lengan, l.usia)} className="m-stack m-grid2 grid grid-cols-[1fr_1.2fr_0.9fr_70px_100px_120px] items-center gap-x-2 border-t border-[#EEF1F4] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F] max-md:py-2.5">
+                    <span className="font-mono">{l.mrpId}</span>
+                    <span data-label="Warna">
+                      {l.warna}
+                      {l.usia ? ` (${l.usia})` : ""}
+                    </span>
+                    <span data-label="Lengan">{l.lengan}</span>
+                    <span data-label="Qty" className="text-right font-mono">{l.qty} pcs</span>
+                    <span data-label="Rate/pc" className="text-right font-mono">{formatRupiah(rateForLine(l))}</span>
+                    <span data-label="Nilai" className="text-right font-mono">{formatRupiah(l.qty * rateForLine(l))}</span>
+                  </div>
+                ))}
+                <div className="m-wrap grid grid-cols-[1fr_1.2fr_0.9fr_70px_100px_120px] gap-x-2 border-t border-[#EEF1F4] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[11.5px] font-semibold text-[#31414F] max-md:justify-between max-md:py-2.5">
+                  <span className="col-span-3">Total invoice</span>
+                  <span className="text-right font-mono">{invoiceDialogLines.reduce((sum, l) => sum + l.qty, 0)} pcs</span>
+                  <span className="col-span-2 text-right font-mono">{formatRupiah(invoiceDialogTotal)}</span>
+                </div>
               </div>
               {invoiceError && <div className="mt-2 font-sans text-[10.5px] text-danger-fg">{invoiceError}</div>}
             </div>
