@@ -198,10 +198,10 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
       <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
         <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Invoice yang telah dibuat</div>
         <div className="overflow-x-auto">
-          <div className="m-fluid min-w-[1020px]">
+          <div className="m-fluid min-w-[1160px]">
             <div
               className="m-hide grid items-center gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
-              style={{ gridTemplateColumns: "110px 1fr 90px 110px 90px 120px 160px" }}
+              style={{ gridTemplateColumns: "110px 1fr 90px 110px 90px 120px 160px 140px" }}
             >
               <span>No Invoice</span>
               <span>MRP</span>
@@ -210,6 +210,7 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
               <span>Tanggal</span>
               <span className="text-right">Total</span>
               <span>Status Payment</span>
+              <span>Bukti Bayar</span>
             </div>
             {myInvoices.length === 0 && <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada invoice.</div>}
             {myInvoices.map((inv) => {
@@ -223,13 +224,21 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
               const prodStatus = invoiceProductionStatus(inv, productionGroupMeta, rawInvoices);
               return (
                 <div key={inv.id}>
-                  <button
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setExpandedInvoiceId(invExpanded ? "" : inv.id)}
-                    className="m-stack m-grid2 grid w-full items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] text-left font-sans text-xs text-[#31414F] hover:bg-[#F7F9FB] max-md:py-3"
-                    style={{ gridTemplateColumns: "110px 1fr 90px 110px 90px 120px 160px" }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setExpandedInvoiceId(invExpanded ? "" : inv.id);
+                      }
+                    }}
+                    className="m-stack m-grid2 grid w-full cursor-pointer items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] text-left font-sans text-xs text-[#31414F] hover:bg-[#F7F9FB] max-md:py-3"
+                    style={{ gridTemplateColumns: "110px 1fr 90px 110px 90px 120px 160px 140px" }}
                   >
                     <span className="font-mono font-medium max-md:text-[13px]">{inv.id}</span>
-                    <span data-label="MRP" className="max-md:col-span-full">{inv.lines.map((l) => l.mrpId).join(", ")}</span>
+                    <span data-label="MRP" className="max-md:col-span-full">{Array.from(new Set(inv.lines.map((l) => l.mrpId))).join(", ")}</span>
                     <span data-label="Total qty" className="text-right font-mono">{formatPcs(totalQtyInv)}</span>
                     <span data-label="Status">
                       <StatusPill tone={vendorInvoiceBadge(inv.status).tone}>{vendorInvoiceBadge(inv.status).label}</StatusPill>
@@ -239,7 +248,18 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                     <span data-label="Status payment" className="max-md:col-span-full">
                       <StatusPill tone={payment.tone}>{payment.label}</StatusPill>
                     </span>
-                  </button>
+                    <span data-label="Bukti bayar" className="max-md:col-span-full" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                      {inv.buktiBayarAt ? (
+                        <Button onClick={() => void viewVendorInvoicePaymentProof(inv.id)} variant="accent" size="xs">
+                          Lihat bukti bayar
+                        </Button>
+                      ) : inv.status === "PAID" ? (
+                        <span className="font-sans text-[11px] text-text-muted">Belum dilampirkan</span>
+                      ) : (
+                        <span className="font-sans text-[11px] text-text-muted">—</span>
+                      )}
+                    </span>
+                  </div>
                   {invExpanded && (
                     <div className="border-b border-[#F1F4F7] bg-[#FAFBFC] px-6 py-3 max-md:px-3">
                       <div className="mb-3 grid grid-cols-4 gap-3 rounded-md max-md:grid-cols-2 border border-[#E4E9EE] bg-white p-3">
@@ -269,18 +289,6 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                           <div className="mt-0.5 font-mono text-[12.5px] font-semibold text-[#31414F]">{inv.dueDate ? formatDate(inv.dueDate) : "—"}</div>
                         </div>
                       </div>
-                      {inv.status === "PAID" && (
-                        <div className="mb-3 flex flex-wrap items-center gap-3 rounded-md border border-[#E4E9EE] bg-white px-3 py-2.5">
-                          <span className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Bukti pembayaran dari Finance</span>
-                          {inv.buktiBayarAt ? (
-                            <Button onClick={() => void viewVendorInvoicePaymentProof(inv.id)} variant="accent" size="xs">
-                              Lihat bukti bayar
-                            </Button>
-                          ) : (
-                            <span className="font-sans text-[11.5px] text-text-muted">Belum dilampirkan</span>
-                          )}
-                        </div>
-                      )}
                       {(inv.adjustments?.length ?? 0) > 0 && (
                     <div className="mb-3 rounded-md border border-[#E4E9EE] bg-white p-3">
                       <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Penyesuaian dari Procurement</div>
@@ -455,6 +463,45 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                   <span className="col-span-2 text-right font-mono">{formatRupiah(invoiceDialogTotal)}</span>
                 </div>
               </div>
+              {(() => {
+                // Totalan per warna (semua lengan dijumlahkan; usia dipisah karena tarifnya bisa beda) supaya vendor bisa mencocokkan dengan hitungan sendiri.
+                const byWarna = new Map<string, { warna: string; mrps: Set<string>; qty: number; nilai: number }>();
+                for (const l of invoiceDialogLines) {
+                  const key = l.warna + "|" + (l.usia ?? "");
+                  const cur = byWarna.get(key) ?? { warna: l.warna + (l.usia ? ` (${l.usia})` : ""), mrps: new Set<string>(), qty: 0, nilai: 0 };
+                  cur.mrps.add(l.mrpId);
+                  cur.qty += l.qty;
+                  cur.nilai += l.qty * rateForLine(l);
+                  byWarna.set(key, cur);
+                }
+                const rows = Array.from(byWarna.values()).sort((x, y) => x.warna.localeCompare(y.warna));
+                if (rows.length === 0) return null;
+                const totalQty = rows.reduce((sum, r) => sum + r.qty, 0);
+                return (
+                  <div className="mt-3 overflow-hidden rounded-md border border-[#E4E9EE]">
+                    <div className="grid grid-cols-[1fr_90px_140px] gap-x-2 bg-[#F2F5F8] px-3 py-1.5 font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                      <span>Total per warna</span>
+                      <span className="text-right">Qty</span>
+                      <span className="text-right">Nilai</span>
+                    </div>
+                    {rows.map((r) => (
+                      <div key={r.warna} className="grid grid-cols-[1fr_90px_140px] items-center gap-x-2 border-t border-[#EEF1F4] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+                        <span>
+                          {r.warna}
+                          {r.mrps.size > 1 && <span className="ml-1.5 font-mono text-[10px] text-text-muted">{Array.from(r.mrps).join(", ")}</span>}
+                        </span>
+                        <span className="text-right font-mono">{r.qty} pcs</span>
+                        <span className="text-right font-mono">{formatRupiah(r.nilai)}</span>
+                      </div>
+                    ))}
+                    <div className="grid grid-cols-[1fr_90px_140px] gap-x-2 border-t border-[#EEF1F4] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[11.5px] font-semibold text-[#31414F]">
+                      <span>Total semua warna</span>
+                      <span className="text-right font-mono">{totalQty} pcs</span>
+                      <span className="text-right font-mono">{formatRupiah(invoiceDialogTotal)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
               {invoiceError && <div className="mt-2 font-sans text-[10.5px] text-danger-fg">{invoiceError}</div>}
             </div>
             <div className="flex justify-end gap-2 border-t border-border-subtle px-5 py-3.5">
