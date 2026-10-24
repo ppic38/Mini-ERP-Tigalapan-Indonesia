@@ -5,6 +5,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { NumberInput } from "@/components/mrp/number-input";
+import { QtyStepper } from "@/components/mrp/qty-stepper";
 import { Button } from "@/components/ui/button";
 import { alertDialog, confirmDialog } from "@/components/ui/confirm-dialog";
 import { ColumnMenu, useColumnVisibility } from "@/components/ui/column-menu";
@@ -678,7 +679,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                   { key: "size", label: "Size", w: "minmax(0,0.5fr)", align: "" },
                   { key: "sumber", label: "Sumber Roll", w: "minmax(0,2.2fr)", align: "" },
                   { key: "sisa", label: "Sisa bisa dikirim", w: "minmax(0,1fr)", align: "text-right" },
-                  { key: "qty", label: "Qty", w: "110px", always: true, align: "text-right" },
+                  { key: "qty", label: "Qty", w: "200px", always: true, align: "text-right" },
                 ].filter((c) => c.always || fgCols.has(c.key));
                 const template = cols.map((c) => c.w).join(" ");
                 return (
@@ -716,14 +717,12 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                               );
                             return (
                               <span key={c.key} data-label="Qty kirim" className="flex items-center justify-end max-md:order-5">
-                                <NumberInput
+                                <QtyStepper
                                   value={rollQtyDraft[r.key] ?? 0}
-                                  decimals={0}
-                                  emptyWhenZero
-                                  placeholder="mis. 12"
+                                  max={r.available}
                                   disabled={!noKoli.trim()}
-                                  onChange={(v) => setRollQty(r.key, Math.max(0, Math.min(v, r.available)))}
-                                  className="input w-[90px] text-right disabled:cursor-not-allowed disabled:bg-[#F7F9FB] disabled:text-text-muted"
+                                  label={`${r.warna} ${r.lengan} ${r.size}`}
+                                  onChange={(v) => setRollQty(r.key, v)}
                                 />
                               </span>
                             );
@@ -767,7 +766,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                   { key: "size", label: "Size / Usia", w: "minmax(0,1fr)", align: "" },
                   { key: "sumber", label: "Sumber Roll", w: "minmax(0,2fr)", align: "" },
                   { key: "sisa", label: "Sisa bisa dikirim", w: "minmax(0,1fr)", align: "text-right" },
-                  { key: "qty", label: "Qty", w: "110px", always: true, align: "text-right" },
+                  { key: "qty", label: "Qty", w: "200px", always: true, align: "text-right" },
                 ].filter((col) => col.always || rwCols.has(col.key));
                 const template = cols.map((col) => col.w).join(" ");
                 return (
@@ -809,14 +808,12 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                               );
                             return (
                               <span key={col.key} data-label="Qty kirim" className="flex items-center justify-end max-md:order-5">
-                                <NumberInput
+                                <QtyStepper
                                   value={qty}
-                                  decimals={0}
-                                  emptyWhenZero
-                                  placeholder="mis. 12"
+                                  max={r.available}
                                   disabled={!noKoli.trim()}
-                                  onChange={(v) => setRowQty(r.key, Math.max(0, Math.min(v, r.available)))}
-                                  className="input w-[90px] text-right disabled:cursor-not-allowed disabled:bg-[#F7F9FB] disabled:text-text-muted"
+                                  label={`${r.warna} ${r.lengan} ${r.size}`}
+                                  onChange={(v) => setRowQty(r.key, v)}
                                 />
                               </span>
                             );
