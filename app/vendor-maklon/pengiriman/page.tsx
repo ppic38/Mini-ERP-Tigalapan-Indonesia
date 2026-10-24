@@ -6,7 +6,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { NumberInput } from "@/components/mrp/number-input";
 import { Button } from "@/components/ui/button";
-import { alertDialog } from "@/components/ui/confirm-dialog";
+import { alertDialog, confirmDialog } from "@/components/ui/confirm-dialog";
 import { ColumnMenu, useColumnVisibility } from "@/components/ui/column-menu";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -137,6 +137,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
   const createDeliveryKoli = useMrpStore((s) => s.createDeliveryKoli);
   const updateDeliveryKoli = useMrpStore((s) => s.updateDeliveryKoli);
+  const deleteDeliveryKoli = useMrpStore((s) => s.deleteDeliveryKoli);
   const setKoliEkspedisiResiGroup = useMrpStore((s) => s.setKoliEkspedisiResiGroup);
   const deliverKoliResiGroup = useMrpStore((s) => s.deliverKoliResiGroup);
 
@@ -333,6 +334,47 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
       rollDraft[key] = (rollDraft[key] ?? 0) + it.qty;
     }
     setRollQtyDraft(rollDraft);
+  }
+
+  // Hapus koli yang belum dikirim: isinya otomatis tersedia lagi di daftar per warna·lengan·size untuk dimasukkan ke koli lain.
+  async function removeKoli(k: DeliveryKoli) {
+    const total = k.items.reduce((sum, it) => sum + it.qty, 0);
+    // Rincian digabung per jenis produk · warna · lengan · size · usia (satu size bisa terpecah ke beberapa roll di dalam koli).
+    const merged = new Map<string, { label: string; qty: number }>();
+    for (const it of k.items) {
+      const key = [it.kind, it.warna, it.lengan, it.size, it.usia ?? ""].join("|");
+      const label = `${kindLabel(it.kind)} · ${it.warna} · ${it.lengan} · Size ${it.size}${it.usia ? " (" + USIA_LABEL[it.usia] + ")" : ""}`;
+      const cur = merged.get(key);
+      if (cur) cur.qty += it.qty;
+      else merged.set(key, { label, qty: it.qty });
+    }
+    const lines = Array.from(merged.values()).map((m) => `${m.label}: ${m.qty} pieces`);
+    const MAX_LINES = 12;
+    const shown = lines.length > MAX_LINES ? [...lines.slice(0, MAX_LINES), `Serta ${lines.length - MAX_LINES} rincian lainnya`] : lines;
+    const ok = await confirmDialog({
+      title: `Hapus koli ${k.noKoli}?`,
+      message:
+        `Koli ${k.noKoli} belum dikirim sehingga dapat dihapus.\n` +
+        `Apabila dihapus, seluruh isi koli ini, dengan total ${total} pieces, akan dikembalikan ke daftar item yang belum dikemas ` +
+        `(Finish Good, Rework, dan Reject) dan dapat dimasukkan kembali ke koli lain. Penghapusan ini tidak dapat dibatalkan.`,
+      detailsTitle: "Rincian yang akan dikembalikan ke daftar:",
+      details: shown,
+      confirmLabel: "Ya, hapus koli",
+      cancelLabel: "Batal",
+      tone: "danger",
+    });
+    if (!ok) return;
+    if (editingKoliId === k.id) cancelEdit();
+    setSelectedForEkspedisi((prev) => {
+      const next = new Set(prev);
+      next.delete(k.id);
+      return next;
+    });
+    try {
+      await deleteDeliveryKoli(k.id);
+    } catch {
+      // pesan gagal sudah ditampilkan store (notifyError) dan koli dikembalikan
+    }
   }
 
   function cancelEdit() {
@@ -823,6 +865,11 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                           <Button onClick={() => editKoli(k)} disabled={k.id.startsWith("tmp-")} variant="ghost" size="xs">
                             Edit
                           </Button>
+                          {!sysadminMode && (
+                            <Button onClick={() => void removeKoli(k)} disabled={k.id.startsWith("tmp-")} variant="danger" size="xs">
+                              Hapus
+                            </Button>
+                          )}
                         </span>
                         {sysadminMode && (
                           <span className="-my-1.5 flex items-center border-l-2 border-accent-purple/40 bg-accent-purple-bg px-2 py-1.5">

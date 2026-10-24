@@ -2779,6 +2779,39 @@ export async function updateDeliveryKoliAction(koliId: string, patch: { ekspedis
   }
 }
 
+/** Hapus koli yang BELUM dikirim (owner 2026-10-24: "tambahkan fitur untuk bisa hapus koli"). Qty di dalamnya otomatis tersedia lagi untuk
+ *  koli berikutnya, karena sisa per warna·lengan·size selalu dihitung dari isi koli yang ada (availableFgToShip / rollRemainingBySizeForMrp /
+ *  availableRejectToShip) -- tidak ada angka yang perlu dikembalikan manual. Hanya koli milik vendor sendiri dan belum delivered; koli yang
+ *  sudah dikirim dibatalkan lewat koreksi Sysadmin. Alasan penolakan dikembalikan sebagai nilai (Next menyembunyikan pesan Error di production). */
+export async function deleteDeliveryKoliAction(koliId: string): Promise<ActionResult<void>> {
+  try {
+    const actor = await requireVendorSessionWithActor();
+    const db = supabaseServer();
+    const { data: koli, error } = await db.from("delivery_kolis").select("id,vendor_produksi,no_koli,mrp_id,delivered_at,resi_invoiced_at").eq("id", koliId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!koli) return { ok: true, data: undefined }; // sudah terhapus (klik dobel / tim lain) -- anggap berhasil
+    if (koli.vendor_produksi !== actor.vendorId) throw new Error("Forbidden: koli ini bukan milik vendor Anda.");
+    if (koli.delivered_at || koli.resi_invoiced_at) throw new Error("Koli ini sudah dikirim, jadi tidak bisa dihapus dari sini.");
+    const { data: items, error: itemsErr } = await db.from("delivery_koli_items").select("warna,lengan,size,qty,kind,usia,source_batch_id").eq("delivery_koli_id", koliId);
+    if (itemsErr) throw new Error(itemsErr.message);
+    // Tabel penunjuk koli dihapus dulu (foto ekspedisi, tautan batch lama), baru isi, baru koli.
+    await db.from("delivery_koli_ekspedisi_photos").delete().eq("delivery_koli_id", koliId);
+    await db.from("delivery_koli_batches").delete().eq("delivery_koli_id", koliId);
+    const { error: itemDelErr } = await db.from("delivery_koli_items").delete().eq("delivery_koli_id", koliId);
+    if (itemDelErr) throw new Error(itemDelErr.message);
+    const { error: delErr } = await db.from("delivery_kolis").delete().eq("id", koliId);
+    if (delErr) {
+      // Pulihkan isi yang sudah terhapus supaya koli tidak tertinggal kosong.
+      if ((items ?? []).length > 0) await db.from("delivery_koli_items").insert((items ?? []).map((it) => ({ ...it, delivery_koli_id: koliId })));
+      throw new Error(`Gagal menghapus koli (isinya dikembalikan seperti semula): ${delErr.message}`);
+    }
+    await logVendorAction(actor, `Hapus koli ${koli.no_koli ?? koliId} (${(items ?? []).reduce((sum, it) => sum + Number(it.qty), 0)} pcs kembali tersedia)`, "delivery_kolis", koliId);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export async function setVendorInvoiceDueDateAction(invoiceId: string, dueDate: string): Promise<void> {
   await requireInternalRole(await requireSession(), "finance");
   const { error } = await supabaseServer().from("vendor_invoices").update({ due_date: dueDate }).eq("id", invoiceId);

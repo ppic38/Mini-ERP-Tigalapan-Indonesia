@@ -524,6 +524,7 @@ type FlowActions = {
   unresolveProductionYield: (batchId: string) => Promise<void>;
   reworkRejectSize: (input: { mrpId: string; vendorProduksi: string; warna: string; lengan: Lengan; fromSize: string; qty: number; toLengan: Lengan; toSize: string; usia: Usia }) => Promise<void>;
   updateDeliveryKoli: (koliId: string, patch: { ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }) => Promise<void>;
+  deleteDeliveryKoli: (koliId: string) => Promise<void>;
   setVendorInvoiceDueDate: (invoiceId: string, dueDate: string) => Promise<void>;
   setVendorInvoiceOngkir: (invoiceId: string, ongkirTotal: number) => Promise<void>;
   /** TAHAP 1 -- "Selesai Produksi" di tab Finish Good (hitung reject, tidak mengunci rework). */
@@ -2279,6 +2280,20 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // Guard "sudah delivered_at -> no-op" di updateDeliveryKoliAction ditiru di sini juga (mirip
   // markKoliDelivered) supaya tidak optimistically menampilkan perubahan yang sebenarnya ditolak
   // server tanpa error.
+  // Hapus koli belum dikirim: optimistic (koli langsung hilang, qty-nya langsung tersedia lagi karena sisa dihitung dari isi koli),
+  // dikembalikan kalau server menolak (pesan ditampilkan lewat notifyError, lalu dilempar ulang).
+  deleteDeliveryKoli: async (koliId) => {
+    const previous = get().deliveryKolis;
+    set({ deliveryKolis: previous.filter((k) => !(k.id === koliId && !k.deliveredAt)) });
+    try {
+      unwrapAction(await actions.deleteDeliveryKoliAction(koliId));
+    } catch (err) {
+      set({ deliveryKolis: previous });
+      notifyError("Gagal menghapus koli -- dikembalikan seperti semula. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
   updateDeliveryKoli: async (koliId, patch) => {
     const previous = get().deliveryKolis;
     set({

@@ -1,5 +1,10 @@
 # Migrasi Project — Status & Riwayat
 
+## Hapus koli yang belum dikirim -- vendor produksi (2026-10-24, tanpa migration)
+Owner: vendor boleh menghapus koli yang salah isi, dan quantity-nya kembali ke daftar untuk dimasukkan ke koli lain. Tombol "Hapus" di tabel "Koli belum dikirim" (halaman Pengiriman, disembunyikan di Mode Sysadmin yang punya koreksi sendiri). Popup konfirmasi memuat total pieces dan rincian per jenis produk, warna, lengan, size, usia yang akan dikembalikan.
+- Server: `deleteDeliveryKoliAction` (actions.ts) mengembalikan `ActionResult` (alasan penolakan sampai ke layar). Hanya koli milik vendor sendiri dan BELUM delivered/diinvoice; foto ekspedisi, tautan batch, dan isi dihapus dulu baru kolinya, dan isi dipulihkan otomatis kalau penghapusan induk gagal. Tercatat di vendor_action_log. Koli yang sudah terkirim tetap hanya bisa dibatalkan lewat koreksi Sysadmin.
+- Tidak ada angka yang "dikembalikan manual": sisa per warna·lengan·size (Finish Good, Rework, Reject, dan roll) selalu dihitung dari isi koli yang ada, jadi quantity otomatis tersedia lagi begitu koli hilang. Store (`deleteDeliveryKoli`) optimistic dengan rollback kalau server menolak.
+
 ## Reject boleh dikirim lewat Pengiriman -- migration 0074 (2026-10-23)
 Owner: sisa reject boleh masuk koli pengiriman, dengan syarat remark sisa reject warna·lengan itu sudah DIKONFIRMASI di tab Reject & Rework. Keputusan owner: boleh dicampur dengan Finish Good dalam satu koli; TIDAK ditagihkan di invoice vendor; Warehouse hanya mencatat (tanpa stok/HPP) dan TIDAK dikirim ke WMS.
 - `ShippableKind` kini "FG" | "REWORK" | "REJECT". `availableRejectToShip` (derive.ts): sisa reject per size (reject otomatis dikurangi rework) dikurangi reject yang sudah masuk koli, hanya untuk warna·lengan yang `remarkSisaReject`-nya terisi. Remark dibatalkan = reject yang belum dikemas tidak tersedia lagi (yang sudah terkirim tetap tercatat). Muncul di tabel "Rework, Reject & sisa FG lama" halaman Pengiriman dan ikut badge/dropdown MRP.
