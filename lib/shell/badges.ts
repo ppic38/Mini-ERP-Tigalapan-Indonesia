@@ -7,6 +7,7 @@ import {
   invoiceableMrpIds,
   vendorInvoicePaymentStatus,
   invoiceFullyArrived,
+  onlyVendor,
   isBillableKoliItem,
   maklonPoInvoiceLockedBy,
   materialClaimsList,
@@ -211,6 +212,10 @@ function productionGroupGaps(
   // cuma MRP itu yang dihitung (bukan semua MRP milik vendor).
   onlyMrpId?: string
 ): GroupGap[] {
+  // Satu warna·lengan bisa dikerjakan beberapa vendor: hitung hanya data vendor ini.
+  productionBatches = onlyVendor(productionBatches, vendorId);
+  productionResults = onlyVendor(productionResults, vendorId);
+  productionGroupMeta = onlyVendor(productionGroupMeta, vendorId);
   const mrpIds = Array.from(new Set(productionBatches.filter((b) => b.vendorProduksi === vendorId && b.cuttingAt && (!onlyMrpId || b.mrpId === onlyMrpId)).map((b) => b.mrpId)));
   const out: GroupGap[] = [];
   for (const mrpId of mrpIds) {
@@ -321,6 +326,9 @@ export function countRemainingRejectGroupsForMrp(
   productionResults: ProductionResult[],
   productionGroupMeta: ProductionGroupMeta[]
 ): number {
+  productionBatches = onlyVendor(productionBatches, vendorId);
+  productionResults = onlyVendor(productionResults, vendorId);
+  productionGroupMeta = onlyVendor(productionGroupMeta, vendorId);
   return cutWarnaLenganGroups(mrpId, vendorId, productionBatches).filter((g) => {
     const groupKey = mrpId + "|" + g.warna + "|" + g.lengan;
     // BUG FIX (2026-09-09): konsisten dengan mrpIdsWithRemainingReject/countRejectActionableGroups

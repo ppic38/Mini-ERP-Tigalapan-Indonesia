@@ -2352,7 +2352,7 @@ export async function updateBatchToCuttingAction(batchId: string, cuttingAt: str
   let groupKey: string | null = null;
   if (batchRow) {
     groupKey = `${batchRow.mrp_id}|${batchRow.warna}|${batchRow.lengan}`;
-    const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).maybeSingle();
+    const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).eq("vendor_produksi", batchRow.vendor_produksi).maybeSingle();
     if (meta?.done_at) {
       // BUG FIX (2026-09-09, user-reported: "kenapa tidak bisa input hasil cutting?" -- roll BARU
       // muncul untuk warna/lengan yang grupnya SUDAH terlanjur dikunci Final Produksi, mis. karena
@@ -2385,7 +2385,7 @@ export async function updateBatchToCuttingAction(batchId: string, cuttingAt: str
   }
 
   if (batchRow && groupKey) {
-    const { data: metaAfter } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).maybeSingle();
+    const { data: metaAfter } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).eq("vendor_produksi", batchRow.vendor_produksi).maybeSingle();
     if (metaAfter?.fg_confirmed_at && !metaAfter.done_at) {
       await recomputeAutoRejectForGroup(db, groupKey, batchRow.mrp_id, batchRow.vendor_produksi, batchRow.warna, batchRow.lengan as Lengan);
     }
@@ -2677,7 +2677,7 @@ async function updateBatchesToCuttingImpl(
 
   const metaByGroup = new Map<string, { fg_confirmed_at: string | null; done_at: string | null }>();
   for (const [groupKey, g] of groups) {
-    const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).maybeSingle();
+    const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).eq("vendor_produksi", g.vendor_produksi).maybeSingle();
     if (meta?.done_at) {
       throw new Error(
         `Grup ${g.warna} · ${g.lengan} sudah "Selesai Produksi" (Final Produksi) -- hasil cutting tidak bisa diedit lagi. Buka kunci dulu di tab Final Produksi ("Buka kunci ↺") kalau memang masih ada roll baru untuk warna/lengan ini yang perlu diproses.`
@@ -2831,12 +2831,12 @@ export async function setVendorInvoiceOngkirAction(invoiceId: string, ongkirTota
 export async function setGroupRejectRemarkAction(groupKey: string, remark: string): Promise<void> {
   const vendorId = await requireVendorSession();
   const db = supabaseServer();
-  const { data: meta, error: readErr } = await db.from("production_group_meta").select("group_key,vendor_produksi").eq("group_key", groupKey).maybeSingle();
+  const { data: meta, error: readErr } = await db.from("production_group_meta").select("group_key,vendor_produksi").eq("group_key", groupKey).eq("vendor_produksi", vendorId).maybeSingle();
   if (readErr) throw new Error(readErr.message);
   if (!meta) throw new Error("Reject warna ini belum dihitung — klik Selesai Produksi di tab Finish Good dulu.");
   if (meta.vendor_produksi !== vendorId) throw new Error("Grup ini bukan milik vendor Anda.");
   const text = remark.trim();
-  const { error } = await db.from("production_group_meta").update({ remark_sisa_reject: text || null }).eq("group_key", groupKey);
+  const { error } = await db.from("production_group_meta").update({ remark_sisa_reject: text || null }).eq("group_key", groupKey).eq("vendor_produksi", vendorId);
   if (error) throw new Error(error.message);
 }
 
@@ -4035,8 +4035,8 @@ export async function payMaklonInvoiceAction(invoiceId: string): Promise<void> {
 }
 
 export async function undoProductionGroupDoneAction(groupKey: string): Promise<void> {
-  await requireVendorSession();
-  const { error } = await supabaseServer().from("production_group_meta").update({ done_at: null }).eq("group_key", groupKey);
+  const vendorId = await requireVendorSession();
+  const { error } = await supabaseServer().from("production_group_meta").update({ done_at: null }).eq("group_key", groupKey).eq("vendor_produksi", vendorId);
   if (error) throw new Error(error.message);
 }
 
@@ -4177,7 +4177,7 @@ export async function updateBatchRestingAtAction(batchIds: string[], restingAt: 
   const { data: batchRows } = await db.from("production_batches").select("id,mrp_id,vendor_produksi,warna,lengan").in("id", batchIds);
   for (const batchRow of batchRows ?? []) {
     const groupKey = `${batchRow.mrp_id}|${batchRow.warna}|${batchRow.lengan}`;
-    const { data: meta } = await db.from("production_group_meta").select("done_at").eq("group_key", groupKey).maybeSingle();
+    const { data: meta } = await db.from("production_group_meta").select("done_at").eq("group_key", groupKey).eq("vendor_produksi", batchRow.vendor_produksi).maybeSingle();
     if (meta?.done_at) {
       throw new Error(
         `Grup ${batchRow.warna} · ${batchRow.lengan} sudah "Selesai Produksi" (Final Produksi) -- tanggal/jam resting tidak bisa diedit lagi. Buka kunci dulu di tab Final Produksi ("Buka kunci ↺") kalau memang perlu.`
@@ -4270,7 +4270,7 @@ async function closeProductionBatchImpl(batchId: string, fgSizeQty: Record<strin
   const groupKey = `${batch.mrp_id}|${batch.warna}|${batch.lengan}`;
   // Revisi 2026-09-20: roll baru BOLEH ditutup walau warnanya sudah pernah "Selesai" (gelombang berikutnya) -- yang
   // dikunci hanya Final Produksi (done_at).
-  const { data: meta } = await db.from("production_group_meta").select("done_at").eq("group_key", groupKey).maybeSingle();
+  const { data: meta } = await db.from("production_group_meta").select("done_at").eq("group_key", groupKey).eq("vendor_produksi", batch.vendor_produksi).maybeSingle();
   if (meta?.done_at) throw new Error(`Grup ${batch.warna} · ${batch.lengan} sudah Final Produksi — tidak bisa menutup roll lagi. Buka kunci Final dulu.`);
 
   // Replace (bukan tambah) -- hapus dulu baris progres yang mungkin sudah tersimpan dari
@@ -4317,10 +4317,10 @@ async function editRollFgImpl(batchId: string, sizeQty: Record<string, number>):
   if (!batch.cutting_at) throw new Error("Roll ini belum dicutting.");
   await assertCuttingNotPending(db, batchId);
   const groupKey = `${batch.mrp_id}|${batch.warna}|${batch.lengan}`;
-  const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).maybeSingle();
+  const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).eq("vendor_produksi", batch.vendor_produksi).maybeSingle();
   if (meta?.done_at) throw new Error(`Grup ${batch.warna} · ${batch.lengan} sudah Final Produksi -- buka kunci Final dulu sebelum mengedit FG.`);
   // Roll TERTUTUP yang FG-nya diubah memengaruhi reject; kalau reject warna ini sudah dirework/dibuang, ditolak.
-  if (batch.closed_at && meta?.fg_confirmed_at && (await groupHasReworkOrWaste(db, groupKey))) {
+  if (batch.closed_at && meta?.fg_confirmed_at && (await groupHasReworkOrWaste(db, groupKey, batch.vendor_produksi))) {
     throw new Error("Reject warna ini sudah dirework/dibuang -- FG roll yang sudah ditutup tidak bisa diubah lagi.");
   }
   const { data: shipped } = await db.from("delivery_koli_items").select("delivery_koli_id").eq("source_batch_id", batchId).limit(1);
@@ -4376,8 +4376,8 @@ async function editRollFgImpl(batchId: string, sizeQty: Record<string, number>):
 
 /** True kalau reject grup ini SUDAH sempat dirework/dibuang -- dipakai sebagai pengaman: membuka/mengubah roll yang sudah
  *  ditutup akan menghitung ulang reject, dan itu tidak boleh membuat deduksi rework kehilangan reject dasarnya. */
-async function groupHasReworkOrWaste(db: SupabaseClient, groupKey: string): Promise<boolean> {
-  const { data } = await db.from("production_results").select("group_key, kind, note, production_result_sizes(size,qty)").eq("group_key", groupKey);
+async function groupHasReworkOrWaste(db: SupabaseClient, groupKey: string, vendorProduksi: string): Promise<boolean> {
+  const { data } = await db.from("production_results").select("group_key, kind, note, production_result_sizes(size,qty)").eq("group_key", groupKey).eq("vendor_produksi", vendorProduksi);
   const rs = (data ?? []).map((r) => {
     const sizeQty: Record<string, number> = {};
     for (const sz of r.production_result_sizes ?? []) sizeQty[sz.size] = sz.qty;
@@ -4410,9 +4410,9 @@ async function reopenProductionBatchCore(batchId: string): Promise<void> {
   if (!batch) throw new Error("Roll tidak ditemukan.");
   if (!batch.closed_at) return;
   const groupKey = `${batch.mrp_id}|${batch.warna}|${batch.lengan}`;
-  const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).maybeSingle();
+  const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", groupKey).eq("vendor_produksi", batch.vendor_produksi).maybeSingle();
   if (meta?.done_at) throw new Error(`Grup ${batch.warna} · ${batch.lengan} sudah Final Produksi -- buka kunci Final dulu.`);
-  if (meta?.fg_confirmed_at && (await groupHasReworkOrWaste(db, groupKey))) {
+  if (meta?.fg_confirmed_at && (await groupHasReworkOrWaste(db, groupKey, batch.vendor_produksi))) {
     throw new Error("Reject warna ini sudah dirework/dibuang -- roll tidak bisa dibuka lagi supaya hitungan reject tetap konsisten.");
   }
   const { data: shipped } = await db.from("delivery_koli_items").select("delivery_koli_id").eq("source_batch_id", batchId).limit(1);
@@ -4501,7 +4501,7 @@ export async function submitProductionResultAction(input: { mrpId: string; vendo
   await requireVendorSession();
   const db = supabaseServer();
   const groupKey = `${input.mrpId}|${input.warna}|${input.lengan}`;
-  const { data: meta } = await db.from("production_group_meta").select("done_at").eq("group_key", groupKey).maybeSingle();
+  const { data: meta } = await db.from("production_group_meta").select("done_at").eq("group_key", groupKey).eq("vendor_produksi", input.vendorProduksi).maybeSingle();
   if (meta?.done_at) return;
 
   const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", input.mrpId).eq("vendor_produksi", input.vendorProduksi).maybeSingle();
@@ -4717,7 +4717,7 @@ export async function reworkRejectSizeAction(input: { mrpId: string; vendorProdu
   // UI itu tampak seperti tombol "Simpan Rework" tidak melakukan apa-apa sama sekali (dialog
   // ditutup, tapi tidak ada yang tersimpan, tanpa pesan error apa pun). Sekarang dilempar sebagai
   // error supaya UI (production-rework-tab.tsx) bisa menampilkannya ke user.
-  const { data: metas } = await db.from("production_group_meta").select("group_key,done_at").in("group_key", [sourceGroupKey, outputGroupKey]);
+  const { data: metas } = await db.from("production_group_meta").select("group_key,done_at").in("group_key", [sourceGroupKey, outputGroupKey]).eq("vendor_produksi", input.vendorProduksi);
   if ((metas ?? []).some((g) => g.done_at)) {
     throw new Error(
       `Grup ${input.warna} · ${sourceGroupKey === outputGroupKey ? input.lengan : `${input.lengan} atau ${input.toLengan}`} sudah ditandai "Selesai Produksi" -- buka kunci dulu di tab Final Produksi sebelum bisa rework.`
@@ -4727,7 +4727,7 @@ export async function reworkRejectSizeAction(input: { mrpId: string; vendorProdu
   // Rework tidak boleh melebihi sisa reject yang BELUM dikirim (owner 2026-10-23: reject yang sudah masuk koli tidak bisa dirework lagi).
   {
     const snapshot = await getFlowSnapshot();
-    const sisa = cumulativeSizeQtyForGroup(sourceGroupKey, "REJECT", snapshot.productionResults)[input.fromSize] ?? 0;
+    const sisa = cumulativeSizeQtyForGroup(sourceGroupKey, "REJECT", snapshot.productionResults.filter((r) => r.vendorProduksi === input.vendorProduksi))[input.fromSize] ?? 0;
     const shipped = rejectShippedBySize(input.mrpId, input.vendorProduksi, snapshot.deliveryKolis).get(`${input.warna}|${input.lengan}|${input.fromSize}|`) ?? 0;
     if (input.qty > sisa - shipped) {
       throw new Error(
@@ -4806,7 +4806,7 @@ async function recomputeAutoRejectForGroup(
   // dirework dari gelombang sebelumnya tetap tercatat.
   const rejectSizeQty = expectedRejectGrossForGroup(mrpId, warna, lengan, s.batches, s.results);
 
-  const { data: oldAutoRejects } = await db.from("production_results").select("id").eq("group_key", groupKey).eq("kind", "REJECT").is("note", null);
+  const { data: oldAutoRejects } = await db.from("production_results").select("id").eq("group_key", groupKey).eq("vendor_produksi", vendorProduksi).eq("kind", "REJECT").is("note", null);
   if (oldAutoRejects && oldAutoRejects.length > 0) {
     await db.from("production_results").delete().in("id", oldAutoRejects.map((r) => r.id));
   }
@@ -4866,8 +4866,8 @@ async function confirmFgDoneImpl(groupKey: string, mrpId: string, vendorProduksi
   // baru ter-log lewat logFgProgressDelta), recomputeAutoRejectForGroup harus baca kondisi TERKINI.
   await recomputeAutoRejectForGroup(db, groupKey, mrpId, vendorProduksi, warna, lengan);
 
-  const { data: existing } = await db.from("production_group_meta").select("group_key").eq("group_key", groupKey).maybeSingle();
-  if (existing) await db.from("production_group_meta").update({ fg_confirmed_at: today() }).eq("group_key", groupKey);
+  const { data: existing } = await db.from("production_group_meta").select("group_key").eq("group_key", groupKey).eq("vendor_produksi", vendorProduksi).maybeSingle();
+  if (existing) await db.from("production_group_meta").update({ fg_confirmed_at: today() }).eq("group_key", groupKey).eq("vendor_produksi", vendorProduksi);
   else await db.from("production_group_meta").insert({ group_key: groupKey, mrp_id: mrpId, vendor_produksi: vendorProduksi, warna, lengan, fg_confirmed_at: today() });
 
   await maybeAdvanceMaklonToDelivery(mrpId, vendorProduksi);
@@ -4883,16 +4883,16 @@ export async function undoFgConfirmAction(groupKey: string): Promise<ActionResul
 }
 
 async function undoFgConfirmImpl(groupKey: string): Promise<void> {
-  await requireVendorSession();
-  await undoFgConfirmCore(groupKey);
+  const vendorId = await requireVendorSession();
+  await undoFgConfirmCore(groupKey, vendorId);
 }
 
 /** Isi "Buka kunci Finish Good" -- dipisah dari undoFgConfirmImpl supaya dipakai juga oleh
  *  sysadminUndoFgConfirmAction. TIDAK di-export dan TIDAK memeriksa sesi -- pemanggil WAJIB sudah
  *  memeriksanya. */
-async function undoFgConfirmCore(groupKey: string): Promise<void> {
+async function undoFgConfirmCore(groupKey: string, vendorProduksi: string): Promise<void> {
   const db = supabaseServer();
-  const { data: meta } = await db.from("production_group_meta").select("done_at,fg_confirmed_at").eq("group_key", groupKey).maybeSingle();
+  const { data: meta } = await db.from("production_group_meta").select("done_at,fg_confirmed_at").eq("group_key", groupKey).eq("vendor_produksi", vendorProduksi).maybeSingle();
   if (meta?.done_at) {
     throw new Error('Grup ini sudah "Selesai Produksi" di tab Final Produksi -- buka kunci itu dulu sebelum bisa buka kunci Finish Good.');
   }
@@ -4901,7 +4901,8 @@ async function undoFgConfirmCore(groupKey: string): Promise<void> {
   const { data: groupResultRows } = await db
     .from("production_results")
     .select("group_key, kind, note, production_result_sizes(size,qty)")
-    .eq("group_key", groupKey);
+    .eq("group_key", groupKey)
+    .eq("vendor_produksi", vendorProduksi);
   const groupResults: Pick<ProductionResult, "groupKey" | "kind" | "note" | "sizeQty">[] = (groupResultRows ?? []).map((r) => {
     const sizeQty: Record<string, number> = {};
     for (const s of r.production_result_sizes ?? []) sizeQty[s.size] = s.qty;
@@ -4910,11 +4911,11 @@ async function undoFgConfirmCore(groupKey: string): Promise<void> {
   if (reworkQtyForGroup(groupKey, groupResults as ProductionResult[]) > 0 || wasteQtyForGroup(groupKey, groupResults as ProductionResult[]) > 0) {
     throw new Error("Sebagian reject grup ini sudah dirework/dibuang ke sisa -- tidak bisa dibuka lagi supaya data reject tidak jadi tidak konsisten.");
   }
-  const { data: oldAutoRejects } = await db.from("production_results").select("id").eq("group_key", groupKey).eq("kind", "REJECT").is("note", null);
+  const { data: oldAutoRejects } = await db.from("production_results").select("id").eq("group_key", groupKey).eq("vendor_produksi", vendorProduksi).eq("kind", "REJECT").is("note", null);
   if (oldAutoRejects && oldAutoRejects.length > 0) {
     await db.from("production_results").delete().in("id", oldAutoRejects.map((r) => r.id));
   }
-  await db.from("production_group_meta").update({ fg_confirmed_at: null }).eq("group_key", groupKey);
+  await db.from("production_group_meta").update({ fg_confirmed_at: null }).eq("group_key", groupKey).eq("vendor_produksi", vendorProduksi);
 
   // Revisi 2026-09-19 (bug: "klik Selesai Produksi salah / Buka kunci, roll tetap tertutup, tidak bisa
   // input lagi"): confirmFgDoneAction menutup SEMUA roll yang masih terbuka (autoCloseOpenBatchesForGroup),
@@ -4956,7 +4957,7 @@ async function undoFgConfirmCore(groupKey: string): Promise<void> {
 export async function markProductionGroupDoneAction(groupKey: string, mrpId: string, vendorProduksi: string, warna: string, lengan: Lengan): Promise<void> {
   await requireVendorSession();
   const db = supabaseServer();
-  const { data: existing } = await db.from("production_group_meta").select("group_key,fg_confirmed_at").eq("group_key", groupKey).maybeSingle();
+  const { data: existing } = await db.from("production_group_meta").select("group_key,fg_confirmed_at").eq("group_key", groupKey).eq("vendor_produksi", vendorProduksi).maybeSingle();
   if (!existing?.fg_confirmed_at) {
     throw new Error('Selesaikan dulu Finish Good ("Selesai Produksi" di tab Finish Good) sebelum bisa Selesai Produksi di sini -- supaya reject sempat dihitung & dirework dulu kalau perlu.');
   }
@@ -4972,7 +4973,7 @@ export async function markProductionGroupDoneAction(groupKey: string, mrpId: str
   if ((openRolls ?? []).length > 0) {
     throw new Error(`Masih ada ${(openRolls ?? []).length} roll di warna ini yang belum selesai -- selesaikan di tab Finish Good dulu sebelum Final Produksi.`);
   }
-  await db.from("production_group_meta").update({ done_at: today() }).eq("group_key", groupKey);
+  await db.from("production_group_meta").update({ done_at: today() }).eq("group_key", groupKey).eq("vendor_produksi", vendorProduksi);
   await maybeAdvanceMaklonToDelivery(mrpId, vendorProduksi);
 }
 
@@ -5003,7 +5004,7 @@ export async function closeProductionPoAction(maklonPoId: string, reason: string
   const groups = warnaLenganGroupsWithFg(po.mrp_id, po.vendor_produksi, scope.batches, scope.results);
   for (const g of groups) {
     const groupKey = `${po.mrp_id}|${g.warna}|${g.lengan}`;
-    const { data: meta } = await db.from("production_group_meta").select("group_key,fg_confirmed_at,done_at").eq("group_key", groupKey).maybeSingle();
+    const { data: meta } = await db.from("production_group_meta").select("group_key,fg_confirmed_at,done_at").eq("group_key", groupKey).eq("vendor_produksi", po.vendor_produksi).maybeSingle();
     if (meta?.done_at) continue;
     // Revisi 2026-09-20: reject dihitung dari roll TERTUTUP -- roll terbuka yang sudah punya Finish Good ditutup dulu
     // (yang belum diisi sama sekali dibiarkan, sisa PO memang tidak diproduksi), baru reject dihitung dari kondisi terkini.
@@ -5013,7 +5014,7 @@ export async function closeProductionPoAction(maklonPoId: string, reason: string
     await autoCloseOpenBatchesForGroup(db, openWithFg);
     await recomputeAutoRejectForGroup(db, groupKey, po.mrp_id, po.vendor_produksi, g.warna, g.lengan);
     if (meta) {
-      await db.from("production_group_meta").update({ fg_confirmed_at: meta.fg_confirmed_at ?? today(), done_at: today() }).eq("group_key", groupKey);
+      await db.from("production_group_meta").update({ fg_confirmed_at: meta.fg_confirmed_at ?? today(), done_at: today() }).eq("group_key", groupKey).eq("vendor_produksi", po.vendor_produksi);
     } else {
       await db
         .from("production_group_meta")
@@ -5780,12 +5781,12 @@ export async function sysadminReopenRollAction(batchId: string, reason: string):
 }
 
 /** Buka kunci "Selesai Produksi" tahap 1 (Finish Good) sebuah grup warna·lengan atas nama vendor. */
-export async function sysadminUndoFgConfirmAction(groupKey: string, reason: string): Promise<ActionResult<void>> {
+export async function sysadminUndoFgConfirmAction(groupKey: string, vendorProduksi: string, reason: string): Promise<ActionResult<void>> {
   return toActionResult(async () => {
     await requireSysadminSession(reason);
-    const { data: meta } = await supabaseServer().from("production_group_meta").select("vendor_produksi,warna,lengan,mrp_id,fg_confirmed_at").eq("group_key", groupKey).maybeSingle();
+    const { data: meta } = await supabaseServer().from("production_group_meta").select("vendor_produksi,warna,lengan,mrp_id,fg_confirmed_at").eq("group_key", groupKey).eq("vendor_produksi", vendorProduksi).maybeSingle();
     if (!meta?.fg_confirmed_at) throw new Error("Grup ini belum ditandai Selesai Produksi (Finish Good).");
-    await undoFgConfirmCore(groupKey);
+    await undoFgConfirmCore(groupKey, vendorProduksi);
     await writeSysadminAudit("UNDO_FG_CONFIRM", "production_group_meta", groupKey, reason, { fgConfirmedAt: meta.fg_confirmed_at }, { fgConfirmedAt: null });
     await insertNotification(
       notif(`Selesai Produksi (Finish Good) ${meta.mrp_id} · ${meta.warna} · ${meta.lengan} dibuka kuncinya oleh Sysadmin — alasan: ${reason.trim()}. Reject dihitung ulang saat Anda menandai Selesai lagi.`, ["vendorMaklon"], meta.vendor_produksi)
@@ -5796,15 +5797,15 @@ export async function sysadminUndoFgConfirmAction(groupKey: string, reason: stri
 /** Buka kunci Final Produksi (tahap 2) sebuah grup atas nama vendor. Beda dari versi vendor
  *  (undoProductionGroupDoneAction, tanpa syarat): ditolak kalau PO Produksi-nya sudah ditutup (Close PO),
  *  karena Close PO mengunci grup lewat jalur yang sama dan membukanya sebagian membuat data tidak konsisten. */
-export async function sysadminUndoFinalAction(groupKey: string, reason: string): Promise<ActionResult<void>> {
+export async function sysadminUndoFinalAction(groupKey: string, vendorProduksi: string, reason: string): Promise<ActionResult<void>> {
   return toActionResult(async () => {
     await requireSysadminSession(reason);
     const db = supabaseServer();
-    const { data: meta } = await db.from("production_group_meta").select("vendor_produksi,warna,lengan,mrp_id,done_at").eq("group_key", groupKey).maybeSingle();
+    const { data: meta } = await db.from("production_group_meta").select("vendor_produksi,warna,lengan,mrp_id,done_at").eq("group_key", groupKey).eq("vendor_produksi", vendorProduksi).maybeSingle();
     if (!meta?.done_at) throw new Error("Grup ini belum di-Final Produksi.");
     const { data: po } = await db.from("maklon_pos").select("id,closed_at").eq("mrp_id", meta.mrp_id).eq("vendor_produksi", meta.vendor_produksi).not("closed_at", "is", null).limit(1);
     if ((po ?? []).length > 0) throw new Error(`PO Produksi ${po![0].id} sudah ditutup (Close PO) -- buka lagi PO-nya dulu sebelum Final Produksi grup ini dibuka.`);
-    const { error } = await db.from("production_group_meta").update({ done_at: null }).eq("group_key", groupKey);
+    const { error } = await db.from("production_group_meta").update({ done_at: null }).eq("group_key", groupKey).eq("vendor_produksi", vendorProduksi);
     if (error) throw new Error(error.message);
     await writeSysadminAudit("UNDO_FINAL_PRODUKSI", "production_group_meta", groupKey, reason, { doneAt: meta.done_at }, { doneAt: null });
     await insertNotification(

@@ -992,6 +992,8 @@ export function materialPoFullStatus(
   vendorInvoices: VendorInvoice[] = [],
   maklonPOs: MaklonPO[] = []
 ): MaterialPoFullStatus {
+  productionBatches = onlyVendor(productionBatches, po.vendorProduksi);
+  productionResults = onlyVendor(productionResults, po.vendorProduksi);
   if (po.status === "CANCELLED") return "CANCEL";
   if (!po.approved) return "WAITING_APPROVAL";
   if (po.invoicedRolls === 0) return "WAITING_INVOICE";
@@ -2428,6 +2430,8 @@ export function maklonProductionFullyDone(
   batches: ProductionBatch[],
   results: ProductionResult[]
 ): boolean {
+  batches = onlyVendor(batches, vendorProduksi);
+  results = onlyVendor(results, vendorProduksi);
   const hasUncutBatch = batches.some((b) => b.mrpId === mrpId && b.vendorProduksi === vendorProduksi && !b.cuttingAt);
   if (hasUncutBatch) return false;
 
@@ -2456,6 +2460,9 @@ export function mrpIdsWithRemainingReject(
   results: ProductionResult[],
   productionGroupMeta: ProductionGroupMeta[]
 ): string[] {
+  batches = onlyVendor(batches, vendorProduksi);
+  results = onlyVendor(results, vendorProduksi);
+  productionGroupMeta = onlyVendor(productionGroupMeta, vendorProduksi);
   const mrpIds = Array.from(new Set(batches.filter((b) => b.vendorProduksi === vendorProduksi && b.cuttingAt).map((b) => b.mrpId)));
   return mrpIds.filter((mrpId) => {
     const groups = cutWarnaLenganGroups(mrpId, vendorProduksi, batches);
@@ -2486,13 +2493,24 @@ export function addDays(iso: string, days: number): string {
   return localDateString(d);
 }
 
-export function productionGroupMetaFor(groupKey: string, metas: ProductionGroupMeta[]): ProductionGroupMeta | undefined {
-  return metas.find((m) => m.groupKey === groupKey);
+/** Data produksi dikelompokkan per `mrp|warna|lengan` TANPA vendor, sedangkan satu warna·lengan bisa dikerjakan beberapa vendor sekaligus.
+ *  Tanpa penyaringan, target/Finish Good/reject satu vendor ikut menjumlahkan milik vendor lain (kasus W39 Hitam 30S Pendek, 2026-10-24).
+ *  Fungsi perhitungan per vendor memanggil ini di titik masuk supaya hanya baris milik vendor itu yang terhitung. */
+export function onlyVendor<T extends { vendorProduksi: string }>(rows: T[], vendorId: string): T[] {
+  return rows.filter((r) => r.vendorProduksi === vendorId);
+}
+
+/** Status grup (Selesai Produksi, remark reject). Satu grup `mrp|warna|lengan` punya satu baris PER VENDOR (migration 0076) -- sertakan
+ *  `vendorProduksi` supaya status vendor lain tidak terbaca. Tanpa vendor: baris pertama yang cocok (perilaku lama, untuk tampilan lintas vendor). */
+export function productionGroupMetaFor(groupKey: string, metas: ProductionGroupMeta[], vendorProduksi?: string): ProductionGroupMeta | undefined {
+  return metas.find((m) => m.groupKey === groupKey && (vendorProduksi === undefined || m.vendorProduksi === vendorProduksi));
 }
 
 export type ProductionStatusInfo = { label: string; days: number } | null;
 
 export function invoiceYieldSummary(inv: VendorInvoice, mrpDetails: MrpDetail[], batches: ProductionBatch[], results: ProductionResult[]): { target: number; finishGood: number; yieldPct: number } {
+  batches = onlyVendor(batches, inv.vendorProduksi);
+  results = onlyVendor(results, inv.vendorProduksi);
   let target = 0;
   let finishGood = 0;
   for (const line of inv.lines) {
@@ -2528,7 +2546,7 @@ export function productionStatusFromDates(targetDoneAt: string | undefined, done
 export function invoiceProductionStatus(inv: VendorInvoice, metas: ProductionGroupMeta[], invoices: RawMaterialInvoice[]): ProductionStatusInfo {
   for (const line of inv.lines) {
     const groupKey = line.mrpId + "|" + line.warna + "|" + line.lengan;
-    const meta = productionGroupMetaFor(groupKey, metas);
+    const meta = productionGroupMetaFor(groupKey, metas, inv.vendorProduksi);
     const target = targetDoneProduksiForGroup(line.mrpId, inv.vendorProduksi, line.warna, invoices);
     const status = productionStatusFromDates(target, meta?.doneAt);
     if (status) return status;
@@ -2621,6 +2639,8 @@ export function groupCloseSummary(
   batches: ProductionBatch[],
   results: ProductionResult[]
 ): GroupCloseSummary {
+  batches = onlyVendor(batches, vendorProduksi);
+  results = onlyVendor(results, vendorProduksi);
   const planned = mrpPlannedGroupsForVendor(mrpId, vendorProduksi, mrpDetails).find((g) => g.warna === warna && g.lengan === lengan);
   const plannedRoll = planned?.plannedRoll ?? 0;
   const plannedPcs = planned?.plannedPcs ?? 0;
@@ -2833,7 +2853,7 @@ export function availableRejectToShip(
   const groupKeys = new Set(results.filter((r) => r.mrpId === mrpId && r.vendorProduksi === vendorProduksi && r.kind === "REJECT").map((r) => r.groupKey));
   const out: AvailableFgRow[] = [];
   for (const groupKey of groupKeys) {
-    if (!productionGroupMetaFor(groupKey, productionGroupMeta)?.remarkSisaReject?.trim()) continue;
+    if (!productionGroupMetaFor(groupKey, productionGroupMeta, vendorProduksi)?.remarkSisaReject?.trim()) continue;
     const [, warna, lengan] = groupKey.split("|");
     for (const [size, qty] of Object.entries(cumulativeSizeQtyForGroup(groupKey, "REJECT", results))) {
       const available = qty - (packed.get(warna + "|" + lengan + "|" + size + "|") ?? 0);
@@ -2868,7 +2888,7 @@ export function availableFgToShip(
   for (const [key, producedQty] of produced.entries()) {
     const [warna, lengan, size, usia] = key.split("|");
     // Tahap 1 saja (fgConfirmedAt) sudah cukup untuk shippable -- lihat catatan di atas fungsi ini.
-    if (!productionGroupMetaFor(mrpId + "|" + warna + "|" + lengan, productionGroupMeta)?.fgConfirmedAt) continue;
+    if (!productionGroupMetaFor(mrpId + "|" + warna + "|" + lengan, productionGroupMeta, vendorProduksi)?.fgConfirmedAt) continue;
     const available = producedQty - (packed.get(key) ?? 0);
     if (available > 0) {
       out.push({ warna, lengan: lengan as Lengan, size, usia: (usia || undefined) as Usia | undefined, available });
@@ -3390,6 +3410,8 @@ export function reworkedAwayBySize(groupKey: string, results: ProductionResult[]
 // & invoice-vendor-review-panel.tsx, bukan disamakan seperti dulu — yieldPct dihitung dari cutting
 // aktual (fg/cutting), bukan dari target rencana lagi.
 export function productionYieldByWarna(mrpId: string, vendorProduksi: string, mrpDetails: MrpDetail[], batches: ProductionBatch[], results: ProductionResult[]): ProductionYieldRow[] {
+  batches = onlyVendor(batches, vendorProduksi);
+  results = onlyVendor(results, vendorProduksi);
   const groups = cutWarnaLenganGroups(mrpId, vendorProduksi, batches);
   return groups.map((g) => {
     const target = Object.values(targetSizesForGroup(mrpId, g.warna, g.lengan, mrpDetails, batches)).reduce((a, b) => a + b, 0);
@@ -3426,6 +3448,8 @@ export type VendorItemSizeProgress = {
 };
 
 export function vendorItemSizeProgress(mrpId: string, vendorProduksi: string, mrpDetails: MrpDetail[], batches: ProductionBatch[], results: ProductionResult[]): VendorItemSizeProgress[] {
+  batches = onlyVendor(batches, vendorProduksi);
+  results = onlyVendor(results, vendorProduksi);
   const detail = mrpDetailFor(mrpId, mrpDetails);
   if (!detail) return [];
 
@@ -3526,7 +3550,11 @@ export function fgMurniAndReworkForGroup(groupKey: string, results: ProductionRe
   return { murni, rework };
 }
 
-export function productionYieldBySize(mrpId: string, warna: string, lengan: Lengan, mrpDetails: MrpDetail[], batches: ProductionBatch[], results: ProductionResult[]): ProductionYieldRow[] {
+export function productionYieldBySize(mrpId: string, warna: string, lengan: Lengan, mrpDetails: MrpDetail[], batches: ProductionBatch[], results: ProductionResult[], vendorProduksi?: string): ProductionYieldRow[] {
+  if (vendorProduksi !== undefined) {
+    batches = onlyVendor(batches, vendorProduksi);
+    results = onlyVendor(results, vendorProduksi);
+  }
   const target = targetSizesForGroup(mrpId, warna, lengan, mrpDetails, batches);
   const cutting = cuttingSizesForGroup(mrpId, warna, lengan, mrpDetails, batches);
   const groupKey = mrpId + "|" + warna + "|" + lengan;
@@ -3708,6 +3736,9 @@ export function hppRowsForInvoice(
   deliveryKolis: DeliveryKoli[],
   itemSellingPrices: ItemSellingPriceRow[]
 ): HppRow[] {
+  productionBatches = onlyVendor(productionBatches, inv.vendorProduksi);
+  productionResults = onlyVendor(productionResults, inv.vendorProduksi);
+  productionGroupMeta = onlyVendor(productionGroupMeta, inv.vendorProduksi);
   const mrpIdsInInvoice = Array.from(new Set(inv.lines.map((l) => l.mrpId)));
   const totalPcsInKoli = deliveryKolis
     .filter((k) => k.vendorProduksi === inv.vendorProduksi && mrpIdsInInvoice.includes(k.mrpId))
@@ -3745,7 +3776,7 @@ export function hppRowsForInvoice(
   const drafts: Draft[] = [];
   for (const line of inv.lines) {
     const groupKey = line.mrpId + "|" + line.warna + "|" + line.lengan;
-    const bySize = productionYieldBySize(line.mrpId, line.warna, line.lengan, mrpDetails, productionBatches, productionResults);
+    const bySize = productionYieldBySize(line.mrpId, line.warna, line.lengan, mrpDetails, productionBatches, productionResults, inv.vendorProduksi);
     const meta = productionGroupMetaFor(groupKey, productionGroupMeta);
     const target = targetDoneProduksiForGroup(line.mrpId, inv.vendorProduksi, line.warna, rawInvoices);
     const status = productionStatusFromDates(target, meta?.doneAt);
@@ -3967,6 +3998,9 @@ export function hppRowsForInvoicePerRoll(
   ekspedisiRates: EkspedisiRateRow[],
   itemSellingPrices: ItemSellingPriceRow[]
 ): HppRow[] {
+  productionBatches = onlyVendor(productionBatches, inv.vendorProduksi);
+  productionResults = onlyVendor(productionResults, inv.vendorProduksi);
+  productionGroupMeta = onlyVendor(productionGroupMeta, inv.vendorProduksi);
   const rows: HppRow[] = [];
   const legacyLines: VendorInvoiceLine[] = [];
   const groupKeyHasRolls = new Map<string, boolean>();

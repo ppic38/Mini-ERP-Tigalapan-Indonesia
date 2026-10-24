@@ -79,8 +79,8 @@ export function rollReopenCorrections(b: ProductionBatch, groupFinalDone: boolea
 }
 
 /** Buka kunci "Selesai Produksi" (tahap 1, Finish Good) grup warna·lengan. */
-export function fgConfirmCorrections(args: { groupKey: string; warna: string; lengan: Lengan; isFinalDone: boolean }): CorrectionAction[] {
-  const { groupKey, warna, lengan, isFinalDone } = args;
+export function fgConfirmCorrections(args: { groupKey: string; vendorProduksi: string; warna: string; lengan: Lengan; isFinalDone: boolean }): CorrectionAction[] {
+  const { groupKey, vendorProduksi, warna, lengan, isFinalDone } = args;
   return [
     {
       key: "undo-fg-confirm",
@@ -93,14 +93,14 @@ export function fgConfirmCorrections(args: { groupKey: string; warna: string; le
         "Ditolak server kalau reject grup sudah dirework/dibuang (aturan sama seperti tombol vendor). Vendor menerima notifikasi.",
       ],
       confirmLabel: "Buka kunci",
-      run: (reason) => sysadminUndoFgConfirmAction(groupKey, reason),
+      run: (reason) => sysadminUndoFgConfirmAction(groupKey, vendorProduksi, reason),
     },
   ];
 }
 
 /** Buka kunci Final Produksi (tahap 2). Ditolak server kalau PO Produksi-nya sudah ditutup (Close PO). */
-export function finalUndoCorrections(args: { groupKey: string; warna: string; lengan: Lengan }): CorrectionAction[] {
-  const { groupKey, warna, lengan } = args;
+export function finalUndoCorrections(args: { groupKey: string; vendorProduksi: string; warna: string; lengan: Lengan }): CorrectionAction[] {
+  const { groupKey, vendorProduksi, warna, lengan } = args;
   return [
     {
       key: "undo-final",
@@ -112,7 +112,7 @@ export function finalUndoCorrections(args: { groupKey: string; warna: string; le
         "Vendor menerima notifikasi.",
       ],
       confirmLabel: "Buka kunci Final",
-      run: (reason) => sysadminUndoFinalAction(groupKey, reason),
+      run: (reason) => sysadminUndoFinalAction(groupKey, vendorProduksi, reason),
     },
   ];
 }
@@ -186,7 +186,7 @@ export function koliDeleteCorrections(k: DeliveryKoli): CorrectionAction[] {
 export function reworkUndoCorrections(r: ProductionResult, groupMeta: ProductionGroupMeta[]): CorrectionAction[] {
   const fromLengan = (r.note ?? "").match(/^Rework dari (\S+) size/)?.[1];
   const sourceKey = fromLengan ? `${r.mrpId}|${r.warna}|${fromLengan}` : undefined;
-  const finalDone = groupMeta.some((g) => !!g.doneAt && (g.groupKey === r.groupKey || g.groupKey === sourceKey));
+  const finalDone = groupMeta.some((g) => g.vendorProduksi === r.vendorProduksi && !!g.doneAt && (g.groupKey === r.groupKey || g.groupKey === sourceKey));
   const qty = Object.values(r.sizeQty).reduce((a, b) => a + b, 0);
   return [
     {

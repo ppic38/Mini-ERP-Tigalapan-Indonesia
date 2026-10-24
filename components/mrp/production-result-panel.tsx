@@ -12,6 +12,7 @@ import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { fgConfirmCorrections, rollReopenCorrections } from "@/components/sysadmin/vendor-corrections";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { useMrpStore } from "@/lib/mrp/store";
+import { useVendorProduction } from "@/lib/mrp/useVendorProduction";
 import { usePendingActions } from "@/lib/mrp/usePendingActions";
 import {
   restingCandidateRolls,
@@ -130,10 +131,9 @@ function FgProgressHistory({ poId, results }: { poId: string; results: Productio
 
 export function ProductionResultPanel({ vendorId, kind, title, canRework = false }: { vendorId: string; kind: "FG" | "REJECT"; title: string; canRework?: boolean }) {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
-  const productionBatches = useMrpStore((s) => s.productionBatches);
-  const productionResults = useMrpStore((s) => s.productionResults);
+  // Hanya data vendor ini: satu warna·lengan bisa dikerjakan beberapa vendor (lihat useVendorProduction).
+  const { productionBatches, productionResults, productionGroupMeta } = useVendorProduction(vendorId);
   const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
-  const productionGroupMeta = useMrpStore((s) => s.productionGroupMeta);
   const rawInvoices = useMrpStore((s) => s.invoices);
   const rejectRemarks = useMrpStore((s) => s.rejectRemarks);
   const setRejectRemark = useMrpStore((s) => s.setRejectRemark);
@@ -434,7 +434,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                             kunci, dan roll yang sudah ditutup dibuka lewat "Buka lagi" per roll. Sysadmin tetap punya
                             jalan darurat (alasan wajib & Log Audit). */}
                         {kind === "FG" && isFgConfirmed && sysadmin && (
-                          <SysadminActionsBar actions={fgConfirmCorrections({ groupKey, warna: g.warna, lengan: g.lengan, isFinalDone })} />
+                          <SysadminActionsBar actions={fgConfirmCorrections({ groupKey, vendorProduksi: vendorId, warna: g.warna, lengan: g.lengan, isFinalDone })} />
                         )}
                         <Button onClick={() => toggleGroup(g.warna, g.lengan)} variant="accent" size="xs">
                           {expanded ? "Tutup" : kind === "FG" ? "Input Finish Good →" : "Lihat by size →"}
@@ -518,6 +518,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                         </div>
                         <GroupRemarkBox
                           groupKey={groupKey}
+                          vendorProduksi={vendorId}
                           fallback={(() => {
                             // Remark LAMA per PO Produksi (sebelum remark per warna) dipakai sebagai isian awal supaya tinggal dikonfirmasi.
                             const poId = productionResults.find((r) => r.groupKey === groupKey && r.kind === "REJECT" && r.poId)?.poId;

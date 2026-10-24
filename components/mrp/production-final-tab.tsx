@@ -10,6 +10,7 @@ import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { finalUndoCorrections } from "@/components/sysadmin/vendor-corrections";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { useMrpStore } from "@/lib/mrp/store";
+import { useVendorProduction } from "@/lib/mrp/useVendorProduction";
 import { usePendingActions } from "@/lib/mrp/usePendingActions";
 import {
   cumulativeSizeQtyForGroup,
@@ -73,9 +74,8 @@ const STATUS_TONE: Record<FinalStatus, "success" | "info" | "warning" | "neutral
 
 export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
-  const productionBatches = useMrpStore((s) => s.productionBatches);
-  const productionResults = useMrpStore((s) => s.productionResults);
-  const productionGroupMeta = useMrpStore((s) => s.productionGroupMeta);
+  // Hanya data vendor ini: satu warna·lengan bisa dikerjakan beberapa vendor (lihat useVendorProduction).
+  const { productionBatches, productionResults, productionGroupMeta } = useVendorProduction(vendorId);
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
   const rawInvoices = useMrpStore((s) => s.invoices);
   const materialClaimResolutions = useMrpStore((s) => s.materialClaimResolutions);
@@ -289,7 +289,7 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
               label: "Aksi Sysadmin",
               default: true,
               sysadmin: true,
-              render: (r) => (!isPoClosed && r.isDone ? <SysadminActionsBar compact actions={finalUndoCorrections({ groupKey: r.groupKey, warna: r.warna, lengan: r.lengan })} /> : null),
+              render: (r) => (!isPoClosed && r.isDone ? <SysadminActionsBar compact actions={finalUndoCorrections({ groupKey: r.groupKey, vendorProduksi: vendorId, warna: r.warna, lengan: r.lengan })} /> : null),
             },
             { key: "plan", label: "Rencana MRP (pcs)", default: true, align: "right", render: (r) => (r.plannedPcs > 0 ? num(r.plannedPcs) : <span className="text-text-muted">—</span>) },
             { key: "fg", label: "Finish Good / Hasil cutting", default: true, align: "right", render: (r) => (
@@ -325,7 +325,7 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
                   {isPoClosed ? null : r.isDone ? (
                     sysadmin ? null : (
                       <button
-                        onClick={() => runAction(r.groupKey, undoProductionGroupDone(r.groupKey))}
+                        onClick={() => runAction(r.groupKey, undoProductionGroupDone(r.groupKey, vendorId))}
                         title="Buka kunci grup ini supaya Finish Good/Reject/Rework bisa dibuka lagi (mulai dari tab Finish Good)"
                         className="rounded-md border border-[#CBD5DF] bg-white px-3 py-[6px] font-sans text-[11px] font-semibold text-action-primary"
                       >

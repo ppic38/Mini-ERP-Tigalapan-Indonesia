@@ -214,8 +214,8 @@ export function ReworkInlineForm({
 
 /** Remark sisa reject per warna/lengan dengan tombol KONFIRMASI. Remark terkonfirmasi = sisa reject warna ini dianggap sudah ditangani
  *  vendor (badge "Reject & Rework" tidak lagi menghitungnya). "Batalkan" mengosongkan remark -> kembali dihitung. */
-export function GroupRemarkBox({ groupKey, fallback }: { groupKey: string; fallback?: string }) {
-  const meta = useMrpStore((s) => s.productionGroupMeta.find((m) => m.groupKey === groupKey));
+export function GroupRemarkBox({ groupKey, vendorProduksi, fallback }: { groupKey: string; vendorProduksi: string; fallback?: string }) {
+  const meta = useMrpStore((s) => s.productionGroupMeta.find((m) => m.groupKey === groupKey && m.vendorProduksi === vendorProduksi));
   const setGroupRejectRemark = useMrpStore((s) => s.setGroupRejectRemark);
   const saved = meta?.remarkSisaReject?.trim() ?? "";
   const [draft, setDraft] = useState<string | null>(null); // null = tidak sedang mengedit
@@ -229,7 +229,7 @@ export function GroupRemarkBox({ groupKey, fallback }: { groupKey: string; fallb
     setSaving(true);
     setError(null);
     try {
-      await setGroupRejectRemark(groupKey, text);
+      await setGroupRejectRemark(groupKey, vendorProduksi, text);
       setDraft(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Gagal menyimpan remark.");
@@ -328,7 +328,7 @@ export function ReworkHistoryCard({ vendorId }: { vendorId: string }) {
             const toSize = Object.keys(r.sizeQty)[0] ?? "—";
             // Catatan = remark sisa reject warna ASAL (group_key reject = mrp|warna|lengan asal); fallback remark lama per PO.
             const sourceKey = fromLengan ? `${r.mrpId}|${r.warna}|${fromLengan}` : "";
-            const remark = (sourceKey && productionGroupMeta.find((m) => m.groupKey === sourceKey)?.remarkSisaReject?.trim()) || rejectRemarks[r.poId] || "";
+            const remark = (sourceKey && productionGroupMeta.find((m) => m.groupKey === sourceKey && m.vendorProduksi === r.vendorProduksi)?.remarkSisaReject?.trim()) || rejectRemarks[r.poId] || "";
             return (
               <div key={r.id} className="border-b border-[#F1F4F7] last:border-b-0">
                 <div className={"m-stack grid items-center gap-x-3 px-4 py-[11px] text-center font-sans text-xs text-[#31414F] " + COLS}>

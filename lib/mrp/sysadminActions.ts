@@ -642,7 +642,7 @@ export async function sysadminUndoReworkAction(fgResultId: string, reason: strin
     const qty = Number(toSizeRow.qty);
 
     const sourceGroupKey = `${fg.mrp_id}|${fg.warna}|${fromLengan}`;
-    const { data: metas, error: metaErr } = await db.from("production_group_meta").select("group_key,done_at").in("group_key", [sourceGroupKey, fg.group_key]);
+    const { data: metas, error: metaErr } = await db.from("production_group_meta").select("group_key,done_at").in("group_key", [sourceGroupKey, fg.group_key]).eq("vendor_produksi", fg.vendor_produksi);
     if (metaErr) throw new Error(metaErr.message);
     if ((metas ?? []).some((g) => g.done_at)) throw new Error("Grup asal/tujuan rework sudah Final Produksi -- buka kunci Final dulu sebelum rework dibatalkan.");
 
@@ -669,6 +669,7 @@ export async function sysadminUndoReworkAction(fgResultId: string, reason: strin
       .from("production_results")
       .select("id,note,production_result_sizes(size,qty)")
       .eq("group_key", sourceGroupKey)
+      .eq("vendor_produksi", fg.vendor_produksi)
       .eq("kind", "REJECT")
       .eq("recorded_at", fg.recorded_at);
     if (candErr) throw new Error(candErr.message);
@@ -872,7 +873,7 @@ async function loadBatchUntouchedByFg(db: ReturnType<typeof supabaseServer>, bat
   const [{ count: fgCount, error: fgErr }, { count: koliCount, error: koliErr }, { data: meta, error: metaErr }] = await Promise.all([
     db.from("production_batch_fg_sizes").select("size", { count: "exact", head: true }).eq("production_batch_id", batchId),
     db.from("delivery_koli_items").select("delivery_koli_id", { count: "exact", head: true }).eq("source_batch_id", batchId),
-    db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", `${batch.mrp_id}|${batch.warna}|${batch.lengan}`).maybeSingle(),
+    db.from("production_group_meta").select("fg_confirmed_at,done_at").eq("group_key", `${batch.mrp_id}|${batch.warna}|${batch.lengan}`).eq("vendor_produksi", batch.vendor_produksi).maybeSingle(),
   ]);
   if (fgErr || koliErr || metaErr) throw new Error((fgErr ?? koliErr ?? metaErr)!.message);
   if ((fgCount ?? 0) > 0) throw new Error("Roll ini sudah punya hasil Finish Good -- tidak bisa dikoreksi dari sini.");

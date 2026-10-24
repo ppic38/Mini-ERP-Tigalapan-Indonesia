@@ -530,10 +530,10 @@ type FlowActions = {
   setVendorInvoiceOngkir: (invoiceId: string, ongkirTotal: number) => Promise<void>;
   /** TAHAP 1 -- "Selesai Produksi" di tab Finish Good (hitung reject, tidak mengunci rework). */
   confirmFgDone: (groupKey: string, mrpId: string, vendorProduksi: string, warna: string, lengan: Lengan) => Promise<void>;
-  undoFgConfirm: (groupKey: string) => Promise<void>;
+  undoFgConfirm: (groupKey: string, vendorProduksi: string) => Promise<void>;
   /** TAHAP 2 -- "Selesai Produksi" di tab Final Produksi (kunci final, basis on-time/delay). */
   markProductionGroupDone: (groupKey: string, mrpId: string, vendorProduksi: string, warna: string, lengan: Lengan) => Promise<void>;
-  undoProductionGroupDone: (groupKey: string) => Promise<void>;
+  undoProductionGroupDone: (groupKey: string, vendorProduksi: string) => Promise<void>;
   /** Item 21: "Close PO" per PO Produksi (mrpId+vendorProduksi) -- kunci SEMUA warna/lengannya
    *  sekaligus DAN blokir Pengiriman untuk sisa FG yang belum masuk koli (item 22). */
   closeProductionPo: (maklonPoId: string, reason: string) => Promise<void>;
@@ -542,7 +542,7 @@ type FlowActions = {
   reopenProductionPo: (maklonPoId: string) => Promise<void>;
   setRejectRemark: (poId: string, remark: string) => Promise<void>;
   /** Remark sisa reject per warna/lengan (konfirmasi: terisi = dianggap sudah ditangani, badge padam). */
-  setGroupRejectRemark: (groupKey: string, remark: string) => Promise<void>;
+  setGroupRejectRemark: (groupKey: string, vendorProduksi: string, remark: string) => Promise<void>;
   resolveMaterialClaim: (key: string, note: string) => Promise<void>;
   unresolveMaterialClaim: (key: string) => Promise<void>;
   /** Step 1 flow bertahap (2026-09-11) -- Procurement "Terima Klaim". Lihat acceptMaterialClaimAction. */
@@ -2361,9 +2361,9 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // fgConfirmedAt (tidak ada angka baru yang dihitung), jadi aman ditebak di client. Guard server
   // (done_at TAHAP 2 sudah terisi / rework-waste sudah tercatat) tetap ditegakkan di
   // undoFgConfirmAction -- kalau ditolak, rollback + alert seperti biasa.
-  undoFgConfirm: async (groupKey) => {
+  undoFgConfirm: async (groupKey, vendorProduksi) => {
     const previous = get().productionGroupMeta;
-    set({ productionGroupMeta: previous.map((m) => (m.groupKey === groupKey ? { ...m, fgConfirmedAt: undefined } : m)) });
+    set({ productionGroupMeta: previous.map((m) => (m.groupKey === groupKey && m.vendorProduksi === vendorProduksi ? { ...m, fgConfirmedAt: undefined } : m)) });
     try {
       unwrapAction(await actions.undoFgConfirmAction(groupKey));
     } catch (err) {
@@ -2380,10 +2380,10 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   markProductionGroupDone: async (groupKey, mrpId, vendorProduksi, warna, lengan) => {
     const previous = get().productionGroupMeta;
     const doneAt = localDateString(new Date());
-    const exists = previous.some((m) => m.groupKey === groupKey);
+    const exists = previous.some((m) => m.groupKey === groupKey && m.vendorProduksi === vendorProduksi);
     set({
       productionGroupMeta: exists
-        ? previous.map((m) => (m.groupKey === groupKey ? { ...m, doneAt } : m))
+        ? previous.map((m) => (m.groupKey === groupKey && m.vendorProduksi === vendorProduksi ? { ...m, doneAt } : m))
         : [...previous, { groupKey, mrpId, vendorProduksi, warna, lengan, doneAt }],
     });
     try {
@@ -2395,9 +2395,9 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     }
     backgroundRefresh();
   },
-  undoProductionGroupDone: async (groupKey) => {
+  undoProductionGroupDone: async (groupKey, vendorProduksi) => {
     const previous = get().productionGroupMeta;
-    set({ productionGroupMeta: previous.map((m) => (m.groupKey === groupKey ? { ...m, doneAt: undefined } : m)) });
+    set({ productionGroupMeta: previous.map((m) => (m.groupKey === groupKey && m.vendorProduksi === vendorProduksi ? { ...m, doneAt: undefined } : m)) });
     try {
       await actions.undoProductionGroupDoneAction(groupKey);
     } catch (err) {
@@ -2426,10 +2426,10 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     }
     backgroundRefresh();
   },
-  setGroupRejectRemark: async (groupKey, remark) => {
+  setGroupRejectRemark: async (groupKey, vendorProduksi, remark) => {
     const text = remark.trim();
     const previous = get().productionGroupMeta;
-    set({ productionGroupMeta: previous.map((m) => (m.groupKey === groupKey ? { ...m, remarkSisaReject: text || undefined } : m)) });
+    set({ productionGroupMeta: previous.map((m) => (m.groupKey === groupKey && m.vendorProduksi === vendorProduksi ? { ...m, remarkSisaReject: text || undefined } : m)) });
     try {
       await actions.setGroupRejectRemarkAction(groupKey, text);
     } catch (err) {
