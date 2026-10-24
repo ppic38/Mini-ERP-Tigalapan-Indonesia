@@ -430,78 +430,71 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
           kapasitas kumulatif vendor. */}
       {invoiceDialogKoliIds && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0B131B]/45 p-4">
-          <div className="max-h-[92vh] w-full max-w-[640px] overflow-y-auto rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]">
+          <div className="max-h-[92vh] w-full max-w-[720px] overflow-y-auto rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]">
             <div className="border-b border-border-subtle px-5 py-3.5">
               <span className="font-sans text-[13px] font-semibold text-text-primary">Submit Invoice — {invoiceDialogKoliIds.length} koli</span>
             </div>
             <div className="px-5 py-4">
               <div className="overflow-hidden rounded-md border border-[#E4E9EE]">
-                <div className="m-hide grid grid-cols-[1.1fr_1fr_0.9fr_70px_130px] gap-x-2 bg-[#F2F5F8] px-3 py-1.5 font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                <div className="m-hide grid grid-cols-[1fr_1.2fr_0.9fr_70px_100px_120px] gap-x-2 bg-[#F2F5F8] px-3 py-1.5 font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
                   <span>MRP</span>
                   <span>Warna</span>
                   <span>Lengan</span>
                   <span className="text-right">Qty</span>
                   <span className="text-right">Rate/pc</span>
+                  <span className="text-right">Nilai</span>
                 </div>
-                {invoiceDialogLines.map((l) => {
-                  const key = invoiceLineKeyLocal(l.mrpId, l.warna, l.lengan, l.usia);
+                {(() => {
+                  // Satu tabel: baris per MRP/warna/lengan, subtotal per warna (semua lengan dijumlahkan; usia dipisah karena tarifnya bisa beda), lalu total invoice.
+                  const COLS = "grid-cols-[1fr_1.2fr_0.9fr_70px_100px_120px]";
+                  const groups: { key: string; warna: string; lines: typeof invoiceDialogLines }[] = [];
+                  for (const l of invoiceDialogLines) {
+                    const key = l.warna + "|" + (l.usia ?? "");
+                    let g = groups.find((x) => x.key === key);
+                    if (!g) {
+                      g = { key, warna: l.warna + (l.usia ? ` (${l.usia})` : ""), lines: [] };
+                      groups.push(g);
+                    }
+                    g.lines.push(l);
+                  }
+                  const totalQty = invoiceDialogLines.reduce((sum, l) => sum + l.qty, 0);
                   return (
-                    <div key={key} className="m-stack m-grid2 grid grid-cols-[1.1fr_1fr_0.9fr_70px_130px] items-center gap-x-2 border-t border-[#EEF1F4] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F] max-md:py-2.5">
-                      <span className="font-mono">{l.mrpId}</span>
-                      <span data-label="Warna">
-                        {l.warna}
-                        {l.usia ? ` (${l.usia})` : ""}
-                      </span>
-                      <span data-label="Lengan">{l.lengan}</span>
-                      <span data-label="Qty" className="text-right font-mono">{l.qty} pcs</span>
-                      <span data-label="Rate/pc" className="text-right font-mono">{formatRupiah(rateForLine(l))}</span>
-                    </div>
-                  );
-                })}
-                <div className="m-wrap grid grid-cols-[1.1fr_1fr_0.9fr_70px_130px] gap-x-2 border-t border-[#EEF1F4] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[11.5px] font-semibold text-[#31414F] max-md:justify-between max-md:py-2.5">
-                  <span className="col-span-3">Total invoice</span>
-                  <span className="col-span-2 text-right font-mono">{formatRupiah(invoiceDialogTotal)}</span>
-                </div>
-              </div>
-              {(() => {
-                // Totalan per warna (semua lengan dijumlahkan; usia dipisah karena tarifnya bisa beda) supaya vendor bisa mencocokkan dengan hitungan sendiri.
-                const byWarna = new Map<string, { warna: string; mrps: Set<string>; qty: number; nilai: number }>();
-                for (const l of invoiceDialogLines) {
-                  const key = l.warna + "|" + (l.usia ?? "");
-                  const cur = byWarna.get(key) ?? { warna: l.warna + (l.usia ? ` (${l.usia})` : ""), mrps: new Set<string>(), qty: 0, nilai: 0 };
-                  cur.mrps.add(l.mrpId);
-                  cur.qty += l.qty;
-                  cur.nilai += l.qty * rateForLine(l);
-                  byWarna.set(key, cur);
-                }
-                const rows = Array.from(byWarna.values()).sort((x, y) => x.warna.localeCompare(y.warna));
-                if (rows.length === 0) return null;
-                const totalQty = rows.reduce((sum, r) => sum + r.qty, 0);
-                return (
-                  <div className="mt-3 overflow-hidden rounded-md border border-[#E4E9EE]">
-                    <div className="grid grid-cols-[1fr_90px_140px] gap-x-2 bg-[#F2F5F8] px-3 py-1.5 font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-                      <span>Total per warna</span>
-                      <span className="text-right">Qty</span>
-                      <span className="text-right">Nilai</span>
-                    </div>
-                    {rows.map((r) => (
-                      <div key={r.warna} className="grid grid-cols-[1fr_90px_140px] items-center gap-x-2 border-t border-[#EEF1F4] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-                        <span>
-                          {r.warna}
-                          {r.mrps.size > 1 && <span className="ml-1.5 font-mono text-[10px] text-text-muted">{Array.from(r.mrps).join(", ")}</span>}
-                        </span>
-                        <span className="text-right font-mono">{r.qty} pcs</span>
-                        <span className="text-right font-mono">{formatRupiah(r.nilai)}</span>
+                    <>
+                      {groups.map((g) => {
+                        const qty = g.lines.reduce((sum, l) => sum + l.qty, 0);
+                        const nilai = g.lines.reduce((sum, l) => sum + l.qty * rateForLine(l), 0);
+                        return (
+                          <Fragment key={g.key}>
+                            {g.lines.map((l) => (
+                              <div key={invoiceLineKeyLocal(l.mrpId, l.warna, l.lengan, l.usia)} className={`m-stack m-grid2 grid ${COLS} items-center gap-x-2 border-t border-[#EEF1F4] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F] max-md:py-2.5`}>
+                                <span className="font-mono">{l.mrpId}</span>
+                                <span data-label="Warna">
+                                  {l.warna}
+                                  {l.usia ? ` (${l.usia})` : ""}
+                                </span>
+                                <span data-label="Lengan">{l.lengan}</span>
+                                <span data-label="Qty" className="text-right font-mono">{l.qty} pcs</span>
+                                <span data-label="Rate/pc" className="text-right font-mono">{formatRupiah(rateForLine(l))}</span>
+                                <span data-label="Nilai" className="text-right font-mono">{formatRupiah(l.qty * rateForLine(l))}</span>
+                              </div>
+                            ))}
+                            <div className={`m-wrap grid ${COLS} gap-x-2 border-t border-[#EEF1F4] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[11.5px] font-semibold text-[#31414F] max-md:justify-between max-md:py-2.5`}>
+                              <span className="col-span-3">Total {g.warna}</span>
+                              <span className="text-right font-mono">{qty} pcs</span>
+                              <span className="col-span-2 text-right font-mono">{formatRupiah(nilai)}</span>
+                            </div>
+                          </Fragment>
+                        );
+                      })}
+                      <div className={`m-wrap grid ${COLS} gap-x-2 border-t-2 border-[#CFE0EF] bg-info-bg px-3 py-1.5 font-sans text-[11.5px] font-semibold text-info-fg max-md:justify-between max-md:py-2.5`}>
+                        <span className="col-span-3">Total invoice</span>
+                        <span className="text-right font-mono">{totalQty} pcs</span>
+                        <span className="col-span-2 text-right font-mono">{formatRupiah(invoiceDialogTotal)}</span>
                       </div>
-                    ))}
-                    <div className="grid grid-cols-[1fr_90px_140px] gap-x-2 border-t border-[#EEF1F4] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[11.5px] font-semibold text-[#31414F]">
-                      <span>Total semua warna</span>
-                      <span className="text-right font-mono">{totalQty} pcs</span>
-                      <span className="text-right font-mono">{formatRupiah(invoiceDialogTotal)}</span>
-                    </div>
-                  </div>
-                );
-              })()}
+                    </>
+                  );
+                })()}
+              </div>
               {invoiceError && <div className="mt-2 font-sans text-[10.5px] text-danger-fg">{invoiceError}</div>}
             </div>
             <div className="flex justify-end gap-2 border-t border-border-subtle px-5 py-3.5">
