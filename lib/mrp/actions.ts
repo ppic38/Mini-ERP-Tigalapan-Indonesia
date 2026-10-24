@@ -5345,13 +5345,93 @@ export async function setVendorInvoiceStatusAction(invoiceId: string, status: "S
   if (invoice && status === "PAID") await insertNotification(notif(`Invoice vendor ${invoice.id} telah dibayar Finance`, ["vendorMaklon"], invoice.vendor_produksi));
 }
 
-export async function payVendorInvoiceAction(invoiceId: string): Promise<void> {
-  await requireInternalRole(await requireSession(), "finance");
-  const db = supabaseServer();
-  const { data: invoice } = await db.from("vendor_invoices").select("id,vendor_produksi,status").eq("id", invoiceId).single();
-  if (!invoice || invoice.status === "PAID") return;
-  await db.from("vendor_invoices").update({ status: "PAID", paid_at: today() }).eq("id", invoiceId);
-  await insertNotification(notif(`Invoice vendor ${invoice.id} telah dibayar lunas oleh Finance`, ["vendorMaklon"], invoice.vendor_produksi));
+/** Bukti pembayaran invoice vendor produksi (migration 0075). Format dicek di server juga (klien sudah membatasi tipe dan ukuran). */
+function assertVendorInvoiceProof(proof: { dataUrl?: string; fileName?: string } | undefined): asserts proof is { dataUrl: string; fileName?: string } {
+  if (!proof?.dataUrl) throw new Error("Bukti pembayaran (PDF/JPG/PNG) wajib diupload sebelum invoice bisa dibayar.");
+  if (!/^data:(application\/pdf|image\/jpeg|image\/png);base64,/.test(proof.dataUrl)) throw new Error("Bukti pembayaran harus berformat PDF, JPG, atau PNG.");
+}
+
+const VENDOR_PROOF_TABLE_MISSING = "Jalankan migration 0075 (tabel vendor_invoice_payment_proofs) di Supabase dulu.";
+
+/** Finance membayar lunas invoice vendor produksi. Bukti pembayaran WAJIB (owner 2026-10-24, pola sama pembayaran invoice material):
+ *  bukti disimpan DULU, baru status diubah ke PAID, jadi tidak pernah ada invoice lunas tanpa bukti. Satu bukti boleh dipakai untuk
+ *  beberapa invoice yang dibayar bersamaan. Alasan penolakan dikembalikan sebagai nilai (Next menyembunyikan pesan Error di production). */
+export async function payVendorInvoicesAction(invoiceIds: string[], proof: { dataUrl: string; fileName?: string }): Promise<ActionResult<void>> {
+  try {
+    await requireInternalRole(await requireSession(), "finance");
+    assertVendorInvoiceProof(proof);
+    const ids = Array.from(new Set(invoiceIds));
+    if (ids.length === 0) return { ok: true, data: undefined };
+    const db = supabaseServer();
+    const { data: invs, error } = await db.from("vendor_invoices").select("id,vendor_produksi,status").in("id", ids);
+    if (error) throw new Error(error.message);
+    if ((invs ?? []).length !== ids.length) throw new Error("Sebagian invoice vendor tidak ditemukan.");
+    const notApproved = (invs ?? []).filter((i) => i.status !== "APPROVED" && i.status !== "PAID");
+    if (notApproved.length > 0) throw new Error(`Invoice ${notApproved.map((i) => i.id).join(", ")} belum disetujui Procurement, jadi belum bisa dibayar.`);
+    const toPay = (invs ?? []).filter((i) => i.status === "APPROVED");
+    if (toPay.length === 0) return { ok: true, data: undefined };
+    const uploadedAt = nowIso();
+    for (const inv of toPay) {
+      const { error: proofErr } = await db.from("vendor_invoice_payment_proofs").upsert({ invoice_id: inv.id, data_url: proof.dataUrl, file_name: proof.fileName ?? null, uploaded_at: uploadedAt });
+      if (proofErr) throw new Error(proofErr.message.includes("vendor_invoice_payment_proofs") ? VENDOR_PROOF_TABLE_MISSING : `Gagal menyimpan bukti pembayaran: ${proofErr.message}`);
+    }
+    const { error: updErr } = await db
+      .from("vendor_invoices")
+      .update({ status: "PAID", paid_at: today(), bukti_bayar_at: uploadedAt, bukti_bayar_file_name: proof.fileName ?? null })
+      .in("id", toPay.map((i) => i.id));
+    if (updErr) throw new Error(updErr.message);
+    for (const inv of toPay) {
+      await insertNotification(notif(`Invoice vendor ${inv.id} telah dibayar lunas oleh Finance — bukti pembayaran tersedia di Invoice & Payment`, ["vendorMaklon"], inv.vendor_produksi));
+    }
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Lampirkan / ganti bukti pembayaran untuk invoice vendor yang SUDAH lunas (mis. yang dibayar sebelum aturan bukti wajib berlaku). */
+export async function setVendorInvoicePaymentProofAction(invoiceIds: string[], proof: { dataUrl: string; fileName?: string }): Promise<ActionResult<void>> {
+  try {
+    await requireInternalRole(await requireSession(), "finance");
+    assertVendorInvoiceProof(proof);
+    const ids = Array.from(new Set(invoiceIds));
+    if (ids.length === 0) return { ok: true, data: undefined };
+    const db = supabaseServer();
+    const { data: invs, error } = await db.from("vendor_invoices").select("id,status").in("id", ids);
+    if (error) throw new Error(error.message);
+    if ((invs ?? []).length !== ids.length) throw new Error("Sebagian invoice vendor tidak ditemukan.");
+    if ((invs ?? []).some((i) => i.status !== "PAID")) throw new Error("Bukti hanya bisa dilampirkan untuk invoice yang sudah lunas. Untuk invoice yang belum dibayar, lampirkan saat membayar.");
+    const uploadedAt = nowIso();
+    for (const id of ids) {
+      const { error: proofErr } = await db.from("vendor_invoice_payment_proofs").upsert({ invoice_id: id, data_url: proof.dataUrl, file_name: proof.fileName ?? null, uploaded_at: uploadedAt });
+      if (proofErr) throw new Error(proofErr.message.includes("vendor_invoice_payment_proofs") ? VENDOR_PROOF_TABLE_MISSING : `Gagal menyimpan bukti pembayaran: ${proofErr.message}`);
+    }
+    const { error: updErr } = await db.from("vendor_invoices").update({ bukti_bayar_at: uploadedAt, bukti_bayar_file_name: proof.fileName ?? null }).in("id", ids);
+    if (updErr) throw new Error(updErr.message);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Ambil bukti pembayaran 1 invoice vendor on-demand (tidak ikut snapshot). Boleh dibaca Finance/Procurement/Sysadmin, atau vendor pemilik
+ *  invoice itu. Akses internal diperiksa DULU karena satu browser bisa memuat login internal dan login vendor sekaligus. */
+export async function getVendorInvoicePaymentProofAction(invoiceId: string): Promise<ActionResult<{ dataUrl: string; fileName?: string } | null>> {
+  try {
+    const session = await requireSession();
+    const db = supabaseServer();
+    const internalOk = ["finance", "procurement", "sysadmin"].some((r) => session.internalRoles.includes(r as (typeof session.internalRoles)[number]));
+    if (!internalOk) {
+      if (!session.vendorId) requireAnyInternalRole(session, ["finance", "procurement", "sysadmin"]);
+      const { data: inv } = await db.from("vendor_invoices").select("vendor_produksi").eq("id", invoiceId).maybeSingle();
+      if (inv?.vendor_produksi !== session.vendorId) throw new Error("Forbidden: invoice ini bukan milik vendor Anda.");
+    }
+    const { data, error } = await db.from("vendor_invoice_payment_proofs").select("data_url,file_name").eq("invoice_id", invoiceId).maybeSingle();
+    if (error) throw new Error(error.message.includes("vendor_invoice_payment_proofs") ? VENDOR_PROOF_TABLE_MISSING : error.message);
+    return { ok: true, data: data ? { dataUrl: data.data_url, fileName: data.file_name ?? undefined } : null };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 // =========================================================================

@@ -426,7 +426,8 @@ type FlowActions = {
   createVendorInvoice: (input: { vendorProduksi: string; lines: { mrpId: string; warna: string; lengan: Lengan; usia?: Usia; qty: number; ratePerPc: number }[]; note?: string }) => Promise<void>;
   setVendorInvoiceStatus: (invoiceId: string, status: VendorInvoice["status"]) => Promise<void>;
   addVendorInvoiceAdjustment: (invoiceId: string, input: { kind: VendorInvoiceAdjustmentKind; label: string; amount: number; note?: string }) => Promise<void>;
-  payVendorInvoice: (invoiceId: string) => Promise<void>;
+  payVendorInvoices: (invoiceIds: string[], proof: { dataUrl: string; fileName?: string }) => Promise<void>;
+  setVendorInvoicePaymentProof: (invoiceIds: string[], proof: { dataUrl: string; fileName?: string }) => Promise<void>;
   /** Spec Portal Warehouse — "Bongkar Koli", SELALU per resi group & SELALU utuh (Q5). Lihat
    *  receiveWarehouseResiGroupAction di actions.ts — qty TIDAK dipercaya dari client. */
   receiveWarehouseResiGroup: (resiGroupId: string, note?: string) => Promise<void>;
@@ -679,7 +680,7 @@ const BUSY_TRACKED_ACTIONS = new Set<string>([
   "payMaklonInvoice",
   "createVendorInvoice",
   "setVendorInvoiceStatus",
-  "payVendorInvoice",
+  "payVendorInvoices",
   "transferMaterial",
   "withdrawVendorProduction",
   "closePoWithReason",
@@ -1562,14 +1563,28 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     await actions.addVendorInvoiceAdjustmentAction(invoiceId, input);
     backgroundRefresh();
   },
-  payVendorInvoice: async (invoiceId) => {
+  payVendorInvoices: async (invoiceIds, proof) => {
     const previous = get().vendorInvoices;
-    set({ vendorInvoices: previous.map((i) => (i.id === invoiceId && i.status !== "PAID" ? { ...i, status: "PAID", paidAt: localDateString(new Date()) } : i)) });
+    const idSet = new Set(invoiceIds);
+    set({
+      vendorInvoices: previous.map((i) =>
+        idSet.has(i.id) && i.status !== "PAID" ? { ...i, status: "PAID", paidAt: localDateString(new Date()), buktiBayarAt: new Date().toISOString(), buktiBayarFileName: proof.fileName } : i
+      ),
+    });
     try {
-      await actions.payVendorInvoiceAction(invoiceId);
+      unwrapAction(await actions.payVendorInvoicesAction(invoiceIds, proof));
     } catch (err) {
       set({ vendorInvoices: previous });
       notifyError("Gagal membayar invoice vendor -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  setVendorInvoicePaymentProof: async (invoiceIds, proof) => {
+    try {
+      unwrapAction(await actions.setVendorInvoicePaymentProofAction(invoiceIds, proof));
+    } catch (err) {
+      notifyError("Gagal menyimpan bukti pembayaran. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();

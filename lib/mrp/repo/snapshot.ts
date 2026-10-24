@@ -887,6 +887,8 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     paidAt: v.paid_at ?? undefined,
     dueDate: v.due_date ?? undefined,
     ongkirTotal: v.ongkir_total == null ? undefined : Number(v.ongkir_total),
+    buktiBayarAt: v.bukti_bayar_at ?? undefined,
+    buktiBayarFileName: v.bukti_bayar_file_name ?? undefined,
   }));
 
   // ---- Warehouse (migration 0031) -- pola sama deliveryKoliBatchRows di atas, tabel belum tentu

@@ -6,6 +6,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { KoliEkspedisiCard, viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
 import { useMrpStore } from "@/lib/mrp/store";
+import { readProofAsDataUrl } from "@/lib/mrp/clientFiles";
+import { viewVendorInvoicePaymentProof } from "@/lib/mrp/viewVendorInvoiceProof";
 import {
   formatDate,
   formatPcs,
@@ -254,7 +256,8 @@ export function PaymentMaklonPanel() {
 
   const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
   const setVendorInvoiceDueDate = useMrpStore((s) => s.setVendorInvoiceDueDate);
-  const payVendorInvoice = useMrpStore((s) => s.payVendorInvoice);
+  const payVendorInvoices = useMrpStore((s) => s.payVendorInvoices);
+  const setVendorInvoicePaymentProof = useMrpStore((s) => s.setVendorInvoicePaymentProof);
   // Item 2026-09-10 (feedback: breakdown per size + info pengiriman/ekspedisi di detail invoice)
   // -- dibutuhkan `invoiceKoliBreakdown` (lihat InvoiceLinesDetail di atas).
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
@@ -269,6 +272,11 @@ export function PaymentMaklonPanel() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [actionResult, setActionResult] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
+  // Bukti pembayaran WAJIB sebelum "Bayar Penuh" bisa diklik (owner 2026-10-24, pola sama pembayaran invoice material).
+  const [proofDataUrl, setProofDataUrl] = useState<string | undefined>(undefined);
+  const [proofFileName, setProofFileName] = useState<string | undefined>(undefined);
+  const [proofError, setProofError] = useState("");
+  const [rowProofError, setRowProofError] = useState("");
   // Revisi 2026-09-17 (owner: "ikuti konsep PO Approval -- filter MRP untuk yang akan dipayment,
   // begitu dibayar turun ke tabel di bawah yang di-grouping per MRP", diterapkan sama seperti
   // payment-panel.tsx materi): bagian ATAS = dropdown "No MRP (siap dibayar)" + DataTable invoice
@@ -337,18 +345,57 @@ export function PaymentMaklonPanel() {
 
   const selectedList = readyRows.filter((i) => selected.has(i.id));
 
+  async function handleProofFile(file: File | null) {
+    setProofError("");
+    if (!file) {
+      setProofDataUrl(undefined);
+      setProofFileName(undefined);
+      return;
+    }
+    const r = await readProofAsDataUrl(file);
+    if ("error" in r) {
+      setProofError(r.error);
+      setProofDataUrl(undefined);
+      setProofFileName(undefined);
+      return;
+    }
+    setProofDataUrl(r.dataUrl);
+    setProofFileName(r.fileName);
+  }
+
+  // Lampirkan bukti belakangan untuk invoice yang sudah lunas tetapi belum punya bukti (dibayar sebelum aturan ini berlaku).
+  async function handleRowProofFile(invoiceId: string, file: File | null) {
+    setRowProofError("");
+    if (!file) return;
+    const r = await readProofAsDataUrl(file);
+    if ("error" in r) {
+      setRowProofError(r.error);
+      return;
+    }
+    try {
+      await setVendorInvoicePaymentProof([invoiceId], { dataUrl: r.dataUrl, fileName: r.fileName });
+    } catch {
+      // pesan gagal sudah ditampilkan store
+    }
+  }
+
   async function payAll() {
     // CATATAN: dulu payVendorInvoice dipanggil tanpa `await` di dalam loop -- notifikasi "sukses"
     // & pengosongan seleksi langsung tampil sebelum pembayarannya benar-benar tersimpan, jadi
     // baris masih sempat tampak "Belum dibayar" sampai halaman di-reload manual (pola bug yang
     // sama dengan paying-voucher-wizard.tsx / production-cutting-tab.tsx). Sekarang di-await satu
     // per satu supaya notifikasi baru muncul setelah semuanya benar-benar lunas.
-    if (paying) return;
+    if (paying || !proofDataUrl) return;
     setPaying(true);
     try {
-      for (const inv of selectedList) await payVendorInvoice(inv.id);
+      await payVendorInvoices(selectedList.map((i) => i.id), { dataUrl: proofDataUrl, fileName: proofFileName });
       setActionResult(`${selectedList.length} invoice dibayar lunas.`);
       setSelected(new Set());
+      setProofDataUrl(undefined);
+      setProofFileName(undefined);
+      setProofError("");
+    } catch {
+      // pesan gagal sudah ditampilkan store dan perubahan dibatalkan; bukti tetap terisi supaya bisa dicoba lagi
     } finally {
       setPaying(false);
     }
@@ -435,6 +482,27 @@ export function PaymentMaklonPanel() {
     { key: "totalQty", label: "Total qty", default: true, align: "right", render: (inv) => formatPcs(inv.lines.reduce((s, l) => s + l.qty, 0)) },
     { key: "totalPaid", label: "Total dibayar", default: true, align: "right", render: (inv) => formatRupiah(vendorInvoiceTotalPaid(inv)) },
     { key: "tglLunas", label: "Tanggal Lunas", default: true, render: (inv) => formatDate(inv.paidAt) },
+    {
+      key: "buktiBayar",
+      label: "Bukti Bayar",
+      default: true,
+      render: (inv) =>
+        inv.buktiBayarAt ? (
+          <span onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => void viewVendorInvoicePaymentProof(inv.id)} className="font-sans text-[11px] font-semibold text-action-primary underline">
+              Lihat
+            </button>
+          </span>
+        ) : (
+          <span onClick={(e) => e.stopPropagation()} className="flex flex-col gap-0.5">
+            <label className="cursor-pointer font-sans text-[11px] font-semibold text-action-primary underline">
+              Upload
+              <input type="file" accept="application/pdf,image/jpeg,image/png" className="hidden" onChange={(e) => void handleRowProofFile(inv.id, e.target.files?.[0] ?? null)} />
+            </label>
+            {rowProofError && <span className="font-sans text-[10px] text-danger-fg">{rowProofError}</span>}
+          </span>
+        ),
+    },
     {
       key: "lampiranEkspedisi",
       label: "Lampiran Ekspedisi",
@@ -527,9 +595,21 @@ export function PaymentMaklonPanel() {
       {selected.size > 0 && (
         <div className="flex items-center gap-2 rounded-lg border border-[#CFE0EF] bg-info-bg px-5 py-[10px]">
           <span className="font-sans text-xs font-medium text-info-fg">{selected.size} dipilih</span>
+          <label className="flex items-center gap-2 font-sans text-[11.5px] text-info-fg">
+            <span className="font-semibold">Bukti pembayaran (wajib):</span>
+            <input
+              type="file"
+              accept="application/pdf,image/jpeg,image/png"
+              onChange={(e) => void handleProofFile(e.target.files?.[0] ?? null)}
+              className="max-w-[240px] rounded-md border border-[#A8C5DF] bg-white px-2 py-1 text-[11px] file:mr-2 file:rounded file:border-0 file:bg-info-bg file:px-2 file:py-0.5 file:text-[11px] file:font-semibold file:text-info-fg"
+            />
+          </label>
+          {proofFileName && !proofError && <span className="font-sans text-[11px] text-success-fg">✓ {proofFileName}</span>}
+          {proofError && <span className="font-sans text-[11px] text-danger-fg">{proofError}</span>}
           <button
             onClick={payAll}
-            disabled={paying}
+            disabled={paying || !proofDataUrl}
+            title={!proofDataUrl ? "Upload bukti pembayaran (PDF/JPG/PNG) dulu" : undefined}
             className="rounded-md border border-[#A8C5DF] bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-semibold text-success-fg disabled:cursor-not-allowed disabled:opacity-50"
           >
             {/* Item revisi 2026-09-05: tombol tidak lagi menampilkan status "Memproses..." --

@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
 import { useMrpStore } from "@/lib/mrp/store";
+import { viewVendorInvoicePaymentProof } from "@/lib/mrp/viewVendorInvoiceProof";
 import { viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
 import { ItemsDetailPanel, summarizeItems } from "@/components/mrp/koli-items-detail";
 import {
@@ -268,6 +269,18 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                           <div className="mt-0.5 font-mono text-[12.5px] font-semibold text-[#31414F]">{inv.dueDate ? formatDate(inv.dueDate) : "—"}</div>
                         </div>
                       </div>
+                      {inv.status === "PAID" && (
+                        <div className="mb-3 flex flex-wrap items-center gap-3 rounded-md border border-[#E4E9EE] bg-white px-3 py-2.5">
+                          <span className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Bukti pembayaran dari Finance</span>
+                          {inv.buktiBayarAt ? (
+                            <Button onClick={() => void viewVendorInvoicePaymentProof(inv.id)} variant="accent" size="xs">
+                              Lihat bukti bayar
+                            </Button>
+                          ) : (
+                            <span className="font-sans text-[11.5px] text-text-muted">Belum dilampirkan</span>
+                          )}
+                        </div>
+                      )}
                       {(inv.adjustments?.length ?? 0) > 0 && (
                     <div className="mb-3 rounded-md border border-[#E4E9EE] bg-white p-3">
                       <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Penyesuaian dari Procurement</div>

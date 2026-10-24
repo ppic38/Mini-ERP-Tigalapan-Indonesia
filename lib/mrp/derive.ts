@@ -3549,7 +3549,7 @@ export function vendorInvoiceBadge(status: VendorInvoice["status"]) {
     SUBMITTED: { label: "SUBMITTED", tone: "warning" },
     REVISION: { label: "REVISI", tone: "danger" },
     APPROVED: { label: "APPROVED", tone: "info" },
-    PAID: { label: "PAID", tone: "success" },
+    PAID: { label: "LUNAS", tone: "success" }, // owner 2026-10-24: label diganti dari "PAID"; nilai status di data tetap PAID
   };
   return map[status];
 }

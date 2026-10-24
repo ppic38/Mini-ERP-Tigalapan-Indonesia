@@ -586,6 +586,10 @@ export type VendorInvoice = {
   /** Total ongkos kirim untuk invoice ini, dari invoice ekspedisi — dipakai untuk menghitung
    *  ongkir per pc di laporan HPP. Diisi manual (belum ada sumber data ekspedisi terstruktur). */
   ongkirTotal?: number;
+  /** Bukti pembayaran dari Finance (migration 0075) -- hanya penanda; file-nya diambil on-demand
+   *  lewat getVendorInvoicePaymentProofAction supaya tidak ikut snapshot. */
+  buktiBayarAt?: string;
+  buktiBayarFileName?: string;
 };
 
 export type ProductionGroupMeta = {

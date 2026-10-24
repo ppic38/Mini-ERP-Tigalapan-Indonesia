@@ -558,8 +558,10 @@ export async function sysadminRevertVendorInvoicePaidAction(invoiceId: string, r
     if (error) throw new Error(error.message);
     if (!inv) throw new Error("Invoice vendor tidak ditemukan.");
     if (inv.status !== "PAID") throw new Error(`Invoice ini berstatus ${inv.status}, bukan PAID -- tidak ada pembayaran yang bisa dibatalkan.`);
-    const { error: updErr } = await db.from("vendor_invoices").update({ status: "APPROVED", paid_at: null }).eq("id", invoiceId);
+    const { error: updErr } = await db.from("vendor_invoices").update({ status: "APPROVED", paid_at: null, bukti_bayar_at: null, bukti_bayar_file_name: null }).eq("id", invoiceId);
     if (updErr) throw new Error(updErr.message);
+    // Bukti pembayaran lama ikut dihapus (best-effort): pembayaran ulang wajib melampirkan bukti baru (migration 0075).
+    await db.from("vendor_invoice_payment_proofs").delete().eq("invoice_id", invoiceId);
     await writeAuditLog("REVERT_VENDOR_INVOICE_PAID", "vendor_invoices", invoiceId, reason.trim(), { status: inv.status, paidAt: inv.paid_at }, { status: "APPROVED", paidAt: null });
     await notifyAffected(`Pembayaran invoice vendor ${invoiceId} dibatalkan Sysadmin — alasan: ${reason.trim()}. Status kembali ke Disetujui; menunggu pembayaran Finance lagi.`, ["finance", "procurement"]);
     await notifyAffected(`Pembayaran invoice ${invoiceId} dibatalkan Sysadmin (alasan: ${reason.trim()}). Status kembali ke Disetujui, menunggu pembayaran.`, ["vendorMaklon"], inv.vendor_produksi);
