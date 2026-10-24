@@ -611,7 +611,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
               {(editingKoliId && !mrpIds.includes(mrpId) ? [mrpId, ...mrpIds] : mrpIds).map((id) => (
                 <option key={id} value={id}>
                   {id}
-                  {pendingMarker(countPengirimanPendingForMrp(id, vendorId, productionResults, deliveryKolis, productionGroupMeta, maklonPOs), "pcs belum dikemas")}
+                  {pendingMarker(countPengirimanPendingForMrp(id, vendorId, productionResults, deliveryKolis, productionGroupMeta, maklonPOs, productionBatches), "pcs belum dikemas")}
                 </option>
               ))}
             </select>

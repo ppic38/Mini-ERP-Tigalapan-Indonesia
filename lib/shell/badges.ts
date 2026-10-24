@@ -18,6 +18,7 @@ import {
   productionYieldAlertsList,
   warehouseReceivableGroups,
   warnaLenganGroupsWithFg,
+  rollRemainingBySizeForMrp,
 } from "@/lib/mrp/derive";
 import { poApprovalState, type ApprovalRole } from "@/lib/mrp/poApproval";
 import type { MrpDetail } from "@/lib/mrp/store";
@@ -455,12 +456,20 @@ export function countPengirimanPendingForMrp(
   productionResults: ProductionResult[],
   deliveryKolis: DeliveryKoli[],
   productionGroupMeta: ProductionGroupMeta[],
-  maklonPOs: MaklonPO[]
+  maklonPOs: MaklonPO[],
+  productionBatches: ProductionBatch[] = []
 ): number {
-  return SHIPPABLE_SOURCES.reduce((sum, source) => {
+  const pool = SHIPPABLE_SOURCES.reduce((sum, source) => {
     const rows = availableFgToShip(mrpId, vendorId, productionResults, deliveryKolis, productionGroupMeta, maklonPOs, undefined, source);
     return sum + rows.reduce((s, r) => s + r.available, 0);
   }, 0);
+  // FG dari roll (jalur utama sejak HPP per roll, kini termasuk roll terbuka) tidak ada di pool di atas -- ikut dihitung di sini,
+  // kalau tidak penanda dropdown hanya menghitung rework/reject/sisa FG lama (mis. "10 pcs" padahal ada ribuan pcs siap kirim).
+  const rolls = rollRemainingBySizeForMrp(mrpId, vendorId, productionBatches, deliveryKolis, maklonPOs, productionGroupMeta).reduce(
+    (sum, r) => sum + Object.values(r.remaining).reduce((a, b) => a + b, 0),
+    0
+  );
+  return pool + rolls;
 }
 
 /** MRP yang sudah delivered tapi masih ada qty belum diinvoice. Dedupe per MRP (bukan per baris
