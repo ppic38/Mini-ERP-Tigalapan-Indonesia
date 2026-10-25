@@ -5,6 +5,7 @@ import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { GroupRemarkBox, knownSizesForMrp, ReworkHistoryCard, ReworkInlineForm } from "@/components/mrp/rework-parts";
 import { NumberInput } from "@/components/mrp/number-input";
 import { StatusPill } from "@/components/ui/status-pill";
+import { ActorTag } from "@/components/mrp/actor-tag";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { Button } from "@/components/ui/button";
 import { SizeQtyControl } from "@/components/mrp/size-qty-control";
@@ -790,6 +791,10 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                   <span className="flex flex-col">
                                     <span className="font-mono text-[12px] font-medium text-text-primary">{b.codeRoll || b.id}</span>
                                     {sizeShiftLabel(b) && <span className="font-sans text-[9.5px] font-semibold text-info-fg">Alih size (sisa kain): {sizeShiftLabel(b)}</span>}
+                                    <ActorTag label="Resting" name={b.restingBy} className="mt-0.5" />
+                                    <ActorTag label="Cutting" name={b.cuttingBy} />
+                                    <ActorTag label="FG" name={b.fgBy} />
+                                    {b.closedAt && <ActorTag label="Ditutup" name={b.closedBy} />}
                                   </span>
                                   <span data-label="Size & qty" className="flex flex-wrap items-center gap-1.5">
                                     {sizes

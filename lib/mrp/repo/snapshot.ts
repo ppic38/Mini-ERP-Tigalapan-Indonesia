@@ -657,7 +657,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
             }
       );
       rollArrivals[colorKey] = rolls.map((r) =>
-        r.received_at == null ? null : { arrivedAt: r.received_at, codeRoll: r.code_roll ?? undefined, codeLot: r.code_lot ?? undefined }
+        r.received_at == null ? null : { arrivedAt: r.received_at, codeRoll: r.code_roll ?? undefined, codeLot: r.code_lot ?? undefined, receivedBy: r.received_by ?? undefined }
       );
       for (const r of rolls) {
         const claimKey = `${inv.id}|${c.warna}|${c.lengan}|${r.roll_index}`;
@@ -774,6 +774,10 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
       sizeQty: sizeRows.length > 0 ? sizeQty : undefined,
       fgSizeQty: fgSizeRows.length > 0 ? fgSizeQty : undefined,
       closedAt: b.closed_at ?? undefined,
+      restingBy: b.resting_by ?? undefined,
+      cuttingBy: b.cutting_by ?? undefined,
+      fgBy: b.fg_by ?? undefined,
+      closedBy: b.closed_by ?? undefined,
       cuttingApproval: b.cutting_approval_status
         ? {
             status: b.cutting_approval_status as "PENDING" | "APPROVED" | "REJECTED",
@@ -845,6 +849,8 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     })),
     beratKoli: k.berat_koli == null ? undefined : Number(k.berat_koli),
     biayaEkspedisi: k.biaya_ekspedisi == null ? undefined : Number(k.biaya_ekspedisi),
+    createdBy: k.created_by ?? undefined,
+    shippedBy: k.shipped_by ?? undefined,
     deliveredAt: k.delivered_at ?? undefined,
     createdAt: k.created_at,
     sourceBatchIds: (batchIdsByKoli[k.id] ?? []).map((r) => r.production_batch_id),
@@ -884,6 +890,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     status: v.status,
     note: v.note ?? undefined,
     submittedAt: v.submitted_at,
+    submittedBy: v.submitted_by ?? undefined,
     approvedAt: v.approved_at ?? undefined,
     paidAt: v.paid_at ?? undefined,
     dueDate: v.due_date ?? undefined,

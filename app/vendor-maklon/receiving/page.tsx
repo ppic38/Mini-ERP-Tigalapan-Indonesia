@@ -5,6 +5,7 @@ import { Fragment, useEffect, useState } from "react";
 import { alertDialog } from "@/components/ui/confirm-dialog";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
+import { ActorTag } from "@/components/mrp/actor-tag";
 import { Button } from "@/components/ui/button";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -780,6 +781,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                                   <>
                                     <span className="font-mono text-[11px] text-text-muted">{formatDate(arrival.arrivedAt)}</span>
                                     <StatusPill tone="success">Diterima</StatusPill>
+                                    <ActorTag label="oleh" name={arrival.receivedBy} className="max-md:hidden" />
                                   </>
                                 ) : (
                                   <Button onClick={() => markArrived(r.lengan, r.idx)} disabled={!code.codeRoll.trim() || !!conflictMsg || (strictReceive && !rollHasLot(r.lengan, r.idx))} variant="accent" size="sm" className="w-[96px] max-md:w-full">

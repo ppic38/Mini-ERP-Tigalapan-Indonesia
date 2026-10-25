@@ -70,3 +70,18 @@ export function scopeStateToVendor<T extends FlowState>(state: T, vendorId: stri
     vendorProduksiList: state.vendorProduksiList.filter((v) => isMine(v.id)),
   };
 }
+
+/** Nama pelaku di portal vendor (akun utama/anggota tim, migration 0078) hanya untuk vendor itu sendiri dan Sysadmin: modul internal lain tidak
+ *  menerimanya, jadi tidak ada di snapshot yang sampai ke browser mereka. */
+export function stripVendorActorNames<T extends FlowState>(state: T): T {
+  return {
+    ...state,
+    deliveryKolis: state.deliveryKolis.map((k) => ({ ...k, createdBy: undefined, shippedBy: undefined })),
+    productionBatches: state.productionBatches.map((b) => ({ ...b, restingBy: undefined, cuttingBy: undefined, fgBy: undefined, closedBy: undefined })),
+    vendorInvoices: state.vendorInvoices.map((v) => ({ ...v, submittedBy: undefined })),
+    invoices: state.invoices.map((i) => ({
+      ...i,
+      rollArrivals: Object.fromEntries(Object.entries(i.rollArrivals).map(([key, arr]) => [key, arr.map((a) => (a ? { ...a, receivedBy: undefined } : a))])),
+    })),
+  };
+}

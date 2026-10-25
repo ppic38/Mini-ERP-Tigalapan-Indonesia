@@ -4,6 +4,7 @@ import { Fragment, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
+import { ActorTag } from "@/components/mrp/actor-tag";
 import { useMrpStore } from "@/lib/mrp/store";
 import { viewVendorInvoicePaymentProof } from "@/lib/mrp/viewVendorInvoiceProof";
 import { viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
@@ -237,7 +238,10 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                     className="m-stack m-grid2 grid w-full cursor-pointer items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] text-left font-sans text-xs text-[#31414F] hover:bg-[#F7F9FB] max-md:py-3"
                     style={{ gridTemplateColumns: "110px 1fr 90px 110px 90px 120px 160px 140px" }}
                   >
-                    <span className="font-mono font-medium max-md:text-[13px]">{inv.id}</span>
+                    <span className="flex flex-col gap-0.5">
+                      <span className="font-mono font-medium max-md:text-[13px]">{inv.id}</span>
+                      <ActorTag label="Diajukan oleh" name={inv.submittedBy} />
+                    </span>
                     <span data-label="MRP" className="max-md:col-span-full">{Array.from(new Set(inv.lines.map((l) => l.mrpId))).join(", ")}</span>
                     <span data-label="Total qty" className="text-right font-mono">{formatPcs(totalQtyInv)}</span>
                     <span data-label="Status">

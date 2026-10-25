@@ -1,5 +1,6 @@
 "use client";
 
+import { ActorTag } from "@/components/mrp/actor-tag";
 import { useRef, useState } from "react";
 import { Info } from "lucide-react";
 import { NumberInput } from "@/components/mrp/number-input";
@@ -133,6 +134,12 @@ const CUTTING_BATCH_COLUMNS = "minmax(150px,1fr) minmax(130px,0.8fr) minmax(90px
 
 // Kolom "List roll": Warna | Code roll | Berat kotor | Berat bersih | Selisih | Gramasi | Setting | Aksi.
 const LIST_GRID = "minmax(140px,1fr) minmax(130px,0.9fr) minmax(90px,0.6fr) minmax(110px,0.7fr) minmax(130px,0.9fr) minmax(90px,0.6fr) minmax(120px,0.8fr) minmax(130px,0.8fr)";
+
+/** Nama pelaku unik dari beberapa roll (satu sesi resting bisa dikerjakan >1 orang), digabung koma; kosong = tidak tampil. */
+function uniqueNames(xs: (string | undefined)[]): string | undefined {
+  const u = Array.from(new Set(xs.filter((x): x is string => !!x)));
+  return u.length > 0 ? u.join(", ") : undefined;
+}
 
 export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
@@ -1209,8 +1216,11 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                     </span>
                     <span data-label="Warna" className="max-md:col-span-full">{distinctWarna}</span>
                     <span data-label="Roll" className="text-center font-mono">{g.batches.length}</span>
-                    <span data-label="Resting" className="font-mono text-[11px]">{formatDateTime(g.restingAt)}</span>
-                    <span data-label="Cutting" className="font-mono text-[11px] max-md:col-span-full">
+                    <span data-label="Resting" className="flex flex-col gap-0.5 font-mono text-[11px]">
+                      <span>{formatDateTime(g.restingAt)}</span>
+                      <ActorTag label="Oleh" name={uniqueNames(g.batches.map((b) => b.restingBy))} />
+                    </span>
+                    <span data-label="Cutting" className="flex flex-col items-start gap-0.5 font-mono text-[11px] max-md:col-span-full">
                       {sessionComplete ? (
                         <span className="flex items-center gap-1.5">
                           {formatDateTime(earliestCuttingAt ?? g.restingAt)}
@@ -1249,6 +1259,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                           {anyMissingCuttingAt ? "Input Hasil Cutting →" : "Perbaiki Hasil Cutting →"}
                         </Button>
                       )}
+                      {sessionComplete && <ActorTag label="Oleh" name={uniqueNames(g.batches.map((b) => b.cuttingBy))} />}
                     </span>
                     <span data-label="Durasi resting" className="flex flex-col items-start gap-1">
                       <span className="font-mono text-[11px] text-text-muted">{formatDuration(g.restingAt, earliestCuttingAt ?? new Date().toISOString())}</span>

@@ -6,6 +6,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { NumberInput } from "@/components/mrp/number-input";
 import { QtyStepper } from "@/components/mrp/qty-stepper";
+import { ActorTag } from "@/components/mrp/actor-tag";
 import { Button } from "@/components/ui/button";
 import { alertDialog, confirmDialog } from "@/components/ui/confirm-dialog";
 import { ColumnMenu, useColumnVisibility } from "@/components/ui/column-menu";
@@ -874,7 +875,10 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                       <div className="m-wrap grid grid-cols-5 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5" style={sysadminMode ? { gridTemplateColumns: "repeat(5,minmax(0,1fr)) 130px" } : undefined}>
                         <input type="checkbox" checked={selectedForEkspedisi.has(k.id)} onChange={() => toggleSelectedForEkspedisi(k.id)} disabled={k.id.startsWith("tmp-")} className="h-3.5 w-3.5 disabled:opacity-40" />
                         <span className="font-mono">{k.mrpId}</span>
-                        <span className="font-mono font-medium">{k.noKoli}</span>
+                        <span className="flex flex-col">
+                          <span className="font-mono font-medium">{k.noKoli}</span>
+                          <ActorTag label="Dibuat oleh" name={k.createdBy} />
+                        </span>
                         <button
                           onClick={() => toggleKoliExpanded(k.id)}
                           className="flex items-center gap-1 text-left font-sans text-xs text-[#31414F] hover:text-action-primary max-md:order-last max-md:basis-full"
@@ -967,7 +971,10 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                         <Fragment key={k.id}>
                           <div className="m-wrap grid grid-cols-5 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5">
                             <span className="font-mono">{k.mrpId}</span>
-                            <span className="font-mono font-medium">{k.noKoli}</span>
+                            <span className="flex flex-col">
+                          <span className="font-mono font-medium">{k.noKoli}</span>
+                          <ActorTag label="Dibuat oleh" name={k.createdBy} />
+                        </span>
                             <button
                               onClick={() => toggleKoliExpanded(k.id)}
                               className="flex items-center gap-1 text-left font-sans text-xs text-[#31414F] hover:text-action-primary max-md:order-last max-md:basis-full"
@@ -1036,6 +1043,11 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     <span>
                       Total berat: <span className="font-mono">{formatDecimal(totalWeight)} kg</span>
                     </span>
+                    {first.shippedBy && (
+                      <span>
+                        Diset &amp; dikirim oleh: <span className="font-medium">{first.shippedBy}</span>
+                      </span>
+                    )}
                     {first.biayaEkspedisi != null && (
                       <span>
                         Biaya ekspedisi: <span className="font-mono">{formatRupiah(first.biayaEkspedisi)}</span>
@@ -1073,7 +1085,10 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                       <Fragment key={k.id}>
                         <div className="m-wrap grid grid-cols-4 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5">
                           <span className="font-mono">{k.mrpId}</span>
+                          <span className="flex flex-col">
                           <span className="font-mono font-medium">{k.noKoli}</span>
+                          <ActorTag label="Dibuat oleh" name={k.createdBy} />
+                        </span>
                           <button
                             onClick={() => toggleKoliExpanded(k.id)}
                             className="flex items-center gap-1 text-left font-sans text-xs text-[#31414F] hover:text-action-primary max-md:order-last max-md:basis-full"

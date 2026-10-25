@@ -32,7 +32,7 @@ import { internalAccountFor, type InternalRole } from "../internal-auth";
 import { supabaseServer } from "../supabase/server";
 import { nextReadableId, nextPoDisplayId } from "./repo/ids";
 import { getFlowSnapshot, getFlowSnapshotWithMeta } from "./repo/snapshot";
-import { scopeStateToVendor } from "./vendorScope";
+import { scopeStateToVendor, stripVendorActorNames } from "./vendorScope";
 import { loadWeightTolerancePct, WEIGHT_TOLERANCE_KEY } from "./weightToleranceServer";
 import { assertRollCodesUnique } from "./rollCodeServer";
 import {
@@ -139,12 +139,27 @@ async function requireVendorSession(): Promise<string> {
  *  utama (vendors_produksi.name, di-fetch sekali karena sesi utama tidak menyimpan nama). Dipakai
  *  HANYA di action yang ingin dicatat ke vendor_action_log (lihat logVendorAction) -- action lain
  *  yang tidak butuh jejak "siapa klik apa" tetap pakai requireVendorSession biasa, tidak berubah. */
-async function requireVendorSessionWithActor(): Promise<{ vendorId: string; vendorUserId: string | null; actorName: string }> {
+async function requireVendorSessionWithActor(): Promise<{ vendorId: string; vendorUserId: string | null; actorName: string; actorLabel: string }> {
   const session = await requireSession();
   if (!session.vendorId) throw vendorOnlyError(session);
-  if (session.vendorActor) return { vendorId: session.vendorId, vendorUserId: session.vendorActor.vendorUserId, actorName: session.vendorActor.name };
+  // `actorLabel` = teks yang disematkan di baris data (migration 0078) supaya daftar di portal vendor bisa menampilkan "oleh siapa".
+  if (session.vendorActor) {
+    return { vendorId: session.vendorId, vendorUserId: session.vendorActor.vendorUserId, actorName: session.vendorActor.name, actorLabel: `${session.vendorActor.name} (@${session.vendorActor.username})` };
+  }
   const { data } = await supabaseServer().from("vendors_produksi").select("name").eq("id", session.vendorId).maybeSingle();
-  return { vendorId: session.vendorId, vendorUserId: null, actorName: data?.name ?? session.vendorId };
+  const name = data?.name ?? session.vendorId;
+  return { vendorId: session.vendorId, vendorUserId: null, actorName: name, actorLabel: `${name} (akun utama)` };
+}
+
+/** Sematkan nama pelaku di baris data (migration 0078) -- BEST-EFFORT dan terpisah dari aksi utamanya: gagal (mis. migration belum jalan)
+ *  tidak boleh menggagalkan aksi vendor, hanya namanya tidak tersimpan. */
+async function stampActor(db: ReturnType<typeof supabaseServer>, table: string, ids: string[], patch: Record<string, string>): Promise<void> {
+  if (ids.length === 0) return;
+  try {
+    await db.from(table).update(patch).in("id", ids);
+  } catch {
+    // diabaikan dengan sengaja -- lihat catatan di atas.
+  }
 }
 
 /** Tulis 1 baris ke vendor_action_log (migration 0057) -- best-effort, TIDAK melempar error kalau
@@ -1753,6 +1768,7 @@ export async function markRollArrivedAction(invoiceId: string, warna: string, le
     .eq("invoice_color_id", colorId)
     .eq("roll_index", rollIndex);
   if (error) throw new Error(error.message);
+  await db.from("raw_material_invoice_rolls").update({ received_by: actor.actorLabel }).eq("invoice_color_id", colorId).eq("roll_index", rollIndex);
   await fillEmptyCodeLot(db, colorId, rollIndex, codeLot);
 
   const { data: inv } = await db.from("raw_material_invoices").select("id,status,received_at").eq("id", invoiceId).single();
@@ -1805,6 +1821,7 @@ export async function receiveMaterialBatchAction(
   );
   const failed = results.find((r) => r.error);
   if (failed?.error) throw new Error(failed.error.message);
+  if (rolls.length > 0) await db.from("raw_material_invoice_rolls").update({ received_by: actor.actorLabel }).eq("invoice_color_id", colorId).in("roll_index", rolls.map((r) => r.rollIndex));
   await Promise.all(rolls.map((r) => fillEmptyCodeLot(db, colorId, r.rollIndex, r.codeLot)));
   if (addBuyIds.length > 0) {
     const { error } = await db.from("raw_material_invoice_addbuys").update({ received_at: receivedAt }).in("id", addBuyIds).eq("invoice_id", invoiceId);
@@ -2394,7 +2411,8 @@ export async function approveMaterialPosByIdsAction(mrpId: string, poIds: string
  *  sendiri sudah selalu murah (2 tulis kecil, tidak pernah pakai getFlowSnapshot()) -- baru berasa
  *  lambat kalau UI-nya nunggu refresh penuh sesudahnya, itu yang dipotong di sini. */
 export async function updateBatchToCuttingAction(batchId: string, cuttingAt: string, sizeQty: Record<string, number> = {}): Promise<{ cuttingAt: string; sizeQty?: Record<string, number> }> {
-  const vendorId = await requireVendorSession();
+  const actor = await requireVendorSessionWithActor();
+  const vendorId = actor.vendorId;
   const db = supabaseServer();
 
   // Item 18.3: batch ini boleh diedit/"diperbaiki" berulang kali (Input Hasil Cutting SEKARANG
@@ -2424,6 +2442,7 @@ export async function updateBatchToCuttingAction(batchId: string, cuttingAt: str
   }
 
   const { error } = await db.from("production_batches").update({ cutting_at: cuttingAt }).eq("id", batchId);
+  if (!error) await stampActor(db, "production_batches", [batchId], { cutting_by: actor.actorLabel });
   if (error) throw new Error(error.message);
   // Hasil aduan AKTUAL roll ini (lihat komentar ProductionBatch.sizeQty di types.ts) — tabel
   // production_batch_sizes belum tentu ada (butuh migration 0006_production_batch_output.sql).
@@ -2752,6 +2771,7 @@ async function updateBatchesToCuttingImpl(
   // 1 UPDATE untuk SEMUA batchId sekaligus (cuttingAt seragam untuk 1 grup, lihat komentar
   // saveGroup di production-cutting-tab.tsx) -- bukan N update terpisah seperti versi single.
   const { error } = await db.from("production_batches").update({ cutting_at: cuttingAt }).in("id", batchIds);
+  if (!error) await stampActor(db, "production_batches", batchIds, { cutting_by: actor.actorLabel });
   if (error) throw new Error(error.message);
 
   // 1 DELETE untuk semua batchId, lalu 1 INSERT gabungan semua baris sizeQty dari semua batch --
@@ -4227,8 +4247,9 @@ async function startProductionBatchesImpl(input: {
       setting: line.setting?.trim() || undefined,
     });
   }
+  await stampActor(db, "production_batches", created.map((c) => c.id), { resting_by: actor.actorLabel });
   if (created.length > 0) await logVendorAction(actor, `Mulai Resting ${created.length} roll (${input.mrpId})`, "production_batches", created.map((c) => c.id).join(","));
-  return created;
+  return created.map((c) => ({ ...c, restingBy: actor.actorLabel }));
 }
 
 /** Item 14 (feedback batch 2026-09-10, owner: "Tambahkan fitur untuk bisa edit hasil input ulang
@@ -4364,6 +4385,7 @@ async function closeProductionBatchImpl(batchId: string, fgSizeQty: Record<strin
   }
   const { error } = await db.from("production_batches").update({ closed_at: today() }).eq("id", batchId);
   if (error) throw new Error(error.message);
+  await stampActor(db, "production_batches", [batchId], { closed_by: actor.actorLabel, fg_by: actor.actorLabel });
 
   // Log ke riwayat -- HANYA delta yang belum pernah tercatat (mis. dari "Simpan progres"
   // sebelumnya), bukan `fgSizeQty` penuh lagi -- lihat catatan panjang di logFgProgressDelta.
@@ -4405,7 +4427,8 @@ async function assertFgBounds(db: SupabaseClient, batchId: string, fg: Record<st
 }
 
 async function editRollFgImpl(batchId: string, sizeQty: Record<string, number>): Promise<void> {
-  const vendorId = await requireVendorSession();
+  const actor = await requireVendorSessionWithActor();
+  const vendorId = actor.vendorId;
   const db = supabaseServer();
   const { data: batch } = await db
     .from("production_batches")
@@ -4469,6 +4492,7 @@ async function editRollFgImpl(batchId: string, sizeQty: Record<string, number>):
   }
   const { error: snapErr } = await db.from("production_batches").update({ fg_logged_snapshot: clean }).eq("id", batchId);
   if (snapErr) throw new Error(snapErr.message);
+  await stampActor(db, "production_batches", [batchId], { fg_by: actor.actorLabel });
   if (batch.closed_at && meta?.fg_confirmed_at) await recomputeAutoRejectForGroup(db, groupKey, batch.mrp_id, batch.vendor_produksi, batch.warna, batch.lengan as Lengan);
   await maybeAdvanceMaklonToDelivery(batch.mrp_id, batch.vendor_produksi);
 }
@@ -4536,7 +4560,7 @@ async function reopenProductionBatchCore(batchId: string): Promise<void> {
  *  baris yang sudah ada apa adanya (bukan replace dengan payload baru dari client) -- cukup
  *  logFgProgressDelta dipanggil dengan qty yang sudah ada supaya baseline/riwayat tetap konsisten
  *  (delta biasanya 0 karena "Simpan" sudah mencatatnya duluan). */
-async function autoCloseOpenBatchesForGroup(db: SupabaseClient, groupBatches: ProductionBatch[]): Promise<void> {
+async function autoCloseOpenBatchesForGroup(db: SupabaseClient, groupBatches: ProductionBatch[], actorLabel?: string): Promise<void> {
   const openIds = groupBatches.filter((b) => !b.closedAt).map((b) => b.id);
   if (openIds.length === 0) return;
   const { data: rows } = await db
@@ -4548,6 +4572,7 @@ async function autoCloseOpenBatchesForGroup(db: SupabaseClient, groupBatches: Pr
     for (const s of b.production_batch_fg_sizes ?? []) fgSizeQty[s.size] = s.qty;
     const { error } = await db.from("production_batches").update({ closed_at: today() }).eq("id", b.id);
     if (error) throw new Error(error.message);
+    if (actorLabel) await stampActor(db, "production_batches", [b.id], { closed_by: actorLabel });
     await logFgProgressDelta(db, b, fgSizeQty);
   }
 }
@@ -4566,7 +4591,8 @@ export async function saveFgProgressAction(batchId: string, sizeQty: Record<stri
 }
 
 async function saveFgProgressImpl(batchId: string, sizeQty: Record<string, number>, expectedFg?: Record<string, number>): Promise<void> {
-  const vendorId = await requireVendorSession();
+  const actor = await requireVendorSessionWithActor();
+  const vendorId = actor.vendorId;
   const db = supabaseServer();
   const { data: batch } = await db
     .from("production_batches")
@@ -4598,6 +4624,7 @@ async function saveFgProgressImpl(batchId: string, sizeQty: Record<string, numbe
     const { error: insErr } = await db.from("production_batch_fg_sizes").insert(rows.map(([size, qty]) => ({ production_batch_id: batchId, size, qty })));
     if (insErr) throw new Error(insErr.message);
   }
+  await stampActor(db, "production_batches", [batchId], { fg_by: actor.actorLabel });
 }
 
 export async function submitProductionResultAction(input: { mrpId: string; vendorProduksi: string; warna: string; lengan: Lengan; kind: "FG" | "REJECT"; sizeQty: Record<string, number>; note?: string }): Promise<void> {
@@ -4944,7 +4971,8 @@ export async function confirmFgDoneAction(groupKey: string, mrpId: string, vendo
 }
 
 async function confirmFgDoneImpl(groupKey: string, mrpId: string, vendorProduksi: string, warna: string, lengan: Lengan): Promise<void> {
-  assertSameVendor(await requireVendorSession(), vendorProduksi, "Grup produksi ini");
+  const actor = await requireVendorSessionWithActor();
+  assertSameVendor(actor.vendorId, vendorProduksi, "Grup produksi ini");
   const db = supabaseServer();
   const scope = await fetchProductionScopeForMrp(db, mrpId, vendorProduksi);
 
@@ -4963,7 +4991,7 @@ async function confirmFgDoneImpl(groupKey: string, mrpId: string, vendorProduksi
   if (hasCutBatches && toClose.length === 0 && !hasClosed) {
     throw new Error("Belum ada roll dengan Finish Good untuk diselesaikan -- isi Finish Good dulu.");
   }
-  await autoCloseOpenBatchesForGroup(db, toClose);
+  await autoCloseOpenBatchesForGroup(db, toClose, actor.actorLabel);
 
   // Refetch scope (bukan reuse yang di atas) -- groupBatches/closedAt & production_results di atas
   // sudah berubah setelah autoCloseOpenBatchesForGroup (roll baru ditutup + kemungkinan baris FG
@@ -5230,8 +5258,9 @@ export async function createDeliveryKoliAction(input: { mrpId: string; vendorPro
       .insert(items.map((it) => ({ delivery_koli_id: id, warna: it.warna, lengan: it.lengan, size: it.size, qty: it.qty, kind: it.kind, usia: it.usia ?? null, source_batch_id: it.sourceBatchId ?? null })));
     if (itemsErr) throw new Error(itemsErr.message);
   }
+  await stampActor(db, "delivery_kolis", [id], { created_by: actor.actorLabel });
   await logVendorAction(actor, `Buat koli ${input.noKoli} (${items.length} item)`, "delivery_kolis", id);
-  return { id, mrpId: input.mrpId, vendorProduksi: input.vendorProduksi, ekspedisi: input.ekspedisi, noKoli: input.noKoli, items, createdAt };
+  return { id, mrpId: input.mrpId, vendorProduksi: input.vendorProduksi, ekspedisi: input.ekspedisi, noKoli: input.noKoli, items, createdAt, createdBy: actor.actorLabel };
 }
 
 /** Item 2026-09-11 (feedback: "Checkbox Koli yang mau dikirim (disamakan ekspedisinya - jadi satu
@@ -5295,6 +5324,7 @@ export async function setKoliEkspedisiResiGroupAction(
     .in("id", validIds);
   if (error) throw new Error(error.message);
   // Biaya ekspedisi: ditulis TERPISAH supaya set ekspedisi tetap jalan kalau migration 0077 belum dijalankan (selama biaya tidak diisi).
+  await stampActor(db, "delivery_kolis", validIds, { shipped_by: actor.actorLabel });
   const { error: biayaErr } = await db.from("delivery_kolis").update({ biaya_ekspedisi: biaya }).in("id", validIds);
   if (biayaErr && biaya != null) throw new Error(/biaya_ekspedisi/.test(biayaErr.message) ? "Kolom biaya ekspedisi belum ada di database -- migration 0077 perlu dijalankan dulu." : biayaErr.message);
   // Revisi 2026-09-19 (owner: "hilangkan fitur Delivery -- begitu ekspedisi & resi disimpan langsung
@@ -5376,7 +5406,8 @@ export async function deliverKoliResiGroupAction(items: { koliId: string; beratK
 // =========================================================================
 
 export async function createVendorInvoiceAction(input: { vendorProduksi: string; lines: { mrpId: string; warna: string; lengan: Lengan; usia?: Usia; qty: number; ratePerPc: number }[]; note?: string }): Promise<void> {
-  assertSameVendor(await requireVendorSession(), input.vendorProduksi, "Invoice ini");
+  const actor = await requireVendorSessionWithActor();
+  assertSameVendor(actor.vendorId, input.vendorProduksi, "Invoice ini");
   const db = supabaseServer();
   if (input.lines.length === 0) return;
   const id = await nextReadableId("VINV");
@@ -5391,6 +5422,7 @@ export async function createVendorInvoiceAction(input: { vendorProduksi: string;
     submitted_at: today(),
   });
   if (error) throw new Error(error.message);
+  await stampActor(db, "vendor_invoices", [id], { submitted_by: actor.actorLabel });
   await db.from("vendor_invoice_lines").insert(
     input.lines.map((l) => ({ vendor_invoice_id: id, mrp_id: l.mrpId, warna: l.warna, lengan: l.lengan, usia: l.usia ?? null, qty: l.qty, rate_per_pc: l.ratePerPc, amount: l.qty * l.ratePerPc }))
   );
@@ -6069,12 +6101,14 @@ export async function getFlowSnapshotAction(clientMasterVersion?: number | null)
     // (lib/mrp/vendorScope.ts): browser vendor tidak boleh menerima data vendor lain.
     return { ...scopeStateToVendor(state, session.vendorId!), hargaMaklon: [], hargaKain: [], hargaKainPks: [], hargaRib: [], hargaKerahManset: [], itemSellingPrices: [], hargaFob: [], dataVersion, masterVersion: null as number | null, weightTolerancePct };
   }
+  // Nama pelaku vendor (migration 0078) hanya untuk vendor itu sendiri dan Sysadmin.
+  const visibleState = session.internalRoles.includes("sysadmin") ? state : stripVendorActorNames(state);
   if (!masterIncluded) {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { hargaMaklon, hargaKain, hargaKainPks, hargaRib, hargaKerahManset, itemSellingPrices, hargaFob, ...rest } = state;
+    const { hargaMaklon, hargaKain, hargaKainPks, hargaRib, hargaKerahManset, itemSellingPrices, hargaFob, ...rest } = visibleState;
     return { ...rest, dataVersion, masterVersion: masterVersion as number | null, weightTolerancePct };
   }
-  return { ...state, dataVersion, masterVersion, weightTolerancePct };
+  return { ...visibleState, dataVersion, masterVersion, weightTolerancePct };
 }
 
 // =========================================================================

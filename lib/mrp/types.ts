@@ -213,7 +213,8 @@ export type RollReceipt = {
 /** Roll yang sudah ditandai FISIK DITERIMA di Good Receive (arrivedAt) — belum tentu sudah
  *  ditimbang (lihat RollReceipt). Ditimbang & dicek toleransi sekarang di halaman Cutting, bukan
  *  di sini lagi — Good Receive tinggal konfirmasi roll sudah datang + tag code roll/lot-nya. */
-export type RollArrival = { arrivedAt: string; codeRoll?: string; codeLot?: string };
+/** `receivedBy`: nama pelaku Good Receive (migration 0078), hanya dipakai portal vendor. */
+export type RollArrival = { arrivedAt: string; codeRoll?: string; codeLot?: string; receivedBy?: string };
 
 export type AddBuyReceipt = { receivedAt: string };
 
@@ -416,6 +417,11 @@ export type ProductionBatch = {
   /** Revisi 2026-09-07: roll ini sudah "Tutup Roll" — FG-nya final & siap masuk Pengiriman (per
    *  roll, lihat DeliveryKoli.sourceBatchIds), tidak bisa diedit lagi lewat form Finish Good. */
   closedAt?: string;
+  /** Migration 0078: nama pelaku tiap tahap roll (resting, input cutting, FG terakhir disimpan, tutup roll). Hanya dipakai portal vendor. */
+  restingBy?: string;
+  cuttingBy?: string;
+  fgBy?: string;
+  closedBy?: string;
   /** Migration 0068 (OPSIONAL per vendor): persetujuan akun utama atas hasil cutting yang kurang dari target,
    *  kalau diinput anggota tim. Kosong = tidak ada persetujuan (alur biasa). PENDING mengunci Finish Good roll ini;
    *  REJECTED = hasil cutting sudah dikosongkan lagi dan `note` berisi alasan penolakan. */
@@ -485,6 +491,9 @@ export type DeliveryKoli = {
   /** Migration 0077: TOTAL biaya ekspedisi AKTUAL 1 resi (dari nota ekspedisi, diisi vendor saat Set Ekspedisi & Resi). Nilainya sama di semua
    *  koli satu grup resi. Kosong = ongkir dihitung dari tarif per kg Master Data Ekspedisi. */
   biayaEkspedisi?: number;
+  /** Migration 0078: nama pelaku (akun utama/anggota tim vendor) -- dibuat, dan diset ekspedisi & resi. Hanya dipakai portal vendor. */
+  createdBy?: string;
+  shippedBy?: string;
   deliveredAt?: string;
   createdAt: string;
   /** LEGACY (migration 0020, sebelum roll boleh dikirim sebagian) -- id ProductionBatch (roll)
@@ -583,6 +592,8 @@ export type VendorInvoice = {
   status: VendorInvoiceStatus;
   note?: string;
   submittedAt: string;
+  /** Migration 0078: nama pelaku yang mengajukan invoice (hanya portal vendor). */
+  submittedBy?: string;
   approvedAt?: string;
   paidAt?: string;
   dueDate?: string;
