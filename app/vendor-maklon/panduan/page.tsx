@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MessageCircle } from "lucide-react";
+import { WhatsappIcon } from "@/components/ui/whatsapp-icon";
 import { AppShell } from "@/components/shell/app-shell";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -68,9 +68,11 @@ function MediaTabs({ items }: { items: GuideItem[] }) {
 function PanduanContent({ vendorId }: { vendorId: string }) {
   // Media panduan (video/gambar/tautan) yang dikelola Sysadmin (migration 0073). Gagal memuat = halaman tetap tampil teks saja.
   const [media, setMedia] = useState<GuideItem[]>([]);
+  const [mediaLoaded, setMediaLoaded] = useState(false);
   useEffect(() => {
     void listGuideItemsAction("vendor").then((res) => {
       if (res.ok) setMedia(res.data);
+      setMediaLoaded(true);
     });
   }, []);
   const mediaFor = (key: string) => (VENDOR_GUIDE_SECTIONS.some((s) => s.key === key) ? media.filter((m) => m.sectionKey === key) : []);
@@ -95,8 +97,8 @@ function PanduanContent({ vendorId }: { vendorId: string }) {
           rel="noopener noreferrer"
           className="flex items-center gap-3 rounded-lg border border-border-subtle bg-surface-card px-4 py-3 hover:border-accent-blue"
         >
-          <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-info-bg text-info-fg">
-            <MessageCircle size={18} />
+          <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-[#25D366] text-white">
+            <WhatsappIcon size={20} />
           </span>
           <span className="min-w-0 flex-1">
             <span className="block font-sans text-[13px] font-semibold text-text-primary">Ada kendala, saran, atau feedback?</span>
@@ -114,7 +116,23 @@ function PanduanContent({ vendorId }: { vendorId: string }) {
               }}
               className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 font-sans text-[13px] font-semibold text-text-primary marker:hidden [&::-webkit-details-marker]:hidden"
             >
-              <span className="flex-1">{s.title}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block">{s.title}</span>
+                {mediaLoaded &&
+                  (() => {
+                    // Ringkasan isi bagian ini supaya vendor tahu sebelum membukanya: jumlah video tutorial (media lain disebut terpisah).
+                    const items = mediaFor(s.key);
+                    const videos = items.filter((m) => m.kind === "VIDEO").length;
+                    const others = items.length - videos;
+                    const text =
+                      videos > 0
+                        ? `${videos} video tutorial${others > 0 ? ` · ${others} materi lain` : ""}`
+                        : others > 0
+                          ? `${others} materi panduan (belum ada video)`
+                          : "Belum ada video tutorial";
+                    return <span className={"mt-0.5 block font-sans text-[11px] font-normal " + (items.length === 0 ? "text-text-muted" : "text-info-fg")}>{text}</span>;
+                  })()}
+              </span>
               <span className="font-sans text-[11px] font-medium text-text-muted group-open:hidden">Buka</span>
               <span className="hidden font-sans text-[11px] font-medium text-text-muted group-open:inline">Tutup</span>
             </summary>
