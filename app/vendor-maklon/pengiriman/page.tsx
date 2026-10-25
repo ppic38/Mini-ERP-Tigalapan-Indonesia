@@ -6,7 +6,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { NumberInput } from "@/components/mrp/number-input";
 import { QtyStepper } from "@/components/mrp/qty-stepper";
-import { ActorTag } from "@/components/mrp/actor-tag";
+import { PicText } from "@/components/mrp/actor-tag";
 import { Button } from "@/components/ui/button";
 import { alertDialog, confirmDialog } from "@/components/ui/confirm-dialog";
 import { ColumnMenu, useColumnVisibility } from "@/components/ui/column-menu";
@@ -860,10 +860,11 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
           ) : (
             <>
               <div className="mt-2 overflow-hidden rounded-md border border-border-subtle bg-white">
-                <div className="m-hide grid grid-cols-5 gap-x-2 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted" style={sysadminMode ? { gridTemplateColumns: "repeat(5,minmax(0,1fr)) 130px" } : undefined}>
+                <div className="m-hide grid grid-cols-6 gap-x-2 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted" style={sysadminMode ? { gridTemplateColumns: "repeat(6,minmax(0,1fr)) 130px" } : undefined}>
                   <span />
                   <span>No MRP</span>
                   <span>No Koli</span>
+                  <span>PIC Buat</span>
                   <span>Isi</span>
                   <span className="text-right">Edit</span>
                   {sysadminMode && <span className="-my-1.5 flex items-center border-l-2 border-accent-purple bg-accent-purple-bg px-2 text-accent-purple">Aksi Sysadmin</span>}
@@ -872,13 +873,11 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                   const isExpanded = expandedKoli.has(k.id);
                   return (
                     <Fragment key={k.id}>
-                      <div className="m-wrap grid grid-cols-5 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5" style={sysadminMode ? { gridTemplateColumns: "repeat(5,minmax(0,1fr)) 130px" } : undefined}>
+                      <div className="m-wrap grid grid-cols-6 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5" style={sysadminMode ? { gridTemplateColumns: "repeat(6,minmax(0,1fr)) 130px" } : undefined}>
                         <input type="checkbox" checked={selectedForEkspedisi.has(k.id)} onChange={() => toggleSelectedForEkspedisi(k.id)} disabled={k.id.startsWith("tmp-")} className="h-3.5 w-3.5 disabled:opacity-40" />
                         <span className="font-mono">{k.mrpId}</span>
-                        <span className="flex flex-col">
-                          <span className="font-mono font-medium">{k.noKoli}</span>
-                          <ActorTag label="Dibuat oleh" name={k.createdBy} />
-                        </span>
+                        <span className="font-mono font-medium">{k.noKoli}</span>
+                        <PicText label={k.createdBy} />
                         <button
                           onClick={() => toggleKoliExpanded(k.id)}
                           className="flex items-center gap-1 text-left font-sans text-xs text-[#31414F] hover:text-action-primary max-md:order-last max-md:basis-full"
@@ -957,9 +956,10 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                       )}
                     </div>
                     {first.ekspedisiNote && <div className="border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-[10.5px] text-text-muted">Catatan: {first.ekspedisiNote}</div>}
-                    <div className="m-hide grid grid-cols-5 gap-x-2 border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                    <div className="m-hide grid grid-cols-6 gap-x-2 border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                       <span>No MRP</span>
                       <span>No Koli</span>
+                      <span>PIC Buat</span>
                       <span>Isi</span>
                       <span className="text-right">Berat (kg)</span>
                       <span className="text-right">Edit</span>
@@ -969,12 +969,10 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                       const myWeight = weightOf(k);
                       return (
                         <Fragment key={k.id}>
-                          <div className="m-wrap grid grid-cols-5 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5">
+                          <div className="m-wrap grid grid-cols-6 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5">
                             <span className="font-mono">{k.mrpId}</span>
-                            <span className="flex flex-col">
-                          <span className="font-mono font-medium">{k.noKoli}</span>
-                          <ActorTag label="Dibuat oleh" name={k.createdBy} />
-                        </span>
+                            <span className="font-mono font-medium">{k.noKoli}</span>
+                            <PicText label={k.createdBy} />
                             <button
                               onClick={() => toggleKoliExpanded(k.id)}
                               className="flex items-center gap-1 text-left font-sans text-xs text-[#31414F] hover:text-action-primary max-md:order-last max-md:basis-full"
@@ -1043,11 +1041,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     <span>
                       Total berat: <span className="font-mono">{formatDecimal(totalWeight)} kg</span>
                     </span>
-                    {first.shippedBy && (
-                      <span>
-                        Diset &amp; dikirim oleh: <span className="font-medium">{first.shippedBy}</span>
-                      </span>
-                    )}
                     {first.biayaEkspedisi != null && (
                       <span>
                         Biaya ekspedisi: <span className="font-mono">{formatRupiah(first.biayaEkspedisi)}</span>
@@ -1073,9 +1066,11 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     </span>
                   </div>
                   {first.ekspedisiNote && <div className="border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-[10.5px] text-text-muted">Catatan: {first.ekspedisiNote}</div>}
-                  <div className="m-hide grid grid-cols-4 gap-x-2 border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                  <div className="m-hide grid grid-cols-6 gap-x-2 border-b border-[#F1F4F7] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                     <span>No MRP</span>
                     <span>No Koli</span>
+                    <span>PIC Buat</span>
+                    <span>PIC Kirim</span>
                     <span>Isi</span>
                     <span className="text-right">Berat (kg)</span>
                   </div>
@@ -1083,12 +1078,11 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     const isExpanded = expandedKoli.has(k.id);
                     return (
                       <Fragment key={k.id}>
-                        <div className="m-wrap grid grid-cols-4 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5">
+                        <div className="m-wrap grid grid-cols-6 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5">
                           <span className="font-mono">{k.mrpId}</span>
-                          <span className="flex flex-col">
                           <span className="font-mono font-medium">{k.noKoli}</span>
-                          <ActorTag label="Dibuat oleh" name={k.createdBy} />
-                        </span>
+                          <PicText label={k.createdBy} />
+                          <PicText label={k.shippedBy} />
                           <button
                             onClick={() => toggleKoliExpanded(k.id)}
                             className="flex items-center gap-1 text-left font-sans text-xs text-[#31414F] hover:text-action-primary max-md:order-last max-md:basis-full"

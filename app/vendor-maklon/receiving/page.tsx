@@ -5,7 +5,7 @@ import { Fragment, useEffect, useState } from "react";
 import { alertDialog } from "@/components/ui/confirm-dialog";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
-import { ActorTag } from "@/components/mrp/actor-tag";
+import { PicText } from "@/components/mrp/actor-tag";
 import { Button } from "@/components/ui/button";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -45,6 +45,8 @@ const warnaLabel = (w: string) => (w === NO_WARNA ? "Tanpa warna (umum)" : w);
 // Revisi 2026-09-29: kolom Code lot dilebarkan (80px -> 140px) karena sekarang bisa jadi input teks
 // juga (owner: "buat untuk vendor produksi bisa input code lot"), bukan cuma teks read-only pendek.
 const RECEIVE_GRID = "minmax(80px,0.5fr) minmax(200px,1.6fr) minmax(140px,1fr) minmax(120px,0.8fr) 190px";
+// Tabel roll punya kolom PIC tambahan (tabel item tambahan di bawahnya tetap memakai RECEIVE_GRID).
+const RECEIVE_GRID_ROLL = "minmax(80px,0.5fr) minmax(200px,1.6fr) minmax(140px,1fr) minmax(120px,0.8fr) minmax(110px,0.7fr) 190px";
 const ROLL_PAGE_SIZE = 5;
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -702,12 +704,13 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                       </div>
                       <div
                         className="m-hide grid items-center gap-x-4 border-b-2 border-accent-blue bg-info-bg px-4 py-[8px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
-                        style={{ gridTemplateColumns: RECEIVE_GRID + (sysadminMode ? " 150px" : "") }}
+                        style={{ gridTemplateColumns: RECEIVE_GRID_ROLL + (sysadminMode ? " 150px" : "") }}
                       >
                         <span>Roll</span>
                         <span>Code roll</span>
                         <span>Code lot</span>
                         <span className="text-right">Berat kotor (kg)</span>
+                        <span>PIC</span>
                         <span className="text-right">Status</span>
                         {sysadminMode && <span className="-my-[8px] flex items-center border-l-2 border-accent-purple bg-accent-purple-bg px-2 text-accent-purple">Aksi Sysadmin</span>}
                       </div>
@@ -720,7 +723,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                           <div
                             key={key}
                             className="m-stack m-grid2 grid items-center gap-x-4 border-b border-[#F1F4F7] px-4 py-2 font-sans text-xs text-[#31414F] max-md:py-3"
-                            style={{ gridTemplateColumns: RECEIVE_GRID + (sysadminMode ? " 150px" : "") }}
+                            style={{ gridTemplateColumns: RECEIVE_GRID_ROLL + (sysadminMode ? " 150px" : "") }}
                           >
                             <span className="font-mono font-medium max-md:text-[13px]">Roll {combinedRolls.indexOf(r) + 1}</span>
                             {arrival ? (
@@ -775,13 +778,13 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                               </span>
                             )}
                             <span data-label="Berat kotor (kg)" className="text-right font-mono">{formatDecimal(r.grossKg)}</span>
+                            <PicText label={arrival?.receivedBy} />
                             <span className="flex flex-col items-end gap-1 max-md:items-stretch">
                               <span className="flex items-center justify-end gap-2 max-md:justify-start">
                                 {arrival ? (
                                   <>
                                     <span className="font-mono text-[11px] text-text-muted">{formatDate(arrival.arrivedAt)}</span>
                                     <StatusPill tone="success">Diterima</StatusPill>
-                                    <ActorTag label="oleh" name={arrival.receivedBy} className="max-md:hidden" />
                                   </>
                                 ) : (
                                   <Button onClick={() => markArrived(r.lengan, r.idx)} disabled={!code.codeRoll.trim() || !!conflictMsg || (strictReceive && !rollHasLot(r.lengan, r.idx))} variant="accent" size="sm" className="w-[96px] max-md:w-full">

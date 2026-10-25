@@ -4,7 +4,7 @@ import { Fragment, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
-import { ActorTag } from "@/components/mrp/actor-tag";
+import { PicText } from "@/components/mrp/actor-tag";
 import { useMrpStore } from "@/lib/mrp/store";
 import { viewVendorInvoicePaymentProof } from "@/lib/mrp/viewVendorInvoiceProof";
 import { viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
@@ -199,10 +199,10 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
       <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
         <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Invoice yang telah dibuat</div>
         <div className="overflow-x-auto">
-          <div className="m-fluid min-w-[1160px]">
+          <div className="m-fluid min-w-[1290px]">
             <div
               className="m-hide grid items-center gap-x-3 border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted"
-              style={{ gridTemplateColumns: "110px 1fr 90px 110px 90px 120px 160px 140px" }}
+              style={{ gridTemplateColumns: "110px 1fr 90px 110px 90px 120px 160px 130px 140px" }}
             >
               <span>No Invoice</span>
               <span>MRP</span>
@@ -211,6 +211,7 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
               <span>Tanggal</span>
               <span className="text-right">Total</span>
               <span>Status Payment</span>
+              <span>PIC</span>
               <span>Bukti Bayar</span>
             </div>
             {myInvoices.length === 0 && <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada invoice.</div>}
@@ -236,12 +237,9 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                       }
                     }}
                     className="m-stack m-grid2 grid w-full cursor-pointer items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] text-left font-sans text-xs text-[#31414F] hover:bg-[#F7F9FB] max-md:py-3"
-                    style={{ gridTemplateColumns: "110px 1fr 90px 110px 90px 120px 160px 140px" }}
+                    style={{ gridTemplateColumns: "110px 1fr 90px 110px 90px 120px 160px 130px 140px" }}
                   >
-                    <span className="flex flex-col gap-0.5">
-                      <span className="font-mono font-medium max-md:text-[13px]">{inv.id}</span>
-                      <ActorTag label="Diajukan oleh" name={inv.submittedBy} />
-                    </span>
+                    <span className="font-mono font-medium max-md:text-[13px]">{inv.id}</span>
                     <span data-label="MRP" className="max-md:col-span-full">{Array.from(new Set(inv.lines.map((l) => l.mrpId))).join(", ")}</span>
                     <span data-label="Total qty" className="text-right font-mono">{formatPcs(totalQtyInv)}</span>
                     <span data-label="Status">
@@ -252,6 +250,7 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                     <span data-label="Status payment" className="max-md:col-span-full">
                       <StatusPill tone={payment.tone}>{payment.label}</StatusPill>
                     </span>
+                    <PicText label={inv.submittedBy} />
                     <span data-label="Bukti bayar" className="max-md:col-span-full" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
                       {inv.buktiBayarAt ? (
                         <Button onClick={() => void viewVendorInvoicePaymentProof(inv.id)} variant="accent" size="xs">

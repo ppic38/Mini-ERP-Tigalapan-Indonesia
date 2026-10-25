@@ -5,7 +5,7 @@ import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { GroupRemarkBox, knownSizesForMrp, ReworkHistoryCard, ReworkInlineForm } from "@/components/mrp/rework-parts";
 import { NumberInput } from "@/components/mrp/number-input";
 import { StatusPill } from "@/components/ui/status-pill";
-import { ActorTag } from "@/components/mrp/actor-tag";
+import { PicText } from "@/components/mrp/actor-tag";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { Button } from "@/components/ui/button";
 import { SizeQtyControl } from "@/components/mrp/size-qty-control";
@@ -765,12 +765,13 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                 </div>
                               ) : null;
                             })()}
-                            <div className="m-hide grid grid-cols-[1.1fr_2.2fr_0.9fr_1.1fr_0.8fr_1.3fr] gap-x-3 border-b border-[#E4E8EE] bg-[#F7F9FB] px-4 py-2 font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                            <div className="m-hide grid grid-cols-[1.1fr_2.2fr_0.9fr_1.1fr_0.8fr_1fr_1.3fr] gap-x-3 border-b border-[#E4E8EE] bg-[#F7F9FB] px-4 py-2 font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
                               <span>Roll</span>
                               <span>Size &amp; qty (FG / hasil cutting)</span>
                               <span className="text-center">Total FG / cutting</span>
                               <span className="text-center">Reject</span>
                               <span className="text-center">Status</span>
+                              <span>PIC FG</span>
                               <span className="text-right">Aksi</span>
                             </div>
                             {groupBatches.map((b) => {
@@ -787,14 +788,10 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                     .filter(([, v]) => v > 0)
                                 : [];
                               return (
-                                <div key={b.id} className="m-stack grid grid-cols-[1.1fr_2.2fr_0.9fr_1.1fr_0.8fr_1.3fr] items-center gap-x-3 border-b border-[#EEF1F4] px-4 py-3 font-sans text-[11.5px] text-[#31414F] last:border-b-0 hover:bg-[#F8FBFE]">
+                                <div key={b.id} className="m-stack grid grid-cols-[1.1fr_2.2fr_0.9fr_1.1fr_0.8fr_1fr_1.3fr] items-center gap-x-3 border-b border-[#EEF1F4] px-4 py-3 font-sans text-[11.5px] text-[#31414F] last:border-b-0 hover:bg-[#F8FBFE]">
                                   <span className="flex flex-col">
                                     <span className="font-mono text-[12px] font-medium text-text-primary">{b.codeRoll || b.id}</span>
                                     {sizeShiftLabel(b) && <span className="font-sans text-[9.5px] font-semibold text-info-fg">Alih size (sisa kain): {sizeShiftLabel(b)}</span>}
-                                    <ActorTag label="Resting" name={b.restingBy} className="mt-0.5" />
-                                    <ActorTag label="Cutting" name={b.cuttingBy} />
-                                    <ActorTag label="FG" name={b.fgBy} />
-                                    {b.closedAt && <ActorTag label="Ditutup" name={b.closedBy} />}
                                   </span>
                                   <span data-label="Size & qty" className="flex flex-wrap items-center gap-1.5">
                                     {sizes
@@ -837,6 +834,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                       </span>
                                     )}
                                   </span>
+                                  <PicText label={b.fgBy ?? b.closedBy} />
                                   <span className="flex items-center justify-end gap-2">
                                     <Button
                                       onClick={() => {

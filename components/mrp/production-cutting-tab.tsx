@@ -1,6 +1,6 @@
 "use client";
 
-import { ActorTag } from "@/components/mrp/actor-tag";
+import { PicText } from "@/components/mrp/actor-tag";
 import { useRef, useState } from "react";
 import { Info } from "lucide-react";
 import { NumberInput } from "@/components/mrp/number-input";
@@ -126,7 +126,7 @@ function rollVariance(roll: RestingCandidateRoll, netKg: number) {
 // batch 2026-09-05): 1 baris = 1 SESI RESTING ("Part", lihat restingSessionGroups di
 // lib/mrp/derive.ts); Code roll, Gramasi & Setting ada di sub-tabel per-roll (CUTTING_BATCH_COLUMNS).
 const CUTTING_SESSION_COLUMNS =
-  "minmax(150px,0.9fr) minmax(170px,1fr) minmax(90px,0.5fr) minmax(150px,0.9fr) minmax(190px,1.1fr) minmax(140px,0.8fr) minmax(210px,1.2fr) minmax(100px,0.6fr)";
+  "minmax(150px,0.9fr) minmax(170px,1fr) minmax(90px,0.5fr) minmax(150px,0.9fr) minmax(190px,1.1fr) minmax(120px,0.7fr) minmax(120px,0.7fr) minmax(140px,0.8fr) minmax(210px,1.2fr) minmax(100px,0.6fr)";
 
 // Kolom sub-tabel PER ROLL (ditampilkan begitu 1 baris grup di atas di-expand) -- Warna | Code
 // roll | Gramasi | Setting | Cutting | Hasil Aduan/Yield | Detail Size.
@@ -135,10 +135,10 @@ const CUTTING_BATCH_COLUMNS = "minmax(150px,1fr) minmax(130px,0.8fr) minmax(90px
 // Kolom "List roll": Warna | Code roll | Berat kotor | Berat bersih | Selisih | Gramasi | Setting | Aksi.
 const LIST_GRID = "minmax(140px,1fr) minmax(130px,0.9fr) minmax(90px,0.6fr) minmax(110px,0.7fr) minmax(130px,0.9fr) minmax(90px,0.6fr) minmax(120px,0.8fr) minmax(130px,0.8fr)";
 
-/** Nama pelaku unik dari beberapa roll (satu sesi resting bisa dikerjakan >1 orang), digabung koma; kosong = tidak tampil. */
+/** Nama pelaku unik dari beberapa roll (satu sesi resting bisa dikerjakan >1 orang), digabung " | " (ditampilkan sebagai daftar username oleh PicText); kosong = tampil "-". */
 function uniqueNames(xs: (string | undefined)[]): string | undefined {
   const u = Array.from(new Set(xs.filter((x): x is string => !!x)));
-  return u.length > 0 ? u.join(", ") : undefined;
+  return u.length > 0 ? u.join(" | ") : undefined;
 }
 
 export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
@@ -1156,9 +1156,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
           </div>
         )}
         <div className="overflow-x-auto">
-          {/* Revisi 2026-09-19: wrapper ini min-w-[1240px] -- header, baris grup, dan sub-tabel per-roll
+          {/* Revisi 2026-09-19: wrapper ini min-w-[1480px] -- header, baris grup, dan sub-tabel per-roll
               semua berbagi lebar yang SAMA sehingga latar/border-nya tidak terpotong saat digulir. */}
-          <div className="min-w-[1240px] m-fluid">
+          <div className="min-w-[1480px] m-fluid">
             {!selectedMrpId && (
               <div className="px-4 py-8 text-center font-sans text-xs text-text-muted">
                 Pilih MRP di atas untuk menampilkan kode aduan, progres input resting &amp; cutting, dan riwayatnya.
@@ -1167,7 +1167,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
             {selectedMrpId && (
               <>
             <div
-              className="m-hide grid min-w-[1240px] gap-x-5 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
+              className="m-hide grid min-w-[1480px] gap-x-5 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
               style={{ gridTemplateColumns: CUTTING_SESSION_COLUMNS }}
             >
               <span>Kode Aduan</span>
@@ -1175,6 +1175,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               <span className="text-center">Roll</span>
               <span>Resting</span>
               <span>Cutting</span>
+              <span>PIC Resting</span>
+              <span>PIC Cutting</span>
               <span>Durasi Resting</span>
               <span>Hasil Aduan / Yield</span>
               <span className="text-center">Detail</span>
@@ -1203,7 +1205,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               const groupYieldAlert = groupYieldPct !== null && groupYieldPct < YIELD_ALERT_THRESHOLD_PCT;
               return (
                 <div key={g.key} className="border-b border-[#F1F4F7] last:border-b-0">
-                  <div className="m-stack m-grid2 grid min-w-[1240px] items-center gap-x-5 px-4 py-[11px] font-sans text-xs text-[#31414F]" style={{ gridTemplateColumns: CUTTING_SESSION_COLUMNS }}>
+                  <div className="m-stack m-grid2 grid min-w-[1480px] items-center gap-x-5 px-4 py-[11px] font-sans text-xs text-[#31414F]" style={{ gridTemplateColumns: CUTTING_SESSION_COLUMNS }}>
                     <span className="flex flex-col gap-0.5">
                       <span className="font-mono font-medium">
                         {g.kode} · {g.lengan}
@@ -1216,11 +1218,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                     </span>
                     <span data-label="Warna" className="max-md:col-span-full">{distinctWarna}</span>
                     <span data-label="Roll" className="text-center font-mono">{g.batches.length}</span>
-                    <span data-label="Resting" className="flex flex-col gap-0.5 font-mono text-[11px]">
-                      <span>{formatDateTime(g.restingAt)}</span>
-                      <ActorTag label="Oleh" name={uniqueNames(g.batches.map((b) => b.restingBy))} />
-                    </span>
-                    <span data-label="Cutting" className="flex flex-col items-start gap-0.5 font-mono text-[11px] max-md:col-span-full">
+                    <span data-label="Resting" className="font-mono text-[11px]">{formatDateTime(g.restingAt)}</span>
+                    <span data-label="Cutting" className="font-mono text-[11px] max-md:col-span-full">
                       {sessionComplete ? (
                         <span className="flex items-center gap-1.5">
                           {formatDateTime(earliestCuttingAt ?? g.restingAt)}
@@ -1259,8 +1258,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                           {anyMissingCuttingAt ? "Input Hasil Cutting →" : "Perbaiki Hasil Cutting →"}
                         </Button>
                       )}
-                      {sessionComplete && <ActorTag label="Oleh" name={uniqueNames(g.batches.map((b) => b.cuttingBy))} />}
                     </span>
+                    <PicText label={uniqueNames(g.batches.map((b) => b.restingBy))} />
+                    <PicText label={sessionComplete ? uniqueNames(g.batches.map((b) => b.cuttingBy)) : undefined} />
                     <span data-label="Durasi resting" className="flex flex-col items-start gap-1">
                       <span className="font-mono text-[11px] text-text-muted">{formatDuration(g.restingAt, earliestCuttingAt ?? new Date().toISOString())}</span>
                       {durasiKurang && <StatusPill tone="warning">KURANG DARI TARGET</StatusPill>}
@@ -1290,7 +1290,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   {isExpanded && (
                     <div className="bg-[#FAFBFC]">
                       <div
-                        className="m-hide grid min-w-[1240px] gap-x-5 border-y border-[#CFE0EF] bg-info-bg/60 px-8 py-[7px] font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg"
+                        className="m-hide grid min-w-[1480px] gap-x-5 border-y border-[#CFE0EF] bg-info-bg/60 px-8 py-[7px] font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg"
                         style={{ gridTemplateColumns: CUTTING_BATCH_COLUMNS }}
                       >
                         <span>Warna</span>
@@ -1311,7 +1311,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         return (
                           <div
                             key={b.id}
-                            className="m-stack m-grid2 grid min-w-[1240px] items-center gap-x-5 border-b border-[#F1F4F7] px-8 py-[9px] font-sans text-xs text-[#31414F] last:border-b-0 max-md:px-4 max-md:py-3"
+                            className="m-stack m-grid2 grid min-w-[1480px] items-center gap-x-5 border-b border-[#F1F4F7] px-8 py-[9px] font-sans text-xs text-[#31414F] last:border-b-0 max-md:px-4 max-md:py-3"
                             style={{ gridTemplateColumns: CUTTING_BATCH_COLUMNS }}
                           >
                             <span data-label="Warna" className="max-md:col-span-full">{b.warna}</span>
