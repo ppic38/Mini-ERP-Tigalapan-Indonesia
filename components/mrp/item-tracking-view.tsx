@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { Button } from "@/components/ui/button";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
@@ -15,49 +15,116 @@ const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 const selectCls = "rounded-md border border-border-subtle bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-medium text-[#31414F]";
 const num = "px-3 py-2 text-right font-mono";
 
-type Tone = "blue" | "teal" | "orange" | "green";
-const TONE: Record<Tone, string> = {
-  blue: "border-[#9CB8E8] bg-[#EEF4FF] text-[#1E4FA3]",
-  teal: "border-[#8FD3C8] bg-[#ECFAF7] text-[#13776A]",
-  orange: "border-[#EBC08A] bg-[#FFF6E8] text-[#9A5B0C]",
-  green: "border-[#9AD4AE] bg-[#EDFAF1] text-[#1B7A3C]",
-};
-
-function StageCard({ no, label, value, sub, tone }: { no: number; label: string; value: number; sub?: string; tone: Tone }) {
+function Stat({ no, label, value, sub }: { no: number; label: string; value: number; sub?: string }) {
   return (
-    <div className={"rounded-lg border-2 px-4 py-3 " + TONE[tone]}>
-      <div className="font-sans text-[11.5px] font-semibold">{no}. {label}</div>
-      <div className="mt-1.5 font-sans text-[26px] font-bold leading-none">{formatPcs(value)}</div>
-      <div className="mt-1.5 font-sans text-[10.5px] opacity-75">{sub ?? "pcs"}</div>
+    <div className="min-w-0 px-4 py-3">
+      <div className="truncate font-sans text-[11px] font-medium text-text-muted">{no}. {label}</div>
+      <div className="mt-1 font-sans text-[22px] font-semibold leading-none text-action-primary">{formatPcs(value)}</div>
+      <div className="mt-1.5 truncate font-sans text-[10.5px] text-text-muted">{sub ?? "pcs"}</div>
     </div>
   );
 }
 
-/** Kartu tahapan satu set item: rencana, produksi, lalu pengiriman. */
+/** Ringkasan tahapan satu set item: satu kartu, satu warna, tujuh angka berurutan dari rencana sampai diterima gudang. */
 function StageCards({ rows }: { rows: ItemTrackRow[] }) {
   const t = (k: "target" | "cutting" | "fg" | "reject" | "diKoli" | "dikirim" | "diterima") => sum(rows.map((r) => r[k]));
   const mrps = new Set(rows.flatMap((r) => r.mrpIds)).size;
-  const items = rows.length;
-  const pct = t("target") > 0 ? Math.round((t("fg") / t("target")) * 100) : 0;
+  const pctOf = (n: number) => (t("target") > 0 ? Math.round((n / t("target")) * 100) : 0);
   return (
-    <div className="flex flex-col gap-3">
-      <div>
-        <div className="mb-1.5 font-sans text-[10.5px] font-bold uppercase tracking-wider text-[#1E4FA3]">Rencana dan produksi</div>
-        <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
-          <StageCard no={1} label="Target MRP" value={t("target")} sub={`pcs · ${items} item · ${mrps} MRP`} tone="blue" />
-          <StageCard no={2} label="Sudah dicutting" value={t("cutting")} sub={`pcs · ${t("target") > 0 ? Math.round((t("cutting") / t("target")) * 100) : 0}% dari target`} tone="blue" />
-          <StageCard no={3} label="Finish Good" value={t("fg")} sub={`pcs · ${pct}% dari target`} tone="teal" />
-          <StageCard no={4} label="Reject" value={t("reject")} sub="pcs" tone="orange" />
-        </div>
+    <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
+      <div className="grid grid-cols-4 divide-x divide-[#EEF1F4] max-lg:grid-cols-2 max-sm:grid-cols-1 max-sm:divide-x-0">
+        <Stat no={1} label="Target MRP" value={t("target")} sub={`pcs · ${rows.length} item · ${mrps} MRP`} />
+        <Stat no={2} label="Sudah dicutting" value={t("cutting")} sub={`pcs · ${pctOf(t("cutting"))}% dari target`} />
+        <Stat no={3} label="Finish Good" value={t("fg")} sub={`pcs · ${pctOf(t("fg"))}% dari target`} />
+        <Stat no={4} label="Reject" value={t("reject")} />
       </div>
-      <div>
-        <div className="mb-1.5 font-sans text-[10.5px] font-bold uppercase tracking-wider text-[#9A5B0C]">Pengiriman</div>
-        <div className="grid grid-cols-3 gap-3 max-lg:grid-cols-1">
-          <StageCard no={5} label="Sudah masuk koli, belum dikirim" value={t("diKoli")} tone="orange" />
-          <StageCard no={6} label="Dikirim vendor" value={t("dikirim")} sub={`pcs · belum dikirim dari FG: ${formatPcs(Math.max(0, t("fg") - t("dikirim") - t("diKoli")))}`} tone="orange" />
-          <StageCard no={7} label="Diterima gudang" value={t("diterima")} sub={`pcs · dalam perjalanan: ${formatPcs(Math.max(0, t("dikirim") - t("diterima")))}`} tone="green" />
-        </div>
+      <div className="grid grid-cols-3 divide-x divide-[#EEF1F4] border-t border-[#EEF1F4] max-lg:grid-cols-1 max-lg:divide-x-0">
+        <Stat no={5} label="Masuk koli, belum dikirim" value={t("diKoli")} />
+        <Stat no={6} label="Dikirim vendor" value={t("dikirim")} sub={`pcs · FG belum dikirim: ${formatPcs(Math.max(0, t("fg") - t("dikirim") - t("diKoli")))}`} />
+        <Stat no={7} label="Diterima gudang" value={t("diterima")} sub={`pcs · dalam perjalanan: ${formatPcs(Math.max(0, t("dikirim") - t("diterima")))}`} />
       </div>
+    </div>
+  );
+}
+
+/** Kotak cari item dengan daftar pilihan: muncul saat diklik dan menyempit saat mengetik; item dipilih lewat klik atau panah + Enter. */
+function ItemSearch({ items, query, onQuery, picked, onPick }: { items: ItemTrackRow[]; query: string; onQuery: (v: string) => void; picked: string[]; onPick: (name: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(0);
+  const ref = useRef<HTMLDivElement>(null);
+  const listId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const needle = query.trim().toLowerCase();
+  const matches = items.filter((i) => !picked.includes(i.itemName) && (!needle || i.itemName.toLowerCase().includes(needle))).slice(0, 60);
+  const active = Math.min(hi, Math.max(0, matches.length - 1));
+
+  function choose(name: string) {
+    onPick(name);
+    onQuery("");
+    setHi(0);
+    setOpen(false);
+  }
+
+  return (
+    <div ref={ref} className="relative min-w-[260px] max-w-[380px] flex-1">
+      <input
+        value={query}
+        onChange={(e) => {
+          onQuery(e.target.value);
+          setHi(0);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setOpen(true);
+            setHi((h) => Math.min(h + 1, matches.length - 1));
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setHi((h) => Math.max(h - 1, 0));
+          } else if (e.key === "Enter" && open && matches[active]) {
+            e.preventDefault();
+            choose(matches[active].itemName);
+          } else if (e.key === "Escape") {
+            setOpen(false);
+          }
+        }}
+        placeholder="Cari item, mis. HITAM 24S PDK L"
+        role="combobox"
+        aria-expanded={open}
+        aria-controls={listId}
+        aria-autocomplete="list"
+        className={selectCls + " w-full font-normal"}
+      />
+      {open && (
+        <div id={listId} role="listbox" className="absolute left-0 right-0 top-full z-30 mt-1 max-h-[320px] overflow-y-auto rounded-md border border-border-subtle bg-white py-1 shadow-[0_8px_24px_rgba(11,19,27,.16)]">
+          {matches.length === 0 && <div className="px-3 py-2 font-sans text-[11.5px] text-text-muted">Tidak ada item yang cocok.</div>}
+          {matches.map((i, idx) => (
+            <button
+              key={i.key}
+              type="button"
+              role="option"
+              aria-selected={idx === active}
+              onMouseEnter={() => setHi(idx)}
+              onClick={() => choose(i.itemName)}
+              className={"flex w-full items-center gap-3 px-3 py-1.5 text-left font-sans text-[12px] " + (idx === active ? "bg-[#F2F5F8]" : "")}
+            >
+              <span className="min-w-0 flex-1 truncate font-medium text-text-primary">{i.itemName}</span>
+              <span className="flex-none text-[10.5px] text-text-muted">{i.kategori.join(", ") || "-"} · target {formatPcs(i.target)}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -148,6 +215,7 @@ export function ItemTrackingView() {
   const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
 
   const [q, setQ] = useState("");
+  const [picked, setPicked] = useState<string[]>([]);
   const [warna, setWarna] = useState<string[]>([]);
   const [lengan, setLengan] = useState<string[]>([]);
   const [size, setSize] = useState<string[]>([]);
@@ -168,6 +236,7 @@ export function ItemTrackingView() {
       if (warna.length > 0 && !warna.includes(it.warna)) continue;
       if (lengan.length > 0 && !lengan.includes(it.lengan === "PENDEK" ? "Pendek" : "Panjang")) continue;
       if (size.length > 0 && !size.includes(it.size)) continue;
+      if (picked.length > 0 && !picked.includes(it.itemName)) continue;
       if (needle && !it.itemName.toLowerCase().includes(needle) && !it.warna.toLowerCase().includes(needle)) continue;
       const bd = it.breakdown.filter(
         (b) => (mrp.length === 0 || mrp.includes(b.mrpId)) && (vendor.length === 0 || vendor.includes(vendorLabel(b.vendorProduksi))) && (kategori.length === 0 || kategori.includes(b.kategori))
@@ -176,10 +245,10 @@ export function ItemTrackingView() {
       out.push(bd.length === it.breakdown.length ? it : itemWithBreakdown(it, bd));
     }
     return out;
-  }, [all, q, warna, lengan, size, kategori, mrp, vendor]);
+  }, [all, q, picked, warna, lengan, size, kategori, mrp, vendor]);
 
   const detail = detailKey ? rows.find((r) => r.key === detailKey) : undefined;
-  const hasFilter = !!q.trim() || warna.length + lengan.length + size.length + kategori.length + mrp.length + vendor.length > 0;
+  const hasFilter = !!q.trim() || picked.length > 0 || warna.length + lengan.length + size.length + kategori.length + mrp.length + vendor.length > 0;
 
   const opt = (xs: string[]) => Array.from(new Set(xs.filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const allBreakdown = all.flatMap((i) => i.breakdown);
@@ -217,9 +286,11 @@ export function ItemTrackingView() {
 
   return (
     <>
-      <div className="rounded-lg border border-border-subtle bg-surface-card">
-        <div className="flex flex-wrap items-center gap-2 rounded-lg px-5 py-3">
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari item, mis. HITAM 24S PDK L" className={selectCls + " min-w-[260px] flex-1 max-w-[380px] font-normal"} />
+      <StageCards rows={rows} />
+
+      <div className="mt-3 rounded-lg border border-border-subtle bg-surface-card px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <ItemSearch items={all} query={q} onQuery={setQ} picked={picked} onPick={(name) => setPicked((p) => [...p, name])} />
           <MultiSelectFilter label="Warna" options={opt(all.map((i) => i.warna))} value={warna} onChange={setWarna} />
           <MultiSelectFilter label="Lengan" options={["Pendek", "Panjang"]} value={lengan} onChange={setLengan} />
           <MultiSelectFilter label="Size" options={opt(all.map((i) => i.size))} value={size} onChange={setSize} />
@@ -230,6 +301,7 @@ export function ItemTrackingView() {
             <button
               onClick={() => {
                 setQ("");
+                setPicked([]);
                 setWarna([]);
                 setLengan([]);
                 setSize([]);
@@ -243,13 +315,21 @@ export function ItemTrackingView() {
             </button>
           )}
         </div>
+        {picked.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {picked.map((name) => (
+              <span key={name} className="inline-flex items-center gap-1 rounded-full border border-border-subtle bg-[#F2F5F8] py-[3px] pl-2.5 pr-1.5 font-sans text-[11px] font-medium text-text-primary">
+                {name}
+                <button type="button" aria-label={`Hapus ${name}`} onClick={() => setPicked((p) => p.filter((x) => x !== name))} className="text-text-muted hover:text-text-primary">
+                  ✕
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className="mt-4">
-        <StageCards rows={rows} />
-      </div>
-
-      <div className="mt-4">
+      <div className="mt-3">
         <DataTable
           title="Tracking per item"
           headerActions={
