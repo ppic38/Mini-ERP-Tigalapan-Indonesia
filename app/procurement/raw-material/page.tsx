@@ -275,6 +275,60 @@ function RawMaterialDetailModal({ summary, mrpCreated, onClose }: { summary: Raw
   );
 }
 
+/** Pilih MRP yang akan diunduh ke Excel (boleh lebih dari satu). Pilihan awal: semua MRP yang sedang tampil di tabel. */
+function ExportMrpDialog({ options, onCancel, onConfirm, busy }: { options: { mrpId: string; vendors: number; nilai: number }[]; onCancel: () => void; onConfirm: (mrpIds: string[]) => void; busy: boolean }) {
+  const [picked, setPicked] = useState<Set<string>>(new Set(options.map((o) => o.mrpId)));
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+  const allOn = picked.size === options.length;
+  function toggle(id: string) {
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={onCancel}>
+      <div className="flex max-h-[80vh] w-full max-w-[440px] flex-col overflow-hidden rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.25)]" onClick={(e) => e.stopPropagation()}>
+        <div className="border-b border-border-subtle px-5 py-3.5">
+          <div className="font-sans text-[14px] font-semibold text-text-primary">Export Excel: pilih No. MRP</div>
+          <div className="mt-0.5 font-sans text-[11.5px] text-text-muted">Pilih satu atau beberapa MRP yang mau diunduh. Filter di halaman tetap berlaku.</div>
+        </div>
+        <div className="flex items-center justify-between border-b border-[#EEF1F4] px-5 py-2 font-sans text-[11px]">
+          <button type="button" onClick={() => setPicked(new Set(allOn ? [] : options.map((o) => o.mrpId)))} className="font-semibold text-action-primary hover:underline">
+            {allOn ? "Hapus semua pilihan" : "Pilih semua"}
+          </button>
+          <span className="text-text-muted">{picked.size} dari {options.length} MRP dipilih</span>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto py-1">
+          {options.map((o) => (
+            <label key={o.mrpId} className="flex cursor-pointer items-center gap-2.5 px-5 py-2 font-sans text-[12.5px] text-[#31414F] hover:bg-[#F7F9FB]">
+              <input type="checkbox" checked={picked.has(o.mrpId)} onChange={() => toggle(o.mrpId)} className="h-3.5 w-3.5 accent-accent-blue" />
+              <span className="font-mono font-medium">{o.mrpId}</span>
+              <span className="ml-auto text-[11px] text-text-muted">{o.vendors} vendor · {rp(o.nilai)}</span>
+            </label>
+          ))}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-border-subtle px-5 py-3">
+          <button onClick={onCancel} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary">
+            Batal
+          </button>
+          <Button onClick={() => onConfirm(options.map((o) => o.mrpId).filter((id) => picked.has(id)))} disabled={picked.size === 0 || busy} variant="primary" size="sm">
+            {busy ? "Menyiapkan…" : `Download (${picked.size} MRP)`}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function RawMaterialPage() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -289,6 +343,7 @@ export default function RawMaterialPage() {
   const [kategori, setKategori] = useState<string[]>([]);
   const [jenis, setJenis] = useState<string[]>([]);
   const [exporting, setExporting] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [detailKey, setDetailKey] = useState<string | null>(null);
 
   const allLines = useMemo(() => rawMaterialLines(invoices, productionBatches, mrpDetails, staticMrps), [invoices, productionBatches, mrpDetails, staticMrps]);
@@ -326,11 +381,11 @@ export default function RawMaterialPage() {
   const columns: ColumnDef<RawMaterialSummary>[] = [
     { key: "vendor", label: "Vendor", default: true, render: (s) => vendorName(s.vendorProduksi) },
     { key: "kategori", label: "Kategori produk", default: true, render: (s) => s.kategori },
-    { key: "jenis", label: "Jenis bahan", default: true, render: (s) => s.jenis },
+    { key: "jenis", label: "Jenis bahan", default: false, render: (s) => s.jenis },
     { key: "invoice", label: "Invoice", default: false, align: "right", render: (s) => s.invoiceCount },
     { key: "rollBeli", label: "Roll dibeli", default: true, align: "right", render: (s) => s.rollBeli },
     { key: "rollWip", label: "Roll WIP", default: true, align: "right", info: INFO.rollWip, render: (s) => s.rollWip },
-    { key: "rollSelesai", label: "Roll selesai", default: false, align: "right", info: INFO.rollSelesai, render: (s) => s.rollSelesai },
+    { key: "rollSelesai", label: "Roll selesai", default: true, align: "right", info: INFO.rollSelesai, render: (s) => s.rollSelesai },
     { key: "rollSisa", label: "Roll sisa", default: true, align: "right", info: INFO.rollSisa, render: (s) => s.rollSisa },
     { key: "sebelum", label: "Total sebelum diskon", default: false, align: "right", info: INFO.sebelum, render: (s) => rp(s.nilaiSebelumDiskon) },
     { key: "diskon", label: "Diskon", default: true, align: "right", info: INFO.diskon, render: (s) => rp(s.diskon) },
@@ -340,14 +395,23 @@ export default function RawMaterialPage() {
     { key: "sisa", label: "Sisa bahan baku (Rp)", default: true, align: "right", info: INFO.sisa, render: (s) => rp(s.nilaiSisa) },
   ];
 
-  async function doExport() {
+  async function doExport(mrpIds: string[]) {
+    const chosen = new Set(mrpIds);
+    const chosenSummaries = summaries.filter((x) => chosen.has(x.mrpId));
+    const chosenLines = lines.filter((l) => chosen.has(l.mrpId));
     setExporting(true);
     try {
-      await exportRawMaterialExcel(summaries, lines, filterLabel);
+      await exportRawMaterialExcel(chosenSummaries, chosenLines, [filterLabel, `MRP diunduh: ${mrpIds.join(", ")}`].filter(Boolean).join(" · "));
+      setExportOpen(false);
     } finally {
       setExporting(false);
     }
   }
+  // Pilihan MRP untuk dialog export: MRP yang sedang tampil di tabel (urutan sama), beserta jumlah vendor dan total tagihannya.
+  const exportOptions = Array.from(new Set(summaries.map((x) => x.mrpId))).map((id) => {
+    const rowsOfMrp = summaries.filter((x) => x.mrpId === id);
+    return { mrpId: id, vendors: rowsOfMrp.length, nilai: sum(rowsOfMrp.map((x) => x.nilaiSetelahDiskon)) };
+  });
 
   return (
     <AppShell
@@ -398,8 +462,8 @@ export default function RawMaterialPage() {
           title="Raw material per MRP dan vendor"
           subtitle={`${summaries.length} baris · klik baris untuk membuka rincian per warna dan jenis bahan`}
           headerActions={
-            <Button onClick={() => void doExport()} disabled={exporting || summaries.length === 0} variant="muted" size="xs">
-              {exporting ? "Menyiapkan…" : "Export Excel"}
+            <Button onClick={() => setExportOpen(true)} disabled={summaries.length === 0} variant="muted" size="xs">
+              Export Excel
             </Button>
           }
           columns={columns}
@@ -411,6 +475,7 @@ export default function RawMaterialPage() {
           emptyText="Belum ada invoice bahan untuk filter ini."
         />
       </div>
+      {exportOpen && <ExportMrpDialog options={exportOptions} onCancel={() => setExportOpen(false)} onConfirm={(ids) => void doExport(ids)} busy={exporting} />}
       {detailKey && summaries.find((x) => x.key === detailKey) && (
         <RawMaterialDetailModal summary={summaries.find((x) => x.key === detailKey) as RawMaterialSummary} mrpCreated={mrpCreated} onClose={() => setDetailKey(null)} />
       )}
