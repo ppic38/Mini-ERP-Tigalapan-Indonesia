@@ -50,6 +50,7 @@ export function DataTable<T>({
   rowClassName,
   bodyMaxHeight,
   renderExpanded,
+  onRowClick,
   collapseSignal,
   mobileCards,
 }: {
@@ -93,6 +94,8 @@ export function DataTable<T>({
    *  halaman MRP PPIC. Tidak diisi = tabel tetap seperti biasa, tidak ada perubahan sama sekali
    *  buat pemakai DataTable lain. */
   renderExpanded?: (row: T) => ReactNode;
+  /** Opsional: klik baris memanggil fungsi ini (mis. membuka popup rincian) alih-alih membuka baris. Diabaikan kalau `renderExpanded` diisi. */
+  onRowClick?: (row: T) => void;
   /** Opsional (B1, flow "auto-collapse setelah Bayar" di Finance/Payment) — ubah nilainya (mis.
    *  increment sebuah counter) dari luar untuk memaksa SELURUH baris yang sedang ter-expand
    *  tertutup lagi, tanpa mereset pilihan kolom (`visible`) atau filter (`filterValues`) apa pun.
@@ -211,7 +214,7 @@ export function DataTable<T>({
                   {c.label}
                 </th>
               ))}
-              {renderExpanded && <th className="w-8 px-3 py-[9px]" />}
+              {(renderExpanded || onRowClick) && <th className="w-8 px-3 py-[9px]" />}
             </tr>
           </thead>
           <tbody>
@@ -223,10 +226,10 @@ export function DataTable<T>({
                   <tr
                     className={
                       "border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] last:border-b-0 " +
-                      (renderExpanded ? "cursor-pointer hover:bg-[#FAFBFC] " : "") +
+                      (renderExpanded || onRowClick ? "cursor-pointer hover:bg-[#FAFBFC] " : "") +
                       (rowClassName?.(r) ?? "")
                     }
-                    onClick={renderExpanded ? () => toggleExpanded(key) : undefined}
+                    onClick={renderExpanded ? () => toggleExpanded(key) : onRowClick ? () => onRowClick(r) : undefined}
                   >
                     <td className={"px-5 py-[11px] " + (firstColumnAlign === "right" ? "text-right" : "text-left")}>{firstColumnRender(r)}</td>
                     {visibleColumns.map((c) => (
@@ -234,6 +237,11 @@ export function DataTable<T>({
                         {c.render(r)}
                       </td>
                     ))}
+                    {!renderExpanded && onRowClick && (
+                      <td data-chevron className="px-3 py-[11px]">
+                        <ChevronRight className="h-3.5 w-3.5 flex-none text-text-muted" />
+                      </td>
+                    )}
                     {renderExpanded && (
                       <td data-chevron className="px-3 py-[11px]">
                         {isExpanded ? (
@@ -256,7 +264,7 @@ export function DataTable<T>({
             })}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={visibleColumns.length + 1 + (renderExpanded ? 1 : 0)} className="px-5 py-6 text-center font-sans text-xs text-text-muted">
+                <td colSpan={visibleColumns.length + 1 + (renderExpanded || onRowClick ? 1 : 0)} className="px-5 py-6 text-center font-sans text-xs text-text-muted">
                   {emptyText}
                 </td>
               </tr>

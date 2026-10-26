@@ -215,8 +215,9 @@ function mergeLengan(lines: RawMaterialLine[]): RawMaterialLine[] {
   return [...merged.values(), ...rest];
 }
 
-/** Satu baris per MRP x vendor (kategori dan jenis bahan digabung bila lebih dari satu). */
-export function summarizeRawMaterial(lines: RawMaterialLine[]): RawMaterialSummary[] {
+/** Satu baris per MRP x vendor (kategori dan jenis bahan digabung bila lebih dari satu). Urutan: MRP terbaru (tanggal MRP dibuat, `mrpCreated`) di paling atas,
+ *  sama seperti daftar MRP di PPIC; MRP tanpa tanggal ditaruh paling bawah menurut tanggal invoice terakhir; dalam satu MRP urut nama vendor. */
+export function summarizeRawMaterial(lines: RawMaterialLine[], mrpCreated?: Map<string, string>): RawMaterialSummary[] {
   const map = new Map<string, RawMaterialSummary & { _inv: Set<string>; _kat: Set<string>; _jenis: Set<string> }>();
   for (const l of lines) {
     const key = `${l.mrpId}|${l.vendorProduksi}`;
@@ -249,5 +250,11 @@ export function summarizeRawMaterial(lines: RawMaterialLine[]): RawMaterialSumma
   }
   return Array.from(map.values())
     .map(({ _inv, _kat, _jenis, ...s }) => ({ ...s, invoiceCount: _inv.size, kategori: Array.from(_kat).sort().join(", "), jenis: Array.from(_jenis).sort().join(", ") }))
-    .sort((a, b) => (a.lastBookedAt < b.lastBookedAt ? 1 : a.lastBookedAt > b.lastBookedAt ? -1 : 0) || b.mrpId.localeCompare(a.mrpId, undefined, { numeric: true }) || a.vendorProduksi.localeCompare(b.vendorProduksi));
+    .sort((a, b) => {
+      const ca = mrpCreated?.get(a.mrpId) ?? "";
+      const cb = mrpCreated?.get(b.mrpId) ?? "";
+      if (ca !== cb) return ca < cb ? 1 : -1;
+      if (a.mrpId !== b.mrpId) return (a.lastBookedAt < b.lastBookedAt ? 1 : a.lastBookedAt > b.lastBookedAt ? -1 : 0) || b.mrpId.localeCompare(a.mrpId, undefined, { numeric: true });
+      return a.vendorProduksi.localeCompare(b.vendorProduksi);
+    });
 }
