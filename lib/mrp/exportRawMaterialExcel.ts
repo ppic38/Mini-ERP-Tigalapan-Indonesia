@@ -26,10 +26,19 @@ export async function exportRawMaterialExcel(summaries: RawMaterialSummary[], li
   wb.creator = "Tigalapan Indonesia";
   wb.created = new Date();
 
+  // Sheet Ringkasan dihitung dengan RUMUS dari sheet "Rincian per warna" (SUMIFS per MRP dan vendor), jadi kalau baris rincian diubah atau
+  // dihapus, ringkasan dan total ikut berubah. Tiap rumus juga membawa hasil hitungan (`result`) supaya angka tampil di Protected View.
+  const DETAIL = "'Rincian per warna'";
+  const last = Math.max(2, 1 + lines.length);
+  const rng = (col: string) => `${DETAIL}!$${col}$2:$${col}$${last}`;
+  const col = (c: number) => String.fromCharCode(64 + c);
+  const sumLines = (key: keyof RawMaterialLine, mrpId: string, vendorId: string) =>
+    lines.filter((l) => l.mrpId === mrpId && vendorName(l.vendorProduksi) === vendorName(vendorId)).reduce((sum, l) => sum + Number(l[key] ?? 0), 0);
+
   const ws = wb.addWorksheet("Ringkasan MRP-Vendor", { views: [{ state: "frozen", ySplit: 3, xSplit: 2 }] });
   ws.getCell("A1").value = "Raw Material per MRP dan Vendor";
   ws.getCell("A1").font = { bold: true, size: 13 };
-  ws.getCell("A2").value = `Dibuat ${localDateString(new Date())}${filterLabel ? " · Filter: " + filterLabel : ""} · WIP = roll sudah masuk produksi (belum ditutup), Sisa = dibeli dikurangi WIP dan selesai`;
+  ws.getCell("A2").value = `Dibuat ${localDateString(new Date())}${filterLabel ? " · Filter: " + filterLabel : ""} · Angka dihitung dengan rumus dari sheet "Rincian per warna" · Roll sisa = dibeli − WIP − selesai · Diskon = total sebelum diskon − total setelah diskon`;
   ws.getCell("A2").font = { italic: true, size: 9, color: { argb: "FF6B7280" } };
   const head = ws.addRow([
     "No. MRP", "Vendor", "Kategori produk", "Jenis bahan", "Jumlah invoice",
@@ -37,22 +46,41 @@ export async function exportRawMaterialExcel(summaries: RawMaterialSummary[], li
     "Total sebelum diskon", "Diskon", "Total invoice setelah diskon", "WIP (Rp)", "Selesai produksi (Rp)", "Sisa bahan baku (Rp)",
   ]);
   styleHeader(head);
-  for (const s of summaries) {
-    ws.addRow([
-      s.mrpId, vendorName(s.vendorProduksi), s.kategori, s.jenis, s.invoiceCount,
-      s.rollBeli, s.rollDiterima, s.rollWip, s.rollSelesai, s.rollSisa,
-      Math.round(s.nilaiSebelumDiskon), Math.round(s.diskon), Math.round(s.nilaiSetelahDiskon), Math.round(s.nilaiWip), Math.round(s.nilaiSelesai), Math.round(s.nilaiSisa),
-    ]);
+  // kolom ringkasan -> kolom sheet rincian yang dijumlahkan
+  const map: [number, string, keyof RawMaterialLine][] = [
+    [6, "J", "rollBeli"], [7, "K", "rollDiterima"], [8, "L", "rollWip"], [9, "M", "rollSelesai"],
+    [11, "P", "nilaiSebelumDiskon"], [13, "R", "nilaiSetelahDiskon"], [14, "S", "nilaiWip"], [15, "T", "nilaiSelesai"], [16, "U", "nilaiSisa"],
+  ];
+  summaries.forEach((sm, i) => {
+    const r = 4 + i;
+    const vals: Record<number, number> = {};
+    for (const [c, , key] of map) vals[c] = sumLines(key, sm.mrpId, sm.vendorProduksi);
+    const cells: (string | number | { formula: string; result: number })[] = [sm.mrpId, vendorName(sm.vendorProduksi), sm.kategori, sm.jenis, sm.invoiceCount];
+    for (let c = 6; c <= 16; c++) {
+      const m = map.find((x) => x[0] === c);
+      if (m) cells.push({ formula: `SUMIFS(${rng(m[1])},${rng("A")},$A${r},${rng("B")},$B${r})`, result: vals[c] });
+      else if (c === 10) cells.push({ formula: `F${r}-H${r}-I${r}`, result: vals[6] - vals[8] - vals[9] });
+      else cells.push({ formula: `K${r}-M${r}`, result: vals[11] - vals[13] }); // c === 12: Diskon
+    }
+    ws.addRow(cells);
+  });
+  const firstRow = 4;
+  const lastRow = 3 + summaries.length;
+  const totalCells: (string | { formula: string; result: number })[] = ["TOTAL", "", "", "", ""];
+  for (let c = 6; c <= 16; c++) {
+    const result = summaries.reduce((sum, sm) => {
+      const m = map.find((x) => x[0] === c);
+      if (m) return sum + sumLines(m[2], sm.mrpId, sm.vendorProduksi);
+      if (c === 10) return sum + sumLines("rollBeli", sm.mrpId, sm.vendorProduksi) - sumLines("rollWip", sm.mrpId, sm.vendorProduksi) - sumLines("rollSelesai", sm.mrpId, sm.vendorProduksi);
+      return sum + sumLines("nilaiSebelumDiskon", sm.mrpId, sm.vendorProduksi) - sumLines("nilaiSetelahDiskon", sm.mrpId, sm.vendorProduksi);
+    }, 0);
+    totalCells.push({ formula: `SUM(${col(c)}${firstRow}:${col(c)}${lastRow})`, result });
   }
-  const total = ws.addRow([
-    "TOTAL", "", "", "", "",
-    ...[6, 7, 8, 9, 10].map((c) => ({ formula: `SUM(${String.fromCharCode(64 + c)}4:${String.fromCharCode(64 + c)}${3 + summaries.length})` })),
-    ...[11, 12, 13, 14, 15, 16].map((c) => ({ formula: `SUM(${String.fromCharCode(64 + c)}4:${String.fromCharCode(64 + c)}${3 + summaries.length})` })),
-  ]);
+  const total = ws.addRow(totalCells);
   total.font = { bold: true };
   total.eachCell((c) => (c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF2F5F8" } }));
   for (let c = 11; c <= 16; c++) ws.getColumn(c).numFmt = RP;
-  ws.columns.forEach((col, i) => (col.width = i === 0 ? 16 : i === 1 ? 22 : i === 2 || i === 3 ? 22 : i < 10 ? 11 : 20));
+  ws.columns.forEach((cl, i) => (cl.width = i === 0 ? 16 : i === 1 ? 22 : i === 2 || i === 3 ? 22 : i < 10 ? 11 : 20));
 
   const wd = wb.addWorksheet("Rincian per warna", { views: [{ state: "frozen", ySplit: 1, xSplit: 3 }] });
   const head2 = wd.addRow([
@@ -61,15 +89,21 @@ export async function exportRawMaterialExcel(summaries: RawMaterialSummary[], li
     "Total sebelum diskon", "Diskon", "Total setelah diskon", "WIP (Rp)", "Selesai produksi (Rp)", "Sisa bahan baku (Rp)", "ID invoice internal",
   ]);
   styleHeader(head2);
-  for (const l of lines) {
+  lines.forEach((l, i) => {
+    const r = 2 + i;
+    // Nilai rupiah ditulis tanpa pembulatan (tampilan dibulatkan lewat format) supaya jumlah di ringkasan sama dengan angka di aplikasi.
     wd.addRow([
       l.mrpId, vendorName(l.vendorProduksi), l.warna, l.jenis, l.kategori, l.benang, l.noInvoice, l.bookedAt, l.supplier,
-      l.rollBeli, l.rollDiterima, l.rollWip, l.rollSelesai, l.rollSisa, l.beratKg || "",
-      Math.round(l.nilaiSebelumDiskon), Math.round(l.diskon), Math.round(l.nilaiSetelahDiskon), Math.round(l.nilaiWip), Math.round(l.nilaiSelesai), Math.round(l.nilaiSisa), l.invoiceId,
+      l.rollBeli, l.rollDiterima, l.rollWip, l.rollSelesai,
+      { formula: `J${r}-L${r}-M${r}`, result: l.rollBeli - l.rollWip - l.rollSelesai },
+      l.beratKg || "",
+      l.nilaiSebelumDiskon,
+      { formula: `P${r}-R${r}`, result: l.nilaiSebelumDiskon - l.nilaiSetelahDiskon },
+      l.nilaiSetelahDiskon, l.nilaiWip, l.nilaiSelesai, l.nilaiSisa, l.invoiceId,
     ]);
-  }
+  });
   for (let c = 16; c <= 21; c++) wd.getColumn(c).numFmt = RP;
-  wd.columns.forEach((col, i) => (col.width = i < 9 ? 16 : i < 15 ? 11 : 20));
+  wd.columns.forEach((cl, i) => (cl.width = i < 9 ? 16 : i < 15 ? 11 : 20));
 
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
