@@ -15,11 +15,11 @@ const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 const selectCls = "rounded-md border border-border-subtle bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-medium text-[#31414F]";
 const num = "px-3 py-2 text-right font-mono";
 
-function Stat({ no, label, value, sub }: { no: number; label: string; value: number; sub?: string }) {
+function Stat({ label, value, sub }: { label: string; value: number; sub?: string }) {
   return (
     <div className="relative min-w-0 overflow-hidden rounded-xl border border-border-subtle bg-surface-card px-5 pb-4 pt-5">
       <div className="absolute inset-x-0 top-0 h-[3px] bg-[#38BDF8]" />
-      <div className="truncate font-mono text-[10.5px] uppercase tracking-[0.14em] text-text-muted">{no}. {label}</div>
+      <div className="truncate font-mono text-[10.5px] uppercase tracking-[0.14em] text-text-muted">{label}</div>
       <div className="mt-2 font-sans text-[26px] font-bold leading-none tracking-tight text-text-primary">{formatPcs(value)}</div>
       <div className="mt-2 truncate font-mono text-[10.5px] text-text-muted">{sub ?? "pcs"}</div>
     </div>
@@ -34,15 +34,15 @@ function StageCards({ rows }: { rows: ItemTrackRow[] }) {
   return (
     <div className="flex flex-col gap-3">
       <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
-        <Stat no={1} label="Target MRP" value={t("target")} sub={`pcs · ${rows.length} item · ${mrps} MRP`} />
-        <Stat no={2} label="Sudah dicutting" value={t("cutting")} sub={`pcs · ${pctOf(t("cutting"))}% dari target`} />
-        <Stat no={3} label="Finish Good" value={t("fg")} sub={`pcs · ${pctOf(t("fg"))}% dari target`} />
-        <Stat no={4} label="Reject" value={t("reject")} />
+        <Stat label="Target MRP" value={t("target")} sub={`pcs · ${rows.length} item · ${mrps} MRP`} />
+        <Stat label="Sudah dicutting" value={t("cutting")} sub={`pcs · ${pctOf(t("cutting"))}% dari target`} />
+        <Stat label="Finish Good" value={t("fg")} sub={`pcs · ${pctOf(t("fg"))}% dari target`} />
+        <Stat label="Reject" value={t("reject")} />
       </div>
       <div className="grid grid-cols-3 gap-3 max-lg:grid-cols-1">
-        <Stat no={5} label="Masuk koli, belum dikirim" value={t("diKoli")} />
-        <Stat no={6} label="Dikirim vendor" value={t("dikirim")} sub={`pcs · FG belum dikirim: ${formatPcs(Math.max(0, t("fg") - t("dikirim") - t("diKoli")))}`} />
-        <Stat no={7} label="Diterima gudang" value={t("diterima")} sub={`pcs · dalam perjalanan: ${formatPcs(Math.max(0, t("dikirim") - t("diterima")))}`} />
+        <Stat label="Masuk koli, belum dikirim" value={t("diKoli")} />
+        <Stat label="Dikirim vendor" value={t("dikirim")} sub={`pcs · FG belum dikirim: ${formatPcs(Math.max(0, t("fg") - t("dikirim") - t("diKoli")))}`} />
+        <Stat label="Diterima gudang" value={t("diterima")} sub={`pcs · dalam perjalanan: ${formatPcs(Math.max(0, t("dikirim") - t("diterima")))}`} />
       </div>
     </div>
   );
