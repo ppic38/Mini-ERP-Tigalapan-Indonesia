@@ -59,9 +59,6 @@ export type RawMaterialSummary = {
   nilaiSebelumDiskon: number;
   diskon: number;
   nilaiSetelahDiskon: number;
-  /** Bagian nilaiSetelahDiskon yang berasal dari kain (roll) dan dari rib/item tambahan -- ditampilkan terpisah. */
-  nilaiKain: number;
-  nilaiTambahan: number;
   nilaiWip: number;
   nilaiSelesai: number;
   nilaiSisa: number;
@@ -197,7 +194,7 @@ export function summarizeRawMaterial(lines: RawMaterialLine[]): RawMaterialSumma
       s = {
         key, mrpId: l.mrpId, vendorProduksi: l.vendorProduksi, kategori: "", jenis: "", invoiceCount: 0, lastBookedAt: "",
         rollBeli: 0, rollDiterima: 0, rollWip: 0, rollSelesai: 0, rollSisa: 0,
-        nilaiSebelumDiskon: 0, diskon: 0, nilaiSetelahDiskon: 0, nilaiKain: 0, nilaiTambahan: 0, nilaiWip: 0, nilaiSelesai: 0, nilaiSisa: 0,
+        nilaiSebelumDiskon: 0, diskon: 0, nilaiSetelahDiskon: 0, nilaiWip: 0, nilaiSelesai: 0, nilaiSisa: 0,
         lines: [], _inv: new Set(), _kat: new Set(), _jenis: new Set(),
       };
       map.set(key, s);
@@ -214,8 +211,6 @@ export function summarizeRawMaterial(lines: RawMaterialLine[]): RawMaterialSumma
     s.nilaiSebelumDiskon += l.nilaiSebelumDiskon;
     s.diskon += l.diskon;
     s.nilaiSetelahDiskon += l.nilaiSetelahDiskon;
-    if (l.kind === "KAIN") s.nilaiKain += l.nilaiSetelahDiskon;
-    else s.nilaiTambahan += l.nilaiSetelahDiskon;
     s.nilaiWip += l.nilaiWip;
     s.nilaiSelesai += l.nilaiSelesai;
     s.nilaiSisa += l.nilaiSisa;
