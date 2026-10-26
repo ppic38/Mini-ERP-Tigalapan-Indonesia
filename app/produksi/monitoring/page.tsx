@@ -497,7 +497,14 @@ export default function ProduksiMonitoringPage() {
     if (!mrpMap.has(p.mrpId)) mrpMap.set(p.mrpId, { mrpId: p.mrpId, vendorPOs: [] });
     mrpMap.get(p.mrpId)!.vendorPOs.push(p);
   }
-  const rows = Array.from(mrpMap.values()).sort((a, b) => a.mrpId.localeCompare(b.mrpId));
+  // Urutan: MRP terbaru (tanggal MRP dibuat) di paling atas, sama seperti daftar MRP di PPIC; tanggal sama atau kosong: nomor MRP terbesar dulu.
+  const mrpCreated = new Map(mrpDetails.map((d) => [d.mrp.id, d.dates?.created ?? ""]));
+  const rows = Array.from(mrpMap.values()).sort((a, b) => {
+    const ca = mrpCreated.get(a.mrpId) ?? "";
+    const cb = mrpCreated.get(b.mrpId) ?? "";
+    if (ca !== cb) return ca < cb ? 1 : -1;
+    return b.mrpId.localeCompare(a.mrpId, undefined, { numeric: true });
+  });
 
   function worstStatusFor(group: MrpGroup) {
     const worst = group.vendorPOs
