@@ -28,6 +28,7 @@ export const NAV: Record<RoleKey, RoleNav> = {
       { label: "Purchase Order", href: "/procurement/po-approval" },
       { label: "Paying Voucher (Invoice)", href: "/raw-material" },
       { label: "Material Tracking", href: "/procurement/material-tracking" },
+      { label: "Raw Material", href: "/procurement/raw-material" },
       { label: "Klaim Material", href: "/procurement/material-claims" },
       { label: "Master Data", href: "/procurement/master-data" },
     ],
