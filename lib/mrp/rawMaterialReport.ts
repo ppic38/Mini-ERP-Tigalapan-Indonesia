@@ -24,7 +24,7 @@ export type RawMaterialLine = {
   bookedAt: string;
   /** "KAIN" = roll kain; "TAMBAHAN" = item tambahan invoice (rib/kerah/manset, dst.). */
   kind: "KAIN" | "TAMBAHAN";
-  /** Jenis bahan untuk tampilan: "Kain 24S" atau nama item tambahan. */
+  /** Jenis bahan untuk tampilan: kain memakai nama kategori produk (mis. "COMBED 24S"), item tambahan memakai nama itemnya (Rib, Kerah, Manset). */
   jenis: string;
   /** Benang dari kategori produk (mis. "24S"); "-" kalau tidak terbaca. */
   benang: string;
@@ -133,7 +133,7 @@ export function rawMaterialLines(invoices: RawMaterialInvoice[], batches: Produc
         supplier: inv.supplier,
         bookedAt: inv.bookedAt,
         kind: "KAIN",
-        jenis: `Kain ${benangFromKategori(kategori)}`,
+        jenis: kategori,
         benang: benangFromKategori(kategori),
         kategori,
         warna: c.warna,

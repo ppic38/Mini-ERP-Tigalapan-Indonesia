@@ -225,7 +225,7 @@ function RawMaterialDetailModal({ summary, mrpCreated, onClose }: { summary: Raw
                   <td className="px-3 py-2">{l.warna}</td>
                   <td className="px-3 py-2">
                     {l.jenis}
-                    <span className="block text-[10px] text-text-muted">{l.kategori}</span>
+                    {l.kind !== "KAIN" && <span className="block text-[10px] text-text-muted">{l.kategori}</span>}
                   </td>
                   <td className="px-3 py-2 font-mono" title={`ID invoice internal: ${l.invoiceId}`}>{l.noInvoice}</td>
                   <td className="px-3 py-2 font-mono text-text-muted">{formatDate(l.bookedAt)}</td>
