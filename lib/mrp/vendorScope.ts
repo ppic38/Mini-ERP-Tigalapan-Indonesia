@@ -1,10 +1,31 @@
 import type { FlowState } from "./store";
+import type { AduanPolaRow, LenganGroup } from "./types";
+
+/** Grup warna·lengan versi vendor: satu grup bisa dikerjakan beberapa vendor dan `sizes`/`totalQty`/rib/kerah/manset/roll aslinya memuat SEMUA vendor.
+ *  Untuk vendor, isinya dipotong ke bagian vendor itu sendiri: size dan qty dari Aduan Pola-nya, sedangkan rib, kerah, manset, dan estimasi roll dikali porsi qty-nya
+ *  (rasio kg per roll tetap sama). Kode vendor default hanya dipertahankan kalau milik vendor itu. */
+function scopeGroupToVendor(g: LenganGroup, mine: AduanPolaRow[], vendorId: string): LenganGroup {
+  const bySize = new Map<string, number>();
+  for (const a of mine) for (const x of a.sizes) bySize.set(x.size, (bySize.get(x.size) ?? 0) + x.qty);
+  const mineQty = mine.reduce((sum, a) => sum + a.qty, 0);
+  const share = g.totalQty > 0 ? Math.min(1, mineQty / g.totalQty) : 1;
+  return {
+    ...g,
+    sizes: Array.from(bySize, ([size, qty]) => ({ size, qty })),
+    totalQty: mineQty,
+    ribKg: g.ribKg * share,
+    kerahKg: g.kerahKg * share,
+    mansetKg: g.mansetKg * share,
+    rollEstimate: g.rollEstimate * share,
+    vendorDefault: g.vendorDefault === vendorId ? g.vendorDefault : "",
+  };
+}
 
 /** ISOLASI ANTAR VENDOR (owner 2026-10-24: "jangan sampai ada bocor data dari satu vendor ke vendor lain").
  *  Snapshot dari database memuat SEMUA vendor; sesi vendor murni hanya boleh menerima data vendornya sendiri, jadi layar vendor
  *  tidak pernah menampilkan (dan vendor tidak bisa keliru mengoperasikan) data vendor lain. Dipanggil di getFlowSnapshotAction.
- *  Yang tetap utuh: baris MRP (judul, minggu, tanggal) dan grup lengan yang dirujuk baris Aduan Pola vendor itu sendiri, master
- *  non-vendor (entitas, supplier, tarif ekspedisi). */
+ *  Yang tetap ada: baris MRP (judul, minggu, tanggal) dengan qty vendor itu saja, grup lengan yang dirujuk baris Aduan Pola vendor itu sendiri (dipotong ke
+ *  bagian vendor itu, lihat `scopeGroupToVendor`), master non-vendor (entitas, supplier, tarif ekspedisi). */
 export function scopeStateToVendor<T extends FlowState>(state: T, vendorId: string): T {
   const isMine = (v: string | null | undefined) => v === vendorId;
 
@@ -39,13 +60,20 @@ export function scopeStateToVendor<T extends FlowState>(state: T, vendorId: stri
     .map((d) => {
       const aduanRows = d.aduanRows.filter((a) => isMine(a.vendor));
       const groupIds = new Set(aduanRows.map((a) => a.lenganGroupId));
-      return { ...d, aduanRows, lenganGroups: d.lenganGroups.filter((g) => groupIds.has(g.id)), materialRows: [] };
+      const lenganGroups = d.lenganGroups.filter((g) => groupIds.has(g.id)).map((g) => scopeGroupToVendor(g, aduanRows.filter((a) => a.lenganGroupId === g.id), vendorId));
+      // Total qty MRP (semua vendor) tidak ikut: yang tersisa hanya qty vendor ini.
+      return { ...d, mrp: { ...d.mrp, qty: aduanRows.reduce((sum, a) => sum + a.qty, 0) }, aduanRows, lenganGroups, materialRows: [] };
     });
 
   return {
     ...state,
     mrpDetails,
-    staticMrps: state.staticMrps.filter((m) => mrpIdsMine.has(m.id)),
+    staticMrps: state.staticMrps
+      .filter((m) => mrpIdsMine.has(m.id))
+      .map((m) => {
+        const mine = maklonPOs.filter((p) => p.mrpId === m.id).reduce((sum, p) => sum + p.qty, 0);
+        return mine > 0 ? { ...m, qty: mine } : m;
+      }),
     materialPOs,
     maklonPOs,
     invoices,

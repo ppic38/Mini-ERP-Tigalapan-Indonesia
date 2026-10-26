@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Data MRP untuk vendor dipotong ke bagian vendor itu (2026-10-26, tanpa migration)
+Audit isolasi vendor: snapshot untuk browser vendor masih memuat grup warna·lengan UTUH (`sizes`, `totalQty`, rib/kerah/manset, estimasi roll semua vendor yang mengerjakan grup itu) dan total qty MRP semua vendor; tidak tampil di layar tetapi terlihat lewat alat pengembang browser. `scopeStateToVendor` (lib/mrp/vendorScope.ts) sekarang memotongnya: tiap grup yang dirujuk Aduan Pola vendor dibentuk ulang dari Aduan Pola vendor itu (`scopeGroupToVendor`: size dan qty dari Aduan Pola-nya; rib, kerah, manset, dan estimasi roll dikali porsi qty sehingga kg per roll tetap sama; `vendorDefault` hanya kalau milik vendor itu), `mrp.qty` = jumlah qty vendor itu, MRP lama (static) memakai qty PO vendor itu. Sesi internal dan Sysadmin tidak berubah (tetap data penuh). Form Rasio diuji identik dari data penuh maupun data vendor. Yang masih ada di kode aplikasi untuk semua browser: daftar tetap vendor (`VENDOR_PRODUKSI`, nama, kapasitas, tarif cadangan).
+
 ## Filter vendor di rincian warna MRP (2026-10-26, tanpa migration)
 Owner: rincian warna di baris MRP (halaman MRP PPIC, juga Approval/Monitoring SCM; komponen `MrpWarnaBreakdownTable`) bisa difilter per vendor. Dropdown "Semua vendor" (muncul kalau >1 vendor) membatasi baris ke warna yang dikerjakan vendor itu, dengan angka BAGIAN vendor itu: qty dan roll dari Aduan Pola-nya (panjang/pendek), rib dan kerah/manset = kg grup warna·lengan dikali porsi qty vendor terhadap total grup (jumlah semua vendor = kg grup). Datanya dari `MrpWarnaBreakdown.vendors` (derive.ts, tipe `MrpWarnaVendorPart`), sekarang dipecah per lengan.
 
