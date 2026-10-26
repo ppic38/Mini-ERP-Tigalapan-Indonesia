@@ -3,6 +3,7 @@
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { InfoPopover } from "@/components/ui/info-popover";
 
 export type ColumnDef<T> = {
   key: string;
@@ -10,6 +11,8 @@ export type ColumnDef<T> = {
   default: boolean;
   align?: "left" | "right";
   render: (row: T) => ReactNode;
+  /** Opsional: ikon "i" di header kolom yang membuka kartu penjelasan (asal nilai dan rumusnya). */
+  info?: { title: string; body: ReactNode };
   /** Kolom "Aksi Sysadmin" (owner 2026-10-06): hanya tampil di mode Sysadmin, SELALU tampil (tidak ada di
    *  menu Kolom), ditaruh paling kanan dan diwarnai ungu supaya jelas ini bagian Sysadmin. */
   sysadmin?: boolean;
@@ -212,6 +215,7 @@ export function DataTable<T>({
               {visibleColumns.map((c) => (
                 <th key={c.key} className={"px-3 py-[9px] " + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple bg-accent-purple-bg text-accent-purple" : "")}>
                   {c.label}
+                  {c.info && <InfoPopover title={c.info.title}>{c.info.body}</InfoPopover>}
                 </th>
               ))}
               {(renderExpanded || onRowClick) && <th className="w-8 px-3 py-[9px]" />}

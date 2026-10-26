@@ -6,7 +6,8 @@ import { AppShell } from "@/components/shell/app-shell";
 import { Button } from "@/components/ui/button";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
-import { FilterBar } from "@/components/mrp/filter-bar";
+import { MultiSelectFilter } from "@/components/mrp/multi-select-filter";
+import { InfoPopover } from "@/components/ui/info-popover";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatDate, formatRupiah } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -22,19 +23,112 @@ const bulanLabel = (ym: string) => {
   return `${BULAN[Number(m) - 1] ?? m} ${y}`;
 };
 
+/** Penjelasan kolom berumus (ikon "i" di header): asal nilai dan rumusnya. */
+const INFO = {
+  rollWip: {
+    title: "Roll WIP",
+    body: (
+      <>
+        <p>Roll kain yang sudah <b>masuk produksi</b> tetapi belum ditutup.</p>
+        <p className="mt-1.5"><b>Rumus:</b> jumlah roll yang code roll-nya punya batch produksi (vendor menekan Mulai Resting) dan batch itu belum ditutup.</p>
+        <p className="mt-1.5 text-text-muted">Sumber: code roll di Good Receive dan penimbangan, dicocokkan ke batch produksi vendor.</p>
+      </>
+    ),
+  },
+  rollSelesai: {
+    title: "Roll selesai",
+    body: (
+      <>
+        <p>Roll kain yang produksinya sudah <b>selesai</b>.</p>
+        <p className="mt-1.5"><b>Rumus:</b> jumlah roll yang batch produksinya sudah ditutup (Tutup Roll, tutup otomatis saat FG penuh, atau Selesai Produksi).</p>
+      </>
+    ),
+  },
+  rollSisa: {
+    title: "Roll sisa",
+    body: (
+      <>
+        <p>Roll kain yang <b>belum dipakai</b> produksi.</p>
+        <p className="mt-1.5"><b>Rumus:</b> Roll dibeli − Roll WIP − Roll selesai.</p>
+        <p className="mt-1.5 text-text-muted">Termasuk roll yang belum diterima vendor atau belum diresting.</p>
+      </>
+    ),
+  },
+  sebelum: {
+    title: "Total sebelum diskon",
+    body: (
+      <>
+        <p><b>Rumus:</b> jumlah dari (harga per kg × berat kotor tiap roll) untuk kain, ditambah total item tambahan (rib, kerah, manset).</p>
+        <p className="mt-1.5 text-text-muted">Sumber: harga per kg dan berat roll dari invoice di Paying Voucher.</p>
+      </>
+    ),
+  },
+  diskon: {
+    title: "Diskon",
+    body: (
+      <>
+        <p><b>Rumus:</b> Total sebelum diskon − Total invoice setelah diskon.</p>
+        <p className="mt-1.5 text-text-muted">Diskon di Paying Voucher hanya satu angka per invoice; di sini dibagi ke tiap warna dan item sebanding nilainya.</p>
+      </>
+    ),
+  },
+  setelah: {
+    title: "Total invoice setelah diskon",
+    body: (
+      <>
+        <p><b>Rumus:</b> nilai sebelum diskon × faktor.</p>
+        <p className="mt-1.5">Faktor = total invoice tercatat ÷ (kain + item tambahan sebelum diskon).</p>
+        <p className="mt-1.5 text-text-muted">Jumlah semua baris dalam satu invoice sama dengan total invoice di Paying Voucher.</p>
+      </>
+    ),
+  },
+  wip: {
+    title: "WIP (Rp)",
+    body: (
+      <>
+        <p>Nilai roll yang berstatus <b>WIP</b>.</p>
+        <p className="mt-1.5"><b>Rumus:</b> jumlah nilai roll WIP, dengan nilai per roll = harga per kg × berat kotor roll × faktor diskon.</p>
+      </>
+    ),
+  },
+  selesai: {
+    title: "Selesai produksi (Rp)",
+    body: (
+      <>
+        <p>Nilai roll yang berstatus <b>selesai</b>.</p>
+        <p className="mt-1.5"><b>Rumus:</b> jumlah nilai roll selesai, dengan nilai per roll = harga per kg × berat kotor roll × faktor diskon.</p>
+      </>
+    ),
+  },
+  sisa: {
+    title: "Sisa bahan baku (Rp)",
+    body: (
+      <>
+        <p>Nilai roll yang <b>belum dipakai</b> produksi.</p>
+        <p className="mt-1.5"><b>Rumus:</b> jumlah nilai roll sisa, dengan nilai per roll = harga per kg × berat kotor roll × faktor diskon.</p>
+        <p className="mt-1.5 text-text-muted">Termasuk roll yang belum diterima vendor.</p>
+      </>
+    ),
+  },
+} as const;
+
+function InfoTip({ k }: { k: keyof typeof INFO }) {
+  return <InfoPopover title={INFO[k].title}>{INFO[k].body}</InfoPopover>;
+}
+
 const selectCls = "rounded-md border border-border-subtle bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-medium text-[#31414F]";
 
 /** Popup penuh rincian satu MRP x vendor (owner 2026-10-26): tabel per warna dan jenis bahan dengan filter sendiri dan total yang mengikuti filter. */
 function RawMaterialDetailModal({ summary, mrpCreated, onClose }: { summary: RawMaterialSummary; mrpCreated: Map<string, string>; onClose: () => void }) {
-  const [warna, setWarna] = useState("");
-  const [jenis, setJenis] = useState("");
-  const [noInvoice, setNoInvoice] = useState("");
+  const [warna, setWarna] = useState<string[]>([]);
+  const [jenis, setJenis] = useState<string[]>([]);
+  const [noInvoice, setNoInvoice] = useState<string[]>([]);
   const [q, setQ] = useState("");
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !e.defaultPrevented) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -44,17 +138,17 @@ function RawMaterialDetailModal({ summary, mrpCreated, onClose }: { summary: Raw
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return all
-      .filter((l) => (!warna || l.warna === warna) && (!jenis || l.jenis === jenis) && (!noInvoice || l.noInvoice === noInvoice) && (!needle || `${l.warna} ${l.jenis} ${l.noInvoice} ${l.kategori}`.toLowerCase().includes(needle)))
+      .filter((l) => (warna.length === 0 || warna.includes(l.warna)) && (jenis.length === 0 || jenis.includes(l.jenis)) && (noInvoice.length === 0 || noInvoice.includes(l.noInvoice)) && (!needle || `${l.warna} ${l.jenis} ${l.noInvoice} ${l.kategori}`.toLowerCase().includes(needle)))
       .sort((a, b) => (a.bookedAt < b.bookedAt ? 1 : a.bookedAt > b.bookedAt ? -1 : 0) || a.warna.localeCompare(b.warna) || a.jenis.localeCompare(b.jenis));
   }, [all, warna, jenis, noInvoice, q]);
   const kainRows = rows.filter((l) => l.kind === "KAIN");
   const num = "whitespace-nowrap px-3 py-2 text-right font-mono";
-  const hasFilter = !!(warna || jenis || noInvoice || q.trim());
+  const hasFilter = warna.length > 0 || jenis.length > 0 || noInvoice.length > 0 || !!q.trim();
 
   async function doExport() {
     setExporting(true);
     try {
-      await exportRawMaterialExcel(summarizeRawMaterial(rows, mrpCreated), rows, [`MRP ${summary.mrpId}`, `vendor ${vendorName(summary.vendorProduksi)}`, warna && `warna ${warna}`, jenis && `jenis ${jenis}`, noInvoice && `invoice ${noInvoice}`, q.trim() && `cari "${q.trim()}"`].filter(Boolean).join(", "));
+      await exportRawMaterialExcel(summarizeRawMaterial(rows, mrpCreated), rows, [`MRP ${summary.mrpId}`, `vendor ${vendorName(summary.vendorProduksi)}`, warna.length > 0 && `warna ${warna.join("/")}`, jenis.length > 0 && `jenis ${jenis.join("/")}`, noInvoice.length > 0 && `invoice ${noInvoice.join("/")}`, q.trim() && `cari "${q.trim()}"`].filter(Boolean).join(", "));
     } finally {
       setExporting(false);
     }
@@ -84,31 +178,16 @@ function RawMaterialDetailModal({ summary, mrpCreated, onClose }: { summary: Raw
         </div>
 
         <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle bg-[#FAFBFC] px-5 py-2.5">
-          <select value={warna} onChange={(e) => setWarna(e.target.value)} className={selectCls}>
-            <option value="">Warna: Semua</option>
-            {Array.from(new Set(all.map((l) => l.warna))).sort().map((o) => (
-              <option key={o} value={o}>{o}</option>
-            ))}
-          </select>
-          <select value={jenis} onChange={(e) => setJenis(e.target.value)} className={selectCls}>
-            <option value="">Jenis bahan: Semua</option>
-            {Array.from(new Set(all.map((l) => l.jenis))).sort().map((o) => (
-              <option key={o} value={o}>{o}</option>
-            ))}
-          </select>
-          <select value={noInvoice} onChange={(e) => setNoInvoice(e.target.value)} className={selectCls}>
-            <option value="">No. invoice supplier: Semua</option>
-            {Array.from(new Set(all.map((l) => l.noInvoice))).sort().map((o) => (
-              <option key={o} value={o}>{o}</option>
-            ))}
-          </select>
+          <MultiSelectFilter label="Warna" options={Array.from(new Set(all.map((l) => l.warna))).sort()} value={warna} onChange={setWarna} />
+          <MultiSelectFilter label="Jenis bahan" options={Array.from(new Set(all.map((l) => l.jenis))).sort()} value={jenis} onChange={setJenis} />
+          <MultiSelectFilter label="No. invoice supplier" options={Array.from(new Set(all.map((l) => l.noInvoice))).sort()} value={noInvoice} onChange={setNoInvoice} />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari warna, jenis, atau invoice…" className={selectCls + " min-w-[220px] flex-1 max-w-[320px] font-normal"} />
           {hasFilter && (
             <button
               onClick={() => {
-                setWarna("");
-                setJenis("");
-                setNoInvoice("");
+                setWarna([]);
+                setJenis([]);
+                setNoInvoice([]);
                 setQ("");
               }}
               className="font-sans text-[11.5px] font-semibold text-action-primary underline"
@@ -130,12 +209,12 @@ function RawMaterialDetailModal({ summary, mrpCreated, onClose }: { summary: Raw
                 <th className="px-3 py-2.5 text-left" title="Nomor invoice dari supplier">No. invoice supplier</th>
                 <th className="px-3 py-2.5 text-left">Tanggal</th>
                 <th className="px-3 py-2.5 text-right">Roll dibeli</th>
-                <th className="px-3 py-2.5 text-right">WIP</th>
-                <th className="px-3 py-2.5 text-right">Selesai</th>
-                <th className="px-3 py-2.5 text-right">Sisa</th>
-                <th className="px-3 py-2.5 text-right">Setelah diskon</th>
-                <th className="px-3 py-2.5 text-right">WIP (Rp)</th>
-                <th className="px-3 py-2.5 text-right">Sisa (Rp)</th>
+                <th className="px-3 py-2.5 text-right">WIP<InfoTip k="rollWip" /></th>
+                <th className="px-3 py-2.5 text-right">Selesai<InfoTip k="rollSelesai" /></th>
+                <th className="px-3 py-2.5 text-right">Sisa<InfoTip k="rollSisa" /></th>
+                <th className="px-3 py-2.5 text-right">Setelah diskon<InfoTip k="setelah" /></th>
+                <th className="px-3 py-2.5 text-right">WIP (Rp)<InfoTip k="wip" /></th>
+                <th className="px-3 py-2.5 text-right">Sisa (Rp)<InfoTip k="sisa" /></th>
               </tr>
             </thead>
             <tbody>
@@ -204,11 +283,11 @@ export default function RawMaterialPage() {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const staticMrps = useMrpStore((s) => s.staticMrps);
 
-  const [bulan, setBulan] = useState("");
-  const [mrp, setMrp] = useState("");
-  const [vendor, setVendor] = useState("");
-  const [kategori, setKategori] = useState("");
-  const [jenis, setJenis] = useState("");
+  const [bulan, setBulan] = useState<string[]>([]);
+  const [mrp, setMrp] = useState<string[]>([]);
+  const [vendor, setVendor] = useState<string[]>([]);
+  const [kategori, setKategori] = useState<string[]>([]);
+  const [jenis, setJenis] = useState<string[]>([]);
   const [exporting, setExporting] = useState(false);
   const [detailKey, setDetailKey] = useState<string | null>(null);
 
@@ -217,11 +296,11 @@ export default function RawMaterialPage() {
     () =>
       allLines.filter(
         (l) =>
-          (!bulan || l.bookedAt.slice(0, 7) === bulan) &&
-          (!mrp || l.mrpId === mrp) &&
-          (!vendor || vendorName(l.vendorProduksi) === vendor) &&
-          (!kategori || l.kategori === kategori) &&
-          (!jenis || l.jenis === jenis)
+          (bulan.length === 0 || bulan.includes(l.bookedAt.slice(0, 7))) &&
+          (mrp.length === 0 || mrp.includes(l.mrpId)) &&
+          (vendor.length === 0 || vendor.includes(vendorName(l.vendorProduksi))) &&
+          (kategori.length === 0 || kategori.includes(l.kategori)) &&
+          (jenis.length === 0 || jenis.includes(l.jenis))
       ),
     [allLines, bulan, mrp, vendor, kategori, jenis]
   );
@@ -242,7 +321,7 @@ export default function RawMaterialPage() {
   const rollSelesai = sum(summaries.map((s) => s.rollSelesai));
   const rollSisa = sum(summaries.map((s) => s.rollSisa));
 
-  const filterLabel = [bulan && `bulan ${bulanLabel(bulan)}`, mrp && `MRP ${mrp}`, vendor && `vendor ${vendor}`, kategori && `kategori ${kategori}`, jenis && `jenis ${jenis}`].filter(Boolean).join(", ");
+  const filterLabel = [bulan.length > 0 && `bulan ${bulan.map(bulanLabel).join("/")}`, mrp.length > 0 && `MRP ${mrp.join("/")}`, vendor.length > 0 && `vendor ${vendor.join("/")}`, kategori.length > 0 && `kategori ${kategori.join("/")}`, jenis.length > 0 && `jenis ${jenis.join("/")}`].filter(Boolean).join(", ");
 
   const columns: ColumnDef<RawMaterialSummary>[] = [
     { key: "vendor", label: "Vendor", default: true, render: (s) => vendorName(s.vendorProduksi) },
@@ -250,15 +329,15 @@ export default function RawMaterialPage() {
     { key: "jenis", label: "Jenis bahan", default: true, render: (s) => s.jenis },
     { key: "invoice", label: "Invoice", default: true, align: "right", render: (s) => s.invoiceCount },
     { key: "rollBeli", label: "Roll dibeli", default: true, align: "right", render: (s) => s.rollBeli },
-    { key: "rollWip", label: "Roll WIP", default: true, align: "right", render: (s) => s.rollWip },
-    { key: "rollSelesai", label: "Roll selesai", default: true, align: "right", render: (s) => s.rollSelesai },
-    { key: "rollSisa", label: "Roll sisa", default: true, align: "right", render: (s) => s.rollSisa },
-    { key: "sebelum", label: "Total sebelum diskon", default: false, align: "right", render: (s) => rp(s.nilaiSebelumDiskon) },
-    { key: "diskon", label: "Diskon", default: true, align: "right", render: (s) => rp(s.diskon) },
-    { key: "setelah", label: "Total invoice setelah diskon", default: true, align: "right", render: (s) => <span className="font-semibold">{rp(s.nilaiSetelahDiskon)}</span> },
-    { key: "wip", label: "WIP (Rp)", default: true, align: "right", render: (s) => rp(s.nilaiWip) },
-    { key: "selesai", label: "Selesai produksi (Rp)", default: false, align: "right", render: (s) => rp(s.nilaiSelesai) },
-    { key: "sisa", label: "Sisa bahan baku (Rp)", default: true, align: "right", render: (s) => rp(s.nilaiSisa) },
+    { key: "rollWip", label: "Roll WIP", default: true, align: "right", info: INFO.rollWip, render: (s) => s.rollWip },
+    { key: "rollSelesai", label: "Roll selesai", default: true, align: "right", info: INFO.rollSelesai, render: (s) => s.rollSelesai },
+    { key: "rollSisa", label: "Roll sisa", default: true, align: "right", info: INFO.rollSisa, render: (s) => s.rollSisa },
+    { key: "sebelum", label: "Total sebelum diskon", default: false, align: "right", info: INFO.sebelum, render: (s) => rp(s.nilaiSebelumDiskon) },
+    { key: "diskon", label: "Diskon", default: true, align: "right", info: INFO.diskon, render: (s) => rp(s.diskon) },
+    { key: "setelah", label: "Total invoice setelah diskon", default: true, align: "right", info: INFO.setelah, render: (s) => <span className="font-semibold">{rp(s.nilaiSetelahDiskon)}</span> },
+    { key: "wip", label: "WIP (Rp)", default: true, align: "right", info: INFO.wip, render: (s) => rp(s.nilaiWip) },
+    { key: "selesai", label: "Selesai produksi (Rp)", default: false, align: "right", info: INFO.selesai, render: (s) => rp(s.nilaiSelesai) },
+    { key: "sisa", label: "Sisa bahan baku (Rp)", default: true, align: "right", info: INFO.sisa, render: (s) => rp(s.nilaiSisa) },
   ];
 
   async function doExport() {
@@ -285,19 +364,31 @@ export default function RawMaterialPage() {
         <KpiCard label="Sisa bahan baku" value={rp(nilaiSisa)} valueClassName="text-[20px]" sub={`${rollSisa} roll belum dipakai · ${rollSelesai} selesai dari ${rollBeli} dibeli`} accent="purple" icon={Boxes} />
       </div>
 
-      <div className="mt-4 overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-        <FilterBar
-          filters={[
-            { label: "Bulan invoice", value: bulan, options: bulanOptions, onChange: setBulan },
-            { label: "No. MRP", value: mrp, options: Array.from(new Set(allLines.map((l) => l.mrpId))).sort((a, b) => b.localeCompare(a, undefined, { numeric: true })), onChange: setMrp },
-            { label: "Vendor", value: vendor, options: Array.from(new Set(allLines.map((l) => vendorName(l.vendorProduksi)))).sort(), onChange: setVendor },
-            { label: "Kategori produk", value: kategori, options: Array.from(new Set(allLines.map((l) => l.kategori))).sort(), onChange: setKategori },
-            { label: "Jenis bahan", value: jenis, options: Array.from(new Set(allLines.map((l) => l.jenis))).sort(), onChange: setJenis },
-          ]}
-        />
-        {bulan && (
+      <div className="mt-4 rounded-lg border border-border-subtle bg-surface-card">
+        <div className="flex flex-wrap items-center gap-2 rounded-t-lg border-b border-border-subtle bg-[#FAFBFC] px-5 py-2.5">
+          <MultiSelectFilter label="Bulan invoice" options={bulanOptions} value={bulan} onChange={setBulan} labelOf={bulanLabel} />
+          <MultiSelectFilter label="No. MRP" options={Array.from(new Set(allLines.map((l) => l.mrpId))).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))} value={mrp} onChange={setMrp} />
+          <MultiSelectFilter label="Vendor" options={Array.from(new Set(allLines.map((l) => vendorName(l.vendorProduksi)))).sort()} value={vendor} onChange={setVendor} />
+          <MultiSelectFilter label="Kategori produk" options={Array.from(new Set(allLines.map((l) => l.kategori))).sort()} value={kategori} onChange={setKategori} />
+          <MultiSelectFilter label="Jenis bahan" options={Array.from(new Set(allLines.map((l) => l.jenis))).sort()} value={jenis} onChange={setJenis} />
+          {bulan.length + mrp.length + vendor.length + kategori.length + jenis.length > 0 && (
+            <button
+              onClick={() => {
+                setBulan([]);
+                setMrp([]);
+                setVendor([]);
+                setKategori([]);
+                setJenis([]);
+              }}
+              className="font-sans text-[11.5px] font-semibold text-action-primary underline"
+            >
+              Hapus filter
+            </button>
+          )}
+        </div>
+        {bulan.length > 0 && (
           <div className="border-b border-border-subtle bg-[#FAFBFC] px-5 py-1.5 font-sans text-[10.5px] text-text-muted">
-            Bulan {bulanLabel(bulan)}: invoice yang dibuat pada bulan itu. Angka WIP dan sisa adalah kondisi saat ini untuk roll dari invoice tersebut.
+            Bulan {bulan.map(bulanLabel).join(", ")}: invoice yang dibuat pada bulan itu. Angka WIP dan sisa adalah kondisi saat ini untuk roll dari invoice tersebut.
           </div>
         )}
       </div>
