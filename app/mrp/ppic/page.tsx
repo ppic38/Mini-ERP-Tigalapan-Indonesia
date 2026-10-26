@@ -108,7 +108,12 @@ export default function MrpListPage() {
       ...mrpDetails.map((d) => ({ mrp: d.mrp, detail: d })),
       ...staticMrps.map((m) => ({ mrp: m })),
     ];
-    return all.map(({ mrp, detail }) => ({
+    // Urutan: MRP terbaru (tanggal dibuat) paling atas; MRP tanpa tanggal (data statis lama) di paling bawah. Tanggal sama = yang masuk belakangan dulu.
+    const ordered = all
+      .map((row, idx) => ({ row, idx, created: row.detail?.dates?.created ?? "" }))
+      .sort((x, y) => (x.created < y.created ? 1 : x.created > y.created ? -1 : y.idx - x.idx))
+      .map((x) => x.row);
+    return ordered.map(({ mrp, detail }) => ({
       mrp,
       detail,
       // MRP bisa punya lebih dari 1 warna sekaligus (tiap warna = 1 lenganGroup dari file
