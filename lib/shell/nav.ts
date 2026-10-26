@@ -15,6 +15,7 @@ export const NAV: Record<RoleKey, RoleNav> = {
     items: [
       { label: "Dashboard", href: "/dashboard/ppic" },
       { label: "MRP", href: "/mrp/ppic" },
+      { label: "Tracking Item", href: "/mrp/ppic/item-tracking" },
       { label: "Master Data", href: "/mrp/ppic/master-data" },
     ],
   },
@@ -61,6 +62,7 @@ export const NAV: Record<RoleKey, RoleNav> = {
       { label: "Approval MRP", href: "/scm/approval-mrp" },
       { label: "Approval PO", href: "/scm/approval-po" },
       { label: "Monitoring", href: "/scm/monitoring" },
+      { label: "Tracking Item", href: "/scm/item-tracking" },
       // Revisi 2026-09-30 (owner): Master Data SCM -- saat ini toleransi selisih berat (berlaku semua vendor produksi).
       { label: "Master Data", href: "/scm/master-data" },
     ],
