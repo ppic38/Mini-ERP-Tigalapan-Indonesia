@@ -630,11 +630,20 @@ function rasioSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
     for (const g of ofWarna) {
       const gStart = r;
       const lenganShort = g.lengan === "PENDEK" ? "PDK" : "PJG";
-      const aduan = (detail?.aduanRows ?? []).filter((a) => a.lenganGroupId === g.id);
+      // Hanya Aduan Pola milik vendor PO ini: satu warna·lengan bisa dikerjakan beberapa vendor, dan `g.sizes` memuat SEMUA baris Excel grup itu (semua vendor,
+      // size yang sama bisa muncul beberapa kali). Qty per size vendor ini diambil dari Aduan Pola-nya sendiri, supaya total sama dengan qty PO (`po.qty`).
+      const aduan = (detail?.aduanRows ?? []).filter((a) => a.lenganGroupId === g.id && a.vendor === po.vendorProduksi);
       const sumQty = g.sizes.reduce((s, x) => s + x.qty, 0);
+      const vendorQtyBySize = new Map<string, number>();
+      for (const a of aduan) for (const x of a.sizes) vendorQtyBySize.set(x.size, (vendorQtyBySize.get(x.size) ?? 0) + x.qty);
+      // Grup lama tanpa Aduan Pola sama sekali (vendor default saja): pakai baris grup apa adanya, size kembar dijumlahkan.
+      if (aduan.length === 0) for (const x of g.sizes) vendorQtyBySize.set(x.size, (vendorQtyBySize.get(x.size) ?? 0) + x.qty);
+      const sizeOrder: string[] = [];
+      for (const x of [...g.sizes, ...aduan.flatMap((a) => a.sizes)]) if (!sizeOrder.includes(x.size)) sizeOrder.push(x.size);
+      const rows = sizeOrder.map((size) => ({ size, qty: vendorQtyBySize.get(size) ?? 0 })).filter((x) => x.qty > 0);
       let sumRoll = 0;
       let sumRib = 0;
-      for (const sz of g.sizes) {
+      for (const sz of rows) {
         // Kategori per grup (data lama / grup tanpa kategori memakai kategori MRP-nya).
         const kategori = g.kategori || detail?.mrp.kategori || "—";
         const fill = /KIDS/i.test(kategori) ? KIDS_FILL : undefined;
@@ -657,21 +666,26 @@ function rasioSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
         sumRib += ribPerItem;
         r++;
       }
+      if (rows.length === 0) continue;
       const gEnd = r - 1;
       // Total, Total Roll, dan Rib Total berupa RUMUS (jumlah baris di atasnya), bukan angka mati -- ikut berubah kalau diedit.
-      put(gStart, 6, { formula: `SUM(E${gStart}:E${gEnd})`, result: sumQty }, { align: "center", fmt: "#,##0", bold: true });
+      put(gStart, 6, { formula: `SUM(E${gStart}:E${gEnd})`, result: rows.reduce((t, x) => t + x.qty, 0) }, { align: "center", fmt: "#,##0", bold: true });
       put(gStart, 8, { formula: `SUM(G${gStart}:G${gEnd})`, result: sumRoll }, { align: "center", fmt: "0.00", bold: true });
       put(gStart, 12, { formula: `SUM(K${gStart}:K${gEnd})`, result: sumRib }, { align: "center", fmt: "0.00", bold: true });
       for (const col of [6, 8, 12]) merge(gStart, gEnd, col);
       const kc = g.lengan === "PENDEK" ? [13, 14] : [15, 16];
-      put(gStart, kc[0], g.kerahKg || "", { align: "center", fmt: "0.00" });
-      put(gStart, kc[1], g.mansetKg || "", { align: "center", fmt: "0.00" });
+      // Kerah/manset grup dibagi menurut porsi vendor ini (sama seperti rib per item).
+      const share = sumQty > 0 ? Math.min(1, rows.reduce((t, x) => t + x.qty, 0) / sumQty) : 1;
+      const kerahShare = (g.kerahKg || 0) * share;
+      const mansetShare = (g.mansetKg || 0) * share;
+      put(gStart, kc[0], kerahShare || "", { align: "center", fmt: "0.00" });
+      put(gStart, kc[1], mansetShare || "", { align: "center", fmt: "0.00" });
       for (const col of [13, 14, 15, 16]) {
         for (let rr = gStart; rr <= gEnd; rr++) if (!ws.getCell(rr, col).border?.top) put(rr, col, "", {});
         merge(gStart, gEnd, col);
       }
-      kerahTotal += g.kerahKg || 0;
-      mansetTotal += g.mansetKg || 0;
+      kerahTotal += kerahShare;
+      mansetTotal += mansetShare;
     }
     const warnaEnd = r - 1;
     put(warnaStart, 17, { formula: `SUM(M${warnaStart}:M${warnaEnd},O${warnaStart}:O${warnaEnd})`, result: kerahTotal }, { align: "center", fmt: "0.00" });
