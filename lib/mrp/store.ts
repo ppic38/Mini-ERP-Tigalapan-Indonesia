@@ -415,8 +415,7 @@ type FlowActions = {
     note: string,
     noResi: string,
     photo: { dataUrl: string; fileName?: string },
-    beratByKoli: Record<string, number>,
-    biayaEkspedisi?: number
+    beratByKoli: Record<string, number>
   ) => Promise<void>;
   /** Lihat deliverKoliResiGroupAction di actions.ts -- berat per koli + Delivery seluruh grup,
    *  satu aksi. */
@@ -1468,8 +1467,8 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   },
   // TIDAK dibuat optimistic -- foto lampiran belum tentu valid (divalidasi server) & melibatkan
   // upload, pola sama seperti submitCuttingDefectClaim (bukan skalar sederhana).
-  setKoliEkspedisiResiGroup: async (koliIds, ekspedisi, note, noResi, photo, beratByKoli, biayaEkspedisi) => {
-    await actions.setKoliEkspedisiResiGroupAction(koliIds, ekspedisi, note, noResi, photo, beratByKoli, biayaEkspedisi);
+  setKoliEkspedisiResiGroup: async (koliIds, ekspedisi, note, noResi, photo, beratByKoli) => {
+    await actions.setKoliEkspedisiResiGroupAction(koliIds, ekspedisi, note, noResi, photo, beratByKoli);
     // Patch lokal SETELAH server sukses (foto/berat sudah tervalidasi di server): koli langsung
     // pindah ke Riwayat Pengiriman tanpa menunggu snapshot penuh. resiGroupId sementara dipakai
     // bersama supaya koli sesama resi tetap 1 grup di layar; diganti nilai asli saat refresh.
@@ -1489,7 +1488,6 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
                 ekspedisiNoteAt: notedAt,
                 resiGroupId: tmpResi,
                 beratKoli: beratByKoli[k.id] ?? k.beratKoli,
-                biayaEkspedisi: biayaEkspedisi != null && biayaEkspedisi > 0 ? Math.round(biayaEkspedisi) : undefined,
                 deliveredAt: localDateString(now),
               }
             : k

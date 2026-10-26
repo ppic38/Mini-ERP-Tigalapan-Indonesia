@@ -17,10 +17,8 @@ import { viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
 import { ItemsDetailPanel, kindLabel, summarizeItems, USIA_LABEL } from "@/components/mrp/koli-items-detail";
 import {
   availableFgToShip,
-  ekspedisiPrice,
   formatDate,
   formatDecimal,
-  formatRupiah,
   mrpIdsWithClosedRolls,
   mrpIdsWithUnpackedFg,
   rollRemainingBySizeForMrp,
@@ -496,7 +494,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   const [dialogWeights, setDialogWeights] = useState<Record<string, number>>({});
   const [ekspedisiNoteDraft, setEkspedisiNoteDraft] = useState("");
   const [noResiDraft, setNoResiDraft] = useState("");
-  const [biayaDraft, setBiayaDraft] = useState(0);
   const [ekspedisiPhotoDataUrl, setEkspedisiPhotoDataUrl] = useState<string | null>(null);
   const [ekspedisiPhotoFileName, setEkspedisiPhotoFileName] = useState<string | undefined>(undefined);
   const [ekspedisiPhotoError, setEkspedisiPhotoError] = useState<string | null>(null);
@@ -512,7 +509,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
     setEkspedisiDraft("");
     setEkspedisiNoteDraft("");
     setNoResiDraft("");
-    setBiayaDraft(0);
     setEkspedisiPhotoDataUrl(null);
     setEkspedisiPhotoFileName(undefined);
     setEkspedisiPhotoError(null);
@@ -524,7 +520,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
     setEkspedisiDraft("");
     setEkspedisiNoteDraft("");
     setNoResiDraft("");
-    setBiayaDraft(0);
     setEkspedisiPhotoDataUrl(null);
     setEkspedisiPhotoFileName(undefined);
     setEkspedisiPhotoError(null);
@@ -555,7 +550,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
     setEkspedisiSubmitting(true);
     setEkspedisiError(null);
     try {
-      await setKoliEkspedisiResiGroup(ekspedisiDialogKoliIds, ekspedisiDraft, ekspedisiNoteDraft.trim(), noResiDraft.trim(), { dataUrl: ekspedisiPhotoDataUrl, fileName: ekspedisiPhotoFileName }, dialogWeights, biayaDraft > 0 && !ekspedisiDraft.startsWith("Pengiriman Internal") ? biayaDraft : undefined);
+      await setKoliEkspedisiResiGroup(ekspedisiDialogKoliIds, ekspedisiDraft, ekspedisiNoteDraft.trim(), noResiDraft.trim(), { dataUrl: ekspedisiPhotoDataUrl, fileName: ekspedisiPhotoFileName }, dialogWeights);
       setSelectedForEkspedisi(new Set());
       closeEkspedisiDialog();
     } catch (e) {
@@ -1041,11 +1036,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     <span>
                       Total berat: <span className="font-mono">{formatDecimal(totalWeight)} kg</span>
                     </span>
-                    {first.biayaEkspedisi != null && (
-                      <span>
-                        Biaya ekspedisi: <span className="font-mono">{formatRupiah(first.biayaEkspedisi)}</span>
-                      </span>
-                    )}
                     <span className="font-mono text-[11px] text-text-muted">{formatDate(first.deliveredAt)}</span>
                     {first.ekspedisiNoteAt && (
                       <button onClick={() => viewEkspedisiPhoto(first.id)} className="font-semibold text-action-primary underline">
@@ -1166,21 +1156,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                   );
                 })()}
               </div>
-              {!ekspedisiDraft.startsWith("Pengiriman Internal") && (
-                <>
-                  <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Biaya ekspedisi resi ini (Rp) — opsional</div>
-                  <NumberInput value={biayaDraft} decimals={0} currency emptyWhenZero placeholder="Rp 0" onChange={setBiayaDraft} className="input mt-1 w-full text-right" />
-                  {(() => {
-                    const totalW = ekspedisiDialogKoliIds.reduce((s, id) => s + (dialogWeights[id] ?? 0), 0);
-                    const estimasi = ekspedisiDraft && totalW > 0 ? ekspedisiPrice(ekspedisiDraft, totalW, ekspedisiRates) : 0;
-                    return (
-                      <div className="mt-1 font-sans text-[10.5px] text-text-muted">
-                        Isi total biaya dari nota ekspedisi untuk resi ini (semua koli di atas). {estimasi > 0 ? `Kalau dikosongkan, dipakai estimasi tarif master ${formatRupiah(estimasi)}.` : "Kalau dikosongkan, dipakai tarif per kg di Master Data."}
-                      </div>
-                    );
-                  })()}
-                </>
-              )}
               <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Foto lampiran (wajib)</div>
               {/* Revisi 2026-09-19 (owner): tampilan tombol pilih file disamakan dengan upload Bukti
                   Paying Voucher di Procurement (components/mrp/paying-voucher-wizard.tsx). */}

@@ -488,9 +488,6 @@ export type DeliveryKoli = {
   noKoli: string;
   items: DeliveryKoliItem[];
   beratKoli?: number;
-  /** Migration 0077: TOTAL biaya ekspedisi AKTUAL 1 resi (dari nota ekspedisi, diisi vendor saat Set Ekspedisi & Resi). Nilainya sama di semua
-   *  koli satu grup resi. Kosong = ongkir dihitung dari tarif per kg Master Data Ekspedisi. */
-  biayaEkspedisi?: number;
   /** Migration 0078: nama pelaku (akun utama/anggota tim vendor) -- dibuat, dan diset ekspedisi & resi. Hanya dipakai portal vendor. */
   createdBy?: string;
   shippedBy?: string;
