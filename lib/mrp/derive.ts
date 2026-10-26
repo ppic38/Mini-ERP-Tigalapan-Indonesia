@@ -588,6 +588,24 @@ export function vendorsForMrp(detail: MrpDetail | undefined): string[] {
   return codes.map((v) => VENDOR_PRODUKSI[v]?.name ?? v);
 }
 
+/** Bagian satu vendor di satu warna: qty dan roll dari Aduan Pola vendor itu (dipecah panjang/pendek); rib, kerah, manset = kg grup warna·lengan dikali porsi qty vendor itu
+ *  terhadap total grup (jumlah semua vendor = kg grup). */
+export type MrpWarnaVendorPart = {
+  vendor: string;
+  qty: number;
+  roll: number;
+  qtyPanjang: number;
+  qtyPendek: number;
+  rollPanjang: number;
+  rollPendek: number;
+  ribPanjang: number;
+  ribPendek: number;
+  kerahPanjang: number;
+  kerahPendek: number;
+  mansetPanjang: number;
+  mansetPendek: number;
+};
+
 export type MrpWarnaBreakdown = {
   warna: string;
   qtyPanjang: number;
@@ -609,7 +627,7 @@ export type MrpWarnaBreakdown = {
   mansetTotal: number;
   /** Vendor yang mengerjakan warna ini (dari baris aduan pola MRP): satu warna bisa dibagi ke beberapa vendor sekaligus
    *  (revisi 2026-10-14, owner: "PPIC bisa lihat vendor-vendor apa saja yang mengerjakan warna yang sama"). Urut qty terbesar. */
-  vendors: { vendor: string; qty: number; roll: number }[];
+  vendors: MrpWarnaVendorPart[];
   /** Item BAGIAN 1 (histori qty=0) — true kalau SEMUA lengan warna ini qty 0 (tidak ada
    *  pemesanan/produksi sama sekali) -- dipakai UI untuk penanda visual "Tidak ada pemesanan" &
    *  oleh `includeZeroQty: false` untuk membuang baris ini dari tampilan "Menunggu approval". */
@@ -672,20 +690,38 @@ export function mrpWarnaBreakdown(detail: MrpDetail | undefined, opts?: { includ
     map.set(g.warna, cur);
   }
   // Vendor per warna dari baris aduan pola (qty + roll yang dipegang tiap vendor).
-  const vendorsByWarna = new Map<string, Map<string, { qty: number; roll: number }>>();
+  const vendorsByWarna = new Map<string, Map<string, Omit<MrpWarnaVendorPart, "vendor">>>();
+  const groupOf = (warna: string, lengan: Lengan, id: string) => detail.lenganGroups.find((g) => g.id === id) ?? detail.lenganGroups.find((g) => g.warna === warna && g.lengan === lengan);
   for (const a of detail.aduanRows) {
     if (!a.vendor || a.vendor === "-") continue;
-    const byV = vendorsByWarna.get(a.warna) ?? new Map<string, { qty: number; roll: number }>();
-    const cur = byV.get(a.vendor) ?? { qty: 0, roll: 0 };
+    const byV = vendorsByWarna.get(a.warna) ?? new Map<string, Omit<MrpWarnaVendorPart, "vendor">>();
+    const cur =
+      byV.get(a.vendor) ??
+      { qty: 0, roll: 0, qtyPanjang: 0, qtyPendek: 0, rollPanjang: 0, rollPendek: 0, ribPanjang: 0, ribPendek: 0, kerahPanjang: 0, kerahPendek: 0, mansetPanjang: 0, mansetPendek: 0 };
     cur.qty += a.qty;
     cur.roll += a.qtyRoll;
+    const g = groupOf(a.warna, a.lengan, a.lenganGroupId);
+    const share = g && g.totalQty > 0 ? a.qty / g.totalQty : 0;
+    if (a.lengan === "PANJANG") {
+      cur.qtyPanjang += a.qty;
+      cur.rollPanjang += a.qtyRoll;
+      cur.ribPanjang += (g?.ribKg ?? 0) * share;
+      cur.kerahPanjang += (g?.kerahKg ?? 0) * share;
+      cur.mansetPanjang += (g?.mansetKg ?? 0) * share;
+    } else {
+      cur.qtyPendek += a.qty;
+      cur.rollPendek += a.qtyRoll;
+      cur.ribPendek += (g?.ribKg ?? 0) * share;
+      cur.kerahPendek += (g?.kerahKg ?? 0) * share;
+      cur.mansetPendek += (g?.mansetKg ?? 0) * share;
+    }
     byV.set(a.vendor, cur);
     vendorsByWarna.set(a.warna, byV);
   }
   const all = Array.from(map.values()).map((w) => ({
     ...w,
     vendors: Array.from(vendorsByWarna.get(w.warna) ?? [])
-      .map(([code, x]) => ({ vendor: VENDOR_PRODUKSI[code]?.name ?? code, qty: x.qty, roll: x.roll }))
+      .map(([code, x]) => ({ vendor: VENDOR_PRODUKSI[code]?.name ?? code, ...x }))
       .sort((p, q) => q.qty - p.qty),
     isEmpty: w.qtyTotal === 0,
   }));

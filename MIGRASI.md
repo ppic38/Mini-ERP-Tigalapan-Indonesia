@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Filter vendor di rincian warna MRP (2026-10-26, tanpa migration)
+Owner: rincian warna di baris MRP (halaman MRP PPIC, juga Approval/Monitoring SCM; komponen `MrpWarnaBreakdownTable`) bisa difilter per vendor. Dropdown "Semua vendor" (muncul kalau >1 vendor) membatasi baris ke warna yang dikerjakan vendor itu, dengan angka BAGIAN vendor itu: qty dan roll dari Aduan Pola-nya (panjang/pendek), rib dan kerah/manset = kg grup warna·lengan dikali porsi qty vendor terhadap total grup (jumlah semua vendor = kg grup). Datanya dari `MrpWarnaBreakdown.vendors` (derive.ts, tipe `MrpWarnaVendorPart`), sekarang dipecah per lengan.
+
 ## Perbaikan Form Rasio PO: qty hanya milik vendor PO itu (2026-10-26, tanpa migration)
 Bug (vendor CECEP, W40): Form Rasio (Excel dari PO Produksi Saya) menulis total qty PO 10.052 pcs di header, tetapi kolom QTY kalau dijumlah 23.464. Penyebab: `rasioSheet` (lib/mrp/exportPoExcel.ts) menuliskan SEMUA baris size grup warna·lengan (`LenganGroup.sizes` = satu entri per baris Excel MRP, jadi memuat semua vendor yang mengerjakan warna·lengan itu dan size yang sama bisa muncul beberapa kali), padahal Aduan Pola hanya sebagian milik vendor itu. Akibat ikutan: roll per item dan Total Roll terhitung berkali-kali (satu kali per entri size kembar), serta rib/kerah/manset ikut porsi semua vendor. Sekarang qty per size diambil dari Aduan Pola vendor PO itu sendiri (size kembar dijumlahkan, size ber-qty 0 tidak ditampilkan, grup tanpa Aduan Pola vendor itu dilewati), rib dan kerah/manset dibagi menurut porsi vendor terhadap total grup, dan Aduan Pola difilter ke vendor PO (juga saat diunduh dari dialog Download PO internal). Grup lama tanpa Aduan Pola sama sekali memakai baris grup apa adanya.
 

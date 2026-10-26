@@ -4,6 +4,32 @@ import { useState } from "react";
 import { formatPcs } from "@/lib/mrp/derive";
 import type { MrpWarnaBreakdown } from "@/lib/mrp/derive";
 
+/** Angka satu warna untuk SATU vendor saja (dari bagian vendor itu di `vendors`); total panjang + pendek dihitung ulang. */
+function onlyVendorPart(w: MrpWarnaBreakdown, vendor: string): MrpWarnaBreakdown | null {
+  const v = w.vendors.find((x) => x.vendor === vendor);
+  if (!v) return null;
+  return {
+    ...w,
+    qtyPanjang: v.qtyPanjang,
+    qtyPendek: v.qtyPendek,
+    qtyTotal: v.qty,
+    rollPanjang: v.rollPanjang,
+    rollPendek: v.rollPendek,
+    rollTotal: v.roll,
+    ribPanjang: v.ribPanjang,
+    ribPendek: v.ribPendek,
+    ribTotal: v.ribPanjang + v.ribPendek,
+    kerahPanjang: v.kerahPanjang,
+    kerahPendek: v.kerahPendek,
+    kerahTotal: v.kerahPanjang + v.kerahPendek,
+    mansetPanjang: v.mansetPanjang,
+    mansetPendek: v.mansetPendek,
+    mansetTotal: v.mansetPanjang + v.mansetPendek,
+    vendors: [v],
+    isEmpty: false,
+  };
+}
+
 /** Tabel rincian qty/roll/rib(/kerah/manset) per warna (panjang · pendek · total) — dipakai di
  *  baris expand halaman MRP PPIC & Approval/Monitoring SCM supaya tampilannya konsisten di kedua
  *  tempat (satu komponen, satu sumber kebenaran tampilan).
@@ -12,22 +38,44 @@ import type { MrpWarnaBreakdown } from "@/lib/mrp/derive";
  *  pemesanan" ikut ke-scroll) — 2 penambahan MURNI tampilan, tidak mengubah data/perhitungan:
  *  (a) baris tanpa pesanan diberi LATAR warning (oren pastel) supaya lebih kentara dari sekadar
  *  teks abu-abu, (b) filter dropdown per warna supaya bisa fokus ke 1 warna tanpa scroll manual. */
-export function MrpWarnaBreakdownTable({ breakdown }: { breakdown: MrpWarnaBreakdown[] }) {
+export function MrpWarnaBreakdownTable({ breakdown: allBreakdown }: { breakdown: MrpWarnaBreakdown[] }) {
   const [filterWarna, setFilterWarna] = useState("");
+  const [filterVendor, setFilterVendor] = useState("");
+  // Filter vendor: hanya warna yang dikerjakan vendor itu, dengan angka bagian vendor itu (bukan total warna semua vendor).
+  const vendorOptions = Array.from(new Set(allBreakdown.flatMap((w) => w.vendors.map((v) => v.vendor)))).sort((a, b) => a.localeCompare(b));
+  const breakdown = filterVendor ? allBreakdown.map((w) => onlyVendorPart(w, filterVendor)).filter((w): w is MrpWarnaBreakdown => w !== null) : allBreakdown;
 
-  if (breakdown.length === 0) {
+  if (allBreakdown.length === 0) {
     return <div className="font-sans text-[11.5px] text-text-muted">Belum ada rincian warna/lengan untuk MRP ini (data lama atau tanpa detail import).</div>;
   }
   // Item BAGIAN 2 (Req 20) — grup kolom Kerah/Manset cuma ditampilkan kalau ADA baris breakdown
   // yang benar-benar punya nilai (MRP kategori "WANGKI MYNO"), supaya MRP kategori lain tidak
   // penuh kolom 0.
   const showKerahManset = breakdown.some((w) => w.kerahTotal > 0 || w.mansetTotal > 0);
-  const filtered = filterWarna ? breakdown.filter((w) => w.warna === filterWarna) : breakdown;
+  const filtered = filterWarna && breakdown.some((w) => w.warna === filterWarna) ? breakdown.filter((w) => w.warna === filterWarna) : breakdown;
+  const warnaFilterActive = filtered !== breakdown;
 
   return (
     <div className="flex flex-col gap-2">
-      {breakdown.length > 1 && (
-        <div className="flex items-center gap-2">
+      {(allBreakdown.length > 1 || vendorOptions.length > 1) && (
+        <div className="flex flex-wrap items-center gap-2">
+          {vendorOptions.length > 1 && (
+            <select
+              value={filterVendor}
+              onChange={(e) => {
+                setFilterVendor(e.target.value);
+                setFilterWarna("");
+              }}
+              className="input w-auto !py-1.5 !text-[11px]"
+            >
+              <option value="">Semua vendor ({vendorOptions.length})</option>
+              {vendorOptions.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          )}
           <select value={filterWarna} onChange={(e) => setFilterWarna(e.target.value)} className="input w-auto !py-1.5 !text-[11px]">
             <option value="">Semua warna ({breakdown.length})</option>
             {breakdown.map((w) => (
@@ -159,7 +207,7 @@ export function MrpWarnaBreakdownTable({ breakdown }: { breakdown: MrpWarnaBreak
                 </td>
               </tr>
             )}
-            {!filterWarna && breakdown.length > 1 && (
+            {!warnaFilterActive && breakdown.length > 1 && (
               <tr className="border-t-2 border-accent-blue bg-info-bg font-sans text-[11.5px] font-semibold text-info-fg">
                 <td className="px-3 py-2">Total semua warna</td>
                 <td className="border-l border-accent-blue/20 px-3 py-2 text-right font-mono">{formatPcs(breakdown.reduce((s, w) => s + w.qtyPanjang, 0))}</td>
