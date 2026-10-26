@@ -120,23 +120,81 @@ function ExportExcelButton({ pos, fileName, label = "⤓ Download Excel" }: { po
   );
 }
 
-type GramasiInfo = { summary: string; settingSummary: string; rolls: { id: string; codeRoll: string; gramasi: number; setting: string; status: string }[] };
+type RollDetail = { id: string; codeRoll: string; gramasi: number; setting: string; restingAt: string; status: string };
 
-/** Gramasi kain (gsm) dan Setting kain per roll untuk 1 warna·lengan satu vendor di 1 MRP. Keduanya diisi vendor saat Resting dan menempel ke roll (batch); gramasi 0 / setting kosong = belum diisi.
- *  Ringkasan: satu nilai kalau semua roll sama, "min–max" kalau berbeda, "—" kalau belum ada yang diisi. */
-function gramasiForGroup(batches: ReturnType<typeof useMrpStore.getState>["productionBatches"], mrpId: string, vendor: string, warna: string, lengan: string): GramasiInfo {
-  const rolls = batches
+/** Daftar roll (batch) 1 warna·lengan satu vendor di 1 MRP dengan gramasi (gsm) dan Setting kain yang diisi vendor saat Resting. Gramasi 0 / setting kosong = belum diisi. */
+function rollDetailsForGroup(batches: ReturnType<typeof useMrpStore.getState>["productionBatches"], mrpId: string, vendor: string, warna: string, lengan: string): RollDetail[] {
+  return batches
     .filter((b) => b.mrpId === mrpId && b.vendorProduksi === vendor && b.warna === warna && b.lengan === lengan)
-    .map((b) => ({ id: b.id, codeRoll: b.codeRoll ?? b.kode, gramasi: b.gramasi || 0, setting: b.setting?.trim() ?? "", status: b.closedAt ? "Selesai" : b.cuttingAt ? "Cutting" : "Resting" }))
+    .map((b) => ({
+      id: b.id,
+      codeRoll: b.codeRoll ?? b.kode,
+      gramasi: b.gramasi || 0,
+      setting: b.setting?.trim() ?? "",
+      restingAt: b.restingAt,
+      status: b.closedAt ? "Selesai" : b.cuttingAt ? "Cutting" : "Resting",
+    }))
     .sort((a, b) => a.codeRoll.localeCompare(b.codeRoll, undefined, { numeric: true }));
-  const settings = Array.from(new Set(rolls.map((r) => r.setting).filter(Boolean)));
-  const settingSummary = settings.length === 0 ? "—" : settings.length <= 2 ? settings.join(", ") : `${settings.slice(0, 2).join(", ")} +${settings.length - 2}`;
-  const vals = rolls.map((r) => r.gramasi).filter((g) => g > 0);
-  if (vals.length === 0) return { summary: "—", settingSummary, rolls };
-  const lo = Math.min(...vals);
-  const hi = Math.max(...vals);
-  const fmt = (n: number) => n.toLocaleString("id-ID", { maximumFractionDigits: 2 });
-  return { summary: lo === hi ? `${fmt(lo)}` : `${fmt(lo)}–${fmt(hi)}`, settingSummary, rolls };
+}
+
+/** Popup daftar roll satu warna·lengan: code roll, gramasi, setting, mulai resting, dan status. */
+function RollDetailModal({ title, rolls, onClose }: { title: string; rolls: RollDetail[]; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  const tone = (st: string) => (st === "Selesai" ? "success" : st === "Cutting" ? "info" : "neutral");
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={onClose}>
+      <div className="flex max-h-[80vh] w-full max-w-[720px] flex-col overflow-hidden rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.25)]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 border-b border-border-subtle px-5 py-3.5">
+          <div>
+            <div className="font-sans text-[14px] font-semibold text-text-primary">Detail roll</div>
+            <div className="mt-0.5 font-sans text-[11.5px] text-text-muted">{title} · {rolls.length} roll</div>
+          </div>
+          <button onClick={onClose} className="rounded-md border border-[#CBD5DF] bg-white px-3 py-[6px] font-sans text-xs font-semibold text-action-primary">
+            Tutup
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <table className="w-full border-collapse font-sans text-[11.5px]">
+            <thead className="sticky top-0 bg-info-bg text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
+              <tr>
+                <th className="px-4 py-2 text-left">No.</th>
+                <th className="px-3 py-2 text-left">Code roll</th>
+                <th className="px-3 py-2 text-right">Gramasi (gsm)</th>
+                <th className="px-3 py-2 text-left">Setting</th>
+                <th className="px-3 py-2 text-left">Mulai resting</th>
+                <th className="px-3 py-2 text-left">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rolls.map((r, i) => (
+                <tr key={r.id} className="border-t border-[#EEF1F4]">
+                  <td className="px-4 py-2 font-mono text-text-muted">{i + 1}</td>
+                  <td className="px-3 py-2 font-mono font-medium">{r.codeRoll}</td>
+                  <td className="px-3 py-2 text-right font-mono">{r.gramasi > 0 ? r.gramasi.toLocaleString("id-ID", { maximumFractionDigits: 2 }) : <span className="text-text-muted">—</span>}</td>
+                  <td className="px-3 py-2">{r.setting || <span className="text-text-muted">—</span>}</td>
+                  <td className="px-3 py-2 font-mono text-text-muted">{r.restingAt ? formatDate(r.restingAt.slice(0, 10)) : "—"}</td>
+                  <td className="px-3 py-2">
+                    <StatusPill tone={tone(r.status)}>{r.status}</StatusPill>
+                  </td>
+                </tr>
+              ))}
+              {rolls.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-text-muted">Belum ada roll yang di-resting.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
@@ -145,6 +203,7 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
   const productionResults = useMrpStore((s) => s.productionResults);
   const invoices = useMrpStore((s) => s.invoices);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  const [rollDetailKey, setRollDetailKey] = useState<string | null>(null);
 
   const rows = vendorItemSizeProgress(po.mrpId, po.vendorProduksi, mrpDetails, productionBatches, productionResults);
 
@@ -186,8 +245,6 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
               <th className="w-full px-2 py-1.5 text-left">Progres FG (dari hasil cutting aktual)</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-right">Qty</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-right">Material (Roll)</th>
-              <th className="whitespace-nowrap px-2 py-1.5 text-right" title="Gramasi kain (gsm) yang diisi vendor saat Resting; buka baris untuk gramasi per roll">Gramasi (gsm)</th>
-              <th className="whitespace-nowrap px-2 py-1.5 text-left" title="Setting kain yang diisi vendor saat Resting; buka baris untuk setting per roll">Setting</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-right">Hasil Cutting</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-right">Yield Cutting</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-left">Reject / Rework</th>
@@ -208,7 +265,6 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
               const rollReceived = completedRollCountForColor(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, productionBatches);
               const rollTotal = totalRollCountForColor(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, invoices);
               const shifts = sizeShiftsForGroup(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, productionBatches);
-              const gram = gramasiForGroup(productionBatches, po.mrpId, po.vendorProduksi, g.warna, g.lengan);
               const cut = cuttingYieldForGroup(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, mrpDetails, productionBatches);
               const info = deadlineInfoFor(po.mrpId, po.vendorProduksi, g.warna, invoices);
               const status = statusFor(s.finishGood, denom, s.cutting > 0, info);
@@ -218,6 +274,17 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
                     <td className="py-2 pl-3 text-text-muted">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
                     <td className="whitespace-nowrap px-2 py-2 font-sans text-[11.5px] font-medium text-[#31414F]">
                       {g.warna} · {g.lengan}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRollDetailKey(key);
+                        }}
+                        className="ml-2 rounded border border-[#CBD5DF] bg-white px-1.5 py-0.5 font-sans text-[9.5px] font-semibold text-action-primary hover:bg-[#F2F5F8]"
+                        title="Lihat gramasi dan setting per roll"
+                      >
+                        Detail roll
+                      </button>
                       {shifts.length > 0 && (
                         <span title="Ada sisa kain yang dialihkan ke size lain -- buka baris untuk detail" className="ml-1.5 rounded bg-info-bg px-1.5 py-0.5 font-sans text-[9.5px] font-semibold text-info-fg">
                           ALIH SIZE
@@ -239,8 +306,6 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
                     <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] text-text-muted">
                       {rollTotal > 0 ? `${rollReceived}/${rollTotal}` : "—"}
                     </td>
-                    <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] text-text-muted">{gram.summary}</td>
-                    <td className="max-w-[160px] truncate whitespace-nowrap px-2 py-2 font-mono text-[11px] text-text-muted" title={gram.settingSummary}>{gram.settingSummary}</td>
                     <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] text-text-muted" title="Hasil cutting aktual / target rencana (qty PO)">
                       {formatPcs(s.cutting)}/{formatPcs(s.target)}
                     </td>
@@ -264,24 +329,7 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
                   </tr>
                   {open && (
                     <tr className="border-t border-[#F1F4F7] bg-[#FAFBFC]">
-                      <td colSpan={14} className="px-3 py-2 pl-9">
-                        <div className="mb-2 flex flex-col gap-1 font-sans text-[11px] text-[#31414F]">
-                          <span className="text-[10px] font-medium uppercase tracking-wider text-text-muted">Gramasi dan setting per roll</span>
-                          {gram.rolls.length === 0 ? (
-                            <span className="text-text-muted">Belum ada roll yang di-resting.</span>
-                          ) : (
-                            <div className="flex flex-wrap gap-1.5">
-                              {gram.rolls.map((r) => (
-                                <span key={r.id} className="rounded border border-[#E4E9EE] bg-white px-2 py-1 font-mono text-[10.5px]" title={`Status roll: ${r.status}`}>
-                                  <span className="font-semibold">{r.codeRoll}</span>{" "}
-                                  {r.gramasi > 0 ? `${r.gramasi.toLocaleString("id-ID", { maximumFractionDigits: 2 })} gsm` : <span className="text-text-muted">belum diisi</span>}{" "}
-                                  <span className="text-text-muted">· setting:</span> {r.setting || <span className="text-text-muted">—</span>}{" "}
-                                  <span className="text-text-muted">· {r.status}</span>
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
+                      <td colSpan={12} className="px-3 py-2 pl-9">
                         {shifts.length > 0 && (
                           <div className="mb-2 flex flex-col gap-0.5 font-sans text-[11px] text-[#31414F]">
                             <span className="text-[10px] font-medium uppercase tracking-wider text-text-muted">Alih size (sisa kain)</span>
@@ -316,6 +364,13 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
             })}
           </tbody>
         </table>
+      )}
+      {rollDetailKey && (
+        <RollDetailModal
+          title={`${rollDetailKey.replace("|", " · ")} · ${VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi} · ${po.mrpId}`}
+          rolls={rollDetailsForGroup(productionBatches, po.mrpId, po.vendorProduksi, rollDetailKey.split("|")[0], rollDetailKey.split("|")[1])}
+          onClose={() => setRollDetailKey(null)}
+        />
       )}
     </div>
   );
