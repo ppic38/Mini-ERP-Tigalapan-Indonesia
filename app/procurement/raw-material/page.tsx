@@ -32,7 +32,7 @@ function DetailTable({ lines }: { lines: RawMaterialLine[] }) {
           <tr className="border-b border-[#E4E9EE] bg-[#F2F5F8] text-[10px] font-semibold uppercase tracking-wider text-text-muted">
             <th className="px-2.5 py-2 text-left">Warna</th>
             <th className="px-2.5 py-2 text-left">Jenis bahan</th>
-            <th className="px-2.5 py-2 text-left">Invoice</th>
+            <th className="px-2.5 py-2 text-left" title="Nomor invoice dari supplier">No. invoice supplier</th>
             <th className="px-2.5 py-2 text-left">Tanggal</th>
             <th className="px-2.5 py-2 text-right">Roll dibeli</th>
             <th className="px-2.5 py-2 text-right">WIP</th>
@@ -54,7 +54,7 @@ function DetailTable({ lines }: { lines: RawMaterialLine[] }) {
                 {l.jenis}
                 <span className="block text-[10px] text-text-muted">{l.kategori}</span>
               </td>
-              <td className="px-2.5 py-1.5 font-mono">{l.invoiceId}</td>
+              <td className="px-2.5 py-1.5 font-mono" title={`ID invoice internal: ${l.invoiceId}`}>{l.noInvoice}</td>
               <td className="px-2.5 py-1.5 font-mono text-text-muted">{formatDate(l.bookedAt)}</td>
               {l.kind === "KAIN" ? (
                 <>

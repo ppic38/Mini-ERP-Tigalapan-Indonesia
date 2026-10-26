@@ -14,6 +14,8 @@ export type RawMaterialLine = {
   mrpId: string;
   vendorProduksi: string;
   invoiceId: string;
+  /** Nomor invoice dari supplier (`noInvoiceVendor`); kosong = jatuh ke ID invoice internal. Dipakai untuk tampilan. */
+  noInvoice: string;
   supplier: string;
   bookedAt: string;
   /** "KAIN" = roll kain; "TAMBAHAN" = item tambahan invoice (rib/kerah/manset, dst.). */
@@ -104,6 +106,7 @@ export function rawMaterialLines(invoices: RawMaterialInvoice[], batches: Produc
         mrpId: inv.mrpId,
         vendorProduksi: vendor,
         invoiceId: inv.id,
+        noInvoice: inv.noInvoiceVendor?.trim() || inv.id,
         supplier: inv.supplier,
         bookedAt: inv.bookedAt,
         kind: "KAIN",
@@ -155,6 +158,7 @@ export function rawMaterialLines(invoices: RawMaterialInvoice[], batches: Produc
         mrpId: inv.mrpId,
         vendorProduksi: vendor,
         invoiceId: inv.id,
+        noInvoice: inv.noInvoiceVendor?.trim() || inv.id,
         supplier: inv.supplier,
         bookedAt: inv.bookedAt,
         kind: "TAMBAHAN",
