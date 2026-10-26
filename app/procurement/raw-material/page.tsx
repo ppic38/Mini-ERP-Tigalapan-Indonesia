@@ -48,7 +48,7 @@ function RawMaterialDetailModal({ summary, mrpCreated, onClose }: { summary: Raw
       .sort((a, b) => (a.bookedAt < b.bookedAt ? 1 : a.bookedAt > b.bookedAt ? -1 : 0) || a.warna.localeCompare(b.warna) || a.jenis.localeCompare(b.jenis));
   }, [all, warna, jenis, noInvoice, q]);
   const kainRows = rows.filter((l) => l.kind === "KAIN");
-  const num = "px-3 py-2 text-right font-mono";
+  const num = "whitespace-nowrap px-3 py-2 text-right font-mono";
   const hasFilter = !!(warna || jenis || noInvoice || q.trim());
 
   async function doExport() {
@@ -63,7 +63,7 @@ function RawMaterialDetailModal({ summary, mrpCreated, onClose }: { summary: Raw
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-6 max-md:p-0" onClick={onClose}>
       <div
-        className="flex max-h-[80vh] w-full max-w-[1120px] flex-col overflow-hidden rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.25)] max-md:h-full max-md:max-h-none max-md:max-w-none max-md:rounded-none"
+        className="flex max-h-[80vh] w-full max-w-[1320px] flex-col overflow-hidden rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.25)] max-md:h-full max-md:max-h-none max-md:max-w-none max-md:rounded-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border-subtle px-5 py-3">
@@ -122,7 +122,7 @@ function RawMaterialDetailModal({ summary, mrpCreated, onClose }: { summary: Raw
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto">
-          <table className="w-full min-w-[1040px] border-collapse font-sans text-[12px] text-[#31414F]">
+          <table className="w-full min-w-[1180px] border-collapse font-sans text-[12px] text-[#31414F]">
             <thead className="sticky top-0 z-10">
               <tr className="border-b-2 border-accent-blue bg-info-bg text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
                 <th className="px-3 py-2.5 text-left">Warna</th>
