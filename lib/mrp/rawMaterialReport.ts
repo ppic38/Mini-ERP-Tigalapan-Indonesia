@@ -181,7 +181,38 @@ export function rawMaterialLines(invoices: RawMaterialInvoice[], batches: Produc
       });
     });
   }
-  return out;
+  return mergeLengan(out);
+}
+
+/** Lengan pendek dan panjang untuk warna yang sama dalam satu invoice digabung jadi satu baris (owner 2026-10-26); nilai dan roll dijumlahkan.
+ *  Item tambahan tidak punya lengan jadi tidak diubah. */
+function mergeLengan(lines: RawMaterialLine[]): RawMaterialLine[] {
+  const merged = new Map<string, RawMaterialLine>();
+  const rest: RawMaterialLine[] = [];
+  for (const l of lines) {
+    if (l.kind !== "KAIN") {
+      rest.push(l);
+      continue;
+    }
+    const key = `${l.invoiceId}|KAIN|${l.warna}|${l.jenis}`;
+    const cur = merged.get(key);
+    if (!cur) {
+      merged.set(key, { ...l, key, lengan: undefined });
+      continue;
+    }
+    cur.rollBeli += l.rollBeli;
+    cur.rollDiterima += l.rollDiterima;
+    cur.rollWip += l.rollWip;
+    cur.rollSelesai += l.rollSelesai;
+    cur.rollSisa += l.rollSisa;
+    cur.nilaiSebelumDiskon += l.nilaiSebelumDiskon;
+    cur.diskon += l.diskon;
+    cur.nilaiSetelahDiskon += l.nilaiSetelahDiskon;
+    cur.nilaiWip += l.nilaiWip;
+    cur.nilaiSelesai += l.nilaiSelesai;
+    cur.nilaiSisa += l.nilaiSisa;
+  }
+  return [...merged.values(), ...rest];
 }
 
 /** Satu baris per MRP x vendor (kategori dan jenis bahan digabung bila lebih dari satu). */

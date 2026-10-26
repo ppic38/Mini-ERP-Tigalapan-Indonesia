@@ -56,20 +56,20 @@ export async function exportRawMaterialExcel(summaries: RawMaterialSummary[], li
 
   const wd = wb.addWorksheet("Rincian per warna", { views: [{ state: "frozen", ySplit: 1, xSplit: 3 }] });
   const head2 = wd.addRow([
-    "No. MRP", "Vendor", "Warna", "Lengan", "Jenis bahan", "Kategori produk", "Benang", "No. invoice supplier", "Tanggal invoice", "Supplier",
+    "No. MRP", "Vendor", "Warna", "Jenis bahan", "Kategori produk", "Benang", "No. invoice supplier", "Tanggal invoice", "Supplier",
     "Roll dibeli", "Roll diterima", "Roll WIP", "Roll selesai", "Roll sisa", "Berat item tambahan (kg)",
     "Total sebelum diskon", "Diskon", "Total setelah diskon", "WIP (Rp)", "Selesai produksi (Rp)", "Sisa bahan baku (Rp)", "ID invoice internal",
   ]);
   styleHeader(head2);
   for (const l of lines) {
     wd.addRow([
-      l.mrpId, vendorName(l.vendorProduksi), l.warna, l.lengan ?? "", l.jenis, l.kategori, l.benang, l.noInvoice, l.bookedAt, l.supplier,
+      l.mrpId, vendorName(l.vendorProduksi), l.warna, l.jenis, l.kategori, l.benang, l.noInvoice, l.bookedAt, l.supplier,
       l.rollBeli, l.rollDiterima, l.rollWip, l.rollSelesai, l.rollSisa, l.beratKg || "",
       Math.round(l.nilaiSebelumDiskon), Math.round(l.diskon), Math.round(l.nilaiSetelahDiskon), Math.round(l.nilaiWip), Math.round(l.nilaiSelesai), Math.round(l.nilaiSisa), l.invoiceId,
     ]);
   }
-  for (let c = 17; c <= 22; c++) wd.getColumn(c).numFmt = RP;
-  wd.columns.forEach((col, i) => (col.width = i < 3 ? 16 : i < 10 ? 16 : i < 16 ? 11 : 20));
+  for (let c = 16; c <= 21; c++) wd.getColumn(c).numFmt = RP;
+  wd.columns.forEach((col, i) => (col.width = i < 9 ? 16 : i < 15 ? 11 : 20));
 
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
