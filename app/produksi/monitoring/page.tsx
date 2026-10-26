@@ -120,6 +120,25 @@ function ExportExcelButton({ pos, fileName, label = "⤓ Download Excel" }: { po
   );
 }
 
+type GramasiInfo = { summary: string; settingSummary: string; rolls: { id: string; codeRoll: string; gramasi: number; setting: string; status: string }[] };
+
+/** Gramasi kain (gsm) dan Setting kain per roll untuk 1 warna·lengan satu vendor di 1 MRP. Keduanya diisi vendor saat Resting dan menempel ke roll (batch); gramasi 0 / setting kosong = belum diisi.
+ *  Ringkasan: satu nilai kalau semua roll sama, "min–max" kalau berbeda, "—" kalau belum ada yang diisi. */
+function gramasiForGroup(batches: ReturnType<typeof useMrpStore.getState>["productionBatches"], mrpId: string, vendor: string, warna: string, lengan: string): GramasiInfo {
+  const rolls = batches
+    .filter((b) => b.mrpId === mrpId && b.vendorProduksi === vendor && b.warna === warna && b.lengan === lengan)
+    .map((b) => ({ id: b.id, codeRoll: b.codeRoll ?? b.kode, gramasi: b.gramasi || 0, setting: b.setting?.trim() ?? "", status: b.closedAt ? "Selesai" : b.cuttingAt ? "Cutting" : "Resting" }))
+    .sort((a, b) => a.codeRoll.localeCompare(b.codeRoll, undefined, { numeric: true }));
+  const settings = Array.from(new Set(rolls.map((r) => r.setting).filter(Boolean)));
+  const settingSummary = settings.length === 0 ? "—" : settings.length <= 2 ? settings.join(", ") : `${settings.slice(0, 2).join(", ")} +${settings.length - 2}`;
+  const vals = rolls.map((r) => r.gramasi).filter((g) => g > 0);
+  if (vals.length === 0) return { summary: "—", settingSummary, rolls };
+  const lo = Math.min(...vals);
+  const hi = Math.max(...vals);
+  const fmt = (n: number) => n.toLocaleString("id-ID", { maximumFractionDigits: 2 });
+  return { summary: lo === hi ? `${fmt(lo)}` : `${fmt(lo)}–${fmt(hi)}`, settingSummary, rolls };
+}
+
 function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const productionBatches = useMrpStore((s) => s.productionBatches);
@@ -167,6 +186,8 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
               <th className="w-full px-2 py-1.5 text-left">Progres FG (dari hasil cutting aktual)</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-right">Qty</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-right">Material (Roll)</th>
+              <th className="whitespace-nowrap px-2 py-1.5 text-right" title="Gramasi kain (gsm) yang diisi vendor saat Resting; buka baris untuk gramasi per roll">Gramasi (gsm)</th>
+              <th className="whitespace-nowrap px-2 py-1.5 text-left" title="Setting kain yang diisi vendor saat Resting; buka baris untuk setting per roll">Setting</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-right">Hasil Cutting</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-right">Yield Cutting</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-left">Reject / Rework</th>
@@ -187,6 +208,7 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
               const rollReceived = completedRollCountForColor(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, productionBatches);
               const rollTotal = totalRollCountForColor(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, invoices);
               const shifts = sizeShiftsForGroup(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, productionBatches);
+              const gram = gramasiForGroup(productionBatches, po.mrpId, po.vendorProduksi, g.warna, g.lengan);
               const cut = cuttingYieldForGroup(po.mrpId, po.vendorProduksi, g.warna, g.lengan as Lengan, mrpDetails, productionBatches);
               const info = deadlineInfoFor(po.mrpId, po.vendorProduksi, g.warna, invoices);
               const status = statusFor(s.finishGood, denom, s.cutting > 0, info);
@@ -217,6 +239,8 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
                     <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] text-text-muted">
                       {rollTotal > 0 ? `${rollReceived}/${rollTotal}` : "—"}
                     </td>
+                    <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] text-text-muted">{gram.summary}</td>
+                    <td className="max-w-[160px] truncate whitespace-nowrap px-2 py-2 font-mono text-[11px] text-text-muted" title={gram.settingSummary}>{gram.settingSummary}</td>
                     <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-[11px] text-text-muted" title="Hasil cutting aktual / target rencana (qty PO)">
                       {formatPcs(s.cutting)}/{formatPcs(s.target)}
                     </td>
@@ -240,7 +264,24 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
                   </tr>
                   {open && (
                     <tr className="border-t border-[#F1F4F7] bg-[#FAFBFC]">
-                      <td colSpan={12} className="px-3 py-2 pl-9">
+                      <td colSpan={14} className="px-3 py-2 pl-9">
+                        <div className="mb-2 flex flex-col gap-1 font-sans text-[11px] text-[#31414F]">
+                          <span className="text-[10px] font-medium uppercase tracking-wider text-text-muted">Gramasi dan setting per roll</span>
+                          {gram.rolls.length === 0 ? (
+                            <span className="text-text-muted">Belum ada roll yang di-resting.</span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1.5">
+                              {gram.rolls.map((r) => (
+                                <span key={r.id} className="rounded border border-[#E4E9EE] bg-white px-2 py-1 font-mono text-[10.5px]" title={`Status roll: ${r.status}`}>
+                                  <span className="font-semibold">{r.codeRoll}</span>{" "}
+                                  {r.gramasi > 0 ? `${r.gramasi.toLocaleString("id-ID", { maximumFractionDigits: 2 })} gsm` : <span className="text-text-muted">belum diisi</span>}{" "}
+                                  <span className="text-text-muted">· setting:</span> {r.setting || <span className="text-text-muted">—</span>}{" "}
+                                  <span className="text-text-muted">· {r.status}</span>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                         {shifts.length > 0 && (
                           <div className="mb-2 flex flex-col gap-0.5 font-sans text-[11px] text-[#31414F]">
                             <span className="text-[10px] font-medium uppercase tracking-wider text-text-muted">Alih size (sisa kain)</span>

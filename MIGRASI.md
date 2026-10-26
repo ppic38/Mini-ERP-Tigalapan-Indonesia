@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Gramasi dan Setting kain di Monitoring Produksi (2026-10-26, tanpa migration)
+Permintaan user: bisa tahu gramasi kain dari roll. Gramasi sudah tersimpan per roll di `production_batches.gramasi` (gsm, diisi vendor saat Resting, 0 = belum diisi, tidak bisa diedit sesudahnya) tetapi sebelumnya hanya tampil di tab Cutting portal vendor. Sekarang Monitoring Produksi (modul Produksi, drill-down per vendor > per warna·lengan) punya kolom "Gramasi (gsm)" (satu nilai kalau semua roll sama, "min-max" kalau beda, "-" kalau belum ada) dan, di baris yang dibuka, daftar "Gramasi per roll" (code roll, gsm, status Resting/Cutting/Selesai). Roll yang belum di-resting belum punya gramasi. Kolom "Setting" (isian Setting kain per roll, `production_batches.setting`, migration 0048) ditampilkan dengan cara yang sama: ringkasan per warna·lengan dan nilai per roll di baris yang dibuka. Belum ikut di export Excel Monitoring Produksi.
+
 ## Biaya ekspedisi tidak lagi diisi vendor (2026-10-26, tanpa migration; membatalkan sebagian entri 0077 di bawah)
 Owner: harga ekspedisi tidak diinput vendor, pakai Master Data Ekspedisi. Kolom "Biaya ekspedisi resi ini" di dialog Set Ekspedisi & Resi dan tulisan "Biaya ekspedisi" di Riwayat pengiriman dihapus; server (`setKoliEkspedisiResiGroupAction`) tidak lagi menerima atau menulis biaya. `koliOngkirShare` (derive.ts) selalu memakai tarif per kg Master Data x berat koli (dibagi sesuai berat dalam satu resi), jadi HPP dan ongkir kembali seperti sebelum 0077. Kolom `delivery_kolis.biaya_ekspedisi` TETAP ada di database (migration 0077 tidak dibatalkan) tetapi tidak dibaca lagi; nilai yang pernah diisi vendor diabaikan.
 
