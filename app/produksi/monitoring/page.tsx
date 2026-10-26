@@ -249,7 +249,8 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
               <th className="whitespace-nowrap px-2 py-1.5 text-right">Yield Cutting</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-left">Reject / Rework</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-right">Yield FG</th>
-              <th className="whitespace-nowrap px-2 py-1.5 pr-3 text-left">Status</th>
+              <th className="whitespace-nowrap px-2 py-1.5 text-left">Status</th>
+              <th className="whitespace-nowrap px-2 py-1.5 pr-3"></th>
             </tr>
           </thead>
           <tbody>
@@ -274,17 +275,6 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
                     <td className="py-2 pl-3 text-text-muted">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
                     <td className="whitespace-nowrap px-2 py-2 font-sans text-[11.5px] font-medium text-[#31414F]">
                       {g.warna} · {g.lengan}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setRollDetailKey(key);
-                        }}
-                        className="ml-2 rounded border border-[#CBD5DF] bg-white px-1.5 py-0.5 font-sans text-[9.5px] font-semibold text-action-primary hover:bg-[#F2F5F8]"
-                        title="Lihat gramasi dan setting per roll"
-                      >
-                        Detail roll
-                      </button>
                       {shifts.length > 0 && (
                         <span title="Ada sisa kain yang dialihkan ke size lain -- buka baris untuk detail" className="ml-1.5 rounded bg-info-bg px-1.5 py-0.5 font-sans text-[9.5px] font-semibold text-info-fg">
                           ALIH SIZE
@@ -326,10 +316,23 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
                         {status.label}
                       </StatusPill>
                     </td>
+                    <td className="whitespace-nowrap px-2 py-2 pr-3 text-right">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRollDetailKey(key);
+                        }}
+                        className="rounded border border-[#CBD5DF] bg-white px-2 py-0.5 font-sans text-[10px] font-semibold text-action-primary hover:bg-[#F2F5F8]"
+                        title="Lihat gramasi dan setting per roll"
+                      >
+                        Detail roll
+                      </button>
+                    </td>
                   </tr>
                   {open && (
                     <tr className="border-t border-[#F1F4F7] bg-[#FAFBFC]">
-                      <td colSpan={12} className="px-3 py-2 pl-9">
+                      <td colSpan={13} className="px-3 py-2 pl-9">
                         {shifts.length > 0 && (
                           <div className="mb-2 flex flex-col gap-0.5 font-sans text-[11px] text-[#31414F]">
                             <span className="text-[10px] font-medium uppercase tracking-wider text-text-muted">Alih size (sisa kain)</span>
