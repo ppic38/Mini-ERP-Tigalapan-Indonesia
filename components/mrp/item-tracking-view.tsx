@@ -17,16 +17,16 @@ const num = "px-3 py-2 text-right font-mono";
 
 function Stat({ no, label, value, sub }: { no: number; label: string; value: number; sub?: string }) {
   return (
-    <div className="relative min-w-0 overflow-hidden rounded-xl border border-[#2A2C33] bg-[#131418] px-5 pb-4 pt-5">
+    <div className="relative min-w-0 overflow-hidden rounded-xl border border-border-subtle bg-surface-card px-5 pb-4 pt-5">
       <div className="absolute inset-x-0 top-0 h-[3px] bg-[#38BDF8]" />
-      <div className="truncate font-mono text-[10.5px] uppercase tracking-[0.14em] text-[#8B8E98]">{no}. {label}</div>
-      <div className="mt-2 font-sans text-[26px] font-bold leading-none tracking-tight text-white">{formatPcs(value)}</div>
-      <div className="mt-2 truncate font-mono text-[10.5px] text-[#8B8E98]">{sub ?? "pcs"}</div>
+      <div className="truncate font-mono text-[10.5px] uppercase tracking-[0.14em] text-text-muted">{no}. {label}</div>
+      <div className="mt-2 font-sans text-[26px] font-bold leading-none tracking-tight text-text-primary">{formatPcs(value)}</div>
+      <div className="mt-2 truncate font-mono text-[10.5px] text-text-muted">{sub ?? "pcs"}</div>
     </div>
   );
 }
 
-/** Ringkasan tahapan satu set item: tujuh kartu berurutan dari rencana sampai diterima gudang (gaya kartu gelap dengan garis aksen di atas). */
+/** Ringkasan tahapan satu set item: tujuh kartu berurutan dari rencana sampai diterima gudang (kartu dengan garis aksen di atas). */
 function StageCards({ rows }: { rows: ItemTrackRow[] }) {
   const t = (k: "target" | "cutting" | "fg" | "reject" | "diKoli" | "dikirim" | "diterima") => sum(rows.map((r) => r[k]));
   const mrps = new Set(rows.flatMap((r) => r.mrpIds)).size;
