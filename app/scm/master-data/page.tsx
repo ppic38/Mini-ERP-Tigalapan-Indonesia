@@ -8,7 +8,7 @@ import { WeightTolerancePanel } from "@/components/scm/weight-tolerance-panel";
 // Tidak perlu guard "mounted" di sini -- AppShell tidak merender anaknya sebelum terpasang di client.
 export default function ScmMasterDataPage() {
   return (
-    <AppShell role="scm" activeHref="/scm/master-data" breadcrumb={["Dashboard", "Master Data"]} title="Master Data" subtitle="Pengaturan acuan yang berlaku untuk semua vendor produksi">
+    <AppShell role="scm" activeHref="/scm/master-data" breadcrumb={["Dashboard", "Master Data"]} title="Master Data">
       <WeightTolerancePanel />
     </AppShell>
   );

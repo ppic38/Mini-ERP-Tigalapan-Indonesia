@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/mrp/number-input";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { MasterImportModal, normKey, upsertRows, type ImportValues } from "@/components/mrp/master-import-modal";
 import { MasterDataFormModal, ModalField } from "@/components/mrp/master-data-form-modal";
 import { formatRupiah } from "@/lib/mrp/derive";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -30,6 +31,7 @@ export function HargaRibPanel() {
   const [mode, setMode] = useState<"add" | "edit" | null>(null);
   const [editingRow, setEditingRow] = useState<HargaRibRow | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [importOpen, setImportOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -97,11 +99,15 @@ export function HargaRibPanel() {
     <>
       <DataTable
         title="Harga RIB"
-        subtitle={`Harga RIB per kg — ${rows.length} baris. DIPAKAI LIVE untuk estimasi Rp RIB di PO Approval (Rib kg x harga/kg). Supplier yang belum punya baris sendiri memakai harga KNITTO untuk warna yang sama.`}
         headerActions={
-          <Button onClick={openAdd} variant="dashed" size="sm">
-            + Tambah Data
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button onClick={() => setImportOpen(true)} variant="ghost" size="sm">
+              Import Data
+            </Button>
+            <Button onClick={openAdd} variant="dashed" size="sm">
+              + Tambah Data
+            </Button>
+          </div>
         }
         columns={columns}
         rows={rows}
@@ -135,6 +141,27 @@ export function HargaRibPanel() {
             <NumberInput value={draft.hargaPerKg} onChange={(v) => setDraft({ ...draft, hargaPerKg: v })} currency className="input w-full" />
           </ModalField>
         </MasterDataFormModal>
+      )}
+      {importOpen && (
+        <MasterImportModal
+          title="Harga RIB"
+          templateName="Template-Import-Harga-RIB.xlsx"
+          matchNote="Baris dengan Supplier + Warna yang SAMA dengan data yang sudah ada akan diperbarui, bukan digandakan."
+          columns={[
+            { key: "supplier", label: "Supplier", aliases: ["Kode Supplier", "Nama Supplier"], required: true, example: materialSuppliers[0]?.nama ?? "KNITTO" },
+            { key: "warna", label: "Warna", required: true, example: "BENHUR 24S" },
+            { key: "hargaPerKg", label: "Harga Per Kg", aliases: ["Harga/Kg", "Harga"], required: true, number: true, example: 120000 },
+          ]}
+          validate={(v) => (materialSuppliers.some((s) => s.nama.toLowerCase() === String(v.supplier).trim().toLowerCase()) ? [] : ["Supplier tidak ada di Master Data Supplier Material"])}
+          save={(vals) => {
+            const supplierOf = (v: ImportValues) => materialSuppliers.find((s) => s.nama.toLowerCase() === String(v.supplier).trim().toLowerCase())!.nama;
+            const keyOf = (v: ImportValues) => normKey(supplierOf(v), v.warna);
+            const payload = (v: ImportValues) => ({ kodeSupplier: supplierOf(v), namaSupplier: supplierOf(v), warna: String(v.warna).trim(), hargaPerKg: Number(v.hargaPerKg) });
+            const existing = new Map(rows.map((r) => [normKey(r.namaSupplier || r.kodeSupplier, r.warna), r.id]));
+            return upsertRows(vals, keyOf, existing, (v) => addRow(payload(v)), (id, v) => updateRow(id, payload(v)));
+          }}
+          onClose={() => setImportOpen(false)}
+        />
       )}
     </>
   );

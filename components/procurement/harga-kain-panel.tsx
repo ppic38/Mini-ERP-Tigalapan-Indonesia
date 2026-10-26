@@ -112,7 +112,6 @@ export function HargaKainPanel() {
     <>
       <DataTable
         title="Harga Kain / Material"
-        subtitle={`Harga flat per kg — ${rows.length} baris. DIPAKAI LIVE untuk estimasi harga PO Material di PO Approval/export PDF PO -- kalah prioritas dari Harga Kain PKS kalau berat pesanan cocok salah satu tingkatan tonase di sana.`}
         headerActions={
           <div className="flex items-center gap-1.5">
             <Button onClick={() => setImportOpen(true)} variant="ghost" size="sm">

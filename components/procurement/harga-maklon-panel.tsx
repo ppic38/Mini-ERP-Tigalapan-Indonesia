@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/mrp/number-input";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { MasterImportModal, normKey, upsertRows, type ImportValues } from "@/components/mrp/master-import-modal";
 import { MasterDataFormModal, ModalField } from "@/components/mrp/master-data-form-modal";
 import { formatRupiah } from "@/lib/mrp/derive";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -43,6 +44,7 @@ export function HargaMaklonPanel() {
   const [mode, setMode] = useState<"add" | "edit" | null>(null);
   const [editingRow, setEditingRow] = useState<HargaMaklonRow | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [importOpen, setImportOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -66,6 +68,12 @@ export function HargaMaklonPanel() {
     setError("");
     setMode("edit");
   }
+
+  // Cocokkan nama/kode vendor dari file import ke Master Data Vendor Produksi (tidak peduli huruf besar/kecil).
+  const findImportVendor = (name: string) => {
+    const n = name.trim().toLowerCase();
+    return n ? vendorProduksiList.find((v) => v.id.toLowerCase() === n || v.name.toLowerCase() === n) : undefined;
+  };
 
   async function handleSave() {
     setError("");
@@ -127,11 +135,15 @@ export function HargaMaklonPanel() {
     <>
       <DataTable
         title="Harga Maklon"
-        subtitle="Ongkos jahit per vendor produksi — bertingkat berdasarkan kapasitas kumulatif (Standar/PKS). DIPAKAI LIVE untuk estimasi harga PO Produksi di PO Approval (badge sumber Standar/PKS di sana)."
         headerActions={
-          <Button onClick={openAdd} variant="dashed" size="sm">
-            + Tambah Data
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button onClick={() => setImportOpen(true)} variant="ghost" size="sm">
+              Import Data
+            </Button>
+            <Button onClick={openAdd} variant="dashed" size="sm">
+              + Tambah Data
+            </Button>
+          </div>
         }
         columns={columns}
         rows={rows}
@@ -186,6 +198,47 @@ export function HargaMaklonPanel() {
             <NumberInput value={draft.harga} onChange={(v) => setDraft({ ...draft, harga: v })} currency className="input w-full" />
           </ModalField>
         </MasterDataFormModal>
+      )}
+      {importOpen && (
+        <MasterImportModal
+          title="Harga Maklon"
+          templateName="Template-Import-Harga-Maklon.xlsx"
+          matchNote="Baris dengan Vendor Produksi + Tipe Lengan + Jenis Harga + Kapasitas Min yang SAMA dengan data yang sudah ada akan diperbarui, bukan digandakan."
+          columns={[
+            { key: "vendor", label: "Vendor Produksi", aliases: ["Vendor", "Nama Vendor", "Kode Vendor"], required: true, example: vendorProduksiList[0]?.name ?? "CE" },
+            { key: "tipeLengan", label: "Tipe Lengan", required: true, example: "Pendek" },
+            { key: "jenisHarga", label: "Jenis Harga", example: "Standar" },
+            { key: "kapasitasMin", label: "Kapasitas Min", number: true, example: 0 },
+            { key: "kapasitasMax", label: "Kapasitas Max", number: true, example: 1000 },
+            { key: "harga", label: "Harga", aliases: ["Harga Per Pcs"], required: true, number: true, example: 8000 },
+          ]}
+          validate={(v) => {
+            const issues: string[] = [];
+            if (!findImportVendor(String(v.vendor))) issues.push("Vendor tidak ada di Master Data Vendor Produksi");
+            const j = String(v.jenisHarga).trim().toLowerCase();
+            if (j && j !== "standar" && j !== "pks") issues.push('Jenis Harga harus "Standar" atau "PKS"');
+            return issues;
+          }}
+          save={(vals) => {
+            const jenisOf = (v: ImportValues): "Standar" | "PKS" => (String(v.jenisHarga).trim().toLowerCase() === "pks" ? "PKS" : "Standar");
+            const keyOf = (v: ImportValues) => normKey(findImportVendor(String(v.vendor))?.id, v.tipeLengan, jenisOf(v), v.kapasitasMin);
+            const payload = (v: ImportValues) => {
+              const vendor = findImportVendor(String(v.vendor))!;
+              return {
+                kodeVendor: vendor.id,
+                namaVendor: vendor.name,
+                tipeLengan: String(v.tipeLengan).trim(),
+                jenisHarga: jenisOf(v),
+                kapasitasMin: v.kapasitasMin === "" ? undefined : Number(v.kapasitasMin),
+                kapasitasMax: v.kapasitasMax === "" ? undefined : Number(v.kapasitasMax),
+                harga: Number(v.harga),
+              };
+            };
+            const existing = new Map(rows.map((r) => [normKey(r.kodeVendor, r.tipeLengan, r.jenisHarga, r.kapasitasMin), r.id]));
+            return upsertRows(vals, keyOf, existing, (v) => addRow(payload(v)), (id, v) => updateRow(id, payload(v)));
+          }}
+          onClose={() => setImportOpen(false)}
+        />
       )}
     </>
   );

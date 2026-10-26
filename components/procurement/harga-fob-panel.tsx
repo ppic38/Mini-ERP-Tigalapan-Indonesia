@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/mrp/number-input";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { MasterImportModal, normKey, upsertRows, type ImportValues } from "@/components/mrp/master-import-modal";
 import { MasterDataFormModal, ModalField } from "@/components/mrp/master-data-form-modal";
 import { formatRupiah } from "@/lib/mrp/derive";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -28,6 +29,7 @@ export function HargaFobPanel() {
   const [mode, setMode] = useState<"add" | "edit" | null>(null);
   const [editingRow, setEditingRow] = useState<HargaFobRow | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [importOpen, setImportOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -47,6 +49,12 @@ export function HargaFobPanel() {
     setError("");
     setMode("edit");
   }
+
+  // Cocokkan nama/kode vendor dari file import ke Master Data Vendor Produksi (tidak peduli huruf besar/kecil).
+  const findImportVendor = (name: string) => {
+    const n = name.trim().toLowerCase();
+    return n ? vendorProduksiList.find((v) => v.id.toLowerCase() === n || v.name.toLowerCase() === n) : undefined;
+  };
 
   async function handleSave() {
     setError("");
@@ -100,9 +108,14 @@ export function HargaFobPanel() {
       <DataTable
         title="Harga FOB"
         headerActions={
-          <Button onClick={openAdd} variant="dashed" size="sm">
-            + Tambah Data
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button onClick={() => setImportOpen(true)} variant="ghost" size="sm">
+              Import Data
+            </Button>
+            <Button onClick={openAdd} variant="dashed" size="sm">
+              + Tambah Data
+            </Button>
+          </div>
         }
         columns={columns}
         rows={rows}
@@ -131,6 +144,26 @@ export function HargaFobPanel() {
             <NumberInput value={draft.hargaPerPcs} onChange={(v) => setDraft({ ...draft, hargaPerPcs: v })} currency className="input w-full" />
           </ModalField>
         </MasterDataFormModal>
+      )}
+      {importOpen && (
+        <MasterImportModal
+          title="Harga FOB"
+          templateName="Template-Import-Harga-FOB.xlsx"
+          matchNote="Baris dengan Vendor Produksi + Item yang SAMA dengan data yang sudah ada akan diperbarui, bukan digandakan."
+          columns={[
+            { key: "vendor", label: "Vendor Produksi", aliases: ["Vendor", "Nama Vendor", "Kode Vendor"], required: true, example: vendorProduksiList[0]?.name ?? "CE" },
+            { key: "item", label: "Item", required: true, example: "CARGO PANJANG" },
+            { key: "hargaPerPcs", label: "Harga Per Pcs", aliases: ["Harga/Pcs", "Harga"], required: true, number: true, example: 85000 },
+          ]}
+          validate={(v) => (findImportVendor(String(v.vendor)) ? [] : ["Vendor tidak ada di Master Data Vendor Produksi"])}
+          save={(vals) => {
+            const keyOf = (v: ImportValues) => normKey(findImportVendor(String(v.vendor))?.id, v.item);
+            const payload = (v: ImportValues) => ({ vendorProduksi: findImportVendor(String(v.vendor))!.id, item: String(v.item).trim(), hargaPerPcs: Number(v.hargaPerPcs) });
+            const existing = new Map(rows.map((r) => [normKey(r.vendorProduksi, r.item), r.id]));
+            return upsertRows(vals, keyOf, existing, (v) => addRow(payload(v)), (id, v) => updateRow(id, payload(v)));
+          }}
+          onClose={() => setImportOpen(false)}
+        />
       )}
     </>
   );

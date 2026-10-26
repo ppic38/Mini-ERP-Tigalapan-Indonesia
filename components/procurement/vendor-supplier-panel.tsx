@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/mrp/number-input";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { MasterImportModal, normKey, upsertRows, type ImportValues } from "@/components/mrp/master-import-modal";
 import { MasterDataFormModal, ModalField } from "@/components/mrp/master-data-form-modal";
 import { Tabs } from "@/components/ui/tabs";
 import { KeepAliveTab } from "@/components/ui/keep-alive-tab";
@@ -44,6 +45,7 @@ export function VendorSupplierPanel() {
 
   const [subTab, setSubTab] = useState<SubTab>("vendorProduksi");
 
+  const [importSupplierOpen, setImportSupplierOpen] = useState(false);
   const [supplierMode, setSupplierMode] = useState<"add" | null>(null);
   const [supplierDraft, setSupplierDraft] = useState<SupplierDraft>(EMPTY_SUPPLIER_DRAFT);
   const [supplierSaving, setSupplierSaving] = useState(false);
@@ -149,7 +151,6 @@ export function VendorSupplierPanel() {
       <KeepAliveTab active={subTab === "vendorProduksi"}>
         <DataTable
           title="Vendor Produksi"
-          subtitle={`${vendorProduksiList.length} vendor — akun login vendor produksi yang sudah ada di app. Dipakai sebagai dropdown "Vendor Produksi" di Harga Maklon supaya tidak salah ketik. Edit/Hapus di sini TIDAK mengubah password login vendor.`}
           columns={vendorColumns}
           rows={vendorProduksiList}
           keyOf={(v) => v.id}
@@ -162,11 +163,15 @@ export function VendorSupplierPanel() {
       <KeepAliveTab active={subTab === "supplierMaterial"}>
         <DataTable
           title="Supplier Material"
-          subtitle={`${materialSuppliers.length} supplier — dipakai sebagai dropdown supplier di Harga Kain, Harga Kain PKS, Harga RIB & Harga Kerah/Manset. Tambah di sini dulu sebelum bisa dipilih di tabel-tabel itu.`}
           headerActions={
-            <Button onClick={openAddSupplier} variant="dashed" size="sm">
-              + Tambah Data
-            </Button>
+            <div className="flex items-center gap-1.5">
+              <Button onClick={() => setImportSupplierOpen(true)} variant="ghost" size="sm">
+                Import Data
+              </Button>
+              <Button onClick={openAddSupplier} variant="dashed" size="sm">
+                + Tambah Data
+              </Button>
+            </div>
           }
           columns={supplierColumns}
           rows={materialSuppliers}
@@ -177,6 +182,23 @@ export function VendorSupplierPanel() {
           emptyText='Belum ada supplier — klik "+ Tambah Data".'
         />
       </KeepAliveTab>
+      {importSupplierOpen && (
+        <MasterImportModal
+          title="Supplier Material"
+          templateName="Template-Import-Supplier-Material.xlsx"
+          matchNote="Supplier yang namanya sudah ada dilewati, bukan digandakan."
+          columns={[{ key: "nama", label: "Nama Supplier", aliases: ["Nama", "Supplier"], required: true, example: "KNITTO" }]}
+          save={(vals) =>
+            upsertRows(
+              vals,
+              (v) => normKey(v.nama),
+              new Map(materialSuppliers.map((r) => [normKey(r.nama), r.id])),
+              (v: ImportValues) => addSupplier(String(v.nama).trim())
+            )
+          }
+          onClose={() => setImportSupplierOpen(false)}
+        />
+      )}
       {supplierMode && (
         <MasterDataFormModal title="Tambah Supplier Material" onCancel={() => setSupplierMode(null)} onSave={handleSaveSupplier} saving={supplierSaving} error={supplierError}>
           <ModalField label="Nama Supplier">

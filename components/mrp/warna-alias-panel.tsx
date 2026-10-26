@@ -97,7 +97,6 @@ export function WarnaAliasPanel() {
     <>
       <DataTable
         title="Mapping Warna"
-        subtitle={`${rows.length} mapping. Pemetaan nama warna di MRP (PPIC) ke nama warna di Master Data SKU -- dipakai otomatis kalau nama warnanya beda tapi warnanya sama (mis. "BENHUR SPECIAL 24S" -> "BENHUR 24S"), supaya SKU di resi WMS tetap kecocok.`}
         headerActions={
           <div className="flex items-center gap-1.5">
             <Button onClick={() => setImportOpen(true)} variant="ghost" size="sm">

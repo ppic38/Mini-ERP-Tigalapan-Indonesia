@@ -109,7 +109,6 @@ export function ItemSellingPricePanel() {
     <>
       <DataTable
         title="SKU (Harga Jual per Item)"
-        subtitle={`${rows.length} SKU. Dipakai untuk kolom "% HPP" di Laporan HPP (Finance) & dicocokkan otomatis ke resi pengiriman WMS lewat SKU.`}
         headerActions={
           <div className="flex items-center gap-1.5">
             <Button onClick={() => setImportOpen(true)} variant="ghost" size="sm">

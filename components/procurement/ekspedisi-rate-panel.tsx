@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/mrp/number-input";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { MasterImportModal, normKey, upsertRows, type ImportValues } from "@/components/mrp/master-import-modal";
 import { MasterDataFormModal, ModalField } from "@/components/mrp/master-data-form-modal";
 import { formatRupiah } from "@/lib/mrp/derive";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -31,6 +32,7 @@ export function EkspedisiRatePanel() {
   const [mode, setMode] = useState<"add" | "edit" | null>(null);
   const [editingRow, setEditingRow] = useState<EkspedisiRateRow | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [importOpen, setImportOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -90,11 +92,15 @@ export function EkspedisiRatePanel() {
     <>
       <DataTable
         title="Ekspedisi"
-        subtitle="Tarif ongkir FLAT per kg (harga/kg x total berat kg 1 resi pengiriman) — tabel ini DIPAKAI LANGSUNG untuk menghitung ongkir koli/HPP di seluruh app."
         headerActions={
-          <Button onClick={openAdd} variant="dashed" size="sm">
-            + Tambah Data
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button onClick={() => setImportOpen(true)} variant="ghost" size="sm">
+              Import Data
+            </Button>
+            <Button onClick={openAdd} variant="dashed" size="sm">
+              + Tambah Data
+            </Button>
+          </div>
         }
         columns={columns}
         rows={rows}
@@ -114,6 +120,23 @@ export function EkspedisiRatePanel() {
             <NumberInput value={draft.pricePerKg} onChange={(v) => setDraft({ ...draft, pricePerKg: v })} currency className="input w-full" />
           </ModalField>
         </MasterDataFormModal>
+      )}
+      {importOpen && (
+        <MasterImportModal
+          title="Ekspedisi"
+          templateName="Template-Import-Ekspedisi.xlsx"
+          matchNote="Baris dengan Nama ekspedisi yang SAMA dengan data yang sudah ada akan diperbarui, bukan digandakan."
+          columns={[
+            { key: "nama", label: "Nama Ekspedisi", aliases: ["Nama", "Ekspedisi"], required: true, example: "JNE" },
+            { key: "pricePerKg", label: "Harga Per Kg", aliases: ["Harga/Kg", "Harga"], required: true, number: true, example: 8000 },
+          ]}
+          save={(vals) => {
+            const payload = (v: ImportValues) => ({ nama: String(v.nama).trim(), pricePerKg: Number(v.pricePerKg) });
+            const existing = new Map(rows.map((r) => [normKey(r.nama), r.id]));
+            return upsertRows(vals, (v) => normKey(v.nama), existing, (v) => addRow(payload(v)), (id, v) => updateRow(id, payload(v)));
+          }}
+          onClose={() => setImportOpen(false)}
+        />
       )}
     </>
   );

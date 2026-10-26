@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { MasterImportModal, normKey, upsertRows } from "@/components/mrp/master-import-modal";
 import { useMrpStore } from "@/lib/mrp/store";
 
 /** Master Data — daftar Entitas (badan usaha) yang dipakai Procurement (assign per PO/material)
@@ -16,6 +17,7 @@ export function EntitasPanel() {
   const deleteEntitas = useMrpStore((s) => s.deleteEntitas);
   const [newName, setNewName] = useState("");
   const [search, setSearch] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
 
   function submitAdd() {
     const name = newName.trim();
@@ -29,10 +31,10 @@ export function EntitasPanel() {
   return (
     <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
       <div className="flex items-center gap-2 border-b border-border-subtle px-5 py-3">
-        <div>
-          <span className="font-sans text-[13px] font-semibold text-text-primary">List Entitas</span>
-          <div className="mt-0.5 font-sans text-[10.5px] font-medium text-text-muted">Dipakai Procurement & Finance saat assign/approve PO.</div>
-        </div>
+        <span className="font-sans text-[13px] font-semibold text-text-primary">List Entitas</span>
+        <Button onClick={() => setImportOpen(true)} variant="ghost" size="sm" className="ml-auto">
+          Import Data
+        </Button>
       </div>
       <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle bg-[#FAFBFC] px-5 py-2.5">
         <input
@@ -65,6 +67,16 @@ export function EntitasPanel() {
           <div className="px-5 py-6 text-center font-sans text-xs text-text-muted">{rows.length === 0 ? "Belum ada entitas." : "Tidak ada entitas yang cocok."}</div>
         )}
       </div>
+      {importOpen && (
+        <MasterImportModal
+          title="Entitas"
+          templateName="Template-Import-Entitas.xlsx"
+          matchNote="Entitas yang namanya sudah ada dilewati, bukan digandakan."
+          columns={[{ key: "nama", label: "Nama Entitas", aliases: ["Nama", "Entitas"], required: true, example: "PT Contoh Abadi" }]}
+          save={(vals) => upsertRows(vals, (v) => normKey(v.nama), new Map(rows.map((r) => [normKey(r.nama), r.id])), (v) => addEntitas(String(v.nama).trim()))}
+          onClose={() => setImportOpen(false)}
+        />
+      )}
     </div>
   );
 }

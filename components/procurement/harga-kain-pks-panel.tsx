@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/mrp/number-input";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { MasterImportModal, normKey, upsertRows, type ImportValues } from "@/components/mrp/master-import-modal";
 import { MasterDataFormModal, ModalField } from "@/components/mrp/master-data-form-modal";
 import { formatRupiah } from "@/lib/mrp/derive";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -32,6 +33,7 @@ export function HargaKainPksPanel() {
   const [mode, setMode] = useState<"add" | "edit" | null>(null);
   const [editingRow, setEditingRow] = useState<HargaKainPksRow | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [importOpen, setImportOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -124,11 +126,15 @@ export function HargaKainPksPanel() {
     <>
       <DataTable
         title="Harga Kain PKS (bertingkat per tonase)"
-        subtitle={`${rows.length} baris. DIPAKAI LIVE untuk estimasi harga PO Material di PO Approval -- diprioritaskan di atas Harga Kain (flat) kalau berat pesanan cocok salah satu tingkatan tonase (Tonase Min-Max) di sini.`}
         headerActions={
-          <Button onClick={openAdd} variant="dashed" size="sm">
-            + Tambah Data
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button onClick={() => setImportOpen(true)} variant="ghost" size="sm">
+              Import Data
+            </Button>
+            <Button onClick={openAdd} variant="dashed" size="sm">
+              + Tambah Data
+            </Button>
+          </div>
         }
         columns={columns}
         rows={rows}
@@ -180,6 +186,39 @@ export function HargaKainPksPanel() {
             <NumberInput value={draft.hargaPerKg} onChange={(v) => setDraft({ ...draft, hargaPerKg: v })} currency className="input w-full" />
           </ModalField>
         </MasterDataFormModal>
+      )}
+      {importOpen && (
+        <MasterImportModal
+          title="Harga Kain PKS"
+          templateName="Template-Import-Harga-Kain-PKS.xlsx"
+          matchNote="Baris dengan Supplier + Kategori + Warna + Tonase Min yang SAMA dengan data yang sudah ada akan diperbarui, bukan digandakan."
+          columns={[
+            { key: "supplier", label: "Supplier", aliases: ["Kode Supplier", "Nama Supplier"], required: true, example: materialSuppliers[0]?.nama ?? "KNITTO" },
+            { key: "kategori", label: "Kategori", example: "COMBED 24S" },
+            { key: "warna", label: "Warna", required: true, example: "BENHUR 24S" },
+            { key: "satuan", label: "Satuan", example: "TON" },
+            { key: "tonaseMin", label: "Tonase Min", number: true, example: 1 },
+            { key: "tonaseMax", label: "Tonase Max", number: true, example: 5 },
+            { key: "hargaPerKg", label: "Harga Per Kg", aliases: ["Harga/Kg", "Harga"], required: true, number: true, example: 65000 },
+          ]}
+          validate={(v) => (materialSuppliers.some((s) => s.nama.toLowerCase() === String(v.supplier).trim().toLowerCase()) ? [] : ["Supplier tidak ada di Master Data Supplier Material"])}
+          save={(vals) => {
+            const supplierOf = (v: ImportValues) => materialSuppliers.find((s) => s.nama.toLowerCase() === String(v.supplier).trim().toLowerCase())!.nama;
+            const keyOf = (v: ImportValues) => normKey(supplierOf(v), v.kategori, v.warna, v.tonaseMin);
+            const payload = (v: ImportValues) => ({
+              kodeSupplier: supplierOf(v),
+              kategori: String(v.kategori).trim(),
+              warna: String(v.warna).trim(),
+              satuan: String(v.satuan).trim() || "TON",
+              tonaseMin: v.tonaseMin === "" ? undefined : Number(v.tonaseMin),
+              tonaseMax: v.tonaseMax === "" ? undefined : Number(v.tonaseMax),
+              hargaPerKg: Number(v.hargaPerKg),
+            });
+            const existing = new Map(rows.map((r) => [normKey(r.kodeSupplier, r.kategori, r.warna, r.tonaseMin), r.id]));
+            return upsertRows(vals, keyOf, existing, (v) => addRow(payload(v)), (id, v) => updateRow(id, payload(v)));
+          }}
+          onClose={() => setImportOpen(false)}
+        />
       )}
     </>
   );
