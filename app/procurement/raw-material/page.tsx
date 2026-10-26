@@ -88,6 +88,7 @@ const INFO = {
       <>
         <p>Nilai roll yang berstatus <b>WIP</b>.</p>
         <p className="mt-1.5"><b>Rumus:</b> jumlah nilai roll WIP, dengan nilai per roll = harga per kg × berat kotor roll × faktor diskon.</p>
+        <p className="mt-1.5"><b>Rib / kerah / manset (≈ estimasi):</b> kg per roll = kg rib warna·lengan di MRP ÷ jumlah roll warna·lengan itu. Dikalikan roll kain WIP warna yang sama di invoice ini, lalu × harga per kg setelah diskon.</p>
       </>
     ),
   },
@@ -106,6 +107,7 @@ const INFO = {
       <>
         <p>Nilai roll yang <b>belum dipakai</b> produksi.</p>
         <p className="mt-1.5"><b>Rumus:</b> jumlah nilai roll sisa, dengan nilai per roll = harga per kg × berat kotor roll × faktor diskon.</p>
+        <p className="mt-1.5"><b>Rib / kerah / manset (≈ estimasi):</b> nilai dibeli − estimasi WIP − estimasi selesai.</p>
         <p className="mt-1.5 text-text-muted">Termasuk roll yang belum diterima vendor.</p>
       </>
     ),
@@ -235,13 +237,17 @@ function RawMaterialDetailModal({ summary, mrpCreated, onClose }: { summary: Raw
                       <td className={num}>{l.rollSisa}</td>
                     </>
                   ) : (
-                    <td colSpan={4} className="px-3 py-2 text-right font-mono text-text-muted" title="Pemakaian rib/kerah/manset tidak dilacak per roll">
-                      {l.beratKg} kg · hanya pembelian
+                    <td
+                      colSpan={4}
+                      className="px-3 py-2 text-right font-mono text-text-muted"
+                      title={l.estimasi ? "Estimasi: kg per roll di MRP x roll kain warna ini yang sudah WIP / selesai" : "Pemakaian item ini tidak dilacak per roll"}
+                    >
+                      {l.beratKg} kg{l.estimasi ? ` · est. WIP ${(l.kgWip ?? 0).toFixed(1)} · selesai ${(l.kgSelesai ?? 0).toFixed(1)}` : " · hanya pembelian"}
                     </td>
                   )}
                   <td className={num + " font-semibold"}>{rp(l.nilaiSetelahDiskon)}</td>
-                  <td className={num}>{l.kind === "KAIN" ? rp(l.nilaiWip) : "—"}</td>
-                  <td className={num}>{l.kind === "KAIN" ? rp(l.nilaiSisa) : "—"}</td>
+                  <td className={num}>{l.kind === "KAIN" || l.estimasi ? <>{l.estimasi && <span className="text-text-muted">≈ </span>}{rp(l.nilaiWip)}</> : "—"}</td>
+                  <td className={num}>{l.kind === "KAIN" || l.estimasi ? <>{l.estimasi && <span className="text-text-muted">≈ </span>}{rp(l.nilaiSisa)}</> : "—"}</td>
                 </tr>
               ))}
               {rows.length === 0 && (

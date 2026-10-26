@@ -38,7 +38,7 @@ export async function exportRawMaterialExcel(summaries: RawMaterialSummary[], li
   const ws = wb.addWorksheet("Ringkasan MRP-Vendor", { views: [{ state: "frozen", ySplit: 3, xSplit: 2 }] });
   ws.getCell("A1").value = "Raw Material per MRP dan Vendor";
   ws.getCell("A1").font = { bold: true, size: 13 };
-  ws.getCell("A2").value = `Dibuat ${localDateString(new Date())}${filterLabel ? " · Filter: " + filterLabel : ""} · Angka dihitung dengan rumus dari sheet "Rincian per warna" · Roll sisa = dibeli − WIP − selesai · Diskon = total sebelum diskon − total setelah diskon`;
+  ws.getCell("A2").value = `Dibuat ${localDateString(new Date())}${filterLabel ? " · Filter: " + filterLabel : ""} · Angka dihitung dengan rumus dari sheet "Rincian per warna" · Roll sisa = dibeli − WIP − selesai · WIP/selesai/sisa rib, kerah, manset adalah ESTIMASI dari roll kain yang dipakai · Diskon = total sebelum diskon − total setelah diskon`;
   ws.getCell("A2").font = { italic: true, size: 9, color: { argb: "FF6B7280" } };
   const head = ws.addRow([
     "No. MRP", "Vendor", "Kategori produk", "Jenis bahan", "Jumlah invoice",

@@ -1,4 +1,5 @@
 import type { MrpDetail } from "./store";
+import { materialKgPerRollForGroup, type AduanMaterialKind } from "./derive";
 import type { Lengan, Mrp, ProductionBatch, RawMaterialInvoice } from "./types";
 
 /** Laporan "Raw Material" (Procurement, owner 2026-10-26): pembelian dan pemakaian bahan baku per MRP dan vendor produksi, untuk pelaporan bulanan.
@@ -6,8 +7,11 @@ import type { Lengan, Mrp, ProductionBatch, RawMaterialInvoice } from "./types";
  *  Sumber nilai: invoice bahan (`RawMaterialInvoice`) -- tiap roll kain = harga per kg x berat kotor roll itu; diskon invoice (satu angka untuk seluruh
  *  invoice) dibagi sebanding nilai tiap item sehingga jumlah semua item setelah diskon = `totalBiaya` invoice. Pemakaian roll ditelusuri lewat code roll:
  *  roll yang sudah punya batch produksi (resting/cutting/FG) dan belum ditutup = WIP, yang batch-nya sudah ditutup = Selesai, sisanya = Sisa (dibeli
- *  dikurangi WIP dan Selesai, termasuk yang belum diterima vendor -- mengikuti spreadsheet RAW MATERIAL). Item tambahan (rib/kerah/manset) tidak
- *  dilacak pemakaiannya per roll, jadi hanya masuk sisi pembelian (tagihan dan diskon). */
+ *  dikurangi WIP dan Selesai, termasuk yang belum diterima vendor -- mengikuti spreadsheet RAW MATERIAL).
+ *
+ *  Rib/kerah/manset tidak dilacak per roll di ERP, jadi pemakaiannya ESTIMASI (owner 2026-10-26): kg per roll = kg rib grup warna+lengan di MRP / jumlah roll
+ *  grup itu (aturan yang sama dengan alokasi rib di PO/PV, `materialKgPerRollForGroup`), dikalikan roll kain warna yang sama dalam invoice itu yang
+ *  berstatus WIP / selesai. Nilainya = kg estimasi x harga per kg item tersebut (setelah diskon), maksimal sebesar kg yang dibeli. */
 
 export type RawMaterialLine = {
   key: string;
@@ -34,6 +38,11 @@ export type RawMaterialLine = {
   rollSisa: number;
   /** Berat item tambahan (kg); 0 untuk kain. */
   beratKg: number;
+  /** Item tambahan rib/kerah/manset: WIP/Selesai/Sisa-nya hasil ESTIMASI dari pemakaian roll kain (lihat catatan di atas). */
+  estimasi?: boolean;
+  /** Estimasi kg item tambahan yang sudah dipakai (WIP dan selesai). */
+  kgWip?: number;
+  kgSelesai?: number;
   nilaiSebelumDiskon: number;
   diskon: number;
   nilaiSetelahDiskon: number;
@@ -96,6 +105,20 @@ export function rawMaterialLines(invoices: RawMaterialInvoice[], batches: Produc
     // selalu sama dengan tagihan invoice, termasuk invoice hasil migrasi.
     const factor = baseTotal > 0 && inv.totalBiaya > 0 ? inv.totalBiaya / baseTotal : 1;
 
+    // Pemakaian rib/kerah/manset yang diperkirakan dari roll kain tiap warna di invoice ini (kg), dipakai membagi item tambahan di bawah.
+    const KINDS: AduanMaterialKind[] = ["rib", "kerah", "manset"];
+    const pool = new Map<string, { wip: Record<AduanMaterialKind, number>; selesai: Record<AduanMaterialKind, number> }>();
+    const addPool = (warna: string, lengan: Lengan, status: "wip" | "selesai") => {
+      const group = detail?.lenganGroups.find((g) => g.warna === warna && g.lengan === lengan);
+      if (!group) return;
+      let p = pool.get(warna);
+      if (!p) {
+        p = { wip: { rib: 0, kerah: 0, manset: 0 }, selesai: { rib: 0, kerah: 0, manset: 0 } };
+        pool.set(warna, p);
+      }
+      for (const k of KINDS) p[status][k] += materialKgPerRollForGroup(group, k);
+    };
+
     inv.colorEntries.forEach((c, ci) => {
       const key = `${c.warna}|${c.lengan}`;
       const arrivals = inv.rollArrivals[key] ?? [];
@@ -139,9 +162,11 @@ export function rawMaterialLines(invoices: RawMaterialInvoice[], batches: Produc
         if (batch && batch.closedAt) {
           line.rollSelesai += 1;
           line.nilaiSelesai += after;
+          addPool(c.warna, c.lengan, "selesai");
         } else if (batch) {
           line.rollWip += 1;
           line.nilaiWip += after;
+          addPool(c.warna, c.lengan, "wip");
         } else {
           line.rollSisa += 1;
           line.nilaiSisa += after;
@@ -153,6 +178,21 @@ export function rawMaterialLines(invoices: RawMaterialInvoice[], batches: Produc
 
     inv.addBuys.forEach((a, ai) => {
       const kategori = categoryFor(detail, mrp, a.warna);
+      const after = a.totalHarga * factor;
+      const kind = KINDS.find((k) => k === a.item.trim().toLowerCase());
+      const p = kind ? pool.get(a.warna) : undefined;
+      let kgWip = 0;
+      let kgSelesai = 0;
+      if (kind && p && a.beratKg > 0) {
+        kgWip = Math.min(p.wip[kind], a.beratKg);
+        kgSelesai = Math.min(p.selesai[kind], a.beratKg - kgWip);
+        // Item tambahan lain dengan warna dan jenis yang sama memakai sisa jatah, bukan jatah yang sama dua kali.
+        p.wip[kind] -= kgWip;
+        p.selesai[kind] -= kgSelesai;
+      }
+      const perKg = a.beratKg > 0 ? after / a.beratKg : 0;
+      const nilaiWip = kgWip * perKg;
+      const nilaiSelesai = kgSelesai * perKg;
       out.push({
         key: `${inv.id}|add|${ai}`,
         mrpId: inv.mrpId,
@@ -173,11 +213,9 @@ export function rawMaterialLines(invoices: RawMaterialInvoice[], batches: Produc
         rollSisa: 0,
         beratKg: a.beratKg,
         nilaiSebelumDiskon: a.totalHarga,
-        diskon: a.totalHarga - a.totalHarga * factor,
-        nilaiSetelahDiskon: a.totalHarga * factor,
-        nilaiWip: 0,
-        nilaiSelesai: 0,
-        nilaiSisa: 0,
+        diskon: a.totalHarga - after,
+        nilaiSetelahDiskon: after,
+        ...(kind ? { estimasi: true, kgWip, kgSelesai, nilaiWip, nilaiSelesai, nilaiSisa: Math.max(0, after - nilaiWip - nilaiSelesai) } : { nilaiWip: 0, nilaiSelesai: 0, nilaiSisa: 0 }),
       });
     });
   }
