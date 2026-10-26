@@ -34,24 +34,24 @@ export async function exportRawMaterialExcel(summaries: RawMaterialSummary[], li
   const head = ws.addRow([
     "No. MRP", "Vendor", "Kategori produk", "Jenis bahan", "Jumlah invoice",
     "Roll dibeli", "Roll diterima", "Roll WIP", "Roll selesai", "Roll sisa",
-    "Total sebelum diskon", "Diskon", "Total invoice setelah diskon", "WIP (Rp)", "Selesai produksi (Rp)", "Sisa bahan baku (Rp)",
+    "Total sebelum diskon", "Diskon", "Kain setelah diskon", "Rib dan tambahan setelah diskon", "Total invoice setelah diskon", "WIP (Rp)", "Selesai produksi (Rp)", "Sisa bahan baku (Rp)",
   ]);
   styleHeader(head);
   for (const s of summaries) {
     ws.addRow([
       s.mrpId, vendorName(s.vendorProduksi), s.kategori, s.jenis, s.invoiceCount,
       s.rollBeli, s.rollDiterima, s.rollWip, s.rollSelesai, s.rollSisa,
-      Math.round(s.nilaiSebelumDiskon), Math.round(s.diskon), Math.round(s.nilaiSetelahDiskon), Math.round(s.nilaiWip), Math.round(s.nilaiSelesai), Math.round(s.nilaiSisa),
+      Math.round(s.nilaiSebelumDiskon), Math.round(s.diskon), Math.round(s.nilaiKain), Math.round(s.nilaiTambahan), Math.round(s.nilaiSetelahDiskon), Math.round(s.nilaiWip), Math.round(s.nilaiSelesai), Math.round(s.nilaiSisa),
     ]);
   }
   const total = ws.addRow([
     "TOTAL", "", "", "", "",
     ...[6, 7, 8, 9, 10].map((c) => ({ formula: `SUM(${String.fromCharCode(64 + c)}4:${String.fromCharCode(64 + c)}${3 + summaries.length})` })),
-    ...[11, 12, 13, 14, 15, 16].map((c) => ({ formula: `SUM(${String.fromCharCode(64 + c)}4:${String.fromCharCode(64 + c)}${3 + summaries.length})` })),
+    ...[11, 12, 13, 14, 15, 16, 17, 18].map((c) => ({ formula: `SUM(${String.fromCharCode(64 + c)}4:${String.fromCharCode(64 + c)}${3 + summaries.length})` })),
   ]);
   total.font = { bold: true };
   total.eachCell((c) => (c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF2F5F8" } }));
-  for (let c = 11; c <= 16; c++) ws.getColumn(c).numFmt = RP;
+  for (let c = 11; c <= 18; c++) ws.getColumn(c).numFmt = RP;
   ws.columns.forEach((col, i) => (col.width = i === 0 ? 16 : i === 1 ? 22 : i === 2 || i === 3 ? 22 : i < 10 ? 11 : 20));
 
   const wd = wb.addWorksheet("Rincian per warna", { views: [{ state: "frozen", ySplit: 1, xSplit: 3 }] });

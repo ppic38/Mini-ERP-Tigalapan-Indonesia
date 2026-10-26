@@ -23,58 +23,117 @@ const bulanLabel = (ym: string) => {
 };
 
 function DetailTable({ lines }: { lines: RawMaterialLine[] }) {
-  const ordered = [...lines].sort((a, b) => (a.bookedAt < b.bookedAt ? 1 : a.bookedAt > b.bookedAt ? -1 : 0) || a.warna.localeCompare(b.warna) || a.jenis.localeCompare(b.jenis));
+  const byDate = (a: RawMaterialLine, b: RawMaterialLine) =>
+    (a.bookedAt < b.bookedAt ? 1 : a.bookedAt > b.bookedAt ? -1 : 0) || a.warna.localeCompare(b.warna) || a.jenis.localeCompare(b.jenis);
+  const kain = lines.filter((l) => l.kind === "KAIN").sort(byDate);
+  const tambahan = lines.filter((l) => l.kind === "TAMBAHAN").sort(byDate);
   const num = "px-2.5 py-1.5 text-right font-mono";
+  const thBase = "px-2.5 py-2";
+  const head = "border-b border-[#E4E9EE] bg-[#F2F5F8] text-[10px] font-semibold uppercase tracking-wider text-text-muted";
+  const foot = "border-t border-[#E4E9EE] bg-[#F7F9FB] font-semibold";
   return (
-    <div className="overflow-x-auto rounded-md border border-border-subtle bg-white">
-      <table className="w-full min-w-[1180px] border-collapse font-sans text-[11.5px] text-[#31414F]">
-        <thead>
-          <tr className="border-b border-[#E4E9EE] bg-[#F2F5F8] text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-            <th className="px-2.5 py-2 text-left">Warna</th>
-            <th className="px-2.5 py-2 text-left">Jenis bahan</th>
-            <th className="px-2.5 py-2 text-left" title="Nomor invoice dari supplier">No. invoice supplier</th>
-            <th className="px-2.5 py-2 text-left">Tanggal</th>
-            <th className="px-2.5 py-2 text-right">Roll dibeli</th>
-            <th className="px-2.5 py-2 text-right">WIP</th>
-            <th className="px-2.5 py-2 text-right">Selesai</th>
-            <th className="px-2.5 py-2 text-right">Sisa</th>
-            <th className="px-2.5 py-2 text-right">Setelah diskon</th>
-            <th className="px-2.5 py-2 text-right">WIP (Rp)</th>
-            <th className="px-2.5 py-2 text-right">Sisa (Rp)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {ordered.map((l) => (
-            <tr key={l.key} className="border-b border-[#EEF1F4] last:border-b-0">
-              <td className="px-2.5 py-1.5">
-                {l.warna}
-                {l.lengan ? <span className="text-text-muted"> · {l.lengan}</span> : null}
-              </td>
-              <td className="px-2.5 py-1.5">
-                {l.jenis}
-                <span className="block text-[10px] text-text-muted">{l.kategori}</span>
-              </td>
-              <td className="px-2.5 py-1.5 font-mono" title={`ID invoice internal: ${l.invoiceId}`}>{l.noInvoice}</td>
-              <td className="px-2.5 py-1.5 font-mono text-text-muted">{formatDate(l.bookedAt)}</td>
-              {l.kind === "KAIN" ? (
-                <>
+    <div className="flex flex-col gap-3">
+      {kain.length > 0 && (
+        <div className="overflow-x-auto rounded-md border border-border-subtle bg-white">
+          <div className="border-b border-[#E4E9EE] bg-white px-2.5 py-2 font-sans text-[11px] font-semibold text-[#31414F]">Kain (roll)</div>
+          <table className="w-full min-w-[1100px] border-collapse font-sans text-[11.5px] text-[#31414F]">
+            <thead>
+              <tr className={head}>
+                <th className={thBase + " text-left"}>Warna</th>
+                <th className={thBase + " text-left"}>Jenis bahan</th>
+                <th className={thBase + " text-left"} title="Nomor invoice dari supplier">No. invoice supplier</th>
+                <th className={thBase + " text-left"}>Tanggal</th>
+                <th className={thBase + " text-right"}>Roll dibeli</th>
+                <th className={thBase + " text-right"}>WIP</th>
+                <th className={thBase + " text-right"}>Selesai</th>
+                <th className={thBase + " text-right"}>Sisa</th>
+                <th className={thBase + " text-right"}>Setelah diskon</th>
+                <th className={thBase + " text-right"}>WIP (Rp)</th>
+                <th className={thBase + " text-right"}>Sisa (Rp)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {kain.map((l) => (
+                <tr key={l.key} className="border-b border-[#EEF1F4] last:border-b-0">
+                  <td className="px-2.5 py-1.5">
+                    {l.warna}
+                    {l.lengan ? <span className="text-text-muted"> · {l.lengan}</span> : null}
+                  </td>
+                  <td className="px-2.5 py-1.5">
+                    {l.jenis}
+                    <span className="block text-[10px] text-text-muted">{l.kategori}</span>
+                  </td>
+                  <td className="px-2.5 py-1.5 font-mono" title={`ID invoice internal: ${l.invoiceId}`}>{l.noInvoice}</td>
+                  <td className="px-2.5 py-1.5 font-mono text-text-muted">{formatDate(l.bookedAt)}</td>
                   <td className={num}>{l.rollBeli}</td>
                   <td className={num}>{l.rollWip}</td>
                   <td className={num}>{l.rollSelesai}</td>
                   <td className={num}>{l.rollSisa}</td>
-                </>
-              ) : (
-                <td colSpan={4} className="px-2.5 py-1.5 text-right font-mono text-text-muted" title="Pemakaian rib/kerah/manset tidak dilacak per roll">
-                  {l.beratKg} kg · hanya pembelian
-                </td>
-              )}
-              <td className={num + " font-semibold"}>{rp(l.nilaiSetelahDiskon)}</td>
-              <td className={num}>{l.kind === "KAIN" ? rp(l.nilaiWip) : "—"}</td>
-              <td className={num}>{l.kind === "KAIN" ? rp(l.nilaiSisa) : "—"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+                  <td className={num + " font-semibold"}>{rp(l.nilaiSetelahDiskon)}</td>
+                  <td className={num}>{rp(l.nilaiWip)}</td>
+                  <td className={num}>{rp(l.nilaiSisa)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className={foot}>
+                <td className="px-2.5 py-1.5" colSpan={4}>Total kain</td>
+                <td className={num}>{sum(kain.map((l) => l.rollBeli))}</td>
+                <td className={num}>{sum(kain.map((l) => l.rollWip))}</td>
+                <td className={num}>{sum(kain.map((l) => l.rollSelesai))}</td>
+                <td className={num}>{sum(kain.map((l) => l.rollSisa))}</td>
+                <td className={num}>{rp(sum(kain.map((l) => l.nilaiSetelahDiskon)))}</td>
+                <td className={num}>{rp(sum(kain.map((l) => l.nilaiWip)))}</td>
+                <td className={num}>{rp(sum(kain.map((l) => l.nilaiSisa)))}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+      {tambahan.length > 0 && (
+        <div className="overflow-x-auto rounded-md border border-border-subtle bg-white">
+          <div className="border-b border-[#E4E9EE] bg-white px-2.5 py-2 font-sans text-[11px] font-semibold text-[#31414F]">
+            Rib dan item tambahan <span className="font-normal text-text-muted">· hanya pembelian, pemakaiannya tidak dilacak per roll</span>
+          </div>
+          <table className="w-full min-w-[760px] border-collapse font-sans text-[11.5px] text-[#31414F]">
+            <thead>
+              <tr className={head}>
+                <th className={thBase + " text-left"}>Item</th>
+                <th className={thBase + " text-left"}>Warna</th>
+                <th className={thBase + " text-left"} title="Nomor invoice dari supplier">No. invoice supplier</th>
+                <th className={thBase + " text-left"}>Tanggal</th>
+                <th className={thBase + " text-right"}>Berat (kg)</th>
+                <th className={thBase + " text-right"}>Sebelum diskon</th>
+                <th className={thBase + " text-right"}>Setelah diskon</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tambahan.map((l) => (
+                <tr key={l.key} className="border-b border-[#EEF1F4] last:border-b-0">
+                  <td className="px-2.5 py-1.5">
+                    {l.jenis}
+                    <span className="block text-[10px] text-text-muted">{l.kategori}</span>
+                  </td>
+                  <td className="px-2.5 py-1.5">{l.warna}</td>
+                  <td className="px-2.5 py-1.5 font-mono" title={`ID invoice internal: ${l.invoiceId}`}>{l.noInvoice}</td>
+                  <td className="px-2.5 py-1.5 font-mono text-text-muted">{formatDate(l.bookedAt)}</td>
+                  <td className={num}>{l.beratKg}</td>
+                  <td className={num}>{rp(l.nilaiSebelumDiskon)}</td>
+                  <td className={num + " font-semibold"}>{rp(l.nilaiSetelahDiskon)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className={foot}>
+                <td className="px-2.5 py-1.5" colSpan={4}>Total rib dan item tambahan</td>
+                <td className={num}>{sum(tambahan.map((l) => l.beratKg))}</td>
+                <td className={num}>{rp(sum(tambahan.map((l) => l.nilaiSebelumDiskon)))}</td>
+                <td className={num}>{rp(sum(tambahan.map((l) => l.nilaiSetelahDiskon)))}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -135,6 +194,8 @@ export default function RawMaterialPage() {
     { key: "rollSisa", label: "Roll sisa", default: true, align: "right", render: (s) => s.rollSisa },
     { key: "sebelum", label: "Total sebelum diskon", default: false, align: "right", render: (s) => rp(s.nilaiSebelumDiskon) },
     { key: "diskon", label: "Diskon", default: true, align: "right", render: (s) => rp(s.diskon) },
+    { key: "kain", label: "Kain setelah diskon", default: true, align: "right", render: (s) => rp(s.nilaiKain) },
+    { key: "tambahan", label: "Rib dan tambahan setelah diskon", default: true, align: "right", render: (s) => rp(s.nilaiTambahan) },
     { key: "setelah", label: "Total invoice setelah diskon", default: true, align: "right", render: (s) => <span className="font-semibold">{rp(s.nilaiSetelahDiskon)}</span> },
     { key: "wip", label: "WIP (Rp)", default: true, align: "right", render: (s) => rp(s.nilaiWip) },
     { key: "selesai", label: "Selesai produksi (Rp)", default: false, align: "right", render: (s) => rp(s.nilaiSelesai) },
