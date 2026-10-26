@@ -26,7 +26,12 @@ export default function ScmApprovalMrpPage() {
   if (!mounted) return null;
 
   const pending = mrpDetails.filter((d) => d.ppicApproval === "WAITING_PPIC_APPROVAL");
-  const history = mrpDetails.filter((d) => d.ppicApproval === "PPIC_APPROVED" || d.ppicApproval === "REJECTED");
+  // Riwayat: MRP terbaru (tanggal dibuat) paling atas, sama seperti daftar MRP di PPIC; tanggal sama = yang masuk belakangan dulu.
+  const history = mrpDetails
+    .map((d, idx) => ({ d, idx }))
+    .filter(({ d }) => d.ppicApproval === "PPIC_APPROVED" || d.ppicApproval === "REJECTED")
+    .sort((x, y) => (x.d.dates.created < y.d.dates.created ? 1 : x.d.dates.created > y.d.dates.created ? -1 : y.idx - x.idx))
+    .map(({ d }) => d);
 
   function reject(mrpId: string) {
     const note = (noteDraft[mrpId] ?? "").trim();
