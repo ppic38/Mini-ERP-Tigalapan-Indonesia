@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { formatPcs } from "@/lib/mrp/derive";
+import { SingleSelectFilter } from "@/components/mrp/single-select-filter";
 import type { MrpWarnaBreakdown } from "@/lib/mrp/derive";
 
 /** Angka satu warna untuk SATU vendor saja (dari bagian vendor itu di `vendors`); total panjang + pendek dihitung ulang. */
@@ -66,31 +67,25 @@ export function MrpWarnaBreakdownTable({ breakdown: allBreakdown }: { breakdown:
       {(allBreakdown.length > 1 || vendorOptions.length > 1) && (
         <div className="flex flex-wrap items-center gap-2">
           {vendorOptions.length > 1 && (
-            <select
+            <SingleSelectFilter
+              label="Vendor"
+              allLabel={`Semua vendor (${vendorOptions.length})`}
+              options={vendorOptions}
               value={filterVendor}
-              onChange={(e) => {
-                setFilterVendor(e.target.value);
+              onChange={(v) => {
+                setFilterVendor(v);
                 setFilterWarna("");
               }}
-              className="input w-auto !py-1.5 !text-[11px]"
-            >
-              <option value="">Semua vendor ({vendorOptions.length})</option>
-              {vendorOptions.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
+            />
           )}
-          <select value={filterWarna} onChange={(e) => setFilterWarna(e.target.value)} className="input w-auto !py-1.5 !text-[11px]">
-            <option value="">Semua warna ({breakdown.length})</option>
-            {warnaOptions.map((w) => (
-              <option key={w.warna} value={w.warna}>
-                {w.warna}
-                {w.isEmpty ? " — tidak ada pemesanan" : ""}
-              </option>
-            ))}
-          </select>
+          <SingleSelectFilter
+            label="Warna"
+            allLabel={`Semua warna (${breakdown.length})`}
+            options={warnaOptions.map((w) => w.warna)}
+            value={filterWarna}
+            onChange={setFilterWarna}
+            labelOf={(warna) => warna + (breakdown.find((w) => w.warna === warna)?.isEmpty ? " — tidak ada pemesanan" : "")}
+          />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
