@@ -19,6 +19,7 @@ import {
   availableFgToShip,
   formatDate,
   formatDecimal,
+  compareNoKoli,
   mrpIdsWithClosedRolls,
   mrpIdsWithUnpackedFg,
   rollRemainingBySizeForMrp,
@@ -162,6 +163,20 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
 
   const [mrpId, setMrpId] = useState("");
   const [noKoli, setNoKoli] = useState("");
+  // Peringatan sesaat saat ada huruf/simbol diketik di kolom No koli (hanya angka yang diterima).
+  const [noKoliWarn, setNoKoliWarn] = useState(false);
+  const noKoliWarnTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function onNoKoliInput(raw: string) {
+    const digits = raw.replace(/\D/g, "");
+    setNoKoli(digits);
+    if (digits !== raw) {
+      setNoKoliWarn(true);
+      if (noKoliWarnTimer.current) clearTimeout(noKoliWarnTimer.current);
+      noKoliWarnTimer.current = setTimeout(() => setNoKoliWarn(false), 2500);
+    } else {
+      setNoKoliWarn(false);
+    }
+  }
   // Qty per baris "Isi koli" (Rework & sisa FG lama sebelum fitur roll), keyed by
   // rowKey(kind, warna|lengan|size|usia) — lihat rowKey().
   const [qtyDraft, setQtyDraft] = useState<Record<string, number>>({});
@@ -336,6 +351,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
     setEditingKoliId(k.id);
     setMrpId(k.mrpId);
     setNoKoli(k.noKoli);
+    setNoKoliWarn(false);
     setQtyDraft(Object.fromEntries(k.items.filter((it) => !it.sourceBatchId).map((it) => [rowKey(it.kind ?? "FG", it), it.qty])));
     // Qty roll yang SUDAH ada di koli ini (item ber-sourceBatchId), diagregasi kembali ke draft
     // per size supaya form "Isi qty per size" pre-filled dengan isi koli saat ini.
@@ -560,7 +576,11 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
     }
   }
 
-  const myKolis = deliveryKolis.filter((k) => k.vendorProduksi === vendorId);
+  // Berurutan menurut nomor koli (angka sebagai angka); urutan MRP tetap mengikuti kemunculan pertamanya.
+  const myKolisRaw = deliveryKolis.filter((k) => k.vendorProduksi === vendorId);
+  const mrpOrder = new Map<string, number>();
+  for (const k of myKolisRaw) if (!mrpOrder.has(k.mrpId)) mrpOrder.set(k.mrpId, mrpOrder.size);
+  const myKolis = [...myKolisRaw].sort((a, b) => (mrpOrder.get(a.mrpId) ?? 0) - (mrpOrder.get(b.mrpId) ?? 0) || compareNoKoli(a.noKoli, b.noKoli));
   const pending = myKolis.filter((k) => !k.deliveredAt);
   const delivered = myKolis.filter((k) => k.deliveredAt);
 
@@ -623,7 +643,19 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
           </div>
           <div>
             <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">No koli</div>
-            <input value={noKoli} onChange={(e) => setNoKoli(e.target.value)} placeholder="Contoh: KOLI-001" className="input mt-1" />
+            <input
+              value={noKoli}
+              onChange={(e) => onNoKoliInput(e.target.value)}
+              inputMode="numeric"
+              placeholder="Contoh: 001"
+              aria-invalid={noKoliWarn}
+              className={"input mt-1 " + (noKoliWarn ? "!border-danger !bg-danger-bg/40" : "")}
+            />
+            {noKoliWarn && (
+              <div role="alert" className="mt-1 flex items-center gap-1 font-sans text-[11px] font-semibold text-danger-fg">
+                <span aria-hidden>⚠</span> Nomor koli hanya menerima angka.
+              </div>
+            )}
           </div>
         </div>
 

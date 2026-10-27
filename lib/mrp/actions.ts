@@ -5235,7 +5235,13 @@ async function clampDeliveryItemsBySourceBatch(items: DeliveryKoliItem[], mrpId:
  *  addVendorInvoiceAdjustment/store.ts) supaya store.ts bisa langsung nge-patch state DARI HASIL
  *  NYATA ini (pola sama updateBatchToCuttingAction/sendPoToFinanceAction), TANPA menunggu
  *  backgroundRefresh (snapshot 32-tabel) cuma untuk koli baru ini muncul di daftar. */
+/** Nomor koli hanya boleh angka (owner 2026-10-27); dicek juga di server, bukan hanya di kolom isian. */
+function assertNoKoliNumeric(noKoli: string): void {
+  if (!/^\d+$/.test(noKoli.trim())) throw new Error("Nomor koli hanya boleh berisi angka (mis. 001).");
+}
+
 export async function createDeliveryKoliAction(input: { mrpId: string; vendorProduksi: string; ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }): Promise<DeliveryKoli> {
+  assertNoKoliNumeric(input.noKoli);
   const actor = await requireVendorSessionWithActor();
   assertSameVendor(actor.vendorId, input.vendorProduksi, "Koli ini");
   const db = supabaseServer();

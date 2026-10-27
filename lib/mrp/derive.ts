@@ -2161,6 +2161,15 @@ export function availableCodeRollsForColor(
     .map((r) => r.codeRoll);
 }
 
+/** Pembanding nomor koli: angka dibandingkan sebagai angka (2 sebelum 10, "0010" sama dengan 10), yang bukan angka (data lama) menurut urutan natural. */
+export function compareNoKoli(a?: string, b?: string): number {
+  const x = (a ?? "").trim();
+  const y = (b ?? "").trim();
+  const numeric = /^\d+$/;
+  if (numeric.test(x) && numeric.test(y)) return Number(x) - Number(y) || x.length - y.length;
+  return x.localeCompare(y, undefined, { numeric: true });
+}
+
 export function formatDateTime(iso?: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
