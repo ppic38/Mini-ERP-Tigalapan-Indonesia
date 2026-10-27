@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Rincian isi koli digabung per size (2026-10-27, tanpa migration)
+Owner: baris yang tampak duplikat di rincian isi koli (mis. XL Finish Good 15 pcs dan XL 47 pcs). Penyebab: tiap item koli menyimpan roll asalnya sendiri (migration 0024), jadi satu size dari dua roll menjadi dua baris. `mergeKoliItems` (components/mrp/koli-items-detail.tsx) menjumlahkan item yang jenis produk, warna, lengan, size, dan usianya sama; dipakai `ItemsDetailPanel` (Riwayat pengiriman, Koli belum dikirim, Siap diajukan invoice) dan hitungan "N varian" di `summarizeItems`. Hanya tampilan; data koli (per roll) tidak berubah. Tombol "Lihat detail roll" di panel itu membuka popup tabel qty per roll (code roll dari `sourceBatchId` ke batch produksi, jenis produk, warna, lengan, size, qty, total); item tanpa roll asal (Rework, koli lama) bertanda "—".
+
 ## Nomor koli: berurutan dan hanya angka (2026-10-27, tanpa migration)
 Owner: daftar koli di Pengiriman berurut menurut nomor koli, dan kolom "No koli" hanya menerima angka. `compareNoKoli` (derive.ts): angka dibandingkan sebagai angka (2 sebelum 10, "0010" = 10), nomor non-angka dari data lama memakai urutan natural; urutan MRP mengikuti kemunculan pertamanya. Kolom No koli (app/vendor-maklon/pengiriman/page.tsx) membuang huruf/simbol saat diketik atau ditempel, lalu menampilkan peringatan merah "Nomor koli hanya menerima angka" selama 2,5 detik; keyboard angka di perangkat sentuh (`inputMode="numeric"`). Server (`createDeliveryKoliAction`) menolak nomor non-angka juga. Koli lama bernomor huruf tetap tampil, hanya tidak bisa dibuat baru.
 
