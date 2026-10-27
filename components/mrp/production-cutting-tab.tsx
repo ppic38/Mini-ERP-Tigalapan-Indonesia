@@ -405,9 +405,13 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   // Popup form "Tambah roll": hanya warna yang bahannya SUDAH diterima & masih punya sisa yang bisa
   // dipakai (belum diterima = tidak ditampilkan). Setelah warna dipilih, user menentukan JUMLAH roll
   // (stepper) -- code roll terpilih mengikuti urutan, dan bisa disesuaikan dengan centang manual.
+  // Satu kode aduan bisa punya >1 baris dengan warna yang sama (mis. dua baris "S-XL" Burgundy): jatah dijumlahkan per warna, bukan diambil dari baris pertama saja.
   const warnaOptions = selectedGroup
-    ? selectedGroup.rows
-        .map((r) => ({ warna: r.warna, free: r.available - visibleLines.filter((l) => l.roll.warna === r.warna).length }))
+    ? Array.from(new Set(selectedGroup.rows.map((r) => r.warna)))
+        .map((warna) => ({
+          warna,
+          free: selectedGroup.rows.filter((r) => r.warna === warna).reduce((sum, r) => sum + r.available, 0) - visibleLines.filter((l) => l.roll.warna === warna).length,
+        }))
         .filter((o) => o.free > 0)
     : [];
   // Roll BEBAS per warna (owner 2026-10-22): daftar menampilkan SEMUA roll yang masih bebas untuk warna itu (roll dipakai
@@ -415,10 +419,11 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   // dicentang per warna. Dulu daftar dipotong ke N roll pertama, sehingga operator tidak bisa memilih roll lain.
   const pickGroupsData = selectedGroup
     ? pickWarnas.flatMap((w) => {
-        const row = selectedGroup.rows.find((r) => r.warna === w);
-        if (!row) return [];
+        const rowsOfWarna = selectedGroup.rows.filter((r) => r.warna === w);
+        if (rowsOfWarna.length === 0) return [];
+        const available = rowsOfWarna.reduce((sum, r) => sum + r.available, 0);
         const cands = candidates.filter((c) => c.warna === w && c.lengan === selectedGroup.lengan && !visibleLines.some((l) => l.id === c.claimKey));
-        const quota = Math.max(0, Math.min(cands.length, row.available - visibleLines.filter((l) => l.roll.warna === w).length));
+        const quota = Math.max(0, Math.min(cands.length, available - visibleLines.filter((l) => l.roll.warna === w).length));
         return [{ warna: w, cands, quota }];
       })
     : [];
@@ -518,8 +523,12 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
         )
       );
       // 2) buat batch resting -- waktu MULAI resting = saat tombol ini diklik (otomatis).
+      // Baris aduan dengan warna sama dipakai berurutan: roll masuk ke baris yang masih punya jatah, bukan selalu baris pertama.
+      const rowRemaining = new Map(selectedGroup.rows.map((r) => [r.id, r.available]));
       const resolved = visibleLines.map((l) => {
-        const row = selectedGroup.rows.find((r) => r.warna === l.roll.warna);
+        const rowsOfWarna = selectedGroup.rows.filter((r) => r.warna === l.roll.warna);
+        const row = rowsOfWarna.find((r) => (rowRemaining.get(r.id) ?? 0) > 0) ?? rowsOfWarna[0];
+        if (row) rowRemaining.set(row.id, (rowRemaining.get(row.id) ?? 0) - 1);
         return row ? { aduanRowId: row.id, gramasi: l.gramasi, codeRoll: l.roll.isReplacement ? l.codeRoll : l.roll.codeRoll, setting: l.setting } : null;
       });
       const validLines = resolved.filter((x): x is NonNullable<typeof x> => x !== null);
