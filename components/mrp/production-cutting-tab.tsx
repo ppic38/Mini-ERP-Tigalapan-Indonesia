@@ -1,7 +1,7 @@
 "use client";
 
 import { PicText } from "@/components/mrp/actor-tag";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Info } from "lucide-react";
 import { NumberInput } from "@/components/mrp/number-input";
 import { StatusPill } from "@/components/ui/status-pill";
@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
 import { SizeQtyControl } from "@/components/mrp/size-qty-control";
 import { useMrpStore } from "@/lib/mrp/store";
+import { MultiFileInput } from "@/components/mrp/multi-file-input";
+import { saveExtraAttachments, type AttachFile } from "@/lib/mrp/attachments";
 import { useVendorAuthStore } from "@/lib/mrp/vendor-auth-store";
 import { alertDialog } from "@/components/ui/confirm-dialog";
 import {
@@ -203,15 +205,12 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   const [claimLineId, setClaimLineId] = useState<string | null>(null);
   const [claimKind, setClaimKind] = useState<"BERAT" | "FISIK">("BERAT");
   const [claimNote, setClaimNote] = useState("");
-  const [claimPhotoDataUrl, setClaimPhotoDataUrl] = useState<string | null>(null);
-  const [claimPhotoFileName, setClaimPhotoFileName] = useState<string | undefined>(undefined);
-  const [claimPhotoError, setClaimPhotoError] = useState<string | null>(null);
-  const [claimPhotoBusy, setClaimPhotoBusy] = useState(false);
+  // Foto bukti klaim: boleh lebih dari satu (maks 5); Procurement membukanya lewat satu tombol "Lihat / Download".
+  const [claimFiles, setClaimFiles] = useState<AttachFile[]>([]);
   const [claimSubmitting, setClaimSubmitting] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
   // Ref ke <input type="file"> supaya "Ganti foto" bisa ikut mengosongkan value DOM-nya, bukan cuma
   // state React -- tanpa ini memilih file YANG SAMA lagi tidak memicu onChange.
-  const claimPhotoInputRef = useRef<HTMLInputElement>(null);
 
   // Modal "Input Hasil Cutting" di-scope ke SATU SESI RESTING ("Part") -- `activeCuttingGroupKey`
   // berisi RestingSessionGroup.key penuh (mrpId|kode|lengan|restingAt).
@@ -566,36 +565,24 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
     resetClaimPhoto();
   }
   function resetClaimPhoto() {
-    setClaimPhotoDataUrl(null);
-    setClaimPhotoFileName(undefined);
-    setClaimPhotoError(null);
-    setClaimPhotoBusy(false);
-    if (claimPhotoInputRef.current) claimPhotoInputRef.current.value = "";
+    setClaimFiles([]);
   }
-  async function onClaimPhotoSelected(file: File) {
-    setClaimPhotoError(null);
-    setClaimPhotoBusy(true);
+  // Satu foto klaim: dikecilkan di browser dan dicek ukurannya (batas lama tetap berlaku per foto).
+  async function readClaimPhoto(file: File): Promise<AttachFile | { error: string }> {
     try {
       const compressed = await compressImageToDataUrl(file);
-      if (dataUrlApproxBytes(compressed) > MAX_CLAIM_PHOTO_BYTES) {
-        setClaimPhotoError("Foto terlalu besar, ambil ulang dengan resolusi lebih kecil");
-        setClaimPhotoDataUrl(null);
-        return;
-      }
-      setClaimPhotoDataUrl(compressed);
-      setClaimPhotoFileName(file.name);
+      if (dataUrlApproxBytes(compressed) > MAX_CLAIM_PHOTO_BYTES) return { error: "Foto terlalu besar, ambil ulang dengan resolusi lebih kecil" };
+      return { dataUrl: compressed, fileName: file.name };
     } catch (e) {
-      setClaimPhotoError(e instanceof Error ? e.message : "Gagal memproses foto.");
-    } finally {
-      setClaimPhotoBusy(false);
+      return { error: e instanceof Error ? e.message : "Gagal memproses foto." };
     }
   }
   const claimTypeInvalid = claimKind === "BERAT" ? !claimVariance?.claimable : !claimNote.trim();
   async function submitClaim() {
-    if (!claimLine || !claimPhotoDataUrl || claimTypeInvalid || claimSubmitting) return;
+    if (!claimLine || claimFiles.length === 0 || claimTypeInvalid || claimSubmitting) return;
     setClaimSubmitting(true);
     setClaimError(null);
-    const photo = { dataUrl: claimPhotoDataUrl, fileName: claimPhotoFileName };
+    const photo = { dataUrl: claimFiles[0].dataUrl, fileName: claimFiles[0].fileName };
     const r = claimLine.roll;
     try {
       if (claimKind === "BERAT" && claimVariance) {
@@ -603,6 +590,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
       } else {
         await submitRollDefectClaim([{ invoiceId: r.invoiceId, warna: r.warna, lengan: r.lengan, rollIndex: r.rollIndex, netKg: claimLine.netKg > 0 ? claimLine.netKg : r.grossKg }], claimNote.trim(), photo);
       }
+      // Foto ke-2 dan seterusnya disimpan setelah klaim tercatat; kegagalannya hanya diberi tahu (klaim sudah terkirim).
+      const extraError = await saveExtraAttachments("CLAIM_PHOTO", [r.claimKey], claimFiles);
+      if (extraError) window.alert("Claim terkirim, tetapi foto tambahan gagal diunggah: " + extraError + "\nFoto utama sudah tersimpan.");
       removeLine(claimLine.id);
       closeClaim();
     } catch (e) {
@@ -1591,28 +1581,22 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 </>
               )}
               <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
-                Foto bukti — <span className="text-danger-fg">wajib</span>
+                Foto bukti — <span className="text-danger-fg">wajib</span> <span className="font-normal normal-case text-text-muted">(boleh lebih dari satu)</span>
               </div>
               <div className="mt-1.5 rounded-md border border-dashed border-[#CBD5DF] bg-[#FAFBFC] p-3">
-                <input
-                  ref={claimPhotoInputRef}
-                  type="file"
+                <MultiFileInput
+                  files={claimFiles}
+                  onChange={setClaimFiles}
+                  readFile={readClaimPhoto}
                   accept="image/*"
-                  capture="environment"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) onClaimPhotoSelected(file);
-                  }}
-                  className="input w-full file:mr-2.5 file:rounded file:border-0 file:bg-info-bg file:px-2.5 file:py-1 file:font-sans file:text-[11px] file:font-semibold file:text-info-fg"
+                  inputClassName="input w-full file:mr-2.5 file:rounded file:border-0 file:bg-info-bg file:px-2.5 file:py-1 file:font-sans file:text-[11px] file:font-semibold file:text-info-fg"
                 />
-                {!claimPhotoDataUrl && !claimPhotoBusy && !claimPhotoError && <div className="mt-1.5 font-sans text-[11px] text-text-muted">Belum ada foto — wajib sebelum claim bisa dikirim.</div>}
-                {claimPhotoBusy && <div className="mt-1.5 font-sans text-[11px] text-text-muted">Memproses foto…</div>}
-                {claimPhotoError && <div className="mt-1.5 font-sans text-[11px] text-danger-fg">{claimPhotoError}</div>}
-                {claimPhotoDataUrl && !claimPhotoBusy && !claimPhotoError && (
-                  <div className="mt-1.5 flex items-center gap-2">
-                    {/* eslint-disable-next-line @next/next/no-img-element -- preview data URI base64, bukan aset statis (lihat compressImageToDataUrl di atas) */}
-                    <img src={claimPhotoDataUrl} alt="Foto bukti claim" className="h-16 w-16 rounded-md border border-[#E4E8EE] object-cover" />
-                    <div className="font-sans text-[11px] text-success-fg">✓ {claimPhotoFileName} terupload.</div>
+                {claimFiles.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {claimFiles.map((f, i) => (
+                      // eslint-disable-next-line @next/next/no-img-element -- preview data URI base64, bukan aset statis
+                      <img key={`${f.fileName}-${i}`} src={f.dataUrl} alt={`Foto bukti claim ${i + 1}`} className="h-16 w-16 rounded-md border border-[#E4E8EE] object-cover" />
+                    ))}
                   </div>
                 )}
               </div>
@@ -1625,7 +1609,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               </button>
               <button
                 onClick={submitClaim}
-                disabled={!claimPhotoDataUrl || claimPhotoBusy || claimTypeInvalid || claimSubmitting}
+                disabled={claimFiles.length === 0 || claimTypeInvalid || claimSubmitting}
                 className="rounded-md bg-danger px-3.5 py-[7px] font-sans text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {claimSubmitting ? "Mengirim…" : "Ya, Kirim Claim"}

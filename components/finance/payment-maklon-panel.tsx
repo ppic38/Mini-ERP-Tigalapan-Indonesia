@@ -7,6 +7,8 @@ import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { KoliEkspedisiCard, viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
 import { useMrpStore } from "@/lib/mrp/store";
 import { readProofAsDataUrl } from "@/lib/mrp/clientFiles";
+import { MultiFileInput } from "@/components/mrp/multi-file-input";
+import { saveExtraAttachments, type AttachFile } from "@/lib/mrp/attachments";
 import { viewVendorInvoicePaymentProof } from "@/lib/mrp/viewVendorInvoiceProof";
 import {
   formatDate,
@@ -273,10 +275,12 @@ export function PaymentMaklonPanel() {
   const [actionResult, setActionResult] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
   // Bukti pembayaran WAJIB sebelum "Bayar Penuh" bisa diklik (owner 2026-10-24, pola sama pembayaran invoice material).
-  const [proofDataUrl, setProofDataUrl] = useState<string | undefined>(undefined);
-  const [proofFileName, setProofFileName] = useState<string | undefined>(undefined);
-  const [proofError, setProofError] = useState("");
+  const [proofFiles, setProofFiles] = useState<AttachFile[]>([]);
   const [rowProofError, setRowProofError] = useState("");
+  // Lampirkan bukti belakangan (invoice yang sudah lunas tanpa bukti): baris yang sedang membuka kotak unggahnya.
+  const [rowUploadFor, setRowUploadFor] = useState<string | null>(null);
+  const [rowFiles, setRowFiles] = useState<AttachFile[]>([]);
+  const [rowSaving, setRowSaving] = useState(false);
   // Revisi 2026-09-17 (owner: "ikuti konsep PO Approval -- filter MRP untuk yang akan dipayment,
   // begitu dibayar turun ke tabel di bawah yang di-grouping per MRP", diterapkan sama seperti
   // payment-panel.tsx materi): bagian ATAS = dropdown "No MRP (siap dibayar)" + DataTable invoice
@@ -345,37 +349,30 @@ export function PaymentMaklonPanel() {
 
   const selectedList = readyRows.filter((i) => selected.has(i.id));
 
-  async function handleProofFile(file: File | null) {
-    setProofError("");
-    if (!file) {
-      setProofDataUrl(undefined);
-      setProofFileName(undefined);
-      return;
-    }
+  // Pembaca file bukti untuk kotak unggah multi-file (PDF/JPG/PNG; gambar besar dikecilkan otomatis).
+  async function readProofFile(file: File): Promise<AttachFile | { error: string }> {
     const r = await readProofAsDataUrl(file);
-    if ("error" in r) {
-      setProofError(r.error);
-      setProofDataUrl(undefined);
-      setProofFileName(undefined);
-      return;
-    }
-    setProofDataUrl(r.dataUrl);
-    setProofFileName(r.fileName);
+    return "error" in r ? { error: r.error } : { dataUrl: r.dataUrl, fileName: r.fileName };
   }
 
   // Lampirkan bukti belakangan untuk invoice yang sudah lunas tetapi belum punya bukti (dibayar sebelum aturan ini berlaku).
-  async function handleRowProofFile(invoiceId: string, file: File | null) {
+  async function saveRowProof(invoiceId: string) {
+    if (rowFiles.length === 0 || rowSaving) return;
+    setRowSaving(true);
     setRowProofError("");
-    if (!file) return;
-    const r = await readProofAsDataUrl(file);
-    if ("error" in r) {
-      setRowProofError(r.error);
-      return;
-    }
     try {
-      await setVendorInvoicePaymentProof([invoiceId], { dataUrl: r.dataUrl, fileName: r.fileName });
+      await setVendorInvoicePaymentProof([invoiceId], { dataUrl: rowFiles[0].dataUrl, fileName: rowFiles[0].fileName });
+      const extraError = await saveExtraAttachments("VENDOR_INVOICE_PROOF", [invoiceId], rowFiles);
+      if (extraError) {
+        setRowProofError("File utama tersimpan, tetapi file tambahan gagal: " + extraError);
+        return;
+      }
+      setRowFiles([]);
+      setRowUploadFor(null);
     } catch {
       // pesan gagal sudah ditampilkan store
+    } finally {
+      setRowSaving(false);
     }
   }
 
@@ -385,15 +382,16 @@ export function PaymentMaklonPanel() {
     // baris masih sempat tampak "Belum dibayar" sampai halaman di-reload manual (pola bug yang
     // sama dengan paying-voucher-wizard.tsx / production-cutting-tab.tsx). Sekarang di-await satu
     // per satu supaya notifikasi baru muncul setelah semuanya benar-benar lunas.
-    if (paying || !proofDataUrl) return;
+    if (paying || proofFiles.length === 0) return;
     setPaying(true);
     try {
-      await payVendorInvoices(selectedList.map((i) => i.id), { dataUrl: proofDataUrl, fileName: proofFileName });
-      setActionResult(`${selectedList.length} invoice dibayar lunas.`);
+      const paidIds = selectedList.map((i) => i.id);
+      await payVendorInvoices(paidIds, { dataUrl: proofFiles[0].dataUrl, fileName: proofFiles[0].fileName });
+      // File ke-2 dan seterusnya (kalau ada) disimpan setelah pembayaran tercatat; kegagalannya hanya diberi tahu.
+      const extraError = await saveExtraAttachments("VENDOR_INVOICE_PROOF", paidIds, proofFiles);
+      setActionResult(extraError ? `${paidIds.length} invoice dibayar lunas, tetapi file tambahan gagal diunggah: ${extraError}` : `${paidIds.length} invoice dibayar lunas.`);
       setSelected(new Set());
-      setProofDataUrl(undefined);
-      setProofFileName(undefined);
-      setProofError("");
+      setProofFiles([]);
     } catch {
       // pesan gagal sudah ditampilkan store dan perubahan dibatalkan; bukti tetap terisi supaya bisa dicoba lagi
     } finally {
@@ -490,16 +488,33 @@ export function PaymentMaklonPanel() {
         inv.buktiBayarAt ? (
           <span onClick={(e) => e.stopPropagation()}>
             <button onClick={() => void viewVendorInvoicePaymentProof(inv.id)} className="font-sans text-[11px] font-semibold text-action-primary underline">
-              Lihat
+              Lihat / Download
             </button>
+          </span>
+        ) : rowUploadFor === inv.id ? (
+          <span onClick={(e) => e.stopPropagation()} className="flex w-[220px] flex-col gap-1">
+            <MultiFileInput
+              files={rowFiles}
+              onChange={setRowFiles}
+              readFile={readProofFile}
+              accept="application/pdf,image/jpeg,image/png"
+              inputClassName="w-full text-[10.5px] file:mr-1.5 file:rounded file:border-0 file:bg-info-bg file:px-2 file:py-0.5 file:font-sans file:text-[10.5px] file:font-semibold file:text-info-fg"
+            />
+            {rowProofError && <span className="font-sans text-[10px] text-danger-fg">{rowProofError}</span>}
+            <span className="flex items-center gap-2">
+              <button onClick={() => void saveRowProof(inv.id)} disabled={rowFiles.length === 0 || rowSaving} className="rounded bg-action-primary px-2 py-0.5 font-sans text-[10.5px] font-semibold text-white disabled:opacity-50">
+                {rowSaving ? "Menyimpan…" : "Simpan"}
+              </button>
+              <button onClick={() => { setRowUploadFor(null); setRowFiles([]); setRowProofError(""); }} className="font-sans text-[10.5px] text-text-muted underline">
+                Batal
+              </button>
+            </span>
           </span>
         ) : (
           <span onClick={(e) => e.stopPropagation()} className="flex flex-col gap-0.5">
-            <label className="cursor-pointer font-sans text-[11px] font-semibold text-action-primary underline">
+            <button onClick={() => { setRowUploadFor(inv.id); setRowFiles([]); setRowProofError(""); }} className="text-left font-sans text-[11px] font-semibold text-action-primary underline">
               Upload
-              <input type="file" accept="application/pdf,image/jpeg,image/png" className="hidden" onChange={(e) => void handleRowProofFile(inv.id, e.target.files?.[0] ?? null)} />
-            </label>
-            {rowProofError && <span className="font-sans text-[10px] text-danger-fg">{rowProofError}</span>}
+            </button>
           </span>
         ),
     },
@@ -595,21 +610,22 @@ export function PaymentMaklonPanel() {
       {selected.size > 0 && (
         <div className="flex items-center gap-2 rounded-lg border border-[#CFE0EF] bg-info-bg px-5 py-[10px]">
           <span className="font-sans text-xs font-medium text-info-fg">{selected.size} dipilih</span>
-          <label className="flex items-center gap-2 font-sans text-[11.5px] text-info-fg">
-            <span className="font-semibold">Bukti pembayaran (wajib):</span>
-            <input
-              type="file"
-              accept="application/pdf,image/jpeg,image/png"
-              onChange={(e) => void handleProofFile(e.target.files?.[0] ?? null)}
-              className="max-w-[240px] rounded-md border border-[#A8C5DF] bg-white px-2 py-1 text-[11px] file:mr-2 file:rounded file:border-0 file:bg-info-bg file:px-2 file:py-0.5 file:text-[11px] file:font-semibold file:text-info-fg"
-            />
-          </label>
-          {proofFileName && !proofError && <span className="font-sans text-[11px] text-success-fg">✓ {proofFileName}</span>}
-          {proofError && <span className="font-sans text-[11px] text-danger-fg">{proofError}</span>}
+          <div className="flex items-start gap-2 font-sans text-[11.5px] text-info-fg">
+            <span className="pt-1 font-semibold">Bukti pembayaran (wajib):</span>
+            <div className="w-[260px]">
+              <MultiFileInput
+                files={proofFiles}
+                onChange={setProofFiles}
+                readFile={readProofFile}
+                accept="application/pdf,image/jpeg,image/png"
+                inputClassName="w-full rounded-md border border-[#A8C5DF] bg-white px-2 py-1 text-[11px] file:mr-2 file:rounded file:border-0 file:bg-info-bg file:px-2 file:py-0.5 file:text-[11px] file:font-semibold file:text-info-fg"
+              />
+            </div>
+          </div>
           <button
             onClick={payAll}
-            disabled={paying || !proofDataUrl}
-            title={!proofDataUrl ? "Upload bukti pembayaran (PDF/JPG/PNG) dulu" : undefined}
+            disabled={paying || proofFiles.length === 0}
+            title={proofFiles.length === 0 ? "Upload bukti pembayaran (PDF/JPG/PNG) dulu" : undefined}
             className="rounded-md border border-[#A8C5DF] bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-semibold text-success-fg disabled:cursor-not-allowed disabled:opacity-50"
           >
             {/* Item revisi 2026-09-05: tombol tidak lagi menampilkan status "Memproses..." --

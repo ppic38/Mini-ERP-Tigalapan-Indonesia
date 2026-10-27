@@ -5579,6 +5579,101 @@ export async function getVendorInvoicePaymentProofAction(invoiceId: string): Pro
 }
 
 // =========================================================================
+// Lampiran LEBIH DARI SATU file (migration 0080): bukti bayar, foto resi, foto klaim.
+// File pertama tetap di tabel lama masing-masing; file ke-2 dan seterusnya di `attachment_files`. Satu tombol "Lihat / Download" membuka semuanya.
+// =========================================================================
+
+export type AttachmentKind = "INVOICE_PAYMENT_PROOF" | "VENDOR_INVOICE_PROOF" | "EKSPEDISI_PHOTO" | "CLAIM_PHOTO";
+export type AttachmentFileInput = { dataUrl: string; fileName?: string };
+
+const MAX_EXTRA_ATTACHMENTS = 4; // ditambah file utama = maksimal 5 file per lampiran
+const ATTACHMENT_TABLE_MISSING = "Jalankan migration 0080 (tabel attachment_files) di Supabase dulu.";
+
+function checkAttachmentFile(kind: AttachmentKind, file: AttachmentFileInput): void {
+  const proofKind = kind === "INVOICE_PAYMENT_PROOF" || kind === "VENDOR_INVOICE_PROOF";
+  const okMime = proofKind ? /^data:(application\/pdf|image\/jpeg|image\/png);base64,/ : /^data:image\/(jpeg|png|webp);base64,/;
+  if (!okMime.test(file.dataUrl)) throw new Error(proofKind ? "Lampiran harus berformat PDF, JPG, atau PNG." : "Lampiran harus berupa gambar (JPG atau PNG).");
+  const approxBytes = Math.floor(((file.dataUrl.length - file.dataUrl.indexOf(",") - 1) * 3) / 4);
+  if (approxBytes > (kind === "CLAIM_PHOTO" ? 700 * 1024 : 1.3 * 1024 * 1024)) throw new Error("File terlalu besar -- kecilkan dulu ukurannya.");
+}
+
+/** Kunci penyimpanan file tambahan: foto resi dibagi satu grup resi (bukan per koli, supaya tidak digandakan ke semua koli satu resi). */
+async function attachmentRefId(db: ReturnType<typeof supabaseServer>, kind: AttachmentKind, refId: string): Promise<string> {
+  if (kind !== "EKSPEDISI_PHOTO") return refId;
+  const { data } = await db.from("delivery_kolis").select("resi_group_id").eq("id", refId).maybeSingle();
+  return data?.resi_group_id ?? refId;
+}
+
+/** Siapa yang boleh menambah/mengganti file tambahan, dan file utamanya harus sudah ada. */
+async function assertAttachmentWritable(db: ReturnType<typeof supabaseServer>, kind: AttachmentKind, refId: string): Promise<void> {
+  if (kind === "INVOICE_PAYMENT_PROOF" || kind === "VENDOR_INVOICE_PROOF") {
+    await requireInternalRole(await requireSession(), "finance");
+    const table = kind === "INVOICE_PAYMENT_PROOF" ? "invoice_payment_proofs" : "vendor_invoice_payment_proofs";
+    const { data } = await db.from(table).select("invoice_id").eq("invoice_id", refId).maybeSingle();
+    if (!data) throw new Error("File utama bukti pembayaran belum ada.");
+    return;
+  }
+  const vendorId = await requireVendorSession();
+  if (kind === "EKSPEDISI_PHOTO") {
+    const { data: koli } = await db.from("delivery_kolis").select("vendor_produksi").eq("id", refId).maybeSingle();
+    if (!koli) throw new Error("Koli tidak ditemukan.");
+    assertSameVendor(vendorId, koli.vendor_produksi, "Koli ini");
+    const { data: photo } = await db.from("delivery_koli_ekspedisi_photos").select("delivery_koli_id").eq("delivery_koli_id", refId).maybeSingle();
+    if (!photo) throw new Error("Foto utama lampiran ekspedisi belum ada.");
+    return;
+  }
+  await assertInvoiceOwnedByVendor(db, refId.split("|")[0], vendorId);
+  const { data: claimPhoto } = await db.from("material_claim_photos").select("claim_key").eq("claim_key", refId).maybeSingle();
+  if (!claimPhoto) throw new Error("Foto utama klaim belum ada.");
+}
+
+/** Hapus semua file TAMBAHAN satu lampiran (dipanggil sebelum mengunggah ulang, supaya file lama tidak ikut muncul di lampiran yang baru). */
+export async function clearAttachmentExtrasAction(kind: AttachmentKind, refId: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    const db = supabaseServer();
+    await assertAttachmentWritable(db, kind, refId);
+    const ref = await attachmentRefId(db, kind, refId);
+    const { error } = await db.from("attachment_files").delete().eq("kind", kind).eq("ref_id", ref);
+    if (error) throw new Error(error.message.includes("attachment_files") ? ATTACHMENT_TABLE_MISSING : error.message);
+  });
+}
+
+/** Tambah SATU file tambahan (satu panggilan per file, supaya tiap panggilan tetap di bawah batas ukuran Server Action). */
+export async function addAttachmentExtraAction(kind: AttachmentKind, refId: string, file: AttachmentFileInput): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    const db = supabaseServer();
+    await assertAttachmentWritable(db, kind, refId);
+    checkAttachmentFile(kind, file);
+    const ref = await attachmentRefId(db, kind, refId);
+    const { count, error: countErr } = await db.from("attachment_files").select("id", { count: "exact", head: true }).eq("kind", kind).eq("ref_id", ref);
+    if (countErr) throw new Error(countErr.message.includes("attachment_files") ? ATTACHMENT_TABLE_MISSING : countErr.message);
+    if ((count ?? 0) >= MAX_EXTRA_ATTACHMENTS) throw new Error(`Lampiran maksimal ${MAX_EXTRA_ATTACHMENTS + 1} file.`);
+    const { error } = await db.from("attachment_files").insert({ kind, ref_id: ref, data_url: file.dataUrl, file_name: file.fileName ?? null });
+    if (error) throw new Error(`Gagal menyimpan file tambahan: ${error.message}`);
+  });
+}
+
+/** Semua file satu lampiran (file utama + file tambahan) untuk satu tombol "Lihat / Download". Akses mengikuti aturan getter lama tiap jenis lampiran. */
+export async function getAttachmentFilesAction(kind: AttachmentKind, refId: string): Promise<ActionResult<AttachmentFileInput[]>> {
+  return toActionResult(async () => {
+    let first: AttachmentFileInput | null = null;
+    if (kind === "INVOICE_PAYMENT_PROOF") first = await getInvoicePaymentProofAction(refId);
+    else if (kind === "EKSPEDISI_PHOTO") first = await getDeliveryKoliEkspedisiPhotoAction(refId);
+    else if (kind === "CLAIM_PHOTO") first = await getMaterialClaimPhotoAction(refId);
+    else {
+      const res = await getVendorInvoicePaymentProofAction(refId);
+      if (!res.ok) throw new Error(res.error);
+      first = res.data;
+    }
+    if (!first) return [];
+    const db = supabaseServer();
+    const ref = await attachmentRefId(db, kind, refId);
+    const { data } = await db.from("attachment_files").select("data_url,file_name").eq("kind", kind).eq("ref_id", ref).order("id");
+    return [first, ...(data ?? []).map((r) => ({ dataUrl: r.data_url as string, fileName: (r.file_name as string | null) ?? undefined }))];
+  });
+}
+
+// =========================================================================
 // Warehouse (Spec Portal Warehouse bagian B) — Penerimaan & Bongkar koli barang jadi.
 // =========================================================================
 
@@ -5846,6 +5941,13 @@ async function resetMrpCore(mrpId: string): Promise<void> {
     if (photoErr) throw new Error(`Reset MRP gagal di tabel "material_claim_photos": ${photoErr.message}`);
     const { error: proofErr } = await db.from("invoice_payment_proofs").delete().in("invoice_id", rawInvoiceIds);
     if (proofErr) throw new Error(`Reset MRP gagal di tabel "invoice_payment_proofs": ${proofErr.message}`);
+    // File tambahan lampiran (migration 0080): bukti bayar per invoice dan foto klaim per roll (kunci diawali id invoice). Best-effort, tabel mungkin belum ada.
+    try {
+      await db.from("attachment_files").delete().eq("kind", "INVOICE_PAYMENT_PROOF").in("ref_id", rawInvoiceIds);
+      for (const invId of rawInvoiceIds) await db.from("attachment_files").delete().eq("kind", "CLAIM_PHOTO").like("ref_id", `${invId}|%`);
+    } catch {
+      // diabaikan dengan sengaja
+    }
   }
 
   const { error: claimHistErr } = await db.from("material_claim_history").delete().eq("mrp_id", mrpId);

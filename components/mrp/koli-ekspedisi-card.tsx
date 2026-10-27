@@ -1,8 +1,7 @@
 "use client";
 
 import { formatDate } from "@/lib/mrp/derive";
-import { getDeliveryKoliEkspedisiPhotoAction } from "@/lib/mrp/actions";
-import { openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
+import { viewAttachments } from "@/lib/mrp/attachments";
 
 /** Item 2026-09-10 (feedback: Procurement "Invoice Vendor" & Finance "Payment Maklon" minta info
  *  lampiran ekspedisi dari vendor produksi sebelum approve/bayar) -- kartu ringkas 1 koli
@@ -14,19 +13,8 @@ import { openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
  *  ... lampiran foto ekspedisi" langsung di baris ringkas Payment Maklon, bukan cuma di kartu
  *  ini) dipakai LANGSUNG oleh payment-maklon-panel.tsx tanpa merender `KoliEkspedisiCard` penuh
  *  (baris ringkas tabel sempit, cuma butuh tombol lihat foto-nya saja). */
-export async function viewEkspedisiPhoto(koliId: string) {
-  const win = openPreviewWindow();
-  try {
-    const photo = await getDeliveryKoliEkspedisiPhotoAction(koliId);
-    if (!photo) {
-      win?.close();
-      return;
-    }
-    fillPreviewWindow(win, photo.dataUrl);
-  } catch (err) {
-    win?.close();
-    throw err;
-  }
+export function viewEkspedisiPhoto(koliId: string) {
+  return viewAttachments("EKSPEDISI_PHOTO", koliId, "Lampiran resi belum ada.");
 }
 
 export function KoliEkspedisiCard({

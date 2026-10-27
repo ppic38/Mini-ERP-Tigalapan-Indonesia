@@ -15,29 +15,17 @@ import type { MaterialClaimHistory } from "@/lib/mrp/types";
 // Item 2.4: getMaterialClaimPhotoAction DIPANGGIL LANGSUNG dari halaman ini (bukan lewat store) --
 // foto sengaja dikeluarkan dari snapshot (material_claim_photos, migration 0014), jadi tidak ada
 // alur store/backgroundRefresh yang relevan di sini, cuma fetch on-demand saat user klik lihat.
-import { getMaterialClaimPhotoAction } from "@/lib/mrp/actions";
+import { viewAttachments } from "@/lib/mrp/attachments";
 // Revisi 2026-09-06: viewAndDownloadFile sekarang dipakai bareng di semua modul (Procurement/
 // Finance/Vendor Produksi) untuk preview+download file -- fungsi ini sebelumnya dipakai jadi
 // acuan pola-nya (lihat lib/mrp/clientFiles.ts), sekarang ditarik jadi satu fungsi bersama.
 // Revisi 2026-09-08 (bug fix popup blocked): openPreviewWindow/fillPreviewWindow -- lihat
 // catatan panjang di lib/mrp/clientFiles.ts.
-import { openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { claimStageCorrections } from "@/components/sysadmin/procurement-corrections";
 
-async function viewClaimPhoto(claimKey: string) {
-  const win = openPreviewWindow();
-  try {
-    const photo = await getMaterialClaimPhotoAction(claimKey);
-    if (!photo) {
-      win?.close();
-      return;
-    }
-    fillPreviewWindow(win, photo.dataUrl);
-  } catch (err) {
-    win?.close();
-    throw err;
-  }
+function viewClaimPhoto(claimKey: string) {
+  return viewAttachments("CLAIM_PHOTO", claimKey, "Foto bukti klaim belum ada.");
 }
 
 function BuktiFotoCell({ claimKey, hasPhoto }: { claimKey: string; hasPhoto: boolean }) {

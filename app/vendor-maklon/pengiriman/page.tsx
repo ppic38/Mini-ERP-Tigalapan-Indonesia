@@ -14,6 +14,8 @@ import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { useMrpStore } from "@/lib/mrp/store";
 import { usePendingActions } from "@/lib/mrp/usePendingActions";
 import { viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
+import { MultiFileInput } from "@/components/mrp/multi-file-input";
+import { saveExtraAttachments, type AttachFile } from "@/lib/mrp/attachments";
 import { ItemsDetailPanel, kindLabel, summarizeItems, USIA_LABEL } from "@/components/mrp/koli-items-detail";
 import {
   availableFgToShip,
@@ -510,13 +512,10 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   const [dialogWeights, setDialogWeights] = useState<Record<string, number>>({});
   const [ekspedisiNoteDraft, setEkspedisiNoteDraft] = useState("");
   const [noResiDraft, setNoResiDraft] = useState("");
-  const [ekspedisiPhotoDataUrl, setEkspedisiPhotoDataUrl] = useState<string | null>(null);
-  const [ekspedisiPhotoFileName, setEkspedisiPhotoFileName] = useState<string | undefined>(undefined);
-  const [ekspedisiPhotoError, setEkspedisiPhotoError] = useState<string | null>(null);
-  const [ekspedisiPhotoBusy, setEkspedisiPhotoBusy] = useState(false);
+  // Foto lampiran resi: boleh lebih dari satu file (maks 5), semuanya dibuka lewat satu tombol "Lihat / Download foto".
+  const [ekspedisiFiles, setEkspedisiFiles] = useState<AttachFile[]>([]);
   const [ekspedisiSubmitting, setEkspedisiSubmitting] = useState(false);
   const [ekspedisiError, setEkspedisiError] = useState<string | null>(null);
-  const ekspedisiPhotoInputRef = useRef<HTMLInputElement>(null);
 
   function openEkspedisiDialog(koliIds: string[]) {
     if (koliIds.length === 0) return;
@@ -525,9 +524,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
     setEkspedisiDraft("");
     setEkspedisiNoteDraft("");
     setNoResiDraft("");
-    setEkspedisiPhotoDataUrl(null);
-    setEkspedisiPhotoFileName(undefined);
-    setEkspedisiPhotoError(null);
+    setEkspedisiFiles([]);
     setEkspedisiError(null);
   }
   function closeEkspedisiDialog() {
@@ -536,37 +533,29 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
     setEkspedisiDraft("");
     setEkspedisiNoteDraft("");
     setNoResiDraft("");
-    setEkspedisiPhotoDataUrl(null);
-    setEkspedisiPhotoFileName(undefined);
-    setEkspedisiPhotoError(null);
+    setEkspedisiFiles([]);
     setEkspedisiError(null);
-    if (ekspedisiPhotoInputRef.current) ekspedisiPhotoInputRef.current.value = "";
   }
-  async function onEkspedisiPhotoSelected(file: File) {
-    setEkspedisiPhotoError(null);
-    setEkspedisiPhotoBusy(true);
+  // Satu foto resi: dikecilkan di browser dan dicek ukurannya (batas lama tetap berlaku per foto).
+  async function readResiPhoto(file: File): Promise<AttachFile | { error: string }> {
     try {
       const compressed = await compressImageToDataUrl(file);
-      if (dataUrlApproxBytes(compressed) > MAX_EKSPEDISI_PHOTO_BYTES) {
-        setEkspedisiPhotoError("Foto terlalu besar, ambil ulang dengan resolusi lebih kecil");
-        setEkspedisiPhotoDataUrl(null);
-        return;
-      }
-      setEkspedisiPhotoDataUrl(compressed);
-      setEkspedisiPhotoFileName(file.name);
+      if (dataUrlApproxBytes(compressed) > MAX_EKSPEDISI_PHOTO_BYTES) return { error: "Foto terlalu besar, ambil ulang dengan resolusi lebih kecil" };
+      return { dataUrl: compressed, fileName: file.name };
     } catch (e) {
-      setEkspedisiPhotoError(e instanceof Error ? e.message : "Gagal memproses foto.");
-    } finally {
-      setEkspedisiPhotoBusy(false);
+      return { error: e instanceof Error ? e.message : "Gagal memproses foto." };
     }
   }
   async function submitEkspedisi() {
-    if (!ekspedisiDialogKoliIds || !ekspedisiDraft || !noResiDraft.trim() || !ekspedisiPhotoDataUrl || ekspedisiSubmitting) return;
+    if (!ekspedisiDialogKoliIds || !ekspedisiDraft || !noResiDraft.trim() || ekspedisiFiles.length === 0 || ekspedisiSubmitting) return;
     if (ekspedisiDialogKoliIds.some((id) => !((dialogWeights[id] ?? 0) > 0))) return;
     setEkspedisiSubmitting(true);
     setEkspedisiError(null);
     try {
-      await setKoliEkspedisiResiGroup(ekspedisiDialogKoliIds, ekspedisiDraft, ekspedisiNoteDraft.trim(), noResiDraft.trim(), { dataUrl: ekspedisiPhotoDataUrl, fileName: ekspedisiPhotoFileName }, dialogWeights);
+      await setKoliEkspedisiResiGroup(ekspedisiDialogKoliIds, ekspedisiDraft, ekspedisiNoteDraft.trim(), noResiDraft.trim(), { dataUrl: ekspedisiFiles[0].dataUrl, fileName: ekspedisiFiles[0].fileName }, dialogWeights);
+      // Foto ke-2 dan seterusnya disimpan setelah resi tercatat; kegagalannya hanya diberi tahu (resi sudah tersimpan).
+      const extraError = await saveExtraAttachments("EKSPEDISI_PHOTO", [ekspedisiDialogKoliIds[0]], ekspedisiFiles);
+      if (extraError) await alertDialog({ title: "Resi tersimpan, foto tambahan gagal", message: extraError + " Foto utama sudah tersimpan." });
       setSelectedForEkspedisi(new Set());
       closeEkspedisiDialog();
     } catch (e) {
@@ -1188,28 +1177,16 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                   );
                 })()}
               </div>
-              <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Foto lampiran (wajib)</div>
-              {/* Revisi 2026-09-19 (owner): tampilan tombol pilih file disamakan dengan upload Bukti
-                  Paying Voucher di Procurement (components/mrp/paying-voucher-wizard.tsx). */}
-              <input
-                ref={ekspedisiPhotoInputRef}
-                type="file"
-                accept="image/*"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) onEkspedisiPhotoSelected(file);
-                }}
-                className="input mt-1 file:mr-2.5 file:rounded file:border-0 file:bg-info-bg file:px-2.5 file:py-1 file:font-sans file:text-[11px] file:font-semibold file:text-info-fg"
-              />
-              {ekspedisiPhotoFileName && ekspedisiPhotoDataUrl && !ekspedisiPhotoBusy && (
-                <div className="mt-1 font-sans text-[11px] text-success-fg">✓ {ekspedisiPhotoFileName} terupload.</div>
-              )}
-              {ekspedisiPhotoBusy && <div className="mt-1.5 font-sans text-[10.5px] text-text-muted">Memproses foto…</div>}
-              {ekspedisiPhotoError && <div className="mt-1.5 font-sans text-[10.5px] text-danger-fg">{ekspedisiPhotoError}</div>}
-              {ekspedisiPhotoDataUrl && !ekspedisiPhotoBusy && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={ekspedisiPhotoDataUrl} alt="Preview foto lampiran ekspedisi" className="mt-2 max-h-[160px] rounded-md border border-[#EEF1F4]" />
-              )}
+              <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Foto lampiran (wajib, boleh lebih dari satu)</div>
+              <div className="mt-1">
+                <MultiFileInput
+                  files={ekspedisiFiles}
+                  onChange={setEkspedisiFiles}
+                  readFile={readResiPhoto}
+                  accept="image/*"
+                  inputClassName="input w-full file:mr-2.5 file:rounded file:border-0 file:bg-info-bg file:px-2.5 file:py-1 file:font-sans file:text-[11px] file:font-semibold file:text-info-fg"
+                />
+              </div>
               {ekspedisiError && <div className="mt-2 font-sans text-[10.5px] text-danger-fg">{ekspedisiError}</div>}
             </div>
             <div className="flex justify-end gap-2 border-t border-border-subtle px-5 py-3.5">
@@ -1221,7 +1198,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                 disabled={
                   !ekspedisiDraft ||
                   !noResiDraft.trim() ||
-                  !ekspedisiPhotoDataUrl ||
+                  ekspedisiFiles.length === 0 ||
                   ekspedisiSubmitting ||
                   ekspedisiDialogKoliIds.some((id) => !((dialogWeights[id] ?? 0) > 0))
                 }

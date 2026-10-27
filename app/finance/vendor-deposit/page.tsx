@@ -9,10 +9,9 @@ import { formatDateTime, formatRupiah, vendorDepositBalance, vendorDepositEntrie
 // Item 6 (feedback batch 2026-09-07): bukti transfer & bukti foto klaim sengaja tidak ada di
 // snapshot (payload PDF/foto besar) -- fetch on-demand saat tombol diklik, pola SAMA seperti
 // payment-panel.tsx (viewPaymentProof) & material-claims/page.tsx (viewClaimPhoto).
-import { getInvoicePaymentProofAction, getMaterialClaimPhotoAction } from "@/lib/mrp/actions";
+import { viewAttachments } from "@/lib/mrp/attachments";
 // Revisi 2026-09-08 (bug fix popup blocked): openPreviewWindow/fillPreviewWindow -- lihat
 // catatan panjang di lib/mrp/clientFiles.ts.
-import { openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
 import { viewInvoiceBuktiPv } from "@/lib/mrp/viewInvoicePv";
 import type { RawMaterialInvoice, VendorDepositEntry } from "@/lib/mrp/types";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
@@ -51,34 +50,12 @@ function relevantContextFor(e: VendorDepositEntry, invoices: RawMaterialInvoice[
   return { invoice: undefined, codeRoll: undefined, claimKey: undefined, transferInvoiceId: undefined };
 }
 
-async function viewBuktiTransfer(invoiceId: string) {
-  const win = openPreviewWindow();
-  try {
-    const proof = await getInvoicePaymentProofAction(invoiceId);
-    if (!proof) {
-      win?.close();
-      return;
-    }
-    fillPreviewWindow(win, proof.dataUrl);
-  } catch (err) {
-    win?.close();
-    throw err;
-  }
+function viewBuktiTransfer(invoiceId: string) {
+  return viewAttachments("INVOICE_PAYMENT_PROOF", invoiceId, "Bukti transfer belum dilampirkan.");
 }
 
-async function viewBuktiKlaim(claimKey: string) {
-  const win = openPreviewWindow();
-  try {
-    const photo = await getMaterialClaimPhotoAction(claimKey);
-    if (!photo) {
-      win?.close();
-      return;
-    }
-    fillPreviewWindow(win, photo.dataUrl);
-  } catch (err) {
-    win?.close();
-    throw err;
-  }
+function viewBuktiKlaim(claimKey: string) {
+  return viewAttachments("CLAIM_PHOTO", claimKey, "Foto bukti klaim belum ada.");
 }
 
 type SupplierDepositRow = { supplier: string; balance: number; entryCount: number };

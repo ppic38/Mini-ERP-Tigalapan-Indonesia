@@ -562,6 +562,8 @@ export async function sysadminRevertVendorInvoicePaidAction(invoiceId: string, r
     if (updErr) throw new Error(updErr.message);
     // Bukti pembayaran lama ikut dihapus (best-effort): pembayaran ulang wajib melampirkan bukti baru (migration 0075).
     await db.from("vendor_invoice_payment_proofs").delete().eq("invoice_id", invoiceId);
+    // File tambahan bukti bayar (migration 0080) ikut dihapus; tabelnya mungkin belum ada, jadi kegagalannya diabaikan.
+    await db.from("attachment_files").delete().eq("kind", "VENDOR_INVOICE_PROOF").eq("ref_id", invoiceId);
     await writeAuditLog("REVERT_VENDOR_INVOICE_PAID", "vendor_invoices", invoiceId, reason.trim(), { status: inv.status, paidAt: inv.paid_at }, { status: "APPROVED", paidAt: null });
     await notifyAffected(`Pembayaran invoice vendor ${invoiceId} dibatalkan Sysadmin — alasan: ${reason.trim()}. Status kembali ke Disetujui; menunggu pembayaran Finance lagi.`, ["finance", "procurement"]);
     await notifyAffected(`Pembayaran invoice ${invoiceId} dibatalkan Sysadmin (alasan: ${reason.trim()}). Status kembali ke Disetujui, menunggu pembayaran.`, ["vendorMaklon"], inv.vendor_produksi);

@@ -85,6 +85,84 @@ export function fillPreviewWindow(win: Window | null, dataUrl: string) {
   setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
 }
 
+/** Isi tab yang SUDAH dibuka dengan SEMUA file satu lampiran (lebih dari satu) dalam satu halaman: gambar tampil langsung, PDF di dalam bingkai, tiap file punya
+ *  tombol unduh, dan ada tombol "Unduh semua". Dipakai satu tombol "Lihat / Download" untuk lampiran yang terdiri dari beberapa file. */
+export function fillPreviewWindowMulti(win: Window, files: { dataUrl: string; fileName?: string }[]) {
+  const doc = win.document;
+  doc.open();
+  doc.write('<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Lampiran</title></head><body></body></html>');
+  doc.close();
+  const urls: string[] = [];
+  const style = doc.createElement("style");
+  style.textContent =
+    "body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#F2F5F8;color:#1F2A37}" +
+    ".bar{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:10px 16px;background:#fff;border-bottom:1px solid #DDE3EA}" +
+    ".bar b{font-size:14px}.bar a,.bar button{font-size:12px;color:#1D4ED8;text-decoration:underline;background:none;border:0;cursor:pointer;padding:0}" +
+    ".bar .all{margin-left:auto;border:1px solid #CBD5DF;border-radius:6px;padding:6px 12px;text-decoration:none;background:#fff;font-weight:600}" +
+    ".wrap{max-width:1000px;margin:0 auto;padding:16px}.card{background:#fff;border:1px solid #DDE3EA;border-radius:8px;margin-bottom:16px;overflow:hidden}" +
+    ".head{display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid #EEF1F4;font-size:12px}.head span{color:#6B7280}.head a{margin-left:auto;color:#1D4ED8;font-weight:600}" +
+    "img{display:block;max-width:100%;margin:0 auto}iframe{display:block;width:100%;height:80vh;border:0}";
+  doc.head.appendChild(style);
+  doc.title = `Lampiran (${files.length} file)`;
+
+  const bar = doc.createElement("div");
+  bar.className = "bar";
+  const title = doc.createElement("b");
+  title.textContent = `Lampiran · ${files.length} file`;
+  bar.appendChild(title);
+  const wrap = doc.createElement("div");
+  wrap.className = "wrap";
+  const links: HTMLAnchorElement[] = [];
+
+  files.forEach((f, i) => {
+    const blobUrl = dataUrlToBlobUrl(f.dataUrl);
+    if (blobUrl) urls.push(blobUrl);
+    const src = blobUrl ?? f.dataUrl;
+    const name = f.fileName || `lampiran-${i + 1}`;
+    const nav = doc.createElement("a");
+    nav.href = `#file-${i + 1}`;
+    nav.textContent = `${i + 1}. ${name}`;
+    bar.appendChild(nav);
+
+    const card = doc.createElement("div");
+    card.className = "card";
+    card.id = `file-${i + 1}`;
+    const head = doc.createElement("div");
+    head.className = "head";
+    const label = doc.createElement("b");
+    label.textContent = `${i + 1} dari ${files.length}`;
+    const nm = doc.createElement("span");
+    nm.textContent = name;
+    const dl = doc.createElement("a");
+    dl.href = src;
+    dl.download = name;
+    dl.textContent = "Download";
+    links.push(dl);
+    head.append(label, nm, dl);
+    card.appendChild(head);
+    if (/^data:application\/pdf/i.test(f.dataUrl)) {
+      const frame = doc.createElement("iframe");
+      frame.src = src;
+      frame.title = name;
+      card.appendChild(frame);
+    } else {
+      const img = doc.createElement("img");
+      img.src = src;
+      img.alt = name;
+      card.appendChild(img);
+    }
+    wrap.appendChild(card);
+  });
+
+  const all = doc.createElement("button");
+  all.className = "all";
+  all.textContent = "Unduh semua";
+  all.onclick = () => links.forEach((a, i) => setTimeout(() => a.click(), i * 400));
+  bar.appendChild(all);
+  doc.body.append(bar, wrap);
+  win.addEventListener("pagehide", () => urls.forEach((u) => URL.revokeObjectURL(u)));
+}
+
 /** Cadangan kalau tab preview tidak bisa dibuka (popup diblokir browser): unduh file lewat tautan `<a download>`.
  *  Unduhan tidak diperlakukan sebagai popup, jadi tetap jalan walau dipanggil setelah `await`. */
 export function downloadDataUrl(dataUrl: string, fileName: string) {

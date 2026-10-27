@@ -12,29 +12,17 @@ import type { MaterialPO, RawMaterialInvoice } from "@/lib/mrp/types";
 // Item 2.8: getInvoicePaymentProofAction dipanggil langsung (bukan lewat store), sama pola dengan
 // "Lampiran Invoice" di atas -- Procurement cuma BACA bukti ini untuk diserahkan ke vendor
 // material, tidak ada kontrol upload di sisi Procurement.
-import { getInvoicePaymentProofAction } from "@/lib/mrp/actions";
+import { viewAttachments } from "@/lib/mrp/attachments";
 // Revisi 2026-09-06: preview+download konsisten di semua modul -- lihat komentar di file ini.
 // Revisi 2026-09-08 (bug fix popup blocked): openPreviewWindow/fillPreviewWindow -- lihat
 // catatan panjang di lib/mrp/clientFiles.ts.
-import { openPreviewWindow, fillPreviewWindow } from "@/lib/mrp/clientFiles";
 import { viewInvoiceBuktiPv } from "@/lib/mrp/viewInvoicePv";
 import { SysadminTd, SysadminTh } from "@/components/sysadmin/correction-dialog";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { materialInvoiceVoidCorrections } from "@/components/sysadmin/procurement-corrections";
 
-async function viewPaymentProof(invoiceId: string) {
-  const win = openPreviewWindow();
-  try {
-    const proof = await getInvoicePaymentProofAction(invoiceId);
-    if (!proof) {
-      win?.close();
-      return;
-    }
-    fillPreviewWindow(win, proof.dataUrl);
-  } catch (err) {
-    win?.close();
-    throw err;
-  }
+function viewPaymentProof(invoiceId: string) {
+  return viewAttachments("INVOICE_PAYMENT_PROOF", invoiceId, "Bukti pembayaran belum dilampirkan.");
 }
 
 /** Panel "Invoice Material" — konten diekstrak dari halaman lama Paying Voucher (Invoice)
