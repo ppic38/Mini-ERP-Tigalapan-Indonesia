@@ -101,15 +101,22 @@ export function scopeStateToVendor<T extends FlowState>(state: T, vendorId: stri
 
 /** Nama pelaku di portal vendor (akun utama/anggota tim, migration 0078) hanya untuk vendor itu sendiri dan Sysadmin: modul internal lain tidak
  *  menerimanya, jadi tidak ada di snapshot yang sampai ke browser mereka. */
-export function stripVendorActorNames<T extends FlowState>(state: T): T {
+export function stripVendorActorNames<T extends FlowState>(state: T, keepVendorId?: string): T {
+  // `keepVendorId`: sesi yang SEKALIGUS login sebagai vendor itu (satu browser, dua login) tetap menerima nama pelaku baris vendornya sendiri,
+  // supaya kolom PIC di portal vendor terisi; nama baris vendor lain tetap dibuang.
+  const keep = (vendor: string | null | undefined) => !!keepVendorId && vendor === keepVendorId;
   return {
     ...state,
-    deliveryKolis: state.deliveryKolis.map((k) => ({ ...k, createdBy: undefined, shippedBy: undefined })),
-    productionBatches: state.productionBatches.map((b) => ({ ...b, restingBy: undefined, cuttingBy: undefined, fgBy: undefined, closedBy: undefined })),
-    vendorInvoices: state.vendorInvoices.map((v) => ({ ...v, submittedBy: undefined })),
-    invoices: state.invoices.map((i) => ({
-      ...i,
-      rollArrivals: Object.fromEntries(Object.entries(i.rollArrivals).map(([key, arr]) => [key, arr.map((a) => (a ? { ...a, receivedBy: undefined } : a))])),
-    })),
+    deliveryKolis: state.deliveryKolis.map((k) => (keep(k.vendorProduksi) ? k : { ...k, createdBy: undefined, shippedBy: undefined })),
+    productionBatches: state.productionBatches.map((b) => (keep(b.vendorProduksi) ? b : { ...b, restingBy: undefined, cuttingBy: undefined, fgBy: undefined, closedBy: undefined })),
+    vendorInvoices: state.vendorInvoices.map((v) => (keep(v.vendorProduksi) ? v : { ...v, submittedBy: undefined })),
+    invoices: state.invoices.map((i) =>
+      keep(i.destinationVendor)
+        ? i
+        : {
+            ...i,
+            rollArrivals: Object.fromEntries(Object.entries(i.rollArrivals).map(([key, arr]) => [key, arr.map((a) => (a ? { ...a, receivedBy: undefined } : a))])),
+          }
+    ),
   };
 }

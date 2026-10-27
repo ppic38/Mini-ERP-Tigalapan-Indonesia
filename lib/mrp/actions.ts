@@ -6094,7 +6094,7 @@ export async function getFlowSnapshotAction(clientMasterVersion?: number | null)
     return { ...scopeStateToVendor(state, session.vendorId!), hargaMaklon: [], hargaKain: [], hargaKainPks: [], hargaRib: [], hargaKerahManset: [], itemSellingPrices: [], hargaFob: [], dataVersion, masterVersion: null as number | null, weightTolerancePct };
   }
   // Nama pelaku vendor (migration 0078) hanya untuk vendor itu sendiri dan Sysadmin.
-  const visibleState = session.internalRoles.includes("sysadmin") ? state : stripVendorActorNames(state);
+  const visibleState = session.internalRoles.includes("sysadmin") ? state : stripVendorActorNames(state, session.vendorId ?? undefined);
   if (!masterIncluded) {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { hargaMaklon, hargaKain, hargaKainPks, hargaRib, hargaKerahManset, itemSellingPrices, hargaFob, ...rest } = visibleState;
