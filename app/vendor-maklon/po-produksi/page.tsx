@@ -318,7 +318,9 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
     {
       key: "aksi",
       label: "Aksi",
-      default: true,
+      // Disembunyikan secara default (owner 2026-10-27), tetap bisa dimunculkan lewat menu Kolom. Vendor yang punya PO FOB tetap melihatnya,
+      // karena tombol "Ajukan Invoice" PO FOB ada di kolom ini.
+      default: myPOs.some((p) => p.isFob),
       render: (p) => {
         // Tahap 3 skema FOB (migration 0059, owner 2026-09-27: "langsung ke invoice, tanpa
         // tracking") -- PO FOB TIDAK lewat Cutting/Good Receive sama sekali, jadi punya render

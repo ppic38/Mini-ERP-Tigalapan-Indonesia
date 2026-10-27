@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Kolom Aksi PO Produksi Saya disembunyikan (2026-10-27, tanpa migration)
+Owner: kolom "Aksi" di PO Produksi Saya (portal vendor) disembunyikan secara default, tetap bisa dimunculkan lewat menu Kolom. Pengecualian: vendor yang punya PO FOB tetap melihatnya karena tombol "Ajukan Invoice" PO FOB ada di kolom itu. Isi kolom untuk PO CMT hanya teks status.
+
 ## Resting: dua baris Aduan Pola berkode dan berwarna sama (2026-10-27, tanpa migration)
 Laporan owner (Konveksi Makassar W38_MKS): popup "Tambah roll ke resting" S-XL Pendek menampilkan "BURGUNDY 24S (1 roll)" dan "1 tersedia" tetapi "maks 0 roll", sehingga roll R2609035767 tidak bisa dipilih. Penyebab: setelah kode S-2XL diubah jadi S-XL lewat SQL, kode S-XL punya DUA baris Aduan Pola berwarna Burgundy (satu sudah penuh di-resting, satu masih punya jatah 1 roll). `components/mrp/production-cutting-tab.tsx` mengambil jatah dari baris PERTAMA yang cocok warna (`rows.find`), yaitu baris yang sudah penuh. Perbaikan: jatah dijumlahkan dari semua baris kode itu per warna (`warnaOptions`, `pickGroupsData`), dan saat Resting disimpan, tiap roll dimasukkan ke baris yang masih punya jatah (bukan selalu baris pertama). Tidak ada data yang perlu diubah. Kasus yang sama bisa terjadi dari import Excel yang punya dua baris Aduan Pola berkode dan berwarna sama.
 
