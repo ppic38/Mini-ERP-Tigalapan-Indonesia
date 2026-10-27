@@ -41,6 +41,7 @@ function onlyVendorPart(w: MrpWarnaBreakdown, vendor: string): MrpWarnaBreakdown
 export function MrpWarnaBreakdownTable({ breakdown: allBreakdown }: { breakdown: MrpWarnaBreakdown[] }) {
   const [filterWarna, setFilterWarna] = useState("");
   const [filterVendor, setFilterVendor] = useState("");
+  const [query, setQuery] = useState("");
   // Filter vendor: hanya warna yang dikerjakan vendor itu, dengan angka bagian vendor itu (bukan total warna semua vendor).
   const vendorOptions = Array.from(new Set(allBreakdown.flatMap((w) => w.vendors.map((v) => v.vendor)))).sort((a, b) => a.localeCompare(b));
   const breakdown = filterVendor ? allBreakdown.map((w) => onlyVendorPart(w, filterVendor)).filter((w): w is MrpWarnaBreakdown => w !== null) : allBreakdown;
@@ -52,8 +53,13 @@ export function MrpWarnaBreakdownTable({ breakdown: allBreakdown }: { breakdown:
   // yang benar-benar punya nilai (MRP kategori "WANGKI MYNO"), supaya MRP kategori lain tidak
   // penuh kolom 0.
   const showKerahManset = breakdown.some((w) => w.kerahTotal > 0 || w.mansetTotal > 0);
-  const filtered = filterWarna && breakdown.some((w) => w.warna === filterWarna) ? breakdown.filter((w) => w.warna === filterWarna) : breakdown;
+  const byWarna = filterWarna && breakdown.some((w) => w.warna === filterWarna) ? breakdown.filter((w) => w.warna === filterWarna) : breakdown;
+  // Cari warna: hasil menyempit saat mengetik.
+  const needle = query.trim().toLowerCase();
+  const filtered = needle ? byWarna.filter((w) => w.warna.toLowerCase().includes(needle)) : byWarna;
   const warnaFilterActive = filtered !== breakdown;
+  // Pilihan dropdown warna berurut abjad.
+  const warnaOptions = [...breakdown].sort((a, b) => a.warna.localeCompare(b.warna, "id", { numeric: true }));
 
   return (
     <div className="flex flex-col gap-2">
@@ -78,13 +84,20 @@ export function MrpWarnaBreakdownTable({ breakdown: allBreakdown }: { breakdown:
           )}
           <select value={filterWarna} onChange={(e) => setFilterWarna(e.target.value)} className="input w-auto !py-1.5 !text-[11px]">
             <option value="">Semua warna ({breakdown.length})</option>
-            {breakdown.map((w) => (
+            {warnaOptions.map((w) => (
               <option key={w.warna} value={w.warna}>
                 {w.warna}
                 {w.isEmpty ? " — tidak ada pemesanan" : ""}
               </option>
             ))}
           </select>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Cari warna…"
+            aria-label="Cari warna"
+            className="input ml-auto w-[220px] !py-1.5 !text-[11px] max-sm:w-full"
+          />
         </div>
       )}
       <div className="overflow-hidden overflow-x-auto rounded-md border border-[#E4E8EE] bg-white">
