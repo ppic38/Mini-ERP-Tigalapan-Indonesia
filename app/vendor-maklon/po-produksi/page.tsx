@@ -8,7 +8,6 @@ import { exportMaklonPoRasioExcel } from "@/lib/mrp/exportPoExcel";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
-import { SingleSelectFilter } from "@/components/mrp/single-select-filter";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { useMrpStore } from "@/lib/mrp/store";
 import { addDays, formatDate, formatPcs, formatRupiah, maklonPoBadgeWithApproval, maklonPoDisplayStatus, materialReceivedForMaklon, mrpDetailFor, compareNewestFirst } from "@/lib/mrp/derive";
@@ -158,22 +157,15 @@ function AduanDetailTree({ rows }: { rows: AduanPolaRow[] }) {
   );
 }
 
-/** Qty PO per jenis lengan: Pendek, Panjang, Wangki Pendek, Wangki Panjang (Wangki = grup berkategori WANGKI MYNO). Dihitung dari Aduan Pola vendor ini; boleh dipersempit ke satu MRP.
- *  Dipakai untuk menjelaskan kenapa harga maklon sebuah MRP sebesar itu: tarif ditentukan per lengan dari qty kumulatif. */
-function LenganQtyCards({ pos, mrpDetails }: { pos: MaklonPO[]; mrpDetails: MrpDetail[] }) {
-  const [mrpId, setMrpId] = useState("");
-  const mrpOptions = Array.from(new Set(pos.filter((p) => !p.isFob).map((p) => p.mrpId)));
+/** Qty satu PO per jenis lengan: Pendek, Panjang, Wangki Pendek, Wangki Panjang (Wangki = grup berkategori WANGKI MYNO), dari Aduan Pola vendor ini di MRP itu.
+ *  Ditaruh di atas daftar warna saat baris PO dibuka, untuk menjelaskan kenapa harga maklon MRP itu sebesar itu (tarif ditentukan per lengan dari qty kumulatif). */
+function LenganQtyCards({ rows, detail }: { rows: AduanPolaRow[]; detail?: MrpDetail }) {
   const totals = { pdk: 0, pjg: 0, wPdk: 0, wPjg: 0 };
-  for (const po of pos) {
-    if (po.isFob || (mrpId && po.mrpId !== mrpId)) continue;
-    const detail = mrpDetailFor(po.mrpId, mrpDetails);
-    for (const a of detail?.aduanRows ?? []) {
-      if (a.vendor !== po.vendorProduksi) continue;
-      const kategori = detail?.lenganGroups.find((g) => g.id === a.lenganGroupId)?.kategori ?? "";
-      const wangki = /wangk[iy]/i.test(kategori);
-      if (a.lengan === "PENDEK") totals[wangki ? "wPdk" : "pdk"] += a.qty;
-      else totals[wangki ? "wPjg" : "pjg"] += a.qty;
-    }
+  for (const a of rows) {
+    const kategori = detail?.lenganGroups.find((g) => g.id === a.lenganGroupId)?.kategori ?? "";
+    const wangki = /wangk[iy]/i.test(kategori);
+    if (a.lengan === "PENDEK") totals[wangki ? "wPdk" : "pdk"] += a.qty;
+    else totals[wangki ? "wPjg" : "pjg"] += a.qty;
   }
   const total = totals.pdk + totals.pjg + totals.wPdk + totals.wPjg;
   const cards: { label: string; value: number }[] = [
@@ -183,11 +175,10 @@ function LenganQtyCards({ pos, mrpDetails }: { pos: MaklonPO[]; mrpDetails: MrpD
     { label: "Wangki Panjang", value: totals.wPjg },
   ];
   return (
-    <div className="mb-4">
-      <div className="mb-2 flex flex-wrap items-center gap-2">
+    <div className="mb-3">
+      <div className="mb-2 flex items-center gap-2">
         <span className="font-sans text-[12px] font-semibold text-text-primary">Qty per jenis lengan</span>
-        {mrpOptions.length > 1 && <SingleSelectFilter label="MRP" allLabel={`Semua MRP (${mrpOptions.length})`} options={mrpOptions} value={mrpId} onChange={setMrpId} />}
-        <span className="ml-auto font-mono text-[11px] text-text-muted">Total {formatPcs(total)} pcs{mrpId ? ` · ${mrpId}` : ""}</span>
+        <span className="ml-auto font-mono text-[11px] text-text-muted">Total {formatPcs(total)} pcs</span>
       </div>
       <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
         {cards.map((c) => (
@@ -415,7 +406,6 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
       roleOverride={VENDOR_PRODUKSI[vendorId]?.name ?? vendorId}
       entityOverride="Vendor Produksi"
     >
-      <LenganQtyCards pos={myPOs} mrpDetails={mrpDetails} />
       <DataTable
         title="PO produksi saya"
         mobileCards
@@ -435,11 +425,17 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
         ]}
         emptyText="Belum ada PO produksi yang disetujui Finance untuk vendor Anda."
         renderExpanded={(p) => {
-          const rows = mrpDetailFor(p.mrpId, mrpDetails)?.aduanRows.filter((a) => a.vendor === p.vendorProduksi) ?? [];
+          const detail = mrpDetailFor(p.mrpId, mrpDetails);
+          const rows = detail?.aduanRows.filter((a) => a.vendor === p.vendorProduksi) ?? [];
           if (rows.length === 0) {
             return <div className="font-sans text-[11.5px] text-text-muted">Belum ada rincian aduan pola untuk PO ini.</div>;
           }
-          return <AduanDetailTree rows={rows} />;
+          return (
+            <>
+              <LenganQtyCards rows={rows} detail={detail} />
+              <AduanDetailTree rows={rows} />
+            </>
+          );
         }}
       />
     </AppShell>
