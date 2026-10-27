@@ -85,6 +85,7 @@ export default function ScmMonitoringPage() {
         keyOf={(r) => r.mrp.id}
         firstColumnLabel="No. MRP"
         firstColumnRender={(r) => <span className="font-mono">{r.mrp.id}</span>}
+        singleExpand
         renderExpanded={(r) => <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(r.detail)} />}
         filterDefs={[
           { label: "Vendor", options: Array.from(new Set(rows.flatMap((r) => r.vendors))).sort(), test: (r, v) => r.vendors.includes(v) },

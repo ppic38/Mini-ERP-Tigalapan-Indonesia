@@ -95,12 +95,8 @@ export default function MrpListPage() {
   }
 
   function toggleExpanded(mrpId: string) {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(mrpId)) next.delete(mrpId);
-      else next.add(mrpId);
-      return next;
-    });
+    // Hanya satu MRP yang terbuka: membuka satu menutup yang lain.
+    setExpandedIds((prev) => (prev.has(mrpId) ? new Set() : new Set([mrpId])));
   }
 
   const rows = useMemo(() => {

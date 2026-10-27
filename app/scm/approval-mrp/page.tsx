@@ -90,6 +90,7 @@ export default function ScmApprovalMrpPage() {
         keyOf={(d) => d.mrp.id}
         firstColumnLabel="No. MRP"
         firstColumnRender={(d) => <span className="font-mono">{d.mrp.id}</span>}
+        singleExpand
         renderExpanded={(d) => (
           <div className="flex flex-col gap-3">
             <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(d, { includeZeroQty: false })} />
@@ -127,6 +128,7 @@ export default function ScmApprovalMrpPage() {
         keyOf={(d) => d.mrp.id}
         firstColumnLabel="No. MRP"
         firstColumnRender={(d) => <span className="font-mono">{d.mrp.id}</span>}
+        singleExpand
         renderExpanded={(d) => (
           <div>
             <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(d)} />

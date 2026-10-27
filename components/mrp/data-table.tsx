@@ -53,6 +53,7 @@ export function DataTable<T>({
   rowClassName,
   bodyMaxHeight,
   renderExpanded,
+  singleExpand,
   onRowClick,
   collapseSignal,
   mobileCards,
@@ -97,6 +98,8 @@ export function DataTable<T>({
    *  halaman MRP PPIC. Tidak diisi = tabel tetap seperti biasa, tidak ada perubahan sama sekali
    *  buat pemakai DataTable lain. */
   renderExpanded?: (row: T) => ReactNode;
+  /** Kalau true, hanya satu baris yang bisa terbuka: membuka satu baris menutup yang lain. */
+  singleExpand?: boolean;
   /** Opsional: klik baris memanggil fungsi ini (mis. membuka popup rincian) alih-alih membuka baris. Diabaikan kalau `renderExpanded` diisi. */
   onRowClick?: (row: T) => void;
   /** Opsional (B1, flow "auto-collapse setelah Bayar" di Finance/Payment) — ubah nilainya (mis.
@@ -122,6 +125,7 @@ export function DataTable<T>({
 
   function toggleExpanded(key: string) {
     setExpandedKeys((prev) => {
+      if (singleExpand) return prev.has(key) ? new Set() : new Set([key]);
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
