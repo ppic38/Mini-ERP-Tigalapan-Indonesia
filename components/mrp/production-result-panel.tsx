@@ -536,25 +536,45 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                         {sizes.length > 0 && (
                           <div className="mb-3 overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
                             <div className="border-b border-[#CFE0EF] bg-white px-4 py-2 font-sans text-[11.5px] font-semibold text-text-primary">Finish Good per size</div>
-                            <div className="grid grid-cols-4 gap-x-2 bg-[#F7F9FB] px-4 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                            <div className="grid grid-cols-6 gap-x-2 bg-[#F7F9FB] px-4 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                               <span>Size</span>
                               <span className="text-right">Target (hasil cutting)</span>
                               <span className="text-right">Finish Good</span>
                               <span className="text-right">Selisih</span>
+                              <span className="text-right">Di koli (belum dikirim)</span>
+                              <span className="text-right">Terkirim</span>
                             </div>
-                            {sizes.map((size) => {
-                              const tgt = target[size] ?? 0;
-                              const rec = recorded[size] ?? 0;
-                              const kurang = tgt - rec;
-                              return (
-                                <div key={size} className="grid grid-cols-4 items-center gap-x-2 border-t border-[#F1F4F7] px-4 py-1.5 font-sans text-xs text-[#31414F]">
-                                  <span className="font-mono font-medium">{size}</span>
-                                  <span className="text-right font-mono">{tgt}</span>
-                                  <span className="text-right font-mono font-semibold">{rec}</span>
-                                  <span className={"text-right font-mono " + (kurang > 0 ? "font-semibold text-danger-fg" : "text-success-fg")}>{kurang > 0 ? kurang : kurang < 0 ? `+${-kurang}` : "—"}</span>
-                                </div>
-                              );
-                            })}
+                            {(() => {
+                              // Revisi 2026-10-28 (owner): qty per size yang sudah masuk koli dan yang sudah terkirim (koli sudah di-set ekspedisi & resi).
+                              // Reject tidak dihitung (bukan Finish Good); Finish Good dan hasil rework dijumlah per size lintas usia.
+                              const inKoli: Record<string, number> = {};
+                              const sent: Record<string, number> = {};
+                              for (const k of deliveryKolis) {
+                                if (k.mrpId !== selectedMrpId || k.vendorProduksi !== vendorId) continue;
+                                const bucket = k.deliveredAt ? sent : inKoli;
+                                for (const it of k.items) {
+                                  if ((it.kind ?? "FG") === "REJECT" || it.warna !== g.warna || it.lengan !== g.lengan) continue;
+                                  bucket[it.size] = (bucket[it.size] ?? 0) + it.qty;
+                                }
+                              }
+                              return sizes.map((size) => {
+                                const tgt = target[size] ?? 0;
+                                const rec = recorded[size] ?? 0;
+                                const kurang = tgt - rec;
+                                const dikoli = inKoli[size] ?? 0;
+                                const terkirim = sent[size] ?? 0;
+                                return (
+                                  <div key={size} className="grid grid-cols-6 items-center gap-x-2 border-t border-[#F1F4F7] px-4 py-1.5 font-sans text-xs text-[#31414F]">
+                                    <span className="font-mono font-medium">{size}</span>
+                                    <span className="text-right font-mono">{tgt}</span>
+                                    <span className="text-right font-mono font-semibold">{rec}</span>
+                                    <span className={"text-right font-mono " + (kurang > 0 ? "font-semibold text-danger-fg" : "text-success-fg")}>{kurang > 0 ? kurang : kurang < 0 ? `+${-kurang}` : "—"}</span>
+                                    <span className={"text-right font-mono " + (dikoli > 0 ? "font-semibold text-info-fg" : "text-text-muted")}>{dikoli > 0 ? dikoli : "—"}</span>
+                                    <span className={"text-right font-mono " + (terkirim > 0 ? "font-semibold text-success-fg" : "text-text-muted")}>{terkirim > 0 ? terkirim : "—"}</span>
+                                  </div>
+                                );
+                              });
+                            })()}
                           </div>
                         )}
                         {groupBatches.length === 0 && (
