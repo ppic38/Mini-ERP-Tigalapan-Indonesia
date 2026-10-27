@@ -178,88 +178,88 @@ function FgShippingDetailButton({
   });
   const total = rows.reduce((a, r) => ({ fg: a.fg + r.fg, inKoli: a.inKoli + r.inKoli, sent: a.sent + r.sent }), { fg: 0, inKoli: 0, sent: 0 });
 
+  const MAIN_COLS = "grid-cols-[1fr_1fr_1.4fr_1fr]";
+  const KOLI_COLS = "grid-cols-[1fr_0.8fr_1.5fr_2fr]";
+
   return (
     <>
       <button
         onClick={() => setOpen(true)}
         className="rounded-md border border-[#CBD5DF] bg-white px-2.5 py-1 font-sans text-[11px] font-semibold text-action-primary"
       >
-        Lihat detail pengiriman
+        Cek Koli
       </button>
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4">
-          <div className="flex max-h-[88vh] w-full max-w-[680px] flex-col rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]">
-            <div className="border-b border-border-subtle px-5 py-3.5">
-              <div className="font-sans text-[13px] font-semibold text-text-primary">Detail pengiriman — {warna} · {lengan}</div>
+          <div className="flex max-h-[88vh] w-full max-w-[920px] flex-col rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]">
+            <div className="border-b border-border-subtle px-6 py-4">
+              <div className="font-sans text-[14px] font-semibold text-text-primary">Detail pengiriman — {warna} · {lengan}</div>
               <div className="mt-0.5 font-sans text-[11px] text-text-muted">Klik satu size untuk melihat isi per koli.</div>
             </div>
-            <div className="flex-1 overflow-y-auto px-5 py-3">
+            <div className="flex-1 overflow-y-auto px-6 py-4">
               <div className="overflow-hidden rounded-md border border-[#CFE0EF]">
-                <div className="grid grid-cols-[0.8fr_1fr_1.4fr_1fr] gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                <div className={"grid " + MAIN_COLS + " gap-x-6 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] text-center font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"}>
                   <span>Size</span>
-                  <span className="text-right">Finish Good</span>
-                  <span className="text-right">Di koli (belum dikirim)</span>
-                  <span className="text-right">Terkirim</span>
+                  <span>Finish Good</span>
+                  <span>Di koli (belum dikirim)</span>
+                  <span>Terkirim</span>
                 </div>
                 {rows.map((r) => {
                   const isOpen = openSize === r.size;
                   return (
-                    <div key={r.size} className="border-t border-[#F1F4F7]">
+                    <div key={r.size} className="border-b border-[#F1F4F7] last:border-b-0">
                       <button
                         onClick={() => setOpenSize(isOpen ? null : r.size)}
                         disabled={r.list.length === 0}
-                        className={"grid w-full grid-cols-[0.8fr_1fr_1.4fr_1fr] items-center gap-x-2 px-3 py-2 text-left font-sans text-xs text-[#31414F] enabled:hover:bg-[#F3F8FE] " + (isOpen ? "bg-[#F3F8FE]" : "")}
+                        className={"grid w-full items-center gap-x-6 px-4 py-2.5 text-center font-sans text-xs text-[#31414F] enabled:hover:bg-[#F3F8FE] " + MAIN_COLS + " " + (isOpen ? "bg-[#F3F8FE]" : "")}
                       >
                         <span className="font-mono font-medium">
-                          <span className="mr-1 inline-block w-3 text-text-muted">{r.list.length === 0 ? "" : isOpen ? "▾" : "▸"}</span>
+                          <span className="mr-1.5 inline-block w-3 text-text-muted">{r.list.length === 0 ? "" : isOpen ? "▾" : "▸"}</span>
                           {r.size}
                         </span>
-                        <span className="text-right font-mono font-semibold">{r.fg}</span>
-                        <span className={"text-right font-mono " + (r.inKoli > 0 ? "font-semibold text-info-fg" : "text-text-muted")}>{r.inKoli > 0 ? r.inKoli : "—"}</span>
-                        <span className={"text-right font-mono " + (r.sent > 0 ? "font-semibold text-success-fg" : "text-text-muted")}>{r.sent > 0 ? r.sent : "—"}</span>
+                        <span className="font-mono font-semibold">{r.fg}</span>
+                        <span className={"font-mono " + (r.inKoli > 0 ? "font-semibold text-info-fg" : "text-text-muted")}>{r.inKoli > 0 ? r.inKoli : "—"}</span>
+                        <span className={"font-mono " + (r.sent > 0 ? "font-semibold text-success-fg" : "text-text-muted")}>{r.sent > 0 ? r.sent : "—"}</span>
                       </button>
                       {isOpen && (
-                        <div className="border-t border-[#F1F4F7] bg-[#FAFBFC] px-3 py-2">
-                          <div className="grid grid-cols-[0.8fr_0.6fr_1.2fr_1.6fr] gap-x-2 pb-1 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                            <span>No. koli</span>
-                            <span className="text-right">Qty</span>
-                            <span>Status</span>
-                            <span>Ekspedisi / resi</span>
-                          </div>
-                          {r.list.map(({ koli, qty }) => (
-                            <div key={koli.id} className="grid grid-cols-[0.8fr_0.6fr_1.2fr_1.6fr] items-center gap-x-2 border-t border-[#EEF1F5] py-1.5 font-sans text-[11.5px] text-[#31414F]">
-                              <span className="font-mono font-medium">{koli.noKoli}</span>
-                              <span className="text-right font-mono font-semibold">{qty}</span>
-                              <span className={koli.deliveredAt ? "text-success-fg" : "text-info-fg"}>
-                                {koli.deliveredAt ? `Terkirim ${formatDate(koli.deliveredAt.slice(0, 10))}` : "Belum dikirim"}
-                              </span>
-                              <span className="text-text-muted">
-                                {koli.deliveredAt ? [koli.ekspedisi, koli.noResi].filter(Boolean).join(" · ") || "—" : "—"}
-                              </span>
+                        <div className="border-t border-[#E4E8EE] bg-[#F7F9FB] px-4 py-3">
+                          <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
+                            <div className={"grid " + KOLI_COLS + " gap-x-6 bg-[#F1F4F7] px-4 py-1.5 text-center font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted"}>
+                              <span>No. koli</span>
+                              <span>Qty</span>
+                              <span>Status</span>
+                              <span>Ekspedisi / resi</span>
                             </div>
-                          ))}
-                          <div className="grid grid-cols-[0.8fr_0.6fr_1.2fr_1.6fr] gap-x-2 border-t border-[#E4E8EE] pt-1.5 font-sans text-[11px] font-semibold text-[#31414F]">
-                            <span>Total</span>
-                            <span className="text-right font-mono">{r.inKoli + r.sent}</span>
-                            <span className="col-span-2 font-normal text-text-muted">
-                              {r.list.length} koli{r.sent > 0 ? `, ${r.sent} pcs terkirim` : ""}
-                              {r.inKoli > 0 ? `, ${r.inKoli} pcs belum dikirim` : ""}
-                            </span>
+                            {r.list.map(({ koli, qty }) => (
+                              <div key={koli.id} className={"grid " + KOLI_COLS + " items-center gap-x-6 border-t border-[#EEF1F5] px-4 py-2 text-center font-sans text-[11.5px] text-[#31414F]"}>
+                                <span className="font-mono font-medium">{koli.noKoli}</span>
+                                <span className="font-mono font-semibold">{qty}</span>
+                                <span className={koli.deliveredAt ? "text-success-fg" : "text-info-fg"}>
+                                  {koli.deliveredAt ? `Terkirim ${formatDate(koli.deliveredAt.slice(0, 10))}` : "Belum dikirim"}
+                                </span>
+                                <span className="text-text-muted">{koli.deliveredAt ? [koli.ekspedisi, koli.noResi].filter(Boolean).join(" · ") || "—" : "—"}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="mt-2 text-center font-sans text-[11px] text-text-muted">
+                            Size {r.size}: <span className="font-mono font-semibold text-[#31414F]">{r.inKoli + r.sent}</span> pcs di {r.list.length} koli
+                            {r.sent > 0 ? ` · ${r.sent} pcs terkirim` : ""}
+                            {r.inKoli > 0 ? ` · ${r.inKoli} pcs belum dikirim` : ""}
                           </div>
                         </div>
                       )}
                     </div>
                   );
                 })}
-                <div className="grid grid-cols-[0.8fr_1fr_1.4fr_1fr] gap-x-2 border-t border-[#CFE0EF] bg-[#F7F9FB] px-3 py-2 font-sans text-xs font-semibold text-[#31414F]">
-                  <span>Total</span>
-                  <span className="text-right font-mono">{total.fg}</span>
-                  <span className="text-right font-mono text-info-fg">{total.inKoli}</span>
-                  <span className="text-right font-mono text-success-fg">{total.sent}</span>
+                <div className={"grid " + MAIN_COLS + " gap-x-6 border-t-2 border-accent-blue bg-info-bg px-4 py-2.5 text-center font-sans text-xs font-semibold text-info-fg"}>
+                  <span className="uppercase tracking-wider">Total semua size</span>
+                  <span className="font-mono">{total.fg}</span>
+                  <span className="font-mono">{total.inKoli}</span>
+                  <span className="font-mono">{total.sent}</span>
                 </div>
               </div>
             </div>
-            <div className="flex justify-end border-t border-border-subtle px-5 py-3.5">
+            <div className="flex justify-end border-t border-border-subtle px-6 py-3.5">
               <button onClick={() => setOpen(false)} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary">
                 Tutup
               </button>
