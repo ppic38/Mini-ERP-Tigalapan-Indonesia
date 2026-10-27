@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { formatDateTime } from "@/lib/mrp/derive";
 import { MasterDataFormModal, ModalField } from "@/components/mrp/master-data-form-modal";
 import { ImportWarnaAliasModal } from "@/components/mrp/import-warna-alias-modal";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -76,6 +77,7 @@ export function WarnaAliasPanel() {
     { key: "mrpWarna", label: "Nama di MRP", default: true, render: (r) => r.mrpWarna },
     { key: "skuWarna", label: "Nama di SKU", default: true, render: (r) => r.skuWarna },
     { key: "catatan", label: "Catatan", default: true, render: (r) => r.catatan || "—" },
+    { key: "updatedAt", label: "Terakhir diupdate", default: true, render: (r) => <span className="font-mono text-[11px] text-text-muted">{formatDateTime(r.updatedAt)}</span> },
     {
       key: "aksi",
       label: "Aksi",

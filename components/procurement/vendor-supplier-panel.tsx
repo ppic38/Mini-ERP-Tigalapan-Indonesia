@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/mrp/number-input";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { formatDateTime } from "@/lib/mrp/derive";
 import { MasterImportModal, normKey, upsertRows, type ImportValues } from "@/components/mrp/master-import-modal";
 import { MasterDataFormModal, ModalField } from "@/components/mrp/master-data-form-modal";
 import { Tabs } from "@/components/ui/tabs";
@@ -107,6 +108,7 @@ export function VendorSupplierPanel() {
     { key: "name", label: "Nama Vendor Produksi", default: true, render: (v) => v.name },
     { key: "kategori", label: "Kategori", default: true, render: (v) => v.kategori || "—" },
     { key: "weeklyCapacity", label: "Kapasitas/Minggu", default: true, align: "right", render: (v) => v.weeklyCapacity.toLocaleString("id-ID") },
+    { key: "updatedAt", label: "Terakhir diupdate", default: true, render: (r) => <span className="font-mono text-[11px] text-text-muted">{formatDateTime(r.updatedAt)}</span> },
     {
       key: "aksi",
       label: "Aksi",
@@ -126,6 +128,7 @@ export function VendorSupplierPanel() {
 
   const supplierColumns: ColumnDef<MaterialSupplierRow>[] = [
     { key: "nama", label: "Nama Supplier", default: true, render: (r) => r.nama },
+    { key: "updatedAt", label: "Terakhir diupdate", default: true, render: (r) => <span className="font-mono text-[11px] text-text-muted">{formatDateTime(r.updatedAt)}</span> },
     {
       key: "aksi",
       label: "Aksi",

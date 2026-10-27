@@ -6,7 +6,7 @@ import { NumberInput } from "@/components/mrp/number-input";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { MasterImportModal, normKey, upsertRows, type ImportValues } from "@/components/mrp/master-import-modal";
 import { MasterDataFormModal, ModalField } from "@/components/mrp/master-data-form-modal";
-import { formatRupiah } from "@/lib/mrp/derive";
+import { formatRupiah, formatDateTime } from "@/lib/mrp/derive";
 import { useMrpStore } from "@/lib/mrp/store";
 import type { HargaKerahMansetRow } from "@/lib/mrp/masterData";
 
@@ -72,6 +72,7 @@ export function HargaKerahMansetPanel() {
     { key: "namaSupplier", label: "Supplier", default: true, render: (r) => r.namaSupplier || r.kodeSupplier || "—" },
     { key: "hargaKerahPerKg", label: "Harga Kerah per kg", default: true, align: "right", render: (r) => formatRupiah(r.hargaKerahPerKg) },
     { key: "hargaMansetPerKg", label: "Harga Manset per kg", default: true, align: "right", render: (r) => formatRupiah(r.hargaMansetPerKg) },
+    { key: "updatedAt", label: "Terakhir diupdate", default: true, render: (r) => <span className="font-mono text-[11px] text-text-muted">{formatDateTime(r.updatedAt)}</span> },
     {
       key: "aksi",
       label: "Aksi",

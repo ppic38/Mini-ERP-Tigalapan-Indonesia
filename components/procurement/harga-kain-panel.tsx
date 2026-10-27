@@ -6,7 +6,7 @@ import { NumberInput } from "@/components/mrp/number-input";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { MasterDataFormModal, ModalField } from "@/components/mrp/master-data-form-modal";
 import { ImportHargaKainModal } from "@/components/mrp/import-harga-kain-modal";
-import { formatRupiah, MATERIAL_KATEGORI_URUTAN } from "@/lib/mrp/derive";
+import { formatRupiah, MATERIAL_KATEGORI_URUTAN, formatDateTime } from "@/lib/mrp/derive";
 import { useMrpStore } from "@/lib/mrp/store";
 import type { HargaKainRow } from "@/lib/mrp/masterData";
 
@@ -91,6 +91,7 @@ export function HargaKainPanel() {
     { key: "kategori", label: "Kategori", default: true, render: (r) => r.kategori || "—" },
     { key: "warna", label: "Warna", default: true, render: (r) => r.warna || "—" },
     { key: "hargaPerKg", label: "Harga per kg", default: true, align: "right", render: (r) => formatRupiah(r.hargaPerKg) },
+    { key: "updatedAt", label: "Terakhir diupdate", default: true, render: (r) => <span className="font-mono text-[11px] text-text-muted">{formatDateTime(r.updatedAt)}</span> },
     {
       key: "aksi",
       label: "Aksi",

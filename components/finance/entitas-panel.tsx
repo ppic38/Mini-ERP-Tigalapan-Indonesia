@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { MasterImportModal, normKey, upsertRows } from "@/components/mrp/master-import-modal";
 import { useMrpStore } from "@/lib/mrp/store";
+import { formatDateTime } from "@/lib/mrp/derive";
 
 /** Master Data — daftar Entitas (badan usaha) yang dipakai Procurement (assign per PO/material)
  *  & Finance (approval, pilih entitas bayar). Sebelumnya ada 2 sumber berbeda yang tidak sinkron:
@@ -58,6 +59,9 @@ export function EntitasPanel() {
         {filtered.map((r) => (
           <div key={r.id} className="flex items-center gap-2 border-b border-[#F1F4F7] px-5 py-2 last:border-b-0">
             <input value={r.nama} onChange={(e) => updateEntitas(r.id, e.target.value)} className="input flex-1 max-w-[360px]" />
+            <span className="w-[150px] flex-none font-mono text-[11px] text-text-muted" title="Terakhir diupdate">
+              {formatDateTime(r.updatedAt)}
+            </span>
             <Button onClick={() => deleteEntitas(r.id)} variant="danger" size="xs">
               Hapus
             </Button>

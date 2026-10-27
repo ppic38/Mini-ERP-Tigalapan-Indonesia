@@ -990,6 +990,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     kapasitasMin: r.kapasitas_min ?? undefined,
     kapasitasMax: r.kapasitas_max ?? undefined,
     harga: Number(r.harga),
+    updatedAt: r.updated_at ?? undefined,
   }));
   const hargaKain: HargaKainRow[] = (hargaKainRows.data ?? []).map((r) => ({
     id: r.id,
@@ -998,6 +999,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     kategori: r.kategori,
     warna: r.warna,
     hargaPerKg: Number(r.harga_per_kg),
+    updatedAt: r.updated_at ?? undefined,
   }));
   const hargaKainPks: HargaKainPksRow[] = (hargaKainPksRows.data ?? []).map((r) => ({
     id: r.id,
@@ -1008,12 +1010,13 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     tonaseMin: r.tonase_min == null ? undefined : Number(r.tonase_min),
     tonaseMax: r.tonase_max == null ? undefined : Number(r.tonase_max),
     hargaPerKg: Number(r.harga_per_kg),
+    updatedAt: r.updated_at ?? undefined,
   }));
-  const entitasList: EntitasRow[] = (entitasRows.data ?? []).map((r) => ({ id: r.id, nama: r.nama }));
-  const supplierList: SupplierRow[] = (supplierRows.data ?? []).map((r) => ({ id: r.id, nama: r.nama }));
+  const entitasList: EntitasRow[] = (entitasRows.data ?? []).map((r) => ({ id: r.id, nama: r.nama, updatedAt: r.updated_at ?? undefined }));
+  const supplierList: SupplierRow[] = (supplierRows.data ?? []).map((r) => ({ id: r.id, nama: r.nama, updatedAt: r.updated_at ?? undefined }));
   // Kolom `price_per_kg` bertipe `numeric` Postgres -- bisa datang sebagai string lewat PostgREST,
   // `Number(...)` wajib di sini (sama seperti kolom numeric lain di file ini).
-  const ekspedisiRates: EkspedisiRateRow[] = (ekspedisiRateRows.data ?? []).map((r) => ({ id: r.id, nama: r.nama, pricePerKg: Number(r.price_per_kg) }));
+  const ekspedisiRates: EkspedisiRateRow[] = (ekspedisiRateRows.data ?? []).map((r) => ({ id: r.id, nama: r.nama, pricePerKg: Number(r.price_per_kg), updatedAt: r.updated_at ?? undefined }));
   // Harga jual per item, seed sekali (lihat migration 0035) -- `price` numeric Postgres, `Number(...)`
   // wajib sama seperti kolom numeric lain di file ini.
   const itemSellingPrices: ItemSellingPriceRow[] = (itemSellingPriceRows.data ?? []).map((r) => ({
@@ -1025,6 +1028,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     lengan: r.lengan as ItemSellingPriceRow["lengan"],
     size: r.size,
     price: Number(r.price),
+    updatedAt: r.updated_at ?? undefined,
   }));
   // Master Data "Harga RIB" (migration 0037) -- `harga_per_kg` numeric Postgres, `Number(...)` wajib.
   const hargaRib: HargaRibRow[] = (hargaRibRows.data ?? []).map((r) => ({
@@ -1033,6 +1037,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     namaSupplier: r.nama_supplier,
     warna: r.warna,
     hargaPerKg: Number(r.harga_per_kg),
+    updatedAt: r.updated_at ?? undefined,
   }));
   // Master Data "Harga Kerah/Manset per Supplier" (migration 0038) -- kolom harga numeric, `Number(...)` wajib.
   const hargaKerahManset: HargaKerahMansetRow[] = (hargaKerahMansetRows.data ?? []).map((r) => ({
@@ -1041,6 +1046,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     namaSupplier: r.nama_supplier,
     hargaKerahPerKg: Number(r.harga_kerah_per_kg),
     hargaMansetPerKg: Number(r.harga_manset_per_kg),
+    updatedAt: r.updated_at ?? undefined,
   }));
   // Master Data "Vendor & Supplier" > Supplier Material (migration 0042, kolom `kode` dihapus di
   // 0043 -- lihat catatan di masterData.ts) -- daftar pilihan dropdown Harga Kain/Kain PKS/RIB/
@@ -1048,6 +1054,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
   const materialSuppliers: MaterialSupplierRow[] = (materialSupplierRows.data ?? []).map((r) => ({
     id: r.id,
     nama: r.nama,
+    updatedAt: r.updated_at ?? undefined,
   }));
   // Master Data "Harga FOB" (migration 0058) -- `harga_per_pcs` numeric Postgres, `Number(...)` wajib.
   const hargaFob: HargaFobRow[] = (hargaFobRows.data ?? []).map((r) => ({
@@ -1055,6 +1062,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     vendorProduksi: r.vendor_produksi,
     item: r.item,
     hargaPerPcs: Number(r.harga_per_pcs),
+    updatedAt: r.updated_at ?? undefined,
   }));
   // Master Data "Alias Warna" (migration 0051) -- lihat catatan lengkap di WarnaAliasRow (masterData.ts).
   const warnaAliases: WarnaAliasRow[] = (warnaAliasRows.data ?? []).map((r) => ({
@@ -1062,6 +1070,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     mrpWarna: r.mrp_warna,
     skuWarna: r.sku_warna,
     catatan: r.catatan ?? undefined,
+    updatedAt: r.updated_at ?? undefined,
   }));
   // Master Data "Kerah/Manset" (konversi pcs->kg + harga/kg, migration 0036) -- `kg_per_pcs`/
   // `harga_per_kg` numeric Postgres, `Number(...)` wajib sama seperti kolom numeric lain di file ini.
@@ -1069,6 +1078,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     kind: r.kind as "KERAH" | "MANSET" | "RIB",
     kgPerPcs: Number(r.kg_per_pcs),
     hargaPerKg: Number(r.harga_per_kg),
+    updatedAt: r.updated_at ?? undefined,
   }));
   // ---- Vendor produksi (kategori & kapasitas mingguan asli, lihat migration 0019) ----
   const vendorProduksiList: VendorProduksiMasterRow[] = (vendorProduksiMasterRows.data ?? []).map((r) => ({
@@ -1076,6 +1086,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     name: r.name,
     kategori: r.kategori ?? undefined,
     weeklyCapacity: Number(r.base_capacity ?? 0),
+    updatedAt: r.updated_at ?? undefined,
   }));
 
   const state: FlowState = {

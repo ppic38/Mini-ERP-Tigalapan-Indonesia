@@ -32,6 +32,8 @@ export type HargaMaklonRow = {
   kapasitasMin?: number;
   kapasitasMax?: number;
   harga: number;
+  /** Kapan baris ini terakhir diubah (migration 0079); kosong = belum tercatat (baris lama). */
+  updatedAt?: string;
 };
 
 /** Harga kain/material flat per kg, per supplier + kategori kain + warna. */
@@ -42,6 +44,7 @@ export type HargaKainRow = {
   kategori: string;
   warna: string;
   hargaPerKg: number;
+  updatedAt?: string;
 };
 
 /** Harga kain PKS — sama seperti HargaKainRow tapi bertingkat berdasarkan tonase (per SATUAN,
@@ -56,10 +59,11 @@ export type HargaKainPksRow = {
   tonaseMin?: number;
   tonaseMax?: number;
   hargaPerKg: number;
+  updatedAt?: string;
 };
 
-export type EntitasRow = { id: string; nama: string };
-export type SupplierRow = { id: string; nama: string };
+export type EntitasRow = { id: string; nama: string; updatedAt?: string };
+export type SupplierRow = { id: string; nama: string; updatedAt?: string };
 
 /** Tarif ongkir ekspedisi, FLAT per kg (harga/kg x berat kg total 1 resi/grup pengiriman) --
  *  BEDA dari Harga Maklon/Harga Kain/Harga Kain PKS di atas (yang masih murni data referensi
@@ -68,7 +72,7 @@ export type SupplierRow = { id: string; nama: string };
  *  HPP, dan Penerimaan Warehouse -- menggantikan tarif tier hardcode lama (EKSPEDISI_RATES di
  *  lib/mrp/seed.ts, sudah dihapus). Matching nama EXACT (case-sensitive) ke `DeliveryKoli.ekspedisi`
  *  -- nama ekspedisi yang tidak ada di tabel ini menghasilkan ongkir Rp 0 (disengaja). */
-export type EkspedisiRateRow = { id: string; nama: string; pricePerKg: number };
+export type EkspedisiRateRow = { id: string; nama: string; pricePerKg: number; updatedAt?: string };
 
 /** Harga jual per item (kategori/SKU/warna/lengan/size), di-seed SEKALI dari file "Item Library
  *  (Tigalapan).csv" (2026-09-13, 2.139 baris, 6 kategori yang dipakai alur MRP: COMBED 24S, COMBED
@@ -84,6 +88,7 @@ export type ItemSellingPriceRow = {
   lengan: Lengan;
   size: string;
   price: number;
+  updatedAt?: string;
 };
 
 /** Master Data "Kerah/Manset" (konversi qty PCS -> kg + harga/kg, GLOBAL untuk semua warna kategori
@@ -93,7 +98,7 @@ export type ItemSellingPriceRow = {
  *  (app/procurement/po-approval/page.tsx) untuk estimasi nominal Rp (PURELY DISPLAY, tidak
  *  mengubah nilai PO Bahan aktual). */
 /** Parameter konversi pcs -> kg per jenis material tambahan. "RIB" (migration 0069) = kg rib per pcs untuk kebutuhan rib saat upload MRP. */
-export type KerahMansetSettingRow = { kind: "KERAH" | "MANSET" | "RIB"; kgPerPcs: number; hargaPerKg: number };
+export type KerahMansetSettingRow = { kind: "KERAH" | "MANSET" | "RIB"; kgPerPcs: number; hargaPerKg: number; updatedAt?: string };
 
 /** Master Data "Harga RIB" (migration 0037) -- harga RIB per kg, per supplier + warna (bentuk sama
  *  seperti HargaKainRow tanpa `kategori`). Di-seed dari price list KNITTO; supplier lain yang belum
@@ -106,6 +111,7 @@ export type HargaRibRow = {
   namaSupplier: string;
   warna: string;
   hargaPerKg: number;
+  updatedAt?: string;
 };
 
 /** Master Data "Harga Kerah/Manset per Supplier" (migration 0038) -- harga per kg Kerah & Manset per
@@ -118,6 +124,7 @@ export type HargaKerahMansetRow = {
   namaSupplier: string;
   hargaKerahPerKg: number;
   hargaMansetPerKg: number;
+  updatedAt?: string;
 };
 
 /** Master Data "Vendor & Supplier" > Supplier Material (migration 0042, kolom `kode` dihapus di
@@ -128,7 +135,7 @@ export type HargaKerahMansetRow = {
  *  di HargaKainRow/HargaKainPksRow/HargaRibRow/HargaKerahMansetRow TETAP string bebas (bukan
  *  foreign key) -- tabel ini murni SUMBER PILIHAN dropdown, dicocokkan BY NAMA di UI (kode_supplier
  *  pada baris-baris itu diisi sama dengan nama saat create/edit lewat panel, lihat masing-masing). */
-export type MaterialSupplierRow = { id: string; nama: string };
+export type MaterialSupplierRow = { id: string; nama: string; updatedAt?: string };
 
 /** Revisi 2026-09-06: data ASLI vendor produksi dari spreadsheet Procurement (kategori & kapasitas
  *  produksi PER MINGGU) -- sumbernya kolom `kategori`/`base_capacity` di tabel `vendors_produksi`
@@ -141,6 +148,7 @@ export type VendorProduksiMasterRow = {
   name: string;
   kategori?: string;
   weeklyCapacity: number;
+  updatedAt?: string;
 };
 
 /** Master Data "Alias Warna" (migration 0051, owner 2026-09-24: "nama warna di MRP beda dari
@@ -151,7 +159,7 @@ export type VendorProduksiMasterRow = {
  *  (nama sama persis) gagal, supaya WMS tidak menampilkan label otomatis jelek untuk warna yang
  *  sebenarnya sama tapi beda penulisan. Tidak mengubah data MRP/SKU yang sudah ada -- murni tabel
  *  pemetaan tambahan. `mrpWarna` unik (lihat migration), satu nama MRP cuma boleh 1 tujuan alias. */
-export type WarnaAliasRow = { id: string; mrpWarna: string; skuWarna: string; catatan?: string };
+export type WarnaAliasRow = { id: string; mrpWarna: string; skuWarna: string; catatan?: string; updatedAt?: string };
 
 /** Master Data "Harga FOB" (migration 0058, owner 2026-09-27: "dari master data, dummy dulu") --
  *  harga jadi per pcs (bahan+jahit+margin vendor, BUKAN ongkos jahit saja) untuk PO Produksi grup
@@ -161,4 +169,4 @@ export type WarnaAliasRow = { id: string; mrpWarna: string; skuWarna: string; ca
  *  kodeSupplier di tabel harga_* lain -- vendor produksi sudah punya master id resmi sendiri).
  *  `item` string bebas (nama item/kategori, mis. "CARGO MAMU") -- dicocokkan manual oleh
  *  Procurement saat bikin PO Produksi FOB, tidak ada validasi terhadap Master Data SKU. */
-export type HargaFobRow = { id: string; vendorProduksi: string; item: string; hargaPerPcs: number };
+export type HargaFobRow = { id: string; vendorProduksi: string; item: string; hargaPerPcs: number; updatedAt?: string };

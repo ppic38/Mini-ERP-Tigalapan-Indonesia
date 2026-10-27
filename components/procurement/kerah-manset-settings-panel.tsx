@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/mrp/number-input";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { formatDateTime } from "@/lib/mrp/derive";
 import { MasterDataFormModal, ModalField } from "@/components/mrp/master-data-form-modal";
 import { useMrpStore } from "@/lib/mrp/store";
 import type { KerahMansetSettingRow } from "@/lib/mrp/masterData";
@@ -61,6 +62,7 @@ export function KerahMansetSettingsPanel() {
   const columns: ColumnDef<KerahMansetSettingRow>[] = [
     { key: "item", label: "Item", default: true, render: (r) => <span className="font-sans text-[12.5px] font-medium text-text-primary">{kindLabel(r.kind)}</span> },
     { key: "kgPerPcs", label: "Kg per Pcs", default: true, align: "right", render: (r) => r.kgPerPcs.toLocaleString("id-ID", { minimumFractionDigits: 3, maximumFractionDigits: 3 }) },
+    { key: "updatedAt", label: "Terakhir diupdate", default: true, render: (r) => <span className="font-mono text-[11px] text-text-muted">{formatDateTime(r.updatedAt)}</span> },
     {
       key: "aksi",
       label: "Aksi",
