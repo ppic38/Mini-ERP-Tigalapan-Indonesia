@@ -8,11 +8,13 @@ import { exportMaklonPoRasioExcel } from "@/lib/mrp/exportPoExcel";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { SingleSelectFilter } from "@/components/mrp/single-select-filter";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { useMrpStore } from "@/lib/mrp/store";
 import { addDays, formatDate, formatPcs, formatRupiah, maklonPoBadgeWithApproval, maklonPoDisplayStatus, materialReceivedForMaklon, mrpDetailFor, compareNewestFirst } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { AduanPolaRow, MaklonPO } from "@/lib/mrp/types";
+import type { MrpDetail } from "@/lib/mrp/store";
 import { seenPoKey, useMarkPoSeen } from "@/lib/shell/seen-po";
 
 /** Item revisi 2026-09-22 (owner: "astaga buat diclick baru tampil informasinya tiap hierarki") --
@@ -151,6 +153,51 @@ function AduanDetailTree({ rows }: { rows: AduanPolaRow[] }) {
         <span>Total</span>
         <span />
         <span className="text-right font-mono">{formatPcs(grandTotal)}</span>
+      </div>
+    </div>
+  );
+}
+
+/** Qty PO per jenis lengan: Pendek, Panjang, Wangki Pendek, Wangki Panjang (Wangki = grup berkategori WANGKI MYNO). Dihitung dari Aduan Pola vendor ini; boleh dipersempit ke satu MRP.
+ *  Dipakai untuk menjelaskan kenapa harga maklon sebuah MRP sebesar itu: tarif ditentukan per lengan dari qty kumulatif. */
+function LenganQtyCards({ pos, mrpDetails }: { pos: MaklonPO[]; mrpDetails: MrpDetail[] }) {
+  const [mrpId, setMrpId] = useState("");
+  const mrpOptions = Array.from(new Set(pos.filter((p) => !p.isFob).map((p) => p.mrpId)));
+  const totals = { pdk: 0, pjg: 0, wPdk: 0, wPjg: 0 };
+  for (const po of pos) {
+    if (po.isFob || (mrpId && po.mrpId !== mrpId)) continue;
+    const detail = mrpDetailFor(po.mrpId, mrpDetails);
+    for (const a of detail?.aduanRows ?? []) {
+      if (a.vendor !== po.vendorProduksi) continue;
+      const kategori = detail?.lenganGroups.find((g) => g.id === a.lenganGroupId)?.kategori ?? "";
+      const wangki = /wangk[iy]/i.test(kategori);
+      if (a.lengan === "PENDEK") totals[wangki ? "wPdk" : "pdk"] += a.qty;
+      else totals[wangki ? "wPjg" : "pjg"] += a.qty;
+    }
+  }
+  const total = totals.pdk + totals.pjg + totals.wPdk + totals.wPjg;
+  const cards: { label: string; value: number }[] = [
+    { label: "Pendek (PDK)", value: totals.pdk },
+    { label: "Panjang (PJG)", value: totals.pjg },
+    { label: "Wangki Pendek", value: totals.wPdk },
+    { label: "Wangki Panjang", value: totals.wPjg },
+  ];
+  return (
+    <div className="mb-4">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="font-sans text-[12px] font-semibold text-text-primary">Qty per jenis lengan</span>
+        {mrpOptions.length > 1 && <SingleSelectFilter label="MRP" allLabel={`Semua MRP (${mrpOptions.length})`} options={mrpOptions} value={mrpId} onChange={setMrpId} />}
+        <span className="ml-auto font-mono text-[11px] text-text-muted">Total {formatPcs(total)} pcs{mrpId ? ` · ${mrpId}` : ""}</span>
+      </div>
+      <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
+        {cards.map((c) => (
+          <div key={c.label} className="relative overflow-hidden rounded-xl border border-border-subtle bg-surface-card px-5 pb-4 pt-5">
+            <div className="absolute inset-x-0 top-0 h-[3px] bg-[#38BDF8]" />
+            <div className="truncate font-mono text-[10.5px] uppercase tracking-[0.14em] text-text-muted">{c.label}</div>
+            <div className="mt-2 font-sans text-[26px] font-bold leading-none tracking-tight text-text-primary">{formatPcs(c.value)}</div>
+            <div className="mt-2 truncate font-mono text-[10.5px] text-text-muted">pcs{total > 0 ? ` · ${Math.round((c.value / total) * 100)}% dari total` : ""}</div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -368,6 +415,7 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
       roleOverride={VENDOR_PRODUKSI[vendorId]?.name ?? vendorId}
       entityOverride="Vendor Produksi"
     >
+      <LenganQtyCards pos={myPOs} mrpDetails={mrpDetails} />
       <DataTable
         title="PO produksi saya"
         mobileCards

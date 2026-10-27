@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Kartu qty per jenis lengan di PO Produksi Saya (2026-10-27, tanpa migration)
+Owner: bisa menjelaskan ke vendor kenapa harga maklon sebuah MRP sebesar itu (tarif ditentukan per lengan dari qty kumulatif). Di atas tabel PO Produksi Saya (portal vendor) ada empat kartu qty: Pendek (PDK), Panjang (PJG), Wangki Pendek, Wangki Panjang, dihitung dari Aduan Pola vendor itu sendiri (`LenganQtyCards`, app/vendor-maklon/po-produksi/page.tsx); Wangki = grup berkategori WANGKI MYNO (`LenganGroup.kategori`). Pilihan MRP (muncul kalau >1 MRP) mempersempit ke satu MRP; PO FOB tidak ikut (tanpa Aduan Pola). Catatan harga: baris Master Data Harga Maklon bertipe lengan "Wangky PDK/PJG" tidak pernah dipakai perhitungan (`matchesLengan` hanya mengenali PDK/PENDEK/PJG/PANJANG), jadi qty Wangki saat ini dihargai dengan tarif PDK/PJG biasa.
+
 ## Kolom PIC kosong di sesi campuran vendor + modul internal (2026-10-27, tanpa migration)
 Laporan owner: kolom PIC kosong di semua halaman portal vendor CECEP. Penyebab yang ditemukan di kode: `getFlowSnapshotAction` membuang semua nama pelaku (`stripVendorActorNames`) untuk sesi yang punya peran internal non-Sysadmin; satu browser yang login sebagai vendor DAN modul internal (mis. PPIC) dianggap internal, jadi portal vendornya tidak pernah menerima nama. Perbaikan: `stripVendorActorNames(state, keepVendorId)` -- sesi campuran tetap menerima nama pelaku baris vendornya sendiri (`session.vendorId`), nama baris vendor lain tetap dibuang. Sesi vendor murni dan Sysadmin tidak berubah. Data lama (sebelum migration 0078, 2026-10-26) tetap "-" kecuali diisi dari `vendor_action_log` (SQL di chat).
 
