@@ -38,7 +38,7 @@ import {
   compareNoKoli,
 } from "@/lib/mrp/derive";
 import { countFgShortfallGroupsForMrp, countRejectActionableGroupsForMrp, pendingMarker } from "@/lib/shell/badges";
-import type { Lengan, ProductionResult } from "@/lib/mrp/types";
+import type { DeliveryKoli, Lengan, ProductionResult } from "@/lib/mrp/types";
 
 // FG: Warna/lengan | Progres (target+terinput+bar digabung jadi satu kolom, bukan 3 kolom
 // sempit terpisah — jauh lebih mudah dipindai sekilas) | Target done produksi | Aksi.
@@ -129,6 +129,145 @@ function FgProgressHistory({ poId, results }: { poId: string; results: Productio
         );
       })}
     </div>
+  );
+}
+
+/** Popup "Detail pengiriman" untuk satu warna·lengan di tab Finish Good (owner 2026-10-28): per size, berapa Finish Good yang sudah
+ *  masuk koli (belum dikirim) dan yang sudah terkirim; klik satu size untuk melihat rincian per koli (nomor koli, qty, status,
+ *  ekspedisi dan resi). Reject tidak dihitung; qty size yang sama dalam satu koli (dari beberapa roll/usia) dijumlah. */
+function FgShippingDetailButton({
+  mrpId,
+  vendorId,
+  warna,
+  lengan,
+  sizes,
+  recorded,
+  kolis,
+}: {
+  mrpId: string;
+  vendorId: string;
+  warna: string;
+  lengan: Lengan;
+  sizes: string[];
+  recorded: Record<string, number>;
+  kolis: DeliveryKoli[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [openSize, setOpenSize] = useState<string | null>(null);
+
+  const perKoli: Record<string, { koli: DeliveryKoli; qty: number }[]> = {};
+  for (const k of [...kolis].sort((a, b) => compareNoKoli(a.noKoli, b.noKoli))) {
+    if (k.mrpId !== mrpId || k.vendorProduksi !== vendorId) continue;
+    for (const it of k.items) {
+      if ((it.kind ?? "FG") === "REJECT" || it.warna !== warna || it.lengan !== lengan) continue;
+      const list = (perKoli[it.size] ??= []);
+      const existing = list.find((x) => x.koli.id === k.id);
+      if (existing) existing.qty += it.qty;
+      else list.push({ koli: k, qty: it.qty });
+    }
+  }
+  const rows = sizes.map((size) => {
+    const list = perKoli[size] ?? [];
+    return {
+      size,
+      fg: recorded[size] ?? 0,
+      list,
+      inKoli: list.filter((x) => !x.koli.deliveredAt).reduce((a, x) => a + x.qty, 0),
+      sent: list.filter((x) => !!x.koli.deliveredAt).reduce((a, x) => a + x.qty, 0),
+    };
+  });
+  const total = rows.reduce((a, r) => ({ fg: a.fg + r.fg, inKoli: a.inKoli + r.inKoli, sent: a.sent + r.sent }), { fg: 0, inKoli: 0, sent: 0 });
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        className="rounded-md border border-[#CBD5DF] bg-white px-2.5 py-1 font-sans text-[11px] font-semibold text-action-primary"
+      >
+        Lihat detail pengiriman
+      </button>
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4">
+          <div className="flex max-h-[88vh] w-full max-w-[680px] flex-col rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]">
+            <div className="border-b border-border-subtle px-5 py-3.5">
+              <div className="font-sans text-[13px] font-semibold text-text-primary">Detail pengiriman — {warna} · {lengan}</div>
+              <div className="mt-0.5 font-sans text-[11px] text-text-muted">Klik satu size untuk melihat isi per koli.</div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-3">
+              <div className="overflow-hidden rounded-md border border-[#CFE0EF]">
+                <div className="grid grid-cols-[0.8fr_1fr_1.4fr_1fr] gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                  <span>Size</span>
+                  <span className="text-right">Finish Good</span>
+                  <span className="text-right">Di koli (belum dikirim)</span>
+                  <span className="text-right">Terkirim</span>
+                </div>
+                {rows.map((r) => {
+                  const isOpen = openSize === r.size;
+                  return (
+                    <div key={r.size} className="border-t border-[#F1F4F7]">
+                      <button
+                        onClick={() => setOpenSize(isOpen ? null : r.size)}
+                        disabled={r.list.length === 0}
+                        className={"grid w-full grid-cols-[0.8fr_1fr_1.4fr_1fr] items-center gap-x-2 px-3 py-2 text-left font-sans text-xs text-[#31414F] enabled:hover:bg-[#F3F8FE] " + (isOpen ? "bg-[#F3F8FE]" : "")}
+                      >
+                        <span className="font-mono font-medium">
+                          <span className="mr-1 inline-block w-3 text-text-muted">{r.list.length === 0 ? "" : isOpen ? "▾" : "▸"}</span>
+                          {r.size}
+                        </span>
+                        <span className="text-right font-mono font-semibold">{r.fg}</span>
+                        <span className={"text-right font-mono " + (r.inKoli > 0 ? "font-semibold text-info-fg" : "text-text-muted")}>{r.inKoli > 0 ? r.inKoli : "—"}</span>
+                        <span className={"text-right font-mono " + (r.sent > 0 ? "font-semibold text-success-fg" : "text-text-muted")}>{r.sent > 0 ? r.sent : "—"}</span>
+                      </button>
+                      {isOpen && (
+                        <div className="border-t border-[#F1F4F7] bg-[#FAFBFC] px-3 py-2">
+                          <div className="grid grid-cols-[0.8fr_0.6fr_1.2fr_1.6fr] gap-x-2 pb-1 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                            <span>No. koli</span>
+                            <span className="text-right">Qty</span>
+                            <span>Status</span>
+                            <span>Ekspedisi / resi</span>
+                          </div>
+                          {r.list.map(({ koli, qty }) => (
+                            <div key={koli.id} className="grid grid-cols-[0.8fr_0.6fr_1.2fr_1.6fr] items-center gap-x-2 border-t border-[#EEF1F5] py-1.5 font-sans text-[11.5px] text-[#31414F]">
+                              <span className="font-mono font-medium">{koli.noKoli}</span>
+                              <span className="text-right font-mono font-semibold">{qty}</span>
+                              <span className={koli.deliveredAt ? "text-success-fg" : "text-info-fg"}>
+                                {koli.deliveredAt ? `Terkirim ${formatDate(koli.deliveredAt.slice(0, 10))}` : "Belum dikirim"}
+                              </span>
+                              <span className="text-text-muted">
+                                {koli.deliveredAt ? [koli.ekspedisi, koli.noResi].filter(Boolean).join(" · ") || "—" : "—"}
+                              </span>
+                            </div>
+                          ))}
+                          <div className="grid grid-cols-[0.8fr_0.6fr_1.2fr_1.6fr] gap-x-2 border-t border-[#E4E8EE] pt-1.5 font-sans text-[11px] font-semibold text-[#31414F]">
+                            <span>Total</span>
+                            <span className="text-right font-mono">{r.inKoli + r.sent}</span>
+                            <span className="col-span-2 font-normal text-text-muted">
+                              {r.list.length} koli{r.sent > 0 ? `, ${r.sent} pcs terkirim` : ""}
+                              {r.inKoli > 0 ? `, ${r.inKoli} pcs belum dikirim` : ""}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <div className="grid grid-cols-[0.8fr_1fr_1.4fr_1fr] gap-x-2 border-t border-[#CFE0EF] bg-[#F7F9FB] px-3 py-2 font-sans text-xs font-semibold text-[#31414F]">
+                  <span>Total</span>
+                  <span className="text-right font-mono">{total.fg}</span>
+                  <span className="text-right font-mono text-info-fg">{total.inKoli}</span>
+                  <span className="text-right font-mono text-success-fg">{total.sent}</span>
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end border-t border-border-subtle px-5 py-3.5">
+              <button onClick={() => setOpen(false)} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary">
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -536,68 +675,29 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                             baris dibuka (juga saat semua roll sudah tertutup tapi warna belum diklik Selesai). */}
                         {sizes.length > 0 && (
                           <div className="mb-3 overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
-                            <div className="border-b border-[#CFE0EF] bg-white px-4 py-2 font-sans text-[11.5px] font-semibold text-text-primary">Finish Good per size</div>
-                            <div className="grid grid-cols-[0.6fr_1fr_1fr_0.8fr_1.1fr_0.8fr_2.4fr] gap-x-2 bg-[#F7F9FB] px-4 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                            <div className="flex items-center justify-between gap-2 border-b border-[#CFE0EF] bg-white px-4 py-2 font-sans text-[11.5px] font-semibold text-text-primary">
+                              <span>Finish Good per size</span>
+                              <FgShippingDetailButton mrpId={selectedMrpId} vendorId={vendorId} warna={g.warna} lengan={g.lengan as Lengan} sizes={sizes} recorded={recorded} kolis={deliveryKolis} />
+                            </div>
+                            <div className="grid grid-cols-4 gap-x-2 bg-[#F7F9FB] px-4 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                               <span>Size</span>
                               <span className="text-right">Target (hasil cutting)</span>
                               <span className="text-right">Finish Good</span>
                               <span className="text-right">Selisih</span>
-                              <span className="text-right">Di koli (belum dikirim)</span>
-                              <span className="text-right">Terkirim</span>
-                              <span className="pl-3">Isi per koli</span>
                             </div>
-                            {(() => {
-                              // Revisi 2026-10-28 (owner): qty per size yang sudah masuk koli dan yang sudah terkirim (koli sudah di-set ekspedisi & resi).
-                              // Reject tidak dihitung (bukan Finish Good); Finish Good dan hasil rework dijumlah per size lintas usia.
-                              const inKoli: Record<string, number> = {};
-                              const sent: Record<string, number> = {};
-                              // Isi per koli: satu koli bisa memuat size yang sama dari beberapa roll/usia, jadi dijumlah per koli.
-                              const perKoli: Record<string, { noKoli: string; qty: number; sent: boolean }[]> = {};
-                              for (const k of [...deliveryKolis].sort((a, b) => compareNoKoli(a.noKoli, b.noKoli))) {
-                                if (k.mrpId !== selectedMrpId || k.vendorProduksi !== vendorId) continue;
-                                const bucket = k.deliveredAt ? sent : inKoli;
-                                for (const it of k.items) {
-                                  if ((it.kind ?? "FG") === "REJECT" || it.warna !== g.warna || it.lengan !== g.lengan) continue;
-                                  bucket[it.size] = (bucket[it.size] ?? 0) + it.qty;
-                                  const list = (perKoli[it.size] ??= []);
-                                  const existing = list.find((x) => x.noKoli === k.noKoli && x.sent === !!k.deliveredAt);
-                                  if (existing) existing.qty += it.qty;
-                                  else list.push({ noKoli: k.noKoli, qty: it.qty, sent: !!k.deliveredAt });
-                                }
-                              }
-                              return sizes.map((size) => {
-                                const tgt = target[size] ?? 0;
-                                const rec = recorded[size] ?? 0;
-                                const kurang = tgt - rec;
-                                const dikoli = inKoli[size] ?? 0;
-                                const terkirim = sent[size] ?? 0;
-                                return (
-                                  <div key={size} className="grid grid-cols-[0.6fr_1fr_1fr_0.8fr_1.1fr_0.8fr_2.4fr] items-center gap-x-2 border-t border-[#F1F4F7] px-4 py-1.5 font-sans text-xs text-[#31414F]">
-                                    <span className="font-mono font-medium">{size}</span>
-                                    <span className="text-right font-mono">{tgt}</span>
-                                    <span className="text-right font-mono font-semibold">{rec}</span>
-                                    <span className={"text-right font-mono " + (kurang > 0 ? "font-semibold text-danger-fg" : "text-success-fg")}>{kurang > 0 ? kurang : kurang < 0 ? `+${-kurang}` : "—"}</span>
-                                    <span className={"text-right font-mono " + (dikoli > 0 ? "font-semibold text-info-fg" : "text-text-muted")}>{dikoli > 0 ? dikoli : "—"}</span>
-                                    <span className={"text-right font-mono " + (terkirim > 0 ? "font-semibold text-success-fg" : "text-text-muted")}>{terkirim > 0 ? terkirim : "—"}</span>
-                                    <span className="flex flex-wrap gap-1 pl-3">
-                                      {(perKoli[size] ?? []).length === 0 ? (
-                                        <span className="font-mono text-text-muted">—</span>
-                                      ) : (
-                                        (perKoli[size] ?? []).map((x) => (
-                                          <span
-                                            key={x.noKoli + (x.sent ? "-k" : "-b")}
-                                            title={`Koli ${x.noKoli}: ${x.qty} pcs ${x.sent ? "(sudah dikirim)" : "(belum dikirim)"}`}
-                                            className={"whitespace-nowrap rounded px-1.5 py-px font-mono text-[10.5px] " + (x.sent ? "bg-success-bg text-success-fg" : "bg-info-bg text-info-fg")}
-                                          >
-                                            Koli {x.noKoli} · {x.qty}
-                                          </span>
-                                        ))
-                                      )}
-                                    </span>
-                                  </div>
-                                );
-                              });
-                            })()}
+                            {sizes.map((size) => {
+                              const tgt = target[size] ?? 0;
+                              const rec = recorded[size] ?? 0;
+                              const kurang = tgt - rec;
+                              return (
+                                <div key={size} className="grid grid-cols-4 items-center gap-x-2 border-t border-[#F1F4F7] px-4 py-1.5 font-sans text-xs text-[#31414F]">
+                                  <span className="font-mono font-medium">{size}</span>
+                                  <span className="text-right font-mono">{tgt}</span>
+                                  <span className="text-right font-mono font-semibold">{rec}</span>
+                                  <span className={"text-right font-mono " + (kurang > 0 ? "font-semibold text-danger-fg" : "text-success-fg")}>{kurang > 0 ? kurang : kurang < 0 ? `+${-kurang}` : "—"}</span>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                         {groupBatches.length === 0 && (
