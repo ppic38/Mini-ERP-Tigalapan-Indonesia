@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
@@ -10,7 +10,8 @@ import { SysadminPanel } from "@/components/sysadmin/correction-dialog";
 import { maklonPoCorrections, materialPoCorrections } from "@/components/sysadmin/procurement-corrections";
 import { useMrpStore } from "@/lib/mrp/store";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
-import { compareNewestFirst, formatRupiah, formatDate, mrpDetailFor } from "@/lib/mrp/derive";
+import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
+import { compareNewestFirst, formatPcs, formatRupiah, formatDate, mrpDetailFor } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI, ROLL_KG_ESTIMATE } from "@/lib/mrp/seed";
 import {
   APPROVAL_LEVEL_TABLE,
@@ -365,6 +366,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
   }, [materialPOs, maklonPOs]);
 
   // Portal SCM dibedakan per username (scm02 = Asisten Manager L2, scm01 = SCM Manager L3); akun utama SCM tidak bisa menyetujui.
+  const sysadminMode = useSysadminMode();
   const scmUsername = useInternalAuthStore((s) => s.actors.scm?.username);
   const scmPosition = scmPositionOf(scmUsername);
   const isMine = (i: Item) =>
@@ -439,42 +441,74 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
       return next;
     });
   }
+  // Tabel antrean (gaya sama tabel "Semua PO Vendor Produksi" Finance): baris MRP (ringkasan) -> baris vendor/supplier (aksi per PO).
+  const qtyOfItem = (it: Item): number => (it.type === "MAKLON" ? (it.po as MaklonPO).qty : (it.members ?? [it]).reduce((s, m) => s + (m.po as MaterialPO).rollCount, 0));
+  const qtyLabel = (n: number) => (tab === "MAKLON" ? `${formatPcs(n)} pcs` : `${formatPcs(n)} roll`);
+
   function renderGroups(section: string, list: Item[], rowActions?: (it: Item) => React.ReactNode, groupApprove = false) {
+    if (list.length === 0) return null;
     const byMrp = new Map<string, Item[]>();
     for (const it of list) byMrp.set(it.mrpId, [...(byMrp.get(it.mrpId) ?? []), it]);
     // MRP terbaru (tanggal MRP dibuat) paling atas; sama -> No. MRP menurun.
     const createdOf = (id: string) => mrpDetails.find((d) => d.mrp.id === id)?.dates?.created;
     const ordered = Array.from(byMrp.entries()).sort((a, b) => compareNewestFirst(createdOf(a[0]), a[0], createdOf(b[0]), b[0]));
-    return ordered.map(([mrpId, its]) => {
-      const key = `${section}:${mrpId}`;
-      const open = openMrps.has(key) || needle !== "";
-      const groupBusy = its.some((i) => busyIds.has(i.id));
-      const overdue = its.filter((i) => i.state.overdue && !i.state.approved).length;
-      return (
-        <div key={key} className="border-b border-border-subtle last:border-b-0">
-          <div onClick={() => toggleMrp(key)} className={"flex cursor-pointer items-center gap-3 px-4 py-3 font-sans text-xs hover:bg-[#F4F8FC] " + (open ? "bg-[#F4F8FC]" : "bg-white")}>
-            <span className="w-3 text-info-fg">{open ? "▾" : "▸"}</span>
-            <span className="font-mono text-[13px] font-semibold text-text-primary">{mrpId}</span>
-            <span className="rounded-full bg-[#EEF1F4] px-2 py-0.5 font-mono text-[10px] font-semibold text-text-muted">{its.length} PO</span>
-            {overdue > 0 && <span className="rounded-full bg-danger-bg px-2 py-0.5 font-sans text-[10px] font-semibold text-danger-fg">⚠ {overdue} lewat SLA</span>}
-            <span className="ml-auto font-mono text-[12.5px] font-semibold text-text-primary">{formatRupiah(its.reduce((s, i) => s + i.amount, 0))}</span>
-            {groupApprove && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void approveItems(its, mrpId);
-                }}
-                disabled={groupBusy}
-                className={OUTLINE_BTN}
-              >
-                {groupBusy ? <Spinner label="Memproses…" /> : `Setujui MRP ini (${its.length})`}
-              </button>
-            )}
-          </div>
-          {open && <div className="border-t border-border-subtle bg-[#FBFCFD] pl-6">{its.map((it) => renderRow(it, rowActions?.(it) ?? null))}</div>}
-        </div>
-      );
-    });
+    const unit = tab === "MATERIAL" ? "supplier" : "vendor";
+    return (
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse">
+          <thead>
+            <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
+              <th className="px-5 py-[9px] text-left">No MRP / {tab === "MATERIAL" ? "Supplier" : "Vendor Produksi"} / No PO</th>
+              <th className="px-3 py-[9px] text-right">Qty</th>
+              <th className="px-3 py-[9px] text-right">Nilai</th>
+              <th className="px-3 py-[9px] text-left">Status Approval</th>
+              <th className="px-3 py-[9px] text-right">Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ordered.map(([mrpId, its]) => {
+              const key = `${section}:${mrpId}`;
+              const open = openMrps.has(key) || needle !== "";
+              const groupBusy = its.some((i) => busyIds.has(i.id));
+              const overdue = its.filter((i) => i.state.overdue && !i.state.approved).length;
+              const poCount = its.reduce((s, i) => s + (i.members?.length ?? 1), 0);
+              return (
+                <Fragment key={key}>
+                  <tr onClick={() => toggleMrp(key)} className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] hover:bg-[#FAFBFC] " + (open ? "bg-info-bg" : "")}>
+                    <td className="px-5 py-[11px]">
+                      <span className="mr-1.5 text-text-muted">{open ? "▾" : "▸"}</span>
+                      <span className="font-mono font-semibold text-text-primary">{mrpId}</span>
+                      <span className="ml-1.5 text-[10.5px] text-text-muted">{its.length} {unit}</span>
+                      {overdue > 0 && <span className="ml-2 rounded-full bg-danger-bg px-2 py-0.5 text-[10px] font-semibold text-danger-fg">⚠ {overdue} lewat SLA</span>}
+                    </td>
+                    <td className="px-3 py-[11px] text-right font-mono tabular-nums">{qtyLabel(its.reduce((s, i) => s + qtyOfItem(i), 0))}</td>
+                    <td className="px-3 py-[11px] text-right font-mono font-medium tabular-nums">{formatRupiah(its.reduce((s, i) => s + i.amount, 0))}</td>
+                    <td className="px-3 py-[11px]">
+                      <StatusPill tone="neutral">{poCount} PO</StatusPill>
+                    </td>
+                    <td className="px-3 py-[11px] text-right">
+                      {groupApprove && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void approveItems(its, mrpId);
+                          }}
+                          disabled={groupBusy}
+                          className={OUTLINE_BTN}
+                        >
+                          {groupBusy ? <Spinner label="Memproses…" /> : "Setujui Semua"}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                  {open && its.map((it) => renderRow(it, rowActions?.(it) ?? null))}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
   }
 
   function openDownload(item: Item) {
@@ -482,50 +516,61 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
     else setDownload({ kind: "maklon", pos: [item.po as MaklonPO], baseName: `PO-${item.id}` });
   }
 
+
   function renderRow(item: Item, actions: React.ReactNode) {
     const st = item.state;
     const busy = busyIds.has(item.id);
     return (
-      <div key={item.id} className={"border-b border-[#F1F4F7] transition-opacity last:border-b-0 " + (busy ? "opacity-60" : "")}>
-        <div className="grid items-center gap-x-4 gap-y-2 px-4 py-3 font-sans text-xs text-[#31414F]" style={{ gridTemplateColumns: "minmax(200px,1.3fr) minmax(230px,1.5fr) 130px auto" }}>
-          <div className="min-w-0">
-            <div className="truncate text-[12.5px] font-semibold text-text-primary">{itemTitle(item)}</div>
-            <div className="truncate text-[11px] text-text-muted" title={itemSubtitle(item)}>
+      <Fragment key={item.id}>
+        <tr className={"border-b border-[#F1F4F7] bg-[#FBFCFD] font-sans text-[11.5px] text-[#31414F] transition-opacity " + (busy ? "opacity-60" : "")}>
+          <td className="py-[10px] pl-12 pr-3">
+            <div className="font-semibold text-text-primary">{item.type === "MATERIAL" ? item.supplier ?? item.vendor : item.vendor}</div>
+            <div className="max-w-[420px] truncate font-mono text-[10.5px] text-text-muted" title={itemSubtitle(item)}>
               {itemSubtitle(item)}
             </div>
-          </div>
-          <div>
+          </td>
+          <td className="px-3 py-[10px] text-right font-mono tabular-nums">{qtyLabel(qtyOfItem(item))}</td>
+          <td className="px-3 py-[10px] text-right font-mono font-medium tabular-nums">{formatRupiah(item.amount)}</td>
+          <td className="px-3 py-[10px]">
             <ApprovalProgress po={item.po} state={st} />
-            {st.slaDueAt && (
+            {st.slaDueAt && !st.approved && (
               <div className={"mt-1 text-[10px] " + (st.overdue ? "font-semibold text-danger-fg" : "text-text-muted")}>
                 {st.overdue ? "⚠ Lewat SLA · " : "Batas SLA · "}
                 {fmtTime(st.slaDueAt)}
               </div>
             )}
-          </div>
-          <div className="text-right font-mono text-[12.5px] font-semibold text-text-primary">{formatRupiah(item.amount)}</div>
-          <div className="flex items-center justify-end gap-1.5">
-            <Button onClick={() => setDetailItem(item)} variant="ghost" size="xs">
-              Lihat detail
-            </Button>
-            <Button onClick={() => openDownload(item)} variant="ghost" size="xs">
-              PO
-            </Button>
-            {actions}
-          </div>
-        </div>
+          </td>
+          <td className="px-3 py-[10px]">
+            <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
+              <Button onClick={() => setDetailItem(item)} variant="ghost" size="xs">
+                Lihat detail
+              </Button>
+              <Button onClick={() => openDownload(item)} variant="ghost" size="xs">
+                PO
+              </Button>
+              {actions}
+            </div>
+          </td>
+        </tr>
         {st.rejected && st.rejectNote && (
-          <div className="mx-4 mb-2 rounded-md border border-[#EFC9C4] bg-danger-bg px-3 py-1.5 font-sans text-[11px] text-danger-fg">
-            Ditolak {st.rejectedBy ? APPROVAL_ROLE_LABEL[st.rejectedBy] : ""}: {st.rejectNote}
-          </div>
+          <tr className="border-b border-[#F1F4F7] bg-[#FBFCFD]">
+            <td colSpan={5} className="pb-2 pl-12 pr-4">
+              <div className="rounded-md border border-[#EFC9C4] bg-danger-bg px-3 py-1.5 font-sans text-[11px] text-danger-fg">
+                Ditolak {st.rejectedBy ? APPROVAL_ROLE_LABEL[st.rejectedBy] : ""}: {st.rejectNote}
+              </div>
+            </td>
+          </tr>
         )}
-        {/* Koreksi Sysadmin (owner 2026-09-30): antrean ini dipakai bersama Procurement/SCM/GM, jadi 1
-           tempat ini menutup ketiganya. `empty:hidden` -- wadah tidak makan ruang kalau bukan Sysadmin
-           (SysadminActionsBar tidak merender apa pun). */}
-        <div className="px-4 pb-2 empty:hidden">
-          {item.type === "MATERIAL" ? (item.members ?? [item]).map((m) => <SysadminPanel key={m.id} actions={materialPoCorrections(m.po as MaterialPO)} />) : <SysadminPanel actions={maklonPoCorrections(item.po as MaklonPO)} />}
-        </div>
-      </div>
+        {/* Koreksi Sysadmin (owner 2026-09-30): antrean ini dipakai bersama Procurement/SCM/GM, jadi 1 tempat ini menutup ketiganya.
+           Baris hanya dirender di Mode Sysadmin supaya tidak ada baris kosong. */}
+        {sysadminMode && (
+          <tr className="border-b border-[#F1F4F7] bg-[#FBFCFD]">
+            <td colSpan={5} className="pb-2 pl-12 pr-4">
+              {item.type === "MATERIAL" ? (item.members ?? [item]).map((m) => <SysadminPanel key={m.id} actions={materialPoCorrections(m.po as MaterialPO)} />) : <SysadminPanel actions={maklonPoCorrections(item.po as MaklonPO)} />}
+            </td>
+          </tr>
+        )}
+      </Fragment>
     );
   }
 
@@ -608,7 +653,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
             disabled={bulk != null}
             className={OUTLINE_BTN}
           >
-            {bulk ? <Spinner label="Memproses…" /> : `Setujui semua (${mine.length})`}
+            {bulk ? <Spinner label="Memproses…" /> : `Setujui Semua (${mine.length})`}
           </button>
         ) : undefined,
         mine.length === 0 ? (
@@ -620,18 +665,17 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
               mine,
               (it) => (
                 <>
-                  <Button
+                  <button
                     onClick={() =>
                       run(it, async () => {
                         await approvePoStep(it.type, it.id, role);
                       })
                     }
                     disabled={busyIds.has(it.id)}
-                    variant="primary"
-                    size="xs"
+                    className={OUTLINE_BTN}
                   >
                     {busyIds.has(it.id) ? <Spinner label="Memproses…" /> : "Setujui"}
-                  </Button>
+                  </button>
                   <Button
                     onClick={() => {
                       setRejecting(it);
@@ -659,23 +703,20 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
           rejected.length === 0 ? (
             <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Tidak ada {noun} yang ditolak.</div>
           ) : (
-            rejected.map((it) =>
-              renderRow(
-                it,
-                <Button
-                  onClick={() =>
-                    run(it, async () => {
-                      await resubmitPo(it.type, it.id);
-                    })
-                  }
-                  disabled={busyIds.has(it.id)}
-                  variant="primary"
-                  size="xs"
-                >
-                  {busyIds.has(it.id) ? <Spinner label="Memproses…" /> : "Ajukan ulang"}
-                </Button>
-              )
-            )
+            renderGroups("rejected", rejected, (it) => (
+              <Button
+                onClick={() =>
+                  run(it, async () => {
+                    await resubmitPo(it.type, it.id);
+                  })
+                }
+                disabled={busyIds.has(it.id)}
+                variant="primary"
+                size="xs"
+              >
+                {busyIds.has(it.id) ? <Spinner label="Memproses…" /> : "Ajukan ulang"}
+              </Button>
+            ))
           )
         )}
 
