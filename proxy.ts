@@ -43,7 +43,9 @@ export async function proxy(request: NextRequest) {
 
   // /invoice-ocr/ = pustaka statis OCR/PDF (pdf.js, Tesseract) untuk fitur Upload Invoice Supplier;
   // dimuat web worker yang tidak selalu membawa cookie sesi, dan isinya bukan data (hanya kode pustaka).
-  if (PUBLIC_PATHS.includes(pathname) || pathname.startsWith("/invoice-ocr/")) return NextResponse.next();
+  // /api/wos/ = integrasi WOS: tautan lampiran resi bertanda tangan dan rute cron; keduanya memeriksa tanda tangan / CRON_SECRET sendiri
+  // (pemanggilnya sistem lain, bukan browser dengan sesi login), lihat lib/mrp/wosPush.ts.
+  if (PUBLIC_PATHS.includes(pathname) || pathname.startsWith("/invoice-ocr/") || pathname.startsWith("/api/wos/")) return NextResponse.next();
 
   const session = await readSession(request.cookies);
 

@@ -30,6 +30,8 @@ async function toActionResult<T>(fn: () => Promise<T>): Promise<ActionResult<T>>
 import { requireSession, requireInternalRole, requireAnyInternalRole, internalActorForRole } from "../auth/session";
 import { internalAccountFor, type InternalRole } from "../internal-auth";
 import { supabaseServer } from "../supabase/server";
+import { after } from "next/server";
+import { notifyWosResiCreated } from "./wosPush";
 import { nextReadableId, nextPoDisplayId } from "./repo/ids";
 import { getFlowSnapshot, getFlowSnapshotWithMeta } from "./repo/snapshot";
 import { scopeStateToVendor, stripVendorActorNames } from "./vendorScope";
@@ -5337,6 +5339,9 @@ export async function setKoliEkspedisiResiGroupAction(
   const noKoliLabel = validRows.map((r) => r.no_koli ?? r.id).join(", ");
   await insertNotification(notif(`Koli ${noKoliLabel} dari ${VENDOR_PRODUKSI[vendorId]?.name ?? vendorId} sedang dikirim`, ["warehouse"]));
   await logVendorAction(actor, `Set ekspedisi & resi ${noResi.trim()} untuk koli ${noKoliLabel}`, "delivery_kolis", validIds.join(","));
+  // Integrasi WOS (2026-10-28): dorong data resi ke Warehouse Operation System partner. Setelah respons selesai (tidak menahan vendor)
+  // dan BEST-EFFORT -- kegagalan tidak pernah menggagalkan aksi ini. Mati kalau env WOS_WEBHOOK_URL belum diisi.
+  after(() => notifyWosResiCreated(resiGroupId));
 }
 
 /** Ambil BYTE foto lampiran ekspedisi 1 koli on-demand -- `delivery_koli_ekspedisi_photos` sengaja
