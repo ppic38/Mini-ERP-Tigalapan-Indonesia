@@ -36,8 +36,10 @@ type Item = { type: "MATERIAL" | "MAKLON"; id: string; mrpId: string; vendor: st
 const OUTLINE_BTN =
   "inline-flex h-[30px] w-[124px] items-center justify-center rounded-[5px] border border-action-primary bg-white font-sans text-[11.5px] font-semibold text-action-primary hover:bg-info-bg disabled:cursor-not-allowed disabled:opacity-50";
 
-/** Aksi sekunder (Lihat detail / Tolak): teks saja tanpa kotak, supaya baris tidak penuh tombol. */
-const LINK_BTN = "font-sans text-[11.5px] font-semibold hover:underline disabled:cursor-not-allowed disabled:opacity-50";
+/** Tombol sekunder (Lihat detail / Tolak): tinggi sama dengan Setujui, lebar mengikuti teks. */
+const BTN_BASE = "inline-flex h-[30px] items-center justify-center rounded-[5px] border bg-white px-3 font-sans text-[11.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-50";
+const DETAIL_BTN = BTN_BASE + " border-action-primary text-action-primary hover:bg-info-bg";
+const REJECT_BTN = BTN_BASE + " border-[#EFC9C4] text-danger-fg hover:bg-danger-bg";
 
 /** Indikator "sedang memproses" kecil untuk tombol (berputar), supaya jelas aksi sedang berjalan dan bukan macet. */
 function Spinner({ label }: { label?: string }) {
@@ -541,8 +543,8 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
             )}
           </td>
           <td className="px-3 py-[10px]">
-            <div className="flex items-center justify-end gap-3 whitespace-nowrap">
-              <button onClick={() => setDetailItem(item)} className={LINK_BTN + " text-action-primary"}>
+            <div className="flex items-center justify-end gap-2 whitespace-nowrap">
+              <button onClick={() => setDetailItem(item)} className={DETAIL_BTN}>
                 Lihat detail
               </button>
               {actions}
@@ -668,7 +670,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
                       setRejectNote("");
                     }}
                     disabled={busyIds.has(it.id)}
-                    className={LINK_BTN + " text-danger-fg"}
+                    className={REJECT_BTN}
                   >
                     Tolak
                   </button>
