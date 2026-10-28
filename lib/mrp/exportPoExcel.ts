@@ -1,5 +1,5 @@
 import type { Workbook, Worksheet } from "exceljs";
-import { formatDate, localDateString, materialKgPerRollForGroup, mrpDetailFor, type AduanMaterialKind } from "./derive";
+import { formatDate, localDateString, materialKgPerRollForGroup, mrpDetailFor, SIZE_ORDER, type AduanMaterialKind } from "./derive";
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "./seed";
 import type { MrpDetail } from "./store";
 import type { MaklonPO, MaterialPO } from "./types";
@@ -702,11 +702,126 @@ function rasioSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
   }
 }
 
-/** Form Rasio PO Produksi: 1 PO = 1 sheet (landscape), banyak PO = banyak sheet dalam 1 file. No-op kalau `pos` kosong. */
+/** Sheet detail Aduan Pola vendor PO ini: satu baris per Aduan Pola (kode pola) dengan jumlah roll, qty per size (total), dan rasio per roll (pcs per size per 1 roll). */
+function aduanSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
+  const vendorName = VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi;
+  const detail = mrpDetailFor(po.mrpId, mrpDetails);
+  const rows = (detail?.aduanRows ?? []).filter((a) => a.vendor === po.vendorProduksi);
+  const sizeSet = new Set<string>();
+  for (const a of rows) for (const x of a.sizes) if (x.qty > 0) sizeSet.add(x.size);
+  const sizes = [...sizeSet].sort((a, b) => {
+    const ia = SIZE_ORDER.indexOf(a);
+    const ib = SIZE_ORDER.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+  });
+  const nSize = sizes.length;
+  // Kolom: No, Warna, Lengan, Kode Aduan Pola, Roll, [size...] Total Qty, [size per roll...], Pcs/Roll
+  const fixed = 5;
+  const totalCol = fixed + nSize + 1;
+  const perRollStart = totalCol + 1;
+  const lastCol = perRollStart + nSize;
+  ws.views = [{ showGridLines: false, state: "frozen", xSplit: 0, ySplit: 5, topLeftCell: "A6", activeCell: "A6" }];
+  ws.pageSetup = { paperSize: 9, orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+  [5, 22, 10, 16, 8].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  for (let c = fixed + 1; c <= lastCol; c++) ws.getColumn(c).width = c === totalCol || c === lastCol ? 11 : 9;
+
+  ws.mergeCells(1, 1, 1, 8);
+  const t = ws.getCell(1, 1);
+  t.value = "DETAIL ADUAN POLA PER ROLL  |  " + po.id + "  |  " + po.mrpId;
+  t.font = { name: FONT, size: 13, bold: true, color: { argb: INK } };
+  ws.mergeCells(2, 1, 2, 8);
+  const sub = ws.getCell(2, 1);
+  sub.value = "Vendor: " + vendorName + "   |   Tanggal cetak: " + formatDate(localDateString(new Date()));
+  sub.font = { name: FONT, size: 10, color: { argb: GRAY } };
+
+  const head = (row: number, col: number, v: string, fill = ORANGE) => {
+    const c = ws.getCell(row, col);
+    c.value = v;
+    c.font = { name: FONT, size: 10, bold: true, color: { argb: INK } };
+    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+    c.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    c.border = BORDER;
+  };
+  // Baris 4 = judul kelompok kolom, baris 5 = judul kolom.
+  ["NO", "WARNA", "LENGAN", "KODE ADUAN POLA", "ROLL"].forEach((h, i) => {
+    head(4, i + 1, h);
+    head(5, i + 1, "");
+    ws.mergeCells(4, i + 1, 5, i + 1);
+  });
+  head(4, fixed + 1, "QTY PER SIZE (TOTAL)");
+  for (let c = fixed + 2; c <= totalCol; c++) head(4, c, "");
+  ws.mergeCells(4, fixed + 1, 4, totalCol);
+  sizes.forEach((s, i) => head(5, fixed + 1 + i, s));
+  head(5, totalCol, "TOTAL");
+  head(4, perRollStart, "RASIO PER 1 ROLL (PCS)", "FFBDD7EE");
+  for (let c = perRollStart + 1; c <= lastCol; c++) head(4, c, "", "FFBDD7EE");
+  ws.mergeCells(4, perRollStart, 4, lastCol);
+  sizes.forEach((s, i) => head(5, perRollStart + i, s, "FFBDD7EE"));
+  head(5, lastCol, "PCS/ROLL", "FFBDD7EE");
+  ws.getRow(4).height = 20;
+  ws.getRow(5).height = 20;
+
+  const put = (row: number, col: number, v: string | number | { formula: string; result: number }, o: { align?: "left" | "right" | "center"; fmt?: string; bold?: boolean } = {}) => {
+    const c = ws.getCell(row, col);
+    c.value = v;
+    c.font = { name: FONT, size: 10, bold: o.bold ?? false, color: { argb: INK } };
+    c.alignment = { vertical: "middle", horizontal: o.align ?? "left" };
+    c.border = BORDER;
+    if (o.fmt) c.numFmt = o.fmt;
+    return c;
+  };
+
+  const ordered = [...rows].sort((a, b) => (a.warna === b.warna ? (a.lengan === b.lengan ? a.kode.localeCompare(b.kode) : a.lengan === "PENDEK" ? -1 : 1) : a.warna.localeCompare(b.warna)));
+  let r = 6;
+  ordered.forEach((a, idx) => {
+    put(r, 1, idx + 1, { align: "center" });
+    put(r, 2, a.warna);
+    put(r, 3, a.lengan === "PENDEK" ? "Pendek" : "Panjang", { align: "center" });
+    put(r, 4, a.kode, { align: "center" });
+    put(r, 5, a.qtyRoll, { align: "right", fmt: "#,##0.##" });
+    const total = sizes.reduce((s, sz) => s + (a.sizes.filter((x) => x.size === sz).reduce((q, x) => q + x.qty, 0)), 0);
+    sizes.forEach((sz, i) => {
+      const q = a.sizes.filter((x) => x.size === sz).reduce((s, x) => s + x.qty, 0);
+      put(r, fixed + 1 + i, q || "", { align: "right", fmt: "#,##0" });
+      // Rasio per roll = qty size / jumlah roll Aduan Pola itu (pola yang sama dipotong tiap roll).
+      put(r, perRollStart + i, q && a.qtyRoll > 0 ? q / a.qtyRoll : "", { align: "right", fmt: "0.##" });
+    });
+    const first = ws.getCell(r, fixed + 1).address.replace(/\d+/, "");
+    const lastSz = ws.getCell(r, fixed + nSize).address.replace(/\d+/, "");
+    put(r, totalCol, nSize > 0 ? { formula: `SUM(${first}${r}:${lastSz}${r})`, result: total } : total, { align: "right", fmt: "#,##0", bold: true });
+    put(r, lastCol, a.qtyRoll > 0 ? total / a.qtyRoll : "", { align: "right", fmt: "0.##", bold: true });
+    r++;
+  });
+  if (ordered.length === 0) {
+    const c = ws.getCell(6, 1);
+    c.value = "Tidak ada Aduan Pola untuk vendor ini.";
+    c.font = { name: FONT, size: 10, italic: true, color: { argb: GRAY } };
+    return;
+  }
+  // Baris total: roll dan qty per size dijumlahkan (rasio per roll tidak dijumlahkan).
+  put(r, 1, "", {});
+  put(r, 2, "TOTAL", { bold: true });
+  put(r, 3, "", {});
+  put(r, 4, "", {});
+  const colLetter = (c: number) => ws.getCell(1, c).address.replace(/\d+/, "");
+  const sumCol = (c: number, fmt: string, result: number) =>
+    put(r, c, { formula: `SUM(${colLetter(c)}6:${colLetter(c)}${r - 1})`, result }, { align: "right", fmt, bold: true });
+  const sizeTotal = (sz: string) => ordered.reduce((s, a) => s + a.sizes.filter((x) => x.size === sz).reduce((q, x) => q + x.qty, 0), 0);
+  sumCol(5, "#,##0.##", ordered.reduce((s, a) => s + a.qtyRoll, 0));
+  sizes.forEach((sz, i) => sumCol(fixed + 1 + i, "#,##0", sizeTotal(sz)));
+  sumCol(totalCol, "#,##0", sizes.reduce((s, sz) => s + sizeTotal(sz), 0));
+  for (let c = perRollStart; c <= lastCol; c++) put(r, c, "", {});
+}
+
+/** Form Rasio PO Produksi: 1 PO = 2 sheet (rasio + detail Aduan Pola per roll, landscape), banyak PO = banyak sheet dalam 1 file. No-op kalau `pos` kosong. */
 export async function exportMaklonPoRasioExcel(pos: MaklonPO[], mrpDetails: MrpDetail[], fileName: string) {
   if (pos.length === 0) return;
   const { wb } = await newWorkbook();
-  for (const po of pos) rasioSheet(wb.addWorksheet(sheetName(wb, "Rasio " + po.id.replace(/^PO-(MKL-)?/, ""))), po, mrpDetails);
+  for (const po of pos) {
+    const tag = po.id.replace(/^PO-(MKL-)?/, "");
+    rasioSheet(wb.addWorksheet(sheetName(wb, "Rasio " + tag)), po, mrpDetails);
+    aduanSheet(wb.addWorksheet(sheetName(wb, "Aduan " + tag)), po, mrpDetails);
+  }
   await download(wb, fileName);
 }
 
