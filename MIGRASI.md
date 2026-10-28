@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Filter No Resi dan Ekspedisi di Riwayat pengiriman (2026-10-28, tanpa migration)
+Permintaan owner: halaman Pengiriman vendor (`app/vendor-maklon/pengiriman/page.tsx`), kartu "Riwayat pengiriman" dapat dua filter di header: kolom cari No Resi (mengandung teks, tidak peduli huruf besar/kecil) dan dropdown Ekspedisi (diisi dari ekspedisi yang ada di riwayat). Keduanya digabung (AND), ada penghitung "N dari M resi" dan tombol Reset saat filter aktif. Hanya tampilan; kartu "Koli belum dikirim" tidak ikut difilter.
+
 ## Resting: gramasi dan setting WAJIB (2026-10-28, tanpa migration)
 Temuan dari export Detail Roll: ada roll yang gramasinya 0 / settingnya kosong karena tombol Resting hanya mensyaratkan berat bersih. Sekarang tombol Resting (`production-cutting-tab.tsx`, `canRest`) baru aktif kalau SETIAP roll punya berat bersih, gramasi > 0, dan setting terisi, dengan pesan jumlah roll yang masih kurang; server (`startProductionBatchesImpl`, `startProductionBatchAction`) menolak gramasi <= 0 atau setting kosong. Data lama tidak diubah otomatis (dicek 2026-10-28: dari 647 roll, 10 roll W39 vendor KK gramasinya 0 dan 4 di antaranya settingnya kosong; diisi lewat SQL dari chat). Impor migrasi data awal (`parseMigrationImport`) tidak ikut aturan ini.
 

@@ -201,6 +201,9 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   // Filter warna untuk tabel "qty per size" (kosong = semua warna). Hanya memfilter tampilan -- qty yang sudah
   // diisi di warna lain tetap ikut tersimpan.
   const [warnaFilter, setWarnaFilter] = useState("");
+  // Filter "Riwayat pengiriman" (hanya tampilan): cari No Resi (mengandung teks) dan pilih Ekspedisi (kosong = semua).
+  const [histResiFilter, setHistResiFilter] = useState("");
+  const [histEkspedisiFilter, setHistEkspedisiFilter] = useState("");
   // Klik baris "Koli belum dikirim"/"Riwayat pengiriman" untuk expand/collapse rincian isi koli
   // per item — id koli unik lintas kedua tabel jadi aman pakai 1 Set gabungan.
   const [expandedKoli, setExpandedKoli] = useState<Set<string>>(new Set());
@@ -580,6 +583,16 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   const pendingWithEkspedisi = pending.filter((k) => k.resiGroupId);
   const pendingGroups = Array.from(groupByKey(pendingWithEkspedisi, resiKeyFor).entries());
   const deliveredGroups = Array.from(groupByKey(delivered, resiKeyFor).entries());
+  const historyEkspedisiOptions = Array.from(new Set(deliveredGroups.map(([, kolis]) => kolis[0].ekspedisi).filter((e): e is string => !!e))).sort((a, b) => a.localeCompare(b, "id-ID"));
+  const activeHistEkspedisi = historyEkspedisiOptions.includes(histEkspedisiFilter) ? histEkspedisiFilter : "";
+  const histResiQuery = histResiFilter.trim().toLowerCase();
+  const visibleDeliveredGroups = deliveredGroups.filter(([, kolis]) => {
+    const first = kolis[0];
+    if (activeHistEkspedisi && first.ekspedisi !== activeHistEkspedisi) return false;
+    if (histResiQuery && !(first.noResi ?? "").toLowerCase().includes(histResiQuery)) return false;
+    return true;
+  });
+  const historyFiltered = !!activeHistEkspedisi || !!histResiQuery;
 
   // Item 2026-09-11 (migration 0026, owner: "berat dan delivery itu digabung jadi satu aksi ...
   // yang dibayarkan itu adalah berat total koli yang dikirimkan ke satu ekspedisi"): SATU tombol
@@ -1038,12 +1051,52 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
       </div>
 
       <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-        <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Riwayat pengiriman</div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border-subtle px-4 py-3">
+          <span className="font-sans text-[13px] font-semibold text-text-primary">Riwayat pengiriman</span>
+          {deliveredGroups.length > 0 && (
+            <div className="ml-auto flex flex-wrap items-center gap-2 max-md:ml-0 max-md:w-full">
+              <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">No resi</span>
+              <input
+                value={histResiFilter}
+                onChange={(e) => setHistResiFilter(e.target.value)}
+                placeholder="Cari no resi…"
+                className="input w-[170px] max-md:min-w-0 max-md:flex-1"
+              />
+              <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Ekspedisi</span>
+              <select value={activeHistEkspedisi} onChange={(e) => setHistEkspedisiFilter(e.target.value)} className="input w-[240px] max-md:min-w-0 max-md:flex-1">
+                <option value="">Semua ekspedisi</option>
+                {historyEkspedisiOptions.map((e) => (
+                  <option key={e} value={e}>
+                    {e}
+                  </option>
+                ))}
+              </select>
+              {historyFiltered && (
+                <>
+                  <span className="font-sans text-[11px] text-text-muted">
+                    {visibleDeliveredGroups.length} dari {deliveredGroups.length} resi
+                  </span>
+                  <button
+                    onClick={() => {
+                      setHistResiFilter("");
+                      setHistEkspedisiFilter("");
+                    }}
+                    className="font-sans text-[11px] font-semibold text-action-primary underline"
+                  >
+                    Reset
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
         {deliveredGroups.length === 0 ? (
           <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Belum ada koli terkirim.</div>
+        ) : visibleDeliveredGroups.length === 0 ? (
+          <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Tidak ada pengiriman yang cocok dengan filter.</div>
         ) : (
           <div className="flex flex-col gap-3 px-4 py-3">
-            {deliveredGroups.map(([groupKey, kolis]) => {
+            {visibleDeliveredGroups.map(([groupKey, kolis]) => {
               const first = kolis[0];
               const totalWeight = kolis.reduce((s, k) => s + (k.beratKoli ?? 0), 0);
               const alreadyInvoiced = kolis.some((k) => k.resiInvoicedAt);
