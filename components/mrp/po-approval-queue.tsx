@@ -10,7 +10,7 @@ import { SysadminPanel } from "@/components/sysadmin/correction-dialog";
 import { maklonPoCorrections, materialPoCorrections } from "@/components/sysadmin/procurement-corrections";
 import { useMrpStore } from "@/lib/mrp/store";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
-import { formatRupiah, formatDate, mrpDetailFor } from "@/lib/mrp/derive";
+import { compareNewestFirst, formatRupiah, formatDate, mrpDetailFor } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI, ROLL_KG_ESTIMATE } from "@/lib/mrp/seed";
 import {
   APPROVAL_LEVEL_TABLE,
@@ -31,6 +31,10 @@ import type { MaklonPO, MaterialPO } from "@/lib/mrp/types";
 /** `members`: PO Material satu supplier dalam satu MRP digabung jadi SATU baris (approval PO Material berlaku per supplier,
  *  levelnya dari total supplier); `id` = PO pertama (target aksi -- server menerapkannya ke semua PO satu supplier). */
 type Item = { type: "MATERIAL" | "MAKLON"; id: string; mrpId: string; vendor: string; supplier?: string; amount: number; po: MaterialPO | MaklonPO; state: PoApprovalState; members?: Item[] };
+
+/** Tombol aksi massal: putih, teks dan garis biru (Setujui MRP ini / Setujui semua). */
+const OUTLINE_BTN =
+  "rounded-[5px] border border-action-primary bg-white px-3 py-[5px] font-sans text-[11.5px] font-semibold text-action-primary hover:bg-info-bg disabled:cursor-not-allowed disabled:opacity-50";
 
 /** Indikator "sedang memproses" kecil untuk tombol (berputar), supaya jelas aksi sedang berjalan dan bukan macet. */
 function Spinner({ label }: { label?: string }) {
@@ -438,7 +442,10 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
   function renderGroups(section: string, list: Item[], rowActions?: (it: Item) => React.ReactNode, groupApprove = false) {
     const byMrp = new Map<string, Item[]>();
     for (const it of list) byMrp.set(it.mrpId, [...(byMrp.get(it.mrpId) ?? []), it]);
-    return Array.from(byMrp.entries()).map(([mrpId, its]) => {
+    // MRP terbaru (tanggal MRP dibuat) paling atas; sama -> No. MRP menurun.
+    const createdOf = (id: string) => mrpDetails.find((d) => d.mrp.id === id)?.dates?.created;
+    const ordered = Array.from(byMrp.entries()).sort((a, b) => compareNewestFirst(createdOf(a[0]), a[0], createdOf(b[0]), b[0]));
+    return ordered.map(([mrpId, its]) => {
       const key = `${section}:${mrpId}`;
       const open = openMrps.has(key) || needle !== "";
       const groupBusy = its.some((i) => busyIds.has(i.id));
@@ -452,17 +459,16 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
             {overdue > 0 && <span className="rounded-full bg-danger-bg px-2 py-0.5 font-sans text-[10px] font-semibold text-danger-fg">⚠ {overdue} lewat SLA</span>}
             <span className="ml-auto font-mono text-[12.5px] font-semibold text-text-primary">{formatRupiah(its.reduce((s, i) => s + i.amount, 0))}</span>
             {groupApprove && (
-              <Button
+              <button
                 onClick={(e) => {
                   e.stopPropagation();
                   void approveItems(its, mrpId);
                 }}
                 disabled={groupBusy}
-                variant="primary"
-                size="xs"
+                className={OUTLINE_BTN}
               >
                 {groupBusy ? <Spinner label="Memproses…" /> : `Setujui MRP ini (${its.length})`}
-              </Button>
+              </button>
             )}
           </div>
           {open && <div className="border-t border-border-subtle bg-[#FBFCFD] pl-6">{its.map((it) => renderRow(it, rowActions?.(it) ?? null))}</div>}
@@ -523,7 +529,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
     );
   }
 
-  const renderSection = (title: string, count: number, hint: string | undefined, children: React.ReactNode) => (
+  const renderSection = (title: string, count: number, hint: React.ReactNode, children: React.ReactNode) => (
     <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
       <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
         <span className="font-sans text-[13px] font-semibold text-text-primary">{title}</span>
@@ -596,7 +602,15 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
       {renderSection(
         `Menunggu persetujuan ${roleLabel}`,
         mine.length,
-        mine.length > 0 ? `Total ${formatRupiah(totalMine)}` : undefined,
+        mine.length > 1 ? (
+          <button
+            onClick={() => approveItems(mine)}
+            disabled={bulk != null}
+            className={OUTLINE_BTN}
+          >
+            {bulk ? <Spinner label="Memproses…" /> : `Setujui semua (${mine.length})`}
+          </button>
+        ) : undefined,
         mine.length === 0 ? (
           <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Tidak ada {noun} yang menunggu persetujuan Anda.</div>
         ) : (
@@ -632,13 +646,6 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
                 </>
               ),
               true
-            )}
-            {mine.length > 1 && (
-              <div className="flex justify-end border-t border-[#F1F4F7] px-4 py-2.5">
-                <Button onClick={() => approveItems(mine)} disabled={bulk != null} variant="primary" size="sm">
-                  Setujui semua ({mine.length})
-                </Button>
-              </div>
             )}
           </>
         )

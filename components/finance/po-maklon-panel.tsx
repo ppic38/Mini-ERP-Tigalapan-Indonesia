@@ -7,7 +7,7 @@ import { MaklonPoWarnaLenganTable } from "@/components/mrp/maklon-po-warna-lenga
 import { poApprovalState } from "@/lib/mrp/poApproval";
 import { ApprovalChain } from "@/components/mrp/po-approval-queue";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatPcs, formatRupiah, maklonPoBadgeWithApproval } from "@/lib/mrp/derive";
+import { compareNewestFirst, formatPcs, formatRupiah, maklonPoBadgeWithApproval } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { MaklonPO } from "@/lib/mrp/types";
 
@@ -126,7 +126,7 @@ export function PoMaklonPanel() {
         totalQty: pos.reduce((sum, p) => sum + p.qty, 0),
         totalNilai: pos.reduce((sum, p) => sum + p.amount, 0),
       }))
-      .sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID"));
+      .sort((a, b) => compareNewestFirst(mrpDetails.find((d) => d.mrp.id === a.mrpId)?.dates?.created, a.mrpId, mrpDetails.find((d) => d.mrp.id === b.mrpId)?.dates?.created, b.mrpId));
   })();
 
   function allVendorSummariesForMrp(pos: MaklonPO[]) {

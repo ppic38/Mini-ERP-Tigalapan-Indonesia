@@ -7,6 +7,7 @@ import { poApprovalState, poApprovalSummary } from "@/lib/mrp/poApproval";
 import { ApprovalChain } from "@/components/mrp/po-approval-queue";
 import { useMrpStore } from "@/lib/mrp/store";
 import {
+  compareNewestFirst,
   formatPcs,
   formatRupiah,
   hargaKainRate,
@@ -270,7 +271,7 @@ export function PoMaterialPanel() {
         totalRoll: pos.reduce((sum, p) => sum + p.rollCount, 0),
         totalNilai: pos.reduce((sum, p) => sum + p.amount, 0),
       }))
-      .sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID"));
+      .sort((a, b) => compareNewestFirst(mrpDetails.find((d) => d.mrp.id === a.mrpId)?.dates?.created, a.mrpId, mrpDetails.find((d) => d.mrp.id === b.mrpId)?.dates?.created, b.mrpId));
   })();
 
   function approvedSupplierSummariesForMrp(pos: MaterialPO[]) {
