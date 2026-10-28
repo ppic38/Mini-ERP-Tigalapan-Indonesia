@@ -10,7 +10,7 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { useMrpStore } from "@/lib/mrp/store";
-import { addDays, formatDate, formatPcs, formatRupiah, maklonPoBadgeWithApproval, maklonPoDisplayStatus, materialReceivedForMaklon, mrpDetailFor, compareNewestFirst } from "@/lib/mrp/derive";
+import { addDays, formatDate, formatPcs, formatRupiah, maklonMaterialStageBadge, maklonPoBadgeWithApproval, maklonPoDisplayStatus, materialReceivedForMaklon, mrpDetailFor, compareNewestFirst } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { AduanPolaRow, MaklonPO } from "@/lib/mrp/types";
 import type { MrpDetail } from "@/lib/mrp/store";
@@ -198,6 +198,7 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const invoices = useMrpStore((s) => s.invoices);
+  const materialPOs = useMrpStore((s) => s.materialPOs);
   const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
   const vendorProduksiList = useMrpStore((s) => s.vendorProduksiList);
   // Tahap 3 skema FOB (migration 0059) -- cek per-PO apa sudah pernah diajukan invoice FOB-nya.
@@ -270,7 +271,8 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
       label: "Status",
       default: true,
       render: (p) => {
-        const badge = maklonPoBadgeWithApproval(p, vendorInvoices);
+        // Selagi menunggu bahan: status mengikuti tahap bahan MRP yang sama (lihat maklonMaterialStageBadge); selain itu badge biasa.
+        const badge = maklonMaterialStageBadge(p, vendorInvoices, materialPOs, invoices) ?? maklonPoBadgeWithApproval(p, vendorInvoices);
         return <StatusPill tone={badge.tone}>{badge.label}</StatusPill>;
       },
     },
@@ -421,8 +423,8 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
           { label: "No PO", options: Array.from(new Set(myPOs.map((p) => p.id))), test: (p, v) => p.id === v },
           {
             label: "Status",
-            options: Array.from(new Set(myPOs.map((p) => maklonPoBadgeWithApproval(p, vendorInvoices).label))),
-            test: (p, v) => maklonPoBadgeWithApproval(p, vendorInvoices).label === v,
+            options: Array.from(new Set(myPOs.map((p) => (maklonMaterialStageBadge(p, vendorInvoices, materialPOs, invoices) ?? maklonPoBadgeWithApproval(p, vendorInvoices)).label))),
+            test: (p, v) => (maklonMaterialStageBadge(p, vendorInvoices, materialPOs, invoices) ?? maklonPoBadgeWithApproval(p, vendorInvoices)).label === v,
           },
         ]}
         emptyText="Belum ada PO produksi yang disetujui Finance untuk vendor Anda."

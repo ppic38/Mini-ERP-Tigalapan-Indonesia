@@ -1250,6 +1250,32 @@ export function maklonPoBadgeWithApproval(po: Pick<MaklonPO, "mrpId" | "vendorPr
   return maklonPoBadge({ ...po, status: maklonPoDisplayStatus(po, vendorInvoices) });
 }
 
+/** Status PO Produksi untuk portal vendor selagi masih menunggu bahan (revisi 2026-10-28, owner): menggantikan "WAITING MATERIAL" /
+ *  "PARTIAL WAITING MATERIAL" dengan tahap bahan MRP yang SAMA dengan PO itu (PO Material, invoice, pembayaran, pengiriman, penerimaan),
+ *  supaya vendor tahu bahan mana yang ditunggu. Mengembalikan null kalau PO tidak sedang menunggu bahan (pakai badge biasa). Hanya tampilan. */
+export function maklonMaterialStageBadge(
+  po: Pick<MaklonPO, "mrpId" | "vendorProduksi" | "status" | "qty" | "approved" | "startedColors">,
+  vendorInvoices: VendorInvoice[],
+  materialPOs: MaterialPO[],
+  invoices: RawMaterialInvoice[]
+): { label: string; tone: "warning" | "info" | "success" } | null {
+  if (!po.approved || po.qty === 0) return null;
+  const status = maklonPoDisplayStatus(po, vendorInvoices);
+  if (status !== "FULL_WAITING_MATERIAL" && status !== "PARTIAL_WAITING_MATERIAL") return null;
+  const mine = invoices.filter((i) => i.mrpId === po.mrpId && i.destinationVendor === po.vendorProduksi);
+  const hasApprovedMaterialPo = materialPOs.some((p) => p.mrpId === po.mrpId && p.vendorProduksi === po.vendorProduksi && p.status !== "CANCELLED" && p.approved);
+  if (mine.length === 0) return hasApprovedMaterialPo ? { label: "MENUNGGU INVOICE MATERIAL", tone: "warning" } : { label: "PROSES PO MATERIAL", tone: "warning" };
+  const received = (i: RawMaterialInvoice) => i.status === "RECEIVING" || i.status === "WAITING_PRODUCTION" || i.status === "PRODUCTION_DONE";
+  if (mine.some(received)) {
+    return mine.every((i) => received(i) && invoiceFullyArrived(i)) ? { label: "SIAP PRODUKSI", tone: "success" } : { label: "MATERIAL SEBAGIAN DITERIMA", tone: "info" };
+  }
+  // Belum ada yang diterima: pakai tahap invoice yang paling awal (bahan baru dianggap siap kalau semuanya sudah sampai tahap itu).
+  if (mine.some((i) => i.status === "INVOICED")) return { label: "MENUNGGU PEMBAYARAN MATERIAL", tone: "warning" };
+  if (mine.some((i) => i.status === "PAID")) return { label: "MENUNGGU PENGIRIMAN MATERIAL", tone: "warning" };
+  if (mine.some((i) => i.status === "DELIVERY")) return { label: "MATERIAL DALAM PENGIRIMAN", tone: "info" };
+  return { label: "MENUNGGU INVOICE MATERIAL", tone: "warning" };
+}
+
 export function invoiceBadge(status: RawMaterialInvoice["status"]) {
   const map: Record<
     RawMaterialInvoice["status"],
