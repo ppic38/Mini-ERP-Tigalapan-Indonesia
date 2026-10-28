@@ -5,7 +5,6 @@ import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Tabs } from "@/components/ui/tabs";
-import { PoDownloadModal, type PoDownloadRequest } from "@/components/procurement/po-download-modal";
 import { SysadminPanel } from "@/components/sysadmin/correction-dialog";
 import { maklonPoCorrections, materialPoCorrections } from "@/components/sysadmin/procurement-corrections";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -35,7 +34,10 @@ type Item = { type: "MATERIAL" | "MAKLON"; id: string; mrpId: string; vendor: st
 
 /** Tombol aksi massal: putih, teks dan garis biru (Setujui MRP ini / Setujui semua). */
 const OUTLINE_BTN =
-  "rounded-[5px] border border-action-primary bg-white px-3 py-[5px] font-sans text-[11.5px] font-semibold text-action-primary hover:bg-info-bg disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex h-[30px] w-[124px] items-center justify-center rounded-[5px] border border-action-primary bg-white font-sans text-[11.5px] font-semibold text-action-primary hover:bg-info-bg disabled:cursor-not-allowed disabled:opacity-50";
+
+/** Aksi sekunder (Lihat detail / Tolak): teks saja tanpa kotak, supaya baris tidak penuh tombol. */
+const LINK_BTN = "font-sans text-[11.5px] font-semibold hover:underline disabled:cursor-not-allowed disabled:opacity-50";
 
 /** Indikator "sedang memproses" kecil untuk tombol (berputar), supaya jelas aksi sedang berjalan dan bukan macet. */
 function Spinner({ label }: { label?: string }) {
@@ -327,12 +329,14 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
   const markBusy = (ids: string[], on: boolean) =>
     setBusyIds((prev) => {
       const next = new Set(prev);
-      for (const id of ids) (on ? next.add(id) : next.delete(id));
+      for (const id of ids) {
+        if (on) next.add(id);
+        else next.delete(id);
+      }
       return next;
     });
   const [rejecting, setRejecting] = useState<Item | null>(null);
   const [rejectNote, setRejectNote] = useState("");
-  const [download, setDownload] = useState<PoDownloadRequest | null>(null);
   // Section "Sudah selesai" default TERTUTUP -- bisa berisi banyak PO seiring waktu.
   const [doneOpen, setDoneOpen] = useState(false);
 
@@ -511,10 +515,6 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
     );
   }
 
-  function openDownload(item: Item) {
-    if (item.type === "MATERIAL") setDownload({ kind: "material", pos: (item.members ?? [item]).map((m) => m.po as MaterialPO), baseName: `PO-${itemTitle(item).replace(/[^A-Za-z0-9]+/g, "-")}` });
-    else setDownload({ kind: "maklon", pos: [item.po as MaklonPO], baseName: `PO-${item.id}` });
-  }
 
 
   function renderRow(item: Item, actions: React.ReactNode) {
@@ -541,13 +541,10 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
             )}
           </td>
           <td className="px-3 py-[10px]">
-            <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
-              <Button onClick={() => setDetailItem(item)} variant="ghost" size="xs">
+            <div className="flex items-center justify-end gap-3 whitespace-nowrap">
+              <button onClick={() => setDetailItem(item)} className={LINK_BTN + " text-action-primary"}>
                 Lihat detail
-              </Button>
-              <Button onClick={() => openDownload(item)} variant="ghost" size="xs">
-                PO
-              </Button>
+              </button>
               {actions}
             </div>
           </td>
@@ -666,6 +663,16 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
               (it) => (
                 <>
                   <button
+                    onClick={() => {
+                      setRejecting(it);
+                      setRejectNote("");
+                    }}
+                    disabled={busyIds.has(it.id)}
+                    className={LINK_BTN + " text-danger-fg"}
+                  >
+                    Tolak
+                  </button>
+                  <button
                     onClick={() =>
                       run(it, async () => {
                         await approvePoStep(it.type, it.id, role);
@@ -676,17 +683,6 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
                   >
                     {busyIds.has(it.id) ? <Spinner label="Memproses…" /> : "Setujui"}
                   </button>
-                  <Button
-                    onClick={() => {
-                      setRejecting(it);
-                      setRejectNote("");
-                    }}
-                    disabled={busyIds.has(it.id)}
-                    variant="danger"
-                    size="xs"
-                  >
-                    Tolak
-                  </Button>
                 </>
               ),
               true
@@ -704,18 +700,17 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
             <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Tidak ada {noun} yang ditolak.</div>
           ) : (
             renderGroups("rejected", rejected, (it) => (
-              <Button
+              <button
                 onClick={() =>
                   run(it, async () => {
                     await resubmitPo(it.type, it.id);
                   })
                 }
                 disabled={busyIds.has(it.id)}
-                variant="primary"
-                size="xs"
+                className={OUTLINE_BTN}
               >
                 {busyIds.has(it.id) ? <Spinner label="Memproses…" /> : "Ajukan ulang"}
-              </Button>
+              </button>
             ))
           )
         )}
@@ -781,7 +776,6 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
         </div>
       )}
 
-      {download && <PoDownloadModal request={download} mrpDetails={mrpDetails} onClose={() => setDownload(null)} />}
     </div>
   );
 }
