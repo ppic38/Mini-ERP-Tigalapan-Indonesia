@@ -32,6 +32,16 @@ import type { MaklonPO, MaterialPO } from "@/lib/mrp/types";
  *  levelnya dari total supplier); `id` = PO pertama (target aksi -- server menerapkannya ke semua PO satu supplier). */
 type Item = { type: "MATERIAL" | "MAKLON"; id: string; mrpId: string; vendor: string; supplier?: string; amount: number; po: MaterialPO | MaklonPO; state: PoApprovalState; members?: Item[] };
 
+/** Indikator "sedang memproses" kecil untuk tombol (berputar), supaya jelas aksi sedang berjalan dan bukan macet. */
+function Spinner({ label }: { label?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden />
+      {label}
+    </span>
+  );
+}
+
 function itemTitle(item: Item): string {
   return item.type === "MATERIAL" ? `${item.mrpId} · ${item.supplier}` : `${item.mrpId} · ${item.vendor}`;
 }
@@ -304,8 +314,17 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
 
   const [tab, setTab] = useState<"MATERIAL" | "MAKLON">("MATERIAL");
   const [detailItem, setDetailItem] = useState<Item | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  // Baris yang SEDANG diproses (per baris, bukan satu id global): tombol baris lain tetap normal; `bulk` = kemajuan "Setujui MRP ini / semua".
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const [bulk, setBulk] = useState<{ done: number; total: number } | null>(null);
+  const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const markBusy = (ids: string[], on: boolean) =>
+    setBusyIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) (on ? next.add(id) : next.delete(id));
+      return next;
+    });
   const [rejecting, setRejecting] = useState<Item | null>(null);
   const [rejectNote, setRejectNote] = useState("");
   const [download, setDownload] = useState<PoDownloadRequest | null>(null);
@@ -348,23 +367,31 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
     !i.po.approved && !i.state.legacy && !i.state.rejected && i.state.pendingRoles.includes(role) && (role !== "scm" || scmMayActAtStep(scmUsername, i.state.currentStep));
   const mineCount = (type: Item["type"]) => items.filter((i) => i.type === type && isMine(i)).length;
 
-  const tabItems = items.filter((i) => i.type === tab);
+  // Label jabatan penyetuju di judul/konfirmasi: portal SCM memakai jabatan akun yang login (Asisten Manager / SCM Manager).
+  const roleLabel = role === "scm" ? (scmPosition ? SCM_POSITION_LABEL[scmPosition] : "SCM") : APPROVAL_ROLE_LABEL[role];
+
+  const needle = search.trim().toLowerCase();
+  const matchesSearch = (i: Item) =>
+    !needle || [i.mrpId, i.vendor, i.supplier ?? "", i.id, ...(i.members ?? []).flatMap((m) => [m.vendor, m.id])].some((t) => t.toLowerCase().includes(needle));
+  const tabItems = items.filter((i) => i.type === tab && matchesSearch(i));
   const mine = tabItems.filter(isMine);
   const rejected = role === "procurement" ? tabItems.filter((i) => !i.po.approved && i.state.rejected) : [];
-  const others = tabItems.filter((i) => !i.po.approved && !i.state.legacy && !i.state.rejected && !isMine(i));
+  // `state.approved` (bukan hanya flag po.approved): persetujuan terakhir yang baru dicatat secara optimistic langsung terhitung selesai.
+  const others = tabItems.filter((i) => !i.state.approved && !i.state.legacy && !i.state.rejected && !isMine(i));
   // Sudah tuntas SEMUA level (approved=true). Legacy (PO sebelum matriks ini ada) TIDAK ikut -- tidak ada chain-nya.
-  const done = tabItems.filter((i) => i.po.approved && !i.state.legacy);
+  const done = tabItems.filter((i) => i.state.approved && !i.state.legacy);
   const totalMine = mine.reduce((s, i) => s + i.amount, 0);
+  const overdueMine = mine.filter((i) => i.state.overdue).length;
 
   async function run(item: Item, fn: () => Promise<void>) {
-    setBusyId(item.id);
+    markBusy([item.id], true);
     setError(null);
     try {
       await fn();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Aksi gagal.");
     } finally {
-      setBusyId(null);
+      markBusy([item.id], false);
     }
   }
 
@@ -373,21 +400,29 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
     if (list.length === 0) return;
     const ok = await confirmDialog({
       title: scope ? `Setujui ${list.length} PO di MRP ${scope}?` : `Setujui ${list.length} PO sekaligus?`,
-      message: `Total ${formatRupiah(list.reduce((s, i) => s + i.amount, 0))}, disetujui sebagai ${APPROVAL_ROLE_LABEL[role]}.`,
+      message: `Total ${formatRupiah(list.reduce((s, i) => s + i.amount, 0))}, disetujui sebagai ${roleLabel}.`,
       confirmLabel: scope ? "Setujui MRP ini" : "Setujui semua",
     });
     if (!ok) return;
     setError(null);
+    markBusy(list.map((i) => i.id), true);
+    setBulk({ done: 0, total: list.length });
+    let finished = 0;
     for (const it of list) {
-      setBusyId(it.id);
       try {
         await approvePoStep(it.type, it.id, role);
       } catch (e) {
         setError(`${it.id}: ${e instanceof Error ? e.message : "gagal"}`);
         break;
+      } finally {
+        markBusy([it.id], false);
       }
+      finished++;
+      setBulk({ done: finished, total: list.length });
     }
-    setBusyId(null);
+    // Sisa yang tidak sempat diproses (berhenti karena error) dilepas lagi.
+    markBusy(list.map((i) => i.id), false);
+    setBulk(null);
   }
 
   // Daftar dibungkus per MRP (bisa dibuka/ditutup); tombol "Setujui MRP ini" menyetujui semua PO MRP itu, tombol tiap baris = per vendor/PO.
@@ -405,13 +440,16 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
     for (const it of list) byMrp.set(it.mrpId, [...(byMrp.get(it.mrpId) ?? []), it]);
     return Array.from(byMrp.entries()).map(([mrpId, its]) => {
       const key = `${section}:${mrpId}`;
-      const open = openMrps.has(key);
+      const open = openMrps.has(key) || needle !== "";
+      const groupBusy = its.some((i) => busyIds.has(i.id));
+      const overdue = its.filter((i) => i.state.overdue && !i.state.approved).length;
       return (
-        <div key={key} className="border-b border-[#CFE0EF] last:border-b-0">
-          <div onClick={() => toggleMrp(key)} className={"flex cursor-pointer items-center gap-3 bg-[#F8FBFF] px-4 py-2.5 font-sans text-xs hover:bg-info-bg/60 " + (open ? "bg-info-bg/50" : "")}>
-            <span className="text-info-fg">{open ? "▾" : "▸"}</span>
-            <span className="font-mono text-[12.5px] font-semibold text-text-primary">{mrpId}</span>
-            <span className="text-[11px] text-text-muted">{its.length} PO</span>
+        <div key={key} className="border-b border-border-subtle last:border-b-0">
+          <div onClick={() => toggleMrp(key)} className={"flex cursor-pointer items-center gap-3 px-4 py-3 font-sans text-xs hover:bg-[#F4F8FC] " + (open ? "bg-[#F4F8FC]" : "bg-white")}>
+            <span className="w-3 text-info-fg">{open ? "▾" : "▸"}</span>
+            <span className="font-mono text-[13px] font-semibold text-text-primary">{mrpId}</span>
+            <span className="rounded-full bg-[#EEF1F4] px-2 py-0.5 font-mono text-[10px] font-semibold text-text-muted">{its.length} PO</span>
+            {overdue > 0 && <span className="rounded-full bg-danger-bg px-2 py-0.5 font-sans text-[10px] font-semibold text-danger-fg">⚠ {overdue} lewat SLA</span>}
             <span className="ml-auto font-mono text-[12.5px] font-semibold text-text-primary">{formatRupiah(its.reduce((s, i) => s + i.amount, 0))}</span>
             {groupApprove && (
               <Button
@@ -419,15 +457,15 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
                   e.stopPropagation();
                   void approveItems(its, mrpId);
                 }}
-                disabled={busyId != null}
+                disabled={groupBusy}
                 variant="primary"
                 size="xs"
               >
-                Setujui MRP ini ({its.length})
+                {groupBusy ? <Spinner label="Memproses…" /> : `Setujui MRP ini (${its.length})`}
               </Button>
             )}
           </div>
-          {open && its.map((it) => renderRow(it, rowActions?.(it) ?? null))}
+          {open && <div className="border-t border-border-subtle bg-[#FBFCFD] pl-6">{its.map((it) => renderRow(it, rowActions?.(it) ?? null))}</div>}
         </div>
       );
     });
@@ -440,8 +478,9 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
 
   function renderRow(item: Item, actions: React.ReactNode) {
     const st = item.state;
+    const busy = busyIds.has(item.id);
     return (
-      <div key={item.id} className="border-b border-[#F1F4F7] last:border-b-0">
+      <div key={item.id} className={"border-b border-[#F1F4F7] transition-opacity last:border-b-0 " + (busy ? "opacity-60" : "")}>
         <div className="grid items-center gap-x-4 gap-y-2 px-4 py-3 font-sans text-xs text-[#31414F]" style={{ gridTemplateColumns: "minmax(200px,1.3fr) minmax(230px,1.5fr) 130px auto" }}>
           <div className="min-w-0">
             <div className="truncate text-[12.5px] font-semibold text-text-primary">{itemTitle(item)}</div>
@@ -520,9 +559,42 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
         onChange={(key) => setTab(key as "MATERIAL" | "MAKLON")}
       />
       {error && <div className="rounded-md border border-danger bg-danger-bg px-4 py-2.5 font-sans text-[12px] text-danger-fg">{error}</div>}
+      {bulk && (
+        <div className="rounded-md border border-[#CFE0EF] bg-info-bg px-4 py-2.5 font-sans text-[12px] text-info-fg">
+          <div className="flex items-center justify-between">
+            <Spinner label={`Memproses ${bulk.done} dari ${bulk.total} PO…`} />
+            <span className="text-[11px]">Jangan tutup halaman</span>
+          </div>
+          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white">
+            <div className="h-full rounded-full bg-accent-blue transition-all" style={{ width: `${(bulk.done / bulk.total) * 100}%` }} />
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {[
+          { label: "Menunggu Anda", value: mine.length, sub: formatRupiah(totalMine), tone: mine.length > 0 ? "text-warning-fg" : "text-text-primary" },
+          { label: "Lewat SLA", value: overdueMine, sub: "dari yang menunggu Anda", tone: overdueMine > 0 ? "text-danger-fg" : "text-text-primary" },
+          { label: "Di langkah lain", value: others.length, sub: "menunggu approver lain", tone: "text-text-primary" },
+          { label: "Selesai", value: done.length, sub: "semua level", tone: "text-success-fg" },
+        ].map((c) => (
+          <div key={c.label} className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3">
+            <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">{c.label}</div>
+            <div className={"mt-1 font-mono text-[22px] font-semibold " + c.tone}>{c.value}</div>
+            <div className="font-sans text-[11px] text-text-muted">{c.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      <input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Cari No. MRP, vendor, supplier, atau No. PO…"
+        className="w-full rounded-md border border-[#DDE4EB] bg-white px-3 py-2 font-sans text-xs text-text-primary"
+      />
 
       {renderSection(
-        `Menunggu persetujuan ${APPROVAL_ROLE_LABEL[role]}`,
+        `Menunggu persetujuan ${roleLabel}`,
         mine.length,
         mine.length > 0 ? `Total ${formatRupiah(totalMine)}` : undefined,
         mine.length === 0 ? (
@@ -540,18 +612,18 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
                         await approvePoStep(it.type, it.id, role);
                       })
                     }
-                    disabled={busyId != null}
+                    disabled={busyIds.has(it.id)}
                     variant="primary"
                     size="xs"
                   >
-                    {busyId === it.id ? "…" : "Setujui"}
+                    {busyIds.has(it.id) ? <Spinner label="Memproses…" /> : "Setujui"}
                   </Button>
                   <Button
                     onClick={() => {
                       setRejecting(it);
                       setRejectNote("");
                     }}
-                    disabled={busyId != null}
+                    disabled={busyIds.has(it.id)}
                     variant="danger"
                     size="xs"
                   >
@@ -563,7 +635,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
             )}
             {mine.length > 1 && (
               <div className="flex justify-end border-t border-[#F1F4F7] px-4 py-2.5">
-                <Button onClick={() => approveItems(mine)}disabled={busyId != null} variant="primary" size="sm">
+                <Button onClick={() => approveItems(mine)} disabled={bulk != null} variant="primary" size="sm">
                   Setujui semua ({mine.length})
                 </Button>
               </div>
@@ -589,11 +661,11 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
                       await resubmitPo(it.type, it.id);
                     })
                   }
-                  disabled={busyId != null}
+                  disabled={busyIds.has(it.id)}
                   variant="primary"
                   size="xs"
                 >
-                  {busyId === it.id ? "…" : "Ajukan ulang"}
+                  {busyIds.has(it.id) ? <Spinner label="Memproses…" /> : "Ajukan ulang"}
                 </Button>
               )
             )

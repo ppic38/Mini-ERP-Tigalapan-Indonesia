@@ -35,7 +35,7 @@ function notifyError(message: string): void {
   void alertDialog({ title: "Perhatian", message, tone: "danger" });
 }
 import * as rawActions from "./actions";
-import type { ApprovalRole } from "./poApproval";
+import { poApprovalState, type ApprovalRole, type PoApprovalEntry } from "./poApproval";
 import type { SkuImportInputRow, SkuImportSummary, WarnaAliasImportInputRow, HargaKainImportInputRow } from "./actions";
 import { unwrapAction } from "./action-result";
 
@@ -1036,7 +1036,44 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     backgroundRefresh();
   },
   approvePoStep: async (type, id, asRole, note) => {
-    unwrapAction(await actions.approvePoStepAction(type, id, asRole, note));
+    // Optimistic (owner 2026-10-28: "setujui lambat sekali, tidak tau sedang loading"): langkah persetujuan langsung dicatat di
+    // approvalLog lokal sehingga baris pindah dari antrean seketika; status `approved` final tetap menunggu refresh server.
+    // PO Material: server menerapkan ke semua PO satu supplier di MRP yang sama pada langkah yang sama -- ditiru di sini.
+    const prevMaterial = get().materialPOs;
+    const prevMaklon = get().maklonPOs;
+    const at = new Date().toISOString();
+    const withStep = <T extends { approvalLog?: PoApprovalEntry[] | null }>(p: T, step: number): T => ({
+      ...p,
+      approvalLog: [...(p.approvalLog ?? []), { step, role: asRole, action: "APPROVED" as const, at }],
+    });
+    if (type === "MAKLON") {
+      set({
+        maklonPOs: prevMaklon.map((p) => {
+          if (p.id !== id) return p;
+          const st = poApprovalState(p);
+          return st.legacy || st.currentStep == null ? p : withStep(p, st.currentStep);
+        }),
+      });
+    } else {
+      const base = prevMaterial.find((p) => p.id === id);
+      const baseState = base ? poApprovalState(base) : null;
+      if (base && baseState && !baseState.legacy && baseState.currentStep != null) {
+        const step = baseState.currentStep;
+        set({
+          materialPOs: prevMaterial.map((p) => {
+            if (p.mrpId !== base.mrpId || p.supplier !== base.supplier || p.approved || p.status === "CANCELLED") return p;
+            const st = poApprovalState(p);
+            return st.legacy || st.rejected || st.currentStep !== step || !st.pendingRoles.includes(asRole) ? p : withStep(p, step);
+          }),
+        });
+      }
+    }
+    try {
+      unwrapAction(await actions.approvePoStepAction(type, id, asRole, note));
+    } catch (err) {
+      set({ materialPOs: prevMaterial, maklonPOs: prevMaklon });
+      throw err;
+    }
     backgroundRefresh();
   },
   rejectPoStep: async (type, id, asRole, note) => {
