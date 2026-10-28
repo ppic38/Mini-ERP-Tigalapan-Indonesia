@@ -507,7 +507,11 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   }
 
   const claimableLines = visibleLines.filter((l) => rollVariance(l.roll, l.netKg).claimable);
-  const canRest = visibleLines.length > 0 && claimableLines.length === 0 && visibleLines.every((l) => l.netKg > 0);
+  // Berat bersih, gramasi, dan setting WAJIB terisi di setiap roll (Produksi 2026-10-28: data ini dipakai memvalidasi penyebab yield rendah, dan tidak bisa diedit sesudah Resting).
+  const missingNet = visibleLines.filter((l) => !(l.netKg > 0)).length;
+  const missingGramasi = visibleLines.filter((l) => !(l.gramasi > 0)).length;
+  const missingSetting = visibleLines.filter((l) => !l.setting.trim()).length;
+  const canRest = visibleLines.length > 0 && claimableLines.length === 0 && missingNet === 0 && missingGramasi === 0 && missingSetting === 0;
 
   async function submitResting() {
     if (!selectedGroup || submitting || !canRest) return;
@@ -797,6 +801,14 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               {claimableLines.length > 0 && (
                 <div className="mt-2.5 rounded-md border border-[#F0DFC2] bg-warning-bg px-3 py-2 font-sans text-[11px] leading-[1.5] text-warning-fg">
                   {claimableLines.length} roll selisih beratnya di luar toleransi {getWeightTolerancePct()}% (lebih ringan dari berat kotor). Ajukan Claim untuk roll itu, atau koreksi berat bersihnya, sebelum Resting.
+                </div>
+              )}
+              {visibleLines.length > 0 && (missingNet > 0 || missingGramasi > 0 || missingSetting > 0) && (
+                <div className="mt-2.5 rounded-md border border-[#F0DFC2] bg-warning-bg px-3 py-2 font-sans text-[11px] leading-[1.5] text-warning-fg">
+                  Lengkapi dulu sebelum Resting (wajib untuk setiap roll):
+                  {missingNet > 0 && <> berat bersih {missingNet} roll,</>}
+                  {missingGramasi > 0 && <> gramasi {missingGramasi} roll,</>}
+                  {missingSetting > 0 && <> setting {missingSetting} roll,</>} belum diisi. Data ini tidak bisa diubah setelah Resting.
                 </div>
               )}
               {restingError && <div className="mt-2.5 rounded-md border border-danger bg-danger-bg px-3 py-2 font-sans text-[11px] leading-[1.5] text-danger-fg">{restingError}</div>}

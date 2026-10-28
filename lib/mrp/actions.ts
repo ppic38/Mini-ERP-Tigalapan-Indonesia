@@ -4130,6 +4130,7 @@ export async function undoProductionGroupDoneAction(groupKey: string): Promise<v
 
 export async function startProductionBatchAction(input: { mrpId: string; aduanRowId: string; qtyRoll: number; gramasi: number; restingAt: string; codeRoll?: string }): Promise<void> {
   const vendorId = await requireVendorSession();
+  if (!(input.gramasi > 0)) throw new Error("Gramasi wajib diisi sebelum Resting.");
   const db = supabaseServer();
   const { data: aduanRow } = await db.from("aduan_pola_rows").select("vendor,kode,warna,lengan").eq("id", input.aduanRowId).single();
   if (!aduanRow) throw new Error("Baris Aduan Pola tidak ditemukan.");
@@ -4178,6 +4179,10 @@ async function startProductionBatchesImpl(input: {
   lines: { aduanRowId: string; gramasi: number; codeRoll?: string; setting?: string }[];
 }): Promise<ProductionBatch[]> {
   const actor = await requireVendorSessionWithActor();
+  // Gramasi dan Setting wajib untuk setiap roll (Produksi 2026-10-28); UI sudah menahan tombol Resting, ini penjaga server.
+  if (input.lines.some((l) => !(l.gramasi > 0) || !l.setting?.trim())) {
+    throw new Error("Gramasi dan Setting wajib diisi untuk setiap roll sebelum Resting.");
+  }
   const db = supabaseServer();
   const createdAt = today();
   const created: ProductionBatch[] = [];
@@ -4216,9 +4221,7 @@ async function startProductionBatchesImpl(input: {
       resting_at: input.restingAt,
       created_at: createdAt,
       code_roll: line.codeRoll ?? null,
-      // Kolom `setting` (migration 0048) HANYA ditulis kalau diisi -- supaya Resting tetap jalan
-      // kalau migration itu belum dijalankan dan vendor tidak mengisi Setting.
-      ...(line.setting?.trim() ? { setting: line.setting.trim() } : {}),
+      setting: line.setting!.trim(),
     });
     if (error) {
       // Gagal di tengah daftar: batalkan yang sudah terlanjur dibuat di panggilan ini (jangan tinggalkan separuh jadi).
