@@ -256,7 +256,7 @@ export function poApprovalSignBoxes(po: PoApprovalSubject, submittedDate?: strin
     {
       heading: "DIAJUKAN OLEH",
       role: "Procurement",
-      short: "Procurement",
+      short: "Procurement Staff",
       step: 1,
       state: "SUBMITTED",
       name: submitEntry?.actorName?.trim() || "Tim Procurement",
@@ -276,14 +276,16 @@ export function poApprovalSignBoxes(po: PoApprovalSubject, submittedDate?: strin
       const title = role === "scm" ? (s === 3 ? "SCM Manager" : "Asisten Manager SCM") : SLOT_TITLE[role];
       const heading = "DISETUJUI OLEH";
       const roleText = `Level ${s} · ${SLOT_SHORT[role]}`;
+      // Label ringkas di bagan antrean: nama jabatan lengkap (Asisten Manager / SCM Manager / FAT Manager), bukan sekadar "SCM".
+      const shortLabel = role === "scm" ? (s === 3 ? "SCM Manager" : "Asisten Manager") : role === "finance" ? "FAT Manager" : role === "gm" ? "General Manager" : SLOT_SHORT[role];
       if (hit) {
-        boxes.push({ heading, role: roleText, short: SLOT_SHORT[role], step: s, state: "APPROVED", name: hit.actorName?.trim() || title, date: localDateOf(hit.at) });
+        boxes.push({ heading, role: roleText, short: shortLabel, step: s, state: "APPROVED", name: hit.actorName?.trim() || title, date: localDateOf(hit.at) });
       } else if (po.approved) {
-        boxes.push({ heading, role: roleText, short: SLOT_SHORT[role], step: s, state: "APPROVED", name: title, date: approvedDate });
+        boxes.push({ heading, role: roleText, short: shortLabel, step: s, state: "APPROVED", name: title, date: approvedDate });
       } else if (state.rejected && last && last.step === s && last.role === role) {
-        boxes.push({ heading, role: roleText, short: SLOT_SHORT[role], step: s, state: "REJECTED", name: last.actorName?.trim() || title, date: localDateOf(last.at) });
+        boxes.push({ heading, role: roleText, short: shortLabel, step: s, state: "REJECTED", name: last.actorName?.trim() || title, date: localDateOf(last.at) });
       } else {
-        boxes.push({ heading, role: roleText, short: SLOT_SHORT[role], step: s, state: "PENDING", name: title });
+        boxes.push({ heading, role: roleText, short: shortLabel, step: s, state: "PENDING", name: title });
       }
     }
   }

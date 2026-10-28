@@ -113,7 +113,7 @@ function ApprovalProgress({ po, state }: { po: MaterialPO | MaklonPO; state: PoA
         const prev = boxes[i - 1];
         return (
           <span key={i} className="flex items-center gap-1">
-            {prev && (prev.step !== b.step ? <span className="text-[10px] text-text-muted">›</span> : <span className="text-[10px] text-text-muted">+</span>)}
+            {prev && <span className="text-[10px] text-text-muted">›</span>}
             <span
               title={`${b.role} — ${b.name}${b.date ? ` · ${formatDate(b.date)}` : ""}`}
               className={"rounded px-1.5 py-[2px] font-sans text-[10.5px] font-semibold " + TONE_CLASS[tone]}
