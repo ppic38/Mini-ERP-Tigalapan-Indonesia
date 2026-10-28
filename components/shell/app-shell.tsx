@@ -235,7 +235,7 @@ export function AppShell({
   } else if (role === "scm") {
     badgeOverrides = {
       "/scm/approval-mrp": countMrpAwaitingScmApproval(mrpDetails),
-      "/scm/approval-po": countPoPendingForRole("scm", materialPOs, maklonPOs),
+      "/scm/approval-po": countPoPendingForRole("scm", materialPOs, maklonPOs, internalActors.scm?.username),
     };
   } else if (role === "gm") {
     badgeOverrides = {

@@ -31,8 +31,8 @@ export type PoApprovalEntry = {
 
 export const APPROVAL_LEVEL_TABLE = [
   { level: 1, max: 2_000_000, label: "Level 1", approver: "Procurement Staff", slaDays: 1, keterangan: "Pembelian rutin nilai kecil" },
-  { level: 2, max: 50_000_000, label: "Level 2", approver: "SCM", slaDays: 1, keterangan: "Memerlukan review harga & vendor" },
-  { level: 3, max: 200_000_000, label: "Level 3", approver: "FAT Manager + SCM Manager", slaDays: 2, keterangan: "Memerlukan validasi anggaran FAT" },
+  { level: 2, max: 50_000_000, label: "Level 2", approver: "Asisten Manager (SCM)", slaDays: 1, keterangan: "Memerlukan review harga & vendor" },
+  { level: 3, max: 200_000_000, label: "Level 3", approver: "SCM Manager, lalu FAT Manager", slaDays: 2, keterangan: "Memerlukan validasi anggaran FAT" },
   { level: 4, max: Infinity, label: "Level 4", approver: "General Manager / Board of Director", slaDays: 2, keterangan: "Nilai besar, kontrak jangka panjang, atau capex" },
 ] as const;
 
@@ -50,9 +50,32 @@ export function approvalLevelForAmount(amount: number): 1 | 2 | 3 | 4 {
 export const APPROVAL_STEP_ROLES: Record<number, ApprovalRole[]> = {
   1: ["procurement"],
   2: ["scm"],
-  3: ["finance", "scm"],
+  3: ["scm", "finance"],
   4: ["gm"],
 };
+
+/** Langkah yang peran-perannya menyetujui BERURUTAN sesuai urutan di APPROVAL_STEP_ROLES (revisi 2026-10-28, owner: di Level 3
+ *  SCM Manager menyetujui dulu, baru masuk antrean FAT). Langkah lain (tidak terdaftar) tidak berurutan. */
+const APPROVAL_STEP_SEQUENTIAL: Record<number, boolean> = { 3: true };
+
+/** Jabatan di portal SCM (revisi 2026-10-28, owner): akun SCM bernama dibedakan per username -- scm02 = Asisten Manager (Level 2),
+ *  scm01 = SCM Manager (Level 3). Akun utama SCM (tanpa username) tidak bisa menyetujui PO. */
+export type ScmPosition = "asisten" | "manager";
+const SCM_POSITION_BY_USERNAME: Record<string, ScmPosition> = { scm02: "asisten", scm01: "manager" };
+export const SCM_POSITION_LABEL: Record<ScmPosition, string> = { asisten: "Asisten Manager SCM", manager: "SCM Manager" };
+/** Jabatan SCM yang berhak menyetujui tiap langkah. */
+export const SCM_POSITION_FOR_STEP: Record<number, ScmPosition> = { 2: "asisten", 3: "manager" };
+
+export function scmPositionOf(username?: string | null): ScmPosition | null {
+  return username ? SCM_POSITION_BY_USERNAME[username.trim().toLowerCase()] ?? null : null;
+}
+
+/** Boleh tidaknya akun SCM (berdasarkan username-nya) bertindak di langkah `step`. */
+export function scmMayActAtStep(username: string | null | undefined, step: number | null): boolean {
+  if (step == null) return false;
+  const need = SCM_POSITION_FOR_STEP[step];
+  return !!need && scmPositionOf(username) === need;
+}
 
 /** Persetujuan langkah 2 yang SUDAH tercatat oleh Procurement (sebelum Level 2 dipindah ke SCM) tetap dianggap sah, supaya PO
  *  yang sudah melewati Level 2 tidak mundur lagi ke antrean SCM. */
@@ -60,8 +83,8 @@ const APPROVAL_STEP_LEGACY_ROLES: Record<number, ApprovalRole[]> = { 2: ["procur
 
 export const APPROVAL_STEP_LABEL: Record<number, string> = {
   1: "Level 1 · Procurement Staff",
-  2: "Level 2 · SCM",
-  3: "Level 3 · FAT Manager + SCM Manager",
+  2: "Level 2 · Asisten Manager SCM",
+  3: "Level 3 · SCM Manager, lalu FAT Manager",
   4: "Level 4 · General Manager",
 };
 
@@ -165,7 +188,8 @@ export function poApprovalState(po: PoApprovalSubject, now: Date = new Date()): 
     approved: false,
     rejected: false,
     currentStep,
-    pendingRoles: need.filter((r) => !done.includes(r)),
+    // Langkah berurutan (Level 3): hanya peran pertama yang belum setuju yang sedang giliran.
+    pendingRoles: APPROVAL_STEP_SEQUENTIAL[currentStep] ? need.filter((r) => !done.includes(r)).slice(0, 1) : need.filter((r) => !done.includes(r)),
     doneRolesInStep: done,
     cycle,
     stepStartedAt,
@@ -192,7 +216,7 @@ export function poApprovalSummary(state: PoApprovalState): string {
   if (state.rejected) return "Ditolak — perbaiki & ajukan ulang";
   if (state.currentStep == null) return "—";
   const who = state.pendingRoles
-    .map((r) => (r === "finance" ? "FAT Manager" : r === "scm" ? (state.currentStep === 2 ? "SCM" : "SCM Manager") : r === "gm" ? "General Manager" : "Procurement"))
+    .map((r) => (r === "finance" ? "FAT Manager" : r === "scm" ? (state.currentStep === 2 ? "Asisten Manager SCM" : "SCM Manager") : r === "gm" ? "General Manager" : "Procurement"))
     .join(" + ");
   return `Menunggu Level ${state.currentStep} (${who})`;
 }
@@ -249,7 +273,7 @@ export function poApprovalSignBoxes(po: PoApprovalSubject, submittedDate?: strin
     for (const role of APPROVAL_STEP_ROLES[s] ?? []) {
       const accepted: ApprovalRole[] = [role, ...(APPROVAL_STEP_LEGACY_ROLES[s] ?? [])];
       const hit = state.cycle.find((e) => e.step === s && e.action === "APPROVED" && accepted.includes(e.role));
-      const title = role === "scm" && s === 3 ? "SCM Manager" : SLOT_TITLE[role];
+      const title = role === "scm" ? (s === 3 ? "SCM Manager" : "Asisten Manager SCM") : SLOT_TITLE[role];
       const heading = "DISETUJUI OLEH";
       const roleText = `Level ${s} · ${SLOT_SHORT[role]}`;
       if (hit) {

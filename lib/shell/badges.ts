@@ -20,7 +20,7 @@ import {
   warnaLenganGroupsWithFg,
   rollRemainingBySizeForMrp,
 } from "@/lib/mrp/derive";
-import { poApprovalState, type ApprovalRole } from "@/lib/mrp/poApproval";
+import { poApprovalState, scmMayActAtStep, type ApprovalRole } from "@/lib/mrp/poApproval";
 import type { MrpDetail } from "@/lib/mrp/store";
 import type { EkspedisiRateRow, ItemSellingPriceRow } from "@/lib/mrp/masterData";
 import type { DeliveryKoli, MaklonInvoice, MaklonPO, MaterialPO, Mrp, ProductionBatch, ProductionGroupMeta, ProductionResult, ProductionYieldResolution, RawMaterialInvoice, ShippableKind, VendorInvoice, WarehouseReceipt } from "@/lib/mrp/types";
@@ -49,8 +49,12 @@ export function countPendingMaterialPO(materialPOs: MaterialPO[]): number {
 }
 
 /** Jumlah PO (Material + Produksi) yang sedang menunggu approval `role` -- badge menu "Approval PO". */
-export function countPoPendingForRole(role: ApprovalRole, materialPOs: MaterialPO[], maklonPOs: MaklonPO[]): number {
-  const waiting = (p: MaterialPO | MaklonPO) => poApprovalState(p).pendingRoles.includes(role);
+export function countPoPendingForRole(role: ApprovalRole, materialPOs: MaterialPO[], maklonPOs: MaklonPO[], scmUsername?: string | null): number {
+  // Portal SCM dibedakan per username (scm02 = Asisten Manager L2, scm01 = SCM Manager L3): hanya hitung PO yang giliran jabatan akun ini.
+  const waiting = (p: MaterialPO | MaklonPO) => {
+    const st = poApprovalState(p);
+    return st.pendingRoles.includes(role) && (role !== "scm" || scmMayActAtStep(scmUsername, st.currentStep));
+  };
   return materialPOs.filter((p) => p.status !== "CANCELLED" && !p.approved && waiting(p)).length + maklonPOs.filter((p) => !p.approved && waiting(p)).length;
 }
 

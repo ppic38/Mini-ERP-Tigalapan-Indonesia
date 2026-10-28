@@ -77,6 +77,9 @@ import {
   APPROVAL_STEP_SLA_DAYS,
   approvalLevelForAmount,
   poApprovalState,
+  SCM_POSITION_FOR_STEP,
+  SCM_POSITION_LABEL,
+  scmMayActAtStep,
   type ApprovalRole,
   type PoApprovalEntry,
   type PoApprovalState,
@@ -7539,6 +7542,17 @@ async function poStepImpl(type: PoType, id: string, asRole: ApprovalRole, action
     throw new Error(`Bukan giliran ${APPROVAL_ROLE_LABEL[asRole]} -- PO menunggu ${APPROVAL_STEP_LABEL[state.currentStep ?? 0] ?? "langkah lain"}.`);
   }
   if (action === "REJECTED" && !note?.trim()) throw new Error("Alasan penolakan wajib diisi.");
+  // Portal SCM dibedakan per username (revisi 2026-10-28): scm02 = Asisten Manager (Level 2), scm01 = SCM Manager (Level 3).
+  // Akun utama SCM (tanpa username) dan username lain tidak boleh menyetujui/menolak.
+  if (asRole === "scm") {
+    const scmActor = internalActorForRole(await requireSession(), "scm");
+    if (!scmMayActAtStep(scmActor?.username, state.currentStep)) {
+      const need = SCM_POSITION_FOR_STEP[state.currentStep ?? 0];
+      throw new Error(
+        `Langkah ini khusus ${need ? SCM_POSITION_LABEL[need] : "approver lain"}${scmActor ? ` -- akun ${scmActor.username} tidak berwenang` : " -- akun utama SCM tidak bisa menyetujui PO, login dengan akun bernama (scm01 / scm02)"}.`
+      );
+    }
+  }
   if (type === "MATERIAL") {
     // Approval PO Material berlaku PER SUPPLIER (MRP + supplier sama): satu aksi diterapkan ke semua PO vendor produksi
     // di grup itu yang SEDANG menunggu peran ini di langkah yang sama; PO lain di grup (mis. sudah beda langkah) dilewati.
@@ -7546,7 +7560,7 @@ async function poStepImpl(type: PoType, id: string, asRole: ApprovalRole, action
     for (const sub of group) {
       if (sub.id !== id) {
         const st = poApprovalState(sub);
-        if (st.legacy || st.rejected || !st.pendingRoles.includes(asRole)) continue;
+        if (st.legacy || st.rejected || !st.pendingRoles.includes(asRole) || st.currentStep !== state.currentStep) continue;
       }
       await recordApprovalStep(db, type, sub, asRole, action, note, actor.actorName, sub.id === id);
     }

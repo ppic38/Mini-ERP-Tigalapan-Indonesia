@@ -9,6 +9,7 @@ import { PoDownloadModal, type PoDownloadRequest } from "@/components/procuremen
 import { SysadminPanel } from "@/components/sysadmin/correction-dialog";
 import { maklonPoCorrections, materialPoCorrections } from "@/components/sysadmin/procurement-corrections";
 import { useMrpStore } from "@/lib/mrp/store";
+import { useInternalAuthStore } from "@/lib/internal-auth-store";
 import { formatRupiah, formatDate, mrpDetailFor } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI, ROLL_KG_ESTIMATE } from "@/lib/mrp/seed";
 import {
@@ -18,6 +19,9 @@ import {
   poApprovalSignBoxes,
   poApprovalState,
   poApprovalSummary,
+  SCM_POSITION_LABEL,
+  scmMayActAtStep,
+  scmPositionOf,
   type ApprovalRole,
   type PoApprovalSignBox,
   type PoApprovalState,
@@ -337,13 +341,17 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
     return out;
   }, [materialPOs, maklonPOs]);
 
-  const isMine = (i: Item) => !i.po.approved && !i.state.legacy && !i.state.rejected && i.state.pendingRoles.includes(role);
+  // Portal SCM dibedakan per username (scm02 = Asisten Manager L2, scm01 = SCM Manager L3); akun utama SCM tidak bisa menyetujui.
+  const scmUsername = useInternalAuthStore((s) => s.actors.scm?.username);
+  const scmPosition = scmPositionOf(scmUsername);
+  const isMine = (i: Item) =>
+    !i.po.approved && !i.state.legacy && !i.state.rejected && i.state.pendingRoles.includes(role) && (role !== "scm" || scmMayActAtStep(scmUsername, i.state.currentStep));
   const mineCount = (type: Item["type"]) => items.filter((i) => i.type === type && isMine(i)).length;
 
   const tabItems = items.filter((i) => i.type === tab);
   const mine = tabItems.filter(isMine);
   const rejected = role === "procurement" ? tabItems.filter((i) => !i.po.approved && i.state.rejected) : [];
-  const others = tabItems.filter((i) => !i.po.approved && !i.state.legacy && !i.state.rejected && !i.state.pendingRoles.includes(role));
+  const others = tabItems.filter((i) => !i.po.approved && !i.state.legacy && !i.state.rejected && !isMine(i));
   // Sudah tuntas SEMUA level (approved=true). Legacy (PO sebelum matriks ini ada) TIDAK ikut -- tidak ada chain-nya.
   const done = tabItems.filter((i) => i.po.approved && !i.state.legacy);
   const totalMine = mine.reduce((s, i) => s + i.amount, 0);
@@ -448,6 +456,17 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
   return (
     <div className="flex flex-col gap-4">
       <MatrixReference />
+      {role === "scm" && (
+        <div className="rounded-md border border-[#CFE0EF] bg-info-bg px-4 py-2.5 font-sans text-[11.5px] leading-[1.5] text-info-fg">
+          {scmPosition ? (
+            <>
+              Anda login sebagai <b>{scmUsername}</b> — <b>{SCM_POSITION_LABEL[scmPosition]}</b>: hanya PO di langkah {scmPosition === "asisten" ? "Level 2" : "Level 3 (SCM Manager)"} yang bisa Anda setujui atau tolak.
+            </>
+          ) : (
+            <>Akun ini tidak bisa menyetujui PO. Login dengan akun bernama: <b>scm02</b> (Asisten Manager, Level 2) atau <b>scm01</b> (SCM Manager, Level 3).</>
+          )}
+        </div>
+      )}
       <Tabs
         items={[
           { key: "MATERIAL", label: "PO Material", badge: mineCount("MATERIAL") },
