@@ -340,6 +340,8 @@ type FlowActions = {
   roundMaterialPoRollCounts: () => Promise<void>;
   revertMaterialPoRollRounding: () => Promise<void>;
   approveMaklonPo: (id: string) => Promise<void>;
+  /** Finance membatalkan persetujuan PO Produksi (satu PO atau semua PO satu vendor) -- PO kembali menunggu approval. Ditolak server = melempar error beralasan. */
+  cancelMaklonPoApproval: (ids: string[], reason: string) => Promise<void>;
   /** Matriks Approval PO (migration 0055): setujui / tolak langkah approval sebagai `asRole`, ajukan ulang PO ditolak. */
   approvePoStep: (type: "MATERIAL" | "MAKLON", id: string, asRole: ApprovalRole, note?: string) => Promise<void>;
   rejectPoStep: (type: "MATERIAL" | "MAKLON", id: string, asRole: ApprovalRole, note: string) => Promise<void>;
@@ -669,6 +671,7 @@ const BUSY_TRACKED_ACTIONS = new Set<string>([
   "approveVendorMaterialPos",
   "approveMaterialPos",
   "approveMaklonPo",
+  "cancelMaklonPoApproval",
   "approvePoStep",
   "rejectPoStep",
   "resubmitPo",
@@ -1026,6 +1029,10 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       notifyError("Gagal menyetujui PO Produksi. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
+    backgroundRefresh();
+  },
+  cancelMaklonPoApproval: async (ids, reason) => {
+    unwrapAction(await actions.cancelMaklonPoApprovalAction(ids, reason));
     backgroundRefresh();
   },
   approvePoStep: async (type, id, asRole, note) => {

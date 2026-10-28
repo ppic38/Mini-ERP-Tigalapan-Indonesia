@@ -980,6 +980,73 @@ export async function approveMaklonPoAction(id: string): Promise<void> {
   await financeApproveMaklonPo(db, id, actor.actorName);
 }
 
+/** Finance membatalkan persetujuan PO Produksi yang SUDAH disetujui (satu PO atau semua PO satu vendor), supaya kembali ke daftar
+ *  menunggu approval Finance. Hanya selagi vendor belum bergerak: PO belum dimulai/ditutup, belum ada roll resting/cutting, belum ada koli.
+ *  Persetujuan Finance dihapus dari approval_log (persetujuan SCM/GM tetap); PO lama tanpa matriks cukup approved=false. Semua-atau-tidak:
+ *  satu PO yang tidak memenuhi syarat menggagalkan seluruh permintaan. Alasan ditolak dikembalikan sebagai nilai (ActionResult). */
+export async function cancelMaklonPoApprovalAction(ids: string[], reason: string): Promise<ActionResult<{ cancelled: number }>> {
+  return toActionResult(async () => {
+    const actor = await requireInternalRoleWithActor("finance");
+    if (!reason.trim()) throw new Error("Alasan pembatalan wajib diisi.");
+    const poIds = Array.from(new Set(ids));
+    if (poIds.length === 0) throw new Error("Tidak ada PO yang dipilih.");
+    const db = supabaseServer();
+    const { data: pos, error } = await db
+      .from("maklon_pos")
+      .select("id,mrp_id,vendor_produksi,status,approved,approval_level,approval_log,started_colors,closed_at")
+      .in("id", poIds);
+    if (error) throw new Error(error.message);
+    if ((pos?.length ?? 0) !== poIds.length) throw new Error("Ada PO yang tidak ditemukan.");
+
+    const plans: { po: NonNullable<typeof pos>[number]; nextLog: PoApprovalEntry[] | null }[] = [];
+    for (const po of pos ?? []) {
+      const label = `PO ${po.id}`;
+      if (!po.approved) throw new Error(`${label} belum disetujui.`);
+      if (po.closed_at) throw new Error(`${label} sudah ditutup/dibatalkan.`);
+      if (po.status !== "FULL_WAITING_MATERIAL" && po.status !== "PARTIAL_WAITING_MATERIAL") throw new Error(`${label} sudah berstatus ${po.status} -- produksi sudah berjalan, tidak bisa dibatalkan approval-nya.`);
+      if (Array.isArray(po.started_colors) && po.started_colors.length > 0) throw new Error(`${label} sudah mulai produksi untuk sebagian warna.`);
+      const [batches, kolis] = await Promise.all([
+        db.from("production_batches").select("id", { count: "exact", head: true }).eq("mrp_id", po.mrp_id).eq("vendor_produksi", po.vendor_produksi),
+        db.from("delivery_kolis").select("id", { count: "exact", head: true }).eq("mrp_id", po.mrp_id).eq("vendor_produksi", po.vendor_produksi),
+      ]);
+      if (batches.error) throw new Error(batches.error.message);
+      if (kolis.error) throw new Error(kolis.error.message);
+      if ((batches.count ?? 0) > 0) throw new Error(`${label}: vendor sudah punya roll di Resting/Cutting.`);
+      if ((kolis.count ?? 0) > 0) throw new Error(`${label}: vendor sudah membuat koli pengiriman.`);
+
+      if (po.approval_level == null) {
+        plans.push({ po, nextLog: null });
+        continue;
+      }
+      const log = (po.approval_log ?? []) as PoApprovalEntry[];
+      // Hanya persetujuan Finance pada siklus berjalan (sejak pengajuan terakhir) yang dihapus.
+      let start = 0;
+      for (let i = log.length - 1; i >= 0; i--) {
+        if (log[i].step === 1 && log[i].action === "APPROVED") {
+          start = i;
+          break;
+        }
+      }
+      const nextLog = log.filter((e, i) => !(i >= start && e.role === "finance" && e.action === "APPROVED"));
+      if (nextLog.length === log.length) throw new Error(`${label} disetujui tanpa langkah Finance (nilainya di bawah Level 3) -- tidak ada persetujuan Finance yang bisa dibatalkan.`);
+      plans.push({ po, nextLog });
+    }
+
+    for (const { po, nextLog } of plans) {
+      const patch: { approved: boolean; approval_log?: PoApprovalEntry[] } = { approved: false };
+      if (nextLog) patch.approval_log = nextLog;
+      const { error: updErr } = await db.from("maklon_pos").update(patch).eq("id", po.id).eq("approved", true);
+      if (updErr) throw new Error(updErr.message);
+      await logInternalAction(actor, `CANCEL_MAKLON_PO_APPROVAL: ${reason.trim()}`, "maklon_po", po.id);
+      await insertNotification(notif(`Persetujuan PO Produksi ${po.id} (${po.mrp_id}) dibatalkan Finance — alasan: ${reason.trim()}. PO ditarik dari PO Produksi Saya sampai disetujui lagi.`, ["vendorMaklon"], po.vendor_produksi));
+    }
+    // Tanggal "PO Approved" MRP = saat SEMUA PO-nya approved; begitu ada yang ditarik, kosongkan (terisi lagi otomatis saat semuanya approved).
+    for (const mrpId of new Set(plans.map((p) => p.po.mrp_id))) await db.from("mrp").update({ po_approved_at: null }).eq("id", mrpId);
+    await insertNotification(notif(`Persetujuan ${plans.length} PO Produksi dibatalkan Finance (${plans.map((p) => p.po.id).join(", ")}) — alasan: ${reason.trim()}. PO kembali menunggu approval Finance.`, ["procurement", "scm"]));
+    return { cancelled: plans.length };
+  });
+}
+
 // =========================================================================
 // Invoicing (raw material)
 // =========================================================================

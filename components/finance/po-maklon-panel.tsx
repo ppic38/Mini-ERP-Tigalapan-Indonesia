@@ -44,6 +44,31 @@ export function PoMaklonPanel() {
   // Set (bukan single string) supaya beberapa vendor bisa dibuka bersamaan buat dibandingkan.
   const [openVendorPending, setOpenVendorPending] = useState<Set<string>>(new Set());
   const [openPoPending, setOpenPoPending] = useState<string | null>(null);
+
+  // Batalkan approval (PO yang sudah disetujui kembali ke daftar menunggu approval): popup alasan wajib, per vendor atau per PO.
+  const cancelMaklonPoApproval = useMrpStore((s) => s.cancelMaklonPoApproval);
+  const [cancelTarget, setCancelTarget] = useState<{ title: string; ids: string[] } | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  function openCancel(title: string, ids: string[]) {
+    setCancelTarget({ title, ids });
+    setCancelReason("");
+    setCancelError(null);
+  }
+  async function submitCancel() {
+    if (!cancelTarget) return;
+    setCancelBusy(true);
+    setCancelError(null);
+    try {
+      await cancelMaklonPoApproval(cancelTarget.ids, cancelReason);
+      setCancelTarget(null);
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCancelBusy(false);
+    }
+  }
   function toggleVendorPending(vendor: string) {
     setOpenVendorPending((prev) => {
       const next = new Set(prev);
@@ -299,6 +324,7 @@ export function PoMaklonPanel() {
                   <th className="px-3 py-[9px] text-right">Qty</th>
                   <th className="px-3 py-[9px] text-right">Nilai</th>
                   <th className="px-3 py-[9px] text-left">Status</th>
+                  <th className="px-3 py-[9px] text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody>
@@ -325,6 +351,7 @@ export function PoMaklonPanel() {
                         <td className="px-3 py-[11px]">
                           <StatusPill tone="neutral">{m.pos.length} PO</StatusPill>
                         </td>
+                        <td />
                       </tr>
                       {mrpActive &&
                         allVendorSummariesForMrp(m.pos).map((v) => {
@@ -349,6 +376,18 @@ export function PoMaklonPanel() {
                                 <td className="px-3 py-[10px]">
                                   <StatusPill tone="neutral">{v.pos.length} PO</StatusPill>
                                 </td>
+                                <td className="px-3 py-[10px] text-right">
+                                  <Button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openCancel(`${v.vendorName} · ${m.mrpId} (${v.pos.length} PO)`, v.pos.map((p) => p.id));
+                                    }}
+                                    variant="danger"
+                                    size="xs"
+                                  >
+                                    Batalkan approval vendor ini
+                                  </Button>
+                                </td>
                               </tr>
                               {vendorActive &&
                                 v.pos.map((p) => {
@@ -372,10 +411,22 @@ export function PoMaklonPanel() {
                                             <ApprovalChain state={poApprovalState(p)} />
                                           </div>
                                         </td>
+                                        <td className="px-3 py-[10px] text-right">
+                                          <Button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              openCancel(p.id, [p.id]);
+                                            }}
+                                            variant="danger"
+                                            size="xs"
+                                          >
+                                            Batalkan approval
+                                          </Button>
+                                        </td>
                                       </tr>
                                       {poActive && (
                                         <tr>
-                                          <td colSpan={4} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
+                                          <td colSpan={5}className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
                                             {p.cancelledLines.length > 0 && (
                                               <div className="mb-2 rounded-md border border-[#EFC9C4] bg-danger-bg px-3 py-2 font-sans text-[11px] leading-[1.5] text-danger-fg">
                                                 <div className="font-semibold">Cancel Line (dari Procurement)</div>
@@ -414,6 +465,38 @@ export function PoMaklonPanel() {
           </div>
         )}
       </div>
+
+      {cancelTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={() => !cancelBusy && setCancelTarget(null)}>
+          <div className="w-full max-w-[440px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
+            <div className="border-b border-border-subtle px-5 py-3.5 font-sans text-[13px] font-semibold text-text-primary">Batalkan approval PO Produksi</div>
+            <div className="px-5 py-4 font-sans text-xs text-[#31414F]">
+              <div className="font-semibold text-text-primary">{cancelTarget.title}</div>
+              <ul className="mt-2 list-disc space-y-1 pl-4 text-[11.5px] leading-[1.5] text-text-muted">
+                <li>PO kembali ke daftar menunggu approval Finance dan ditarik dari PO Produksi Saya milik vendor.</li>
+                <li>Hanya bisa selagi vendor belum mulai produksi (belum ada roll Resting/Cutting atau koli).</li>
+                <li>Vendor, Procurement, dan SCM menerima notifikasi.</li>
+              </ul>
+              <div className="mt-3 text-[11px] font-semibold uppercase tracking-wider text-text-muted">Alasan (wajib)</div>
+              <textarea
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                rows={3}
+                className="mt-1 w-full rounded-md border border-[#DDE4EB] px-3 py-2 font-sans text-xs text-text-primary"
+              />
+              {cancelError && <div className="mt-2 rounded-md border border-danger bg-danger-bg px-3 py-2 text-[11.5px] text-danger-fg">{cancelError}</div>}
+              <div className="mt-3 flex justify-end gap-2">
+                <Button onClick={() => setCancelTarget(null)} variant="muted" size="xs" disabled={cancelBusy}>
+                  Batal
+                </Button>
+                <Button onClick={submitCancel} variant="danger" size="xs" disabled={cancelBusy || !cancelReason.trim()}>
+                  {cancelBusy ? "Memproses…" : "Batalkan approval"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
