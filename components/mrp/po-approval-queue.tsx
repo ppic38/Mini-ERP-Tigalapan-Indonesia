@@ -368,16 +368,17 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
     }
   }
 
-  async function approveAll() {
-    if (mine.length === 0) return;
+  // Setujui sekaligus satu daftar PO (semua yang menunggu / semua PO satu MRP). `scope` hanya untuk teks konfirmasi.
+  async function approveItems(list: Item[], scope?: string) {
+    if (list.length === 0) return;
     const ok = await confirmDialog({
-      title: `Setujui ${mine.length} PO sekaligus?`,
-      message: `Total ${formatRupiah(totalMine)}, disetujui sebagai ${APPROVAL_ROLE_LABEL[role]}.`,
-      confirmLabel: "Setujui semua",
+      title: scope ? `Setujui ${list.length} PO di MRP ${scope}?` : `Setujui ${list.length} PO sekaligus?`,
+      message: `Total ${formatRupiah(list.reduce((s, i) => s + i.amount, 0))}, disetujui sebagai ${APPROVAL_ROLE_LABEL[role]}.`,
+      confirmLabel: scope ? "Setujui MRP ini" : "Setujui semua",
     });
     if (!ok) return;
     setError(null);
-    for (const it of mine) {
+    for (const it of list) {
       setBusyId(it.id);
       try {
         await approvePoStep(it.type, it.id, role);
@@ -387,6 +388,49 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
       }
     }
     setBusyId(null);
+  }
+
+  // Daftar dibungkus per MRP (bisa dibuka/ditutup); tombol "Setujui MRP ini" menyetujui semua PO MRP itu, tombol tiap baris = per vendor/PO.
+  const [openMrps, setOpenMrps] = useState<Set<string>>(new Set());
+  function toggleMrp(key: string) {
+    setOpenMrps((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+  function renderGroups(section: string, list: Item[], rowActions?: (it: Item) => React.ReactNode, groupApprove = false) {
+    const byMrp = new Map<string, Item[]>();
+    for (const it of list) byMrp.set(it.mrpId, [...(byMrp.get(it.mrpId) ?? []), it]);
+    return Array.from(byMrp.entries()).map(([mrpId, its]) => {
+      const key = `${section}:${mrpId}`;
+      const open = openMrps.has(key);
+      return (
+        <div key={key} className="border-b border-[#CFE0EF] last:border-b-0">
+          <div onClick={() => toggleMrp(key)} className={"flex cursor-pointer items-center gap-3 bg-[#F8FBFF] px-4 py-2.5 font-sans text-xs hover:bg-info-bg/60 " + (open ? "bg-info-bg/50" : "")}>
+            <span className="text-info-fg">{open ? "▾" : "▸"}</span>
+            <span className="font-mono text-[12.5px] font-semibold text-text-primary">{mrpId}</span>
+            <span className="text-[11px] text-text-muted">{its.length} PO</span>
+            <span className="ml-auto font-mono text-[12.5px] font-semibold text-text-primary">{formatRupiah(its.reduce((s, i) => s + i.amount, 0))}</span>
+            {groupApprove && (
+              <Button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void approveItems(its, mrpId);
+                }}
+                disabled={busyId != null}
+                variant="primary"
+                size="xs"
+              >
+                Setujui MRP ini ({its.length})
+              </Button>
+            )}
+          </div>
+          {open && its.map((it) => renderRow(it, rowActions?.(it) ?? null))}
+        </div>
+      );
+    });
   }
 
   function openDownload(item: Item) {
@@ -485,9 +529,10 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
           <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Tidak ada {noun} yang menunggu persetujuan Anda.</div>
         ) : (
           <>
-            {mine.map((it) =>
-              renderRow(
-                it,
+            {renderGroups(
+              "mine",
+              mine,
+              (it) => (
                 <>
                   <Button
                     onClick={() =>
@@ -513,11 +558,12 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
                     Tolak
                   </Button>
                 </>
-              )
+              ),
+              true
             )}
             {mine.length > 1 && (
               <div className="flex justify-end border-t border-[#F1F4F7] px-4 py-2.5">
-                <Button onClick={approveAll} disabled={busyId != null} variant="primary" size="sm">
+                <Button onClick={() => approveItems(mine)}disabled={busyId != null} variant="primary" size="sm">
                   Setujui semua ({mine.length})
                 </Button>
               </div>
@@ -558,7 +604,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
         "Sedang berjalan di langkah lain",
         others.length,
         "hanya informasi",
-        others.length === 0 ? <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Tidak ada.</div> : others.map((it) => renderRow(it, null))
+        others.length === 0 ? <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Tidak ada.</div> : renderGroups("others", others)
       )}
 
       {/* PO yang sudah TUNTAS semua level tetap kelihatan di sini, lengkap dengan siapa yang menyetujui -- bukan cuma
@@ -574,7 +620,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
             {done.length === 0 ? (
               <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Belum ada {noun} yang selesai lewat matriks approval ini.</div>
             ) : (
-              done.map((it) => renderRow(it, null))
+              renderGroups("done", done)
             )}
           </div>
         )}
