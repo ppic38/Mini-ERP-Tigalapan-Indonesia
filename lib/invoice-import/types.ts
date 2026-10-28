@@ -1,7 +1,15 @@
 // Tipe bersama fitur "Upload Invoice Supplier" di Paying Voucher (Procurement).
+import type { FileNameRule } from "./filename";
 
 /** 1 baris barang di invoice supplier: berat (kg), harga per kg, jumlah (Rp) -- sesuai yang tercetak. */
-export type InvoiceLine = { w: number; price: number; amount: number; fixed?: string };
+export type InvoiceLine = {
+  w: number;
+  price: number;
+  amount: number;
+  fixed?: string;
+  /** Kode roll dari supplier (FABRIKU: kolom KODEROL). KNITTO tidak mencetaknya. */
+  code?: string;
+};
 
 /** 1 blok barang di invoice: kain roll ("COMBED 24S - TOSCA MUDA") atau rib ("RIB COMBED 24S - TOSCA MUDA"). */
 export type ParsedInvoiceGroup = {
@@ -33,6 +41,8 @@ export type ParsedInvoice = {
     kgan: { kg: number; n: number } | null;
     /** "Total Roll-an": total kg + jumlah roll, sesuai cetakan invoice. */
     rollan: { kg: number; n: number } | null;
+    /** "Total Qty" (total kg semua barang) bila dicetak -- FABRIKU; dipakai sebagai pembanding berat. */
+    totalKg?: number | null;
   };
   warnings: string[];
   rawText: string;
@@ -47,6 +57,8 @@ export type InvoiceAdapter = {
   matchesSupplier: (supplierName: string) => boolean;
   parse: (text: string, fileName: string) => ParsedInvoice;
   validate: (inv: ParsedInvoice) => InvoiceCheck[];
+  /** Format nama file yang wajib diikuti saat upload (nomor invoice + kode transaksi diambil dari nama file). */
+  fileNameRule: FileNameRule;
 };
 
 /** Ringkasan invoice yang sudah diterapkan ke form Paying Voucher -- pembanding "tanpa selisih" yang

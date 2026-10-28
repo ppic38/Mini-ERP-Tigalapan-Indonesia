@@ -142,7 +142,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     .sort((a, b) => (a.lengan === "PENDEK" ? 0 : 1) - (b.lengan === "PENDEK" ? 0 : 1));
   // Daftar roll GABUNGAN semua lengan warna ini, tiap baris tahu lengan asalnya sendiri.
   const combinedRolls = warnaColorEntries.flatMap((c) =>
-    c.rolls.map((grossKg, idx) => ({ lengan: c.lengan, idx, grossKg, codeLot: c.lots?.[idx]?.trim() || "" }))
+    c.rolls.map((grossKg, idx) => ({ lengan: c.lengan, idx, grossKg, codeLot: c.lots?.[idx]?.trim() || "", presetCode: c.codeRolls?.[idx]?.trim() || "" }))
   );
   function rollKey(lengan: Lengan, idx: number): string {
     return lengan + "|" + idx;
@@ -210,7 +210,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
       let changed = false;
       for (const r of combinedRolls) {
         const key = rollKey(r.lengan, r.idx);
-        if (arrivalFor(r.lengan, r.idx) || next[key]) continue;
+        if (arrivalFor(r.lengan, r.idx) || next[key] || r.presetCode) continue;
         const codeRoll = generateCodeRoll(usedRoll);
         usedRoll.add(codeRoll);
         next[key] = { codeRoll };
@@ -274,6 +274,12 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     setRollPage(0);
   }
 
+  // Code roll bawaan dari invoice supplier (upload FABRIKU) = isian awal roll yang belum diterima; vendor TETAP boleh mengubahnya
+  // (mis. label fisik beda). Roll tanpa kode bawaan memakai alur lama (diisi vendor).
+  function draftOf(lengan: Lengan, idx: number): DraftCode {
+    return draftCode[rollKey(lengan, idx)] ?? { codeRoll: combinedRolls.find((r) => r.lengan === lengan && r.idx === idx)?.presetCode ?? "" };
+  }
+
   // Code roll harus unik (owner 2026-10-05): cek ke semua roll yang sudah terdaftar DAN ke isian roll lain di
   // layar ini. Mengembalikan keterangan roll yang sudah memakainya (berat kotor, code lot, tanggal diterima).
   function codeConflictFor(lengan: Lengan, idx: number, codeRoll: string): string | null {
@@ -282,15 +288,14 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     if (found) return describeRollCodeConflict(found);
     const norm = codeRoll.trim().toLowerCase();
     const other = combinedRolls.find(
-      (r) => !arrivalFor(r.lengan, r.idx) && !(r.lengan === lengan && r.idx === idx) && (draftCode[rollKey(r.lengan, r.idx)]?.codeRoll ?? "").trim().toLowerCase() === norm
+      (r) => !arrivalFor(r.lengan, r.idx) && !(r.lengan === lengan && r.idx === idx) && draftOf(r.lengan, r.idx).codeRoll.trim().toLowerCase() === norm
     );
     return other ? `Code roll ${codeRoll.trim()} juga diisi untuk Roll ${other.idx + 1} (${other.lengan}) di layar ini -- code roll tidak boleh sama.` : null;
   }
 
   function markArrived(lengan: Lengan, idx: number) {
     if (!selectedInvoice) return;
-    const key = rollKey(lengan, idx);
-    const code = draftCode[key] ?? { codeRoll: "" };
+    const code = draftOf(lengan, idx);
     if (!code.codeRoll.trim()) return;
     if (codeConflictFor(lengan, idx, code.codeRoll)) return;
     if (strictReceive && !rollHasLot(lengan, idx)) return;
@@ -347,8 +352,8 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   }
   const rollsMissingLot = strictReceive ? pendingRolls.filter((r) => !rollHasLot(r.lengan, r.idx)) : [];
   // Code roll WAJIB terisi sebelum roll boleh diterima (Terima / Terima semua roll).
-  const rollsMissingCode = pendingRolls.filter((r) => !draftCode[rollKey(r.lengan, r.idx)]?.codeRoll?.trim());
-  const rollsWithCodeConflict = pendingRolls.filter((r) => codeConflictFor(r.lengan, r.idx, draftCode[rollKey(r.lengan, r.idx)]?.codeRoll ?? ""));
+  const rollsMissingCode = pendingRolls.filter((r) => !draftOf(r.lengan, r.idx).codeRoll.trim());
+  const rollsWithCodeConflict = pendingRolls.filter((r) => codeConflictFor(r.lengan, r.idx, draftOf(r.lengan, r.idx).codeRoll));
   function receiveAllRolls() {
     if (!selectedInvoice || pendingRolls.length === 0 || rollsMissingCode.length > 0 || rollsMissingLot.length > 0 || rollsWithCodeConflict.length > 0) return;
     // Pendek & Panjang sekarang digabung 1 list -- receiveMaterialBatch tetap per LENGAN (kontrak
@@ -362,7 +367,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
         c.lengan,
         rollsForLengan.map((r) => ({
           rollIndex: r.idx,
-          codeRoll: draftCode[rollKey(r.lengan, r.idx)]!.codeRoll.trim(),
+          codeRoll: draftOf(r.lengan, r.idx).codeRoll.trim(),
           codeLot: draftCode[rollKey(r.lengan, r.idx)]?.codeLot?.trim() || undefined,
         })),
         []
@@ -717,7 +722,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                       {pageRolls.map((r) => {
                         const key = rollKey(r.lengan, r.idx);
                         const arrival = arrivalFor(r.lengan, r.idx);
-                        const code = draftCode[key] ?? { codeRoll: arrival?.codeRoll ?? "" };
+                        const code = draftCode[key] ?? { codeRoll: arrival?.codeRoll ?? r.presetCode };
                         const conflictMsg = !arrival ? codeConflictFor(r.lengan, r.idx, code.codeRoll) : null;
                         return (
                           <div
@@ -736,6 +741,12 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                                   className="input w-full max-w-[240px] !py-1.5 font-mono text-[11px]"
                                   placeholder="Code roll"
                                 />
+                                {/* Kode dari invoice supplier (FABRIKU): terisi otomatis; boleh diubah kalau label fisik berbeda. */}
+                                {r.presetCode && (
+                                  <span className={"ml-1.5 whitespace-nowrap text-[10px] font-semibold " + (code.codeRoll.trim() === r.presetCode ? "text-success-fg" : "text-warning-fg")}>
+                                    {code.codeRoll.trim() === r.presetCode ? "dari invoice" : "diubah"}
+                                  </span>
+                                )}
                               </span>
                             )}
                             {/* Revisi 2026-09-29 (owner: "buat untuk vendor produksi bisa input

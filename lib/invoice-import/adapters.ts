@@ -3,6 +3,7 @@
 // tanpa menyentuh yang sudah ada. Supplier tanpa adapter tetap memakai input manual.
 
 import { parseKnittoInvoice, validateInvoice } from "./parser-knitto";
+import { FABRIKU_FILENAME_RULE, parseFabrikuInvoice, validateFabrikuInvoice } from "./parser-fabriku";
 import type { InvoiceAdapter } from "./types";
 
 const KNITTO: InvoiceAdapter = {
@@ -11,9 +12,20 @@ const KNITTO: InvoiceAdapter = {
   matchesSupplier: (name) => /KNITTO/i.test(name),
   parse: parseKnittoInvoice,
   validate: validateInvoice,
+  // No Penjualan KNITTO = 2 huruf + angka (mis. OH131026179).
+  fileNameRule: { noPattern: /^[A-Z]{2}\d{6,}$/, example: "OH131026179.5393.pdf" },
 };
 
-export const INVOICE_ADAPTERS: InvoiceAdapter[] = [KNITTO];
+const FABRIKU: InvoiceAdapter = {
+  id: "fabriku",
+  label: "FABRIKU",
+  matchesSupplier: (name) => /FABRIKU/i.test(name),
+  parse: parseFabrikuInvoice,
+  validate: validateFabrikuInvoice,
+  fileNameRule: FABRIKU_FILENAME_RULE,
+};
+
+export const INVOICE_ADAPTERS: InvoiceAdapter[] = [KNITTO, FABRIKU];
 
 export function adapterForSupplier(supplierName: string | null | undefined): InvoiceAdapter | null {
   if (!supplierName) return null;

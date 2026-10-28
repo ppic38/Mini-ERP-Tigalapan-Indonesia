@@ -1169,6 +1169,19 @@ async function bookInvoiceImpl(poId: string, input: BookInvoiceInput): Promise<v
   const totalBiaya = materialTotal + addBuyTotal - input.diskon;
   const invoiceId = await nextReadableId("INV");
 
+  // Kode roll dari invoice supplier (upload FABRIKU): hanya dipakai kalau paralel ke rolls; harus unik di seluruh ERP -- dicek SEBELUM
+  // invoice ditulis, supaya kode yang sudah dipakai roll lain menggagalkan pembukuan dengan pesan jelas (bukan di Good Receive).
+  const rollCodeOf = (c: ColorEntry, idx: number): string | null => {
+    if (!c.codeRolls || c.codeRolls.length !== c.rolls.length) return null;
+    return c.codeRolls[idx]?.trim() || null;
+  };
+  {
+    const entries = input.colorEntries.flatMap((c) =>
+      c.rolls.map((_, idx) => ({ invoiceId, warna: c.warna, lengan: c.lengan, rollIndex: idx, codeRoll: rollCodeOf(c, idx) ?? "" })).filter((e) => e.codeRoll)
+    );
+    if (entries.length > 0) await assertRollCodesUnique(db, entries);
+  }
+
   const { error: insErr } = await db.from("raw_material_invoices").insert({
     id: invoiceId,
     po_id: poId,
@@ -1199,7 +1212,7 @@ async function bookInvoiceImpl(poId: string, input: BookInvoiceInput): Promise<v
       // markRollArrivedAction & receiving/page.tsx).
       await db
         .from("raw_material_invoice_rolls")
-        .insert(c.rolls.map((grossKg, idx) => ({ invoice_color_id: colorId, roll_index: idx, gross_kg: grossKg, code_lot: c.lots?.[idx]?.trim() || null })));
+        .insert(c.rolls.map((grossKg, idx) => ({ invoice_color_id: colorId, roll_index: idx, gross_kg: grossKg, code_lot: c.lots?.[idx]?.trim() || null, code_roll: rollCodeOf(c, idx) })));
     }
   }
   if (input.addBuys.length > 0) {

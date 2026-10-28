@@ -637,6 +637,8 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
         hargaPerRoll: Number(c.harga_per_roll),
         rolls: rolls.map((r) => Number(r.gross_kg)),
         lots: rolls.map((r) => r.code_lot ?? ""),
+        // Kode roll dari invoice supplier (FABRIKU) tersimpan sejak Paying Voucher -- Good Receive memakainya sebagai isian awal.
+        ...(rolls.some((r) => r.code_roll) ? { codeRolls: rolls.map((r) => r.code_roll ?? "") } : {}),
       });
       // received_at = ditandai diterima (Good Receive, lihat markRollArrivedAction) — TIDAK lagi
       // berarti "sudah ditimbang" (itu net_kg, sekarang diisi dari Cutting lewat

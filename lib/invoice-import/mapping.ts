@@ -336,18 +336,18 @@ export function findDuplicateInvoices(noInvoice: string, supplier: string, exist
 
 // ---------- Hasil akhir untuk wizard PV ----------
 
-export type DraftColorEntry = { warna: string; lengan: string; hargaPerRoll: number; rolls: number[] };
+export type DraftColorEntry = { warna: string; lengan: string; hargaPerRoll: number; rolls: number[]; codeRolls?: string[] };
 export type DraftAddBuy = { id: string; item: string; warna: string; beratKg: number; hargaPerKg: number; totalHarga: number; remark: string };
 
 /** Bagi roll berurutan ke tiap lengan sesuai sisa roll per lengan (urutan sama seperti input manual di wizard). */
 export function splitRollsAcrossLengan<L extends string>(rolls: number[], breakdown: { lengan: L; remaining: number }[]) {
   let idx = 0;
-  const result: { lengan: L; rolls: number[] }[] = [];
+  const result: { lengan: L; rolls: number[]; start: number }[] = [];
   for (const b of breakdown) {
     if (b.remaining <= 0 || idx >= rolls.length) continue;
     const take = Math.min(b.remaining, rolls.length - idx);
     if (take <= 0) continue;
-    result.push({ lengan: b.lengan, rolls: rolls.slice(idx, idx + take) });
+    result.push({ lengan: b.lengan, rolls: rolls.slice(idx, idx + take), start: idx });
     idx += take;
   }
   return { parts: result, leftover: rolls.length - idx };
@@ -361,14 +361,16 @@ export const REMARK_UPLOAD = "Dari invoice supplier (upload)";
  * input manual). Rib dibuat 1 baris add-buy per (warna MRP, harga) dengan total = jumlah tercetak.
  */
 export function buildPvDraft(inv: ParsedInvoice, mappings: GroupMapping[], po: PoLike): { colorEntries: (DraftColorEntry & { lengan: string })[]; addBuys: DraftAddBuy[]; diskon: number; leftoverRolls: number } {
-  const rollsByWarna = new Map<string, { rolls: number[]; price: number }>();
+  const rollsByWarna = new Map<string, { rolls: number[]; codes: string[]; price: number }>();
   for (const m of mappings.filter((x) => x.kind === "roll")) {
     const g = inv.groups[m.groupIndex];
     let cursor = 0;
     for (const a of m.alloc) {
       if (a.qty <= 0) continue;
-      const cur = rollsByWarna.get(a.warna) ?? { rolls: [], price: g.lines[0].price };
-      cur.rolls.push(...g.lines.slice(cursor, cursor + a.qty).map((l) => l.w));
+      const cur = rollsByWarna.get(a.warna) ?? { rolls: [], codes: [], price: g.lines[0].price };
+      const slice = g.lines.slice(cursor, cursor + a.qty);
+      cur.rolls.push(...slice.map((l) => l.w));
+      cur.codes.push(...slice.map((l) => l.code ?? ""));
       rollsByWarna.set(a.warna, cur);
       cursor += a.qty;
     }
@@ -376,13 +378,17 @@ export function buildPvDraft(inv: ParsedInvoice, mappings: GroupMapping[], po: P
 
   const colorEntries: (DraftColorEntry & { lengan: string })[] = [];
   let leftoverRolls = 0;
-  for (const [warna, { rolls, price }] of rollsByWarna) {
+  for (const [warna, { rolls, codes, price }] of rollsByWarna) {
     const breakdown = po.colorBreakdown
       .filter((c) => c.warna === warna)
       .map((c) => ({ lengan: c.lengan, remaining: Math.max(0, c.rollCount - (po.invoicedByColor[`${c.warna}|${c.lengan}`] ?? 0)) }));
     const { parts, leftover } = splitRollsAcrossLengan(rolls, breakdown);
     leftoverRolls += leftover;
-    for (const p of parts) colorEntries.push({ warna, lengan: p.lengan, hargaPerRoll: price, rolls: p.rolls });
+    for (const p of parts) {
+      // Kode roll dari invoice supplier (FABRIKU) ikut terbagi persis seperti beratnya; kosong kalau supplier tidak mencetak kode.
+      const codeRolls = codes.slice(p.start, p.start + p.rolls.length);
+      colorEntries.push({ warna, lengan: p.lengan, hargaPerRoll: price, rolls: p.rolls, ...(codeRolls.some((c) => c) ? { codeRolls } : {}) });
+    }
   }
 
   const addBuys: DraftAddBuy[] = [];

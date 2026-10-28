@@ -86,7 +86,7 @@ export function InvoiceBatchReview({
         if (draft.leftoverRolls > 0) throw new Error(`${draft.leftoverRolls} roll tidak punya tempat di PO (sisa per lengan tidak cukup)`);
         const buktiPvDataUrl = await readAsDataUrl(it.file);
         await onBook({
-          colorEntries: draft.colorEntries.map((c) => ({ warna: c.warna, lengan: c.lengan as Lengan, hargaPerRoll: c.hargaPerRoll, rolls: c.rolls })),
+          colorEntries: draft.colorEntries.map((c) => ({ warna: c.warna, lengan: c.lengan as Lengan, hargaPerRoll: c.hargaPerRoll, rolls: c.rolls, ...(c.codeRolls ? { codeRolls: c.codeRolls } : {}) })),
           addBuys: draft.addBuys.map((a) => ({ id: a.id, item: a.item, warna: a.warna, beratKg: a.beratKg, hargaPerKg: a.hargaPerKg, totalHarga: a.totalHarga, remark: a.remark })),
           diskon: draft.diskon,
           noInvoiceVendor: it.parsed.noPenjualan,

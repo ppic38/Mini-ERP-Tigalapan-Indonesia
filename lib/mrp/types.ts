@@ -180,7 +180,16 @@ export type InvoiceStatus = "WAITING_INVOICE" | "INVOICED" | "PAID" | "DELIVERY"
 // ini saja"): `lots` opsional, PARALEL ke `rolls` (index sama) -- kode lot per roll diinput
 // Procurement di sini (paying-voucher-wizard.tsx) saat input berat, bukan lagi di-generate random
 // di Good Receive vendor. Optional supaya invoice LAMA (dari sebelum field ini ada) tetap valid.
-export type ColorEntry = { warna: string; lengan: Lengan; hargaPerRoll: number; rolls: number[]; lots?: string[] };
+export type ColorEntry = {
+  warna: string;
+  lengan: Lengan;
+  hargaPerRoll: number;
+  rolls: number[];
+  lots?: string[];
+  /** Kode roll dari invoice supplier (upload invoice FABRIKU), PARALEL ke `rolls`. Tersimpan di code_roll sehingga Good Receive
+   *  sudah terisi (vendor masih boleh mengubahnya). Kosong untuk input manual / KNITTO. */
+  codeRolls?: string[];
+};
 // hargaPerKg: harga per kg yang diinput user — totalHarga (dipakai di semua kalkulasi lain,
 // termasuk hppRowsForInvoice) SELALU = beratKg * hargaPerKg, dihitung otomatis begitu salah satu
 // dari keduanya diubah (lihat updateAddBuyBerat/updateAddBuyHargaPerKg di paying-voucher-wizard.tsx).

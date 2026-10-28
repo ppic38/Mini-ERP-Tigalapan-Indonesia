@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, "..", "..");
 const out = fs.mkdtempSync(path.join(os.tmpdir(), "inv-import-"));
-execSync(`npx tsc lib/invoice-import/adapters.ts lib/invoice-import/batch.ts lib/invoice-import/mapping.ts lib/invoice-import/parser-knitto.ts lib/invoice-import/types.ts --outDir "${out}" --module commonjs --moduleResolution node10 --target es2020 --skipLibCheck --strict`, { cwd: root, stdio: "inherit" });
+execSync(`npx tsc lib/invoice-import/adapters.ts lib/invoice-import/batch.ts lib/invoice-import/mapping.ts lib/invoice-import/parser-knitto.ts lib/invoice-import/parser-fabriku.ts lib/invoice-import/filename.ts lib/invoice-import/types.ts --outDir "${out}" --module commonjs --moduleResolution node10 --target es2020 --skipLibCheck --strict`, { cwd: root, stdio: "inherit" });
 const require = createRequire(import.meta.url);
 const P = require(path.join(out, "parser-knitto.js"));
 const M = require(path.join(out, "mapping.js"));
@@ -252,6 +252,68 @@ const po2 = B.poAfterDraft(poB, d1.colorEntries);
 assert.equal(po2.invoicedByColor["WARNA01 24S|PENDEK"], 2);
 assert.equal(poB.invoicedByColor["WARNA01 24S|PENDEK"], undefined, "PO asli tidak boleh diubah");
 console.log("upload banyak invoice (penilaian kumulatif): OK");
+
+// ---------- 8. FABRIKU: parser, nama file, kode roll ----------
+{
+  const FP = require(path.join(out, "parser-fabriku.js"));
+  const FN = require(path.join(out, "filename.js"));
+  const fsrc = fs.readFileSync(path.join(here, "fabriku.dummy.txt"), "utf8");
+  const finv = FP.parseFabrikuInvoice(fsrc, "A027.1234.pdf");
+  assert.equal(finv.noPenjualan, "A027");
+  assert.equal(finv.kodeTransfer, "1234");
+  assert.deepEqual(finv.tanggal, { d: 15, m: 10, y: 2026 });
+  assert.equal(finv.customer, "PT CONTOH CUSTOMER");
+  const fRoll = finv.groups.find((g) => g.kind === "roll");
+  const fRib = finv.groups.find((g) => g.kind === "rib");
+  assert.equal(fRoll.warna, "NAVY 10");
+  assert.equal(fRoll.benang, "24S");
+  assert.deepEqual(fRoll.lines.map((l) => l.code), ["ZZROL00001", "ZZROL00002"]);
+  assert.equal(fRib.lines.length, 1);
+  assert.equal(fRib.lines[0].code, undefined, "rib tidak memakai kode roll");
+  assert.equal(finv.totals.subtotal, 4645000);
+  assert.equal(finv.totals.diskon, 100000);
+  assert.equal(finv.totals.totalBayar, 4545000);
+  assert.equal(finv.totals.totalKg, 50.5);
+  assert.ok(FP.validateFabrikuInvoice(finv).every((c) => c.ok), JSON.stringify(FP.validateFabrikuInvoice(finv).filter((c) => !c.ok)));
+
+  // Total Qty tidak cocok -> diblokir
+  const badKg = FP.parseFabrikuInvoice(fsrc.replace("50.50", "49.50"), "A027.1234.pdf");
+  assert.ok(FP.validateFabrikuInvoice(badKg).some((c) => c.id === "kg" && !c.ok && c.blocking));
+  // TOTAL tidak cocok -> diblokir
+  const badTotal = FP.parseFabrikuInvoice(fsrc.replace("4,545,000", "4,545,001"), "A027.1234.pdf");
+  assert.ok(FP.validateFabrikuInvoice(badTotal).some((c) => c.id === "bayar" && !c.ok && c.blocking));
+  // Produk tidak dikenal -> ditolak (diblokir)
+  const unk = FP.parseFabrikuInvoice(fsrc.replace("S COT 24 CM JERSEY SUPER   NAVY 10   ZZROL00002", "X LACOSTE 30 CM   NAVY 10   ZZROL00002"), "A027.1234.pdf");
+  assert.ok(FP.validateFabrikuInvoice(unk).some((c) => c.id === "warn" && !c.ok && c.blocking && /tidak dikenal/.test(c.label)));
+  // Kode roll ganda di invoice -> diblokir
+  const dup = FP.parseFabrikuInvoice(fsrc.replace("ZZROL00002", "ZZROL00001"), "A027.1234.pdf");
+  assert.ok(FP.validateFabrikuInvoice(dup).some((c) => c.id === "warn" && !c.ok && c.blocking && /ganda/i.test(c.label)));
+
+  // Nama file: hanya NOINVOICE.KODETRANSAKSI.pdf (kode 4 digit)
+  const fabRule = A.adapterForSupplier("FABRIKU").fileNameRule;
+  const knRule = A.adapterForSupplier("KNITTO").fileNameRule;
+  assert.ok(FN.checkInvoiceFileName("A027.1234.pdf", fabRule).ok);
+  assert.ok(FN.checkInvoiceFileName("a027.1234 (1).pdf", fabRule).ok, "akhiran salinan diabaikan, huruf kecil diterima");
+  assert.ok(!FN.checkInvoiceFileName("A027.pdf", fabRule).ok, "tanpa kode transaksi");
+  assert.ok(!FN.checkInvoiceFileName("A027.YOGI03.1234.pdf", fabRule).ok, "tiga bagian ditolak");
+  assert.ok(!FN.checkInvoiceFileName("A027.12.pdf", fabRule).ok, "kode transaksi harus 4 digit");
+  assert.ok(!FN.checkInvoiceFileName("3. INVOICE 38 - YOGI 3 - 49 ROLL.pdf", fabRule).ok);
+  assert.ok(FN.checkInvoiceFileName("OH131026179.5393.pdf", knRule).ok);
+  assert.ok(!FN.checkInvoiceFileName("A027.1234.pdf", knRule).ok, "nomor FABRIKU bukan format KNITTO");
+  assert.match(FN.checkInvoiceFileName("salah.pdf", fabRule).message, /NOINVOICE\.KODETRANSAKSI\.pdf/);
+  const badName = FP.parseFabrikuInvoice(fsrc, "salah.pdf");
+  assert.ok(FP.validateFabrikuInvoice(badName).some((c) => !c.ok && c.blocking && /tidak sesuai format/.test(c.label)));
+
+  // Kode roll ikut ke draft PV, terbagi ke lengan persis seperti beratnya
+  const fpo = { colorBreakdown: [{ warna: "NAVY 10 24S", lengan: "PENDEK", rollCount: 1 }, { warna: "NAVY 10 24S", lengan: "PANJANG", rollCount: 1 }], invoicedByColor: {} };
+  const fcolors = M.poColorsFromPo(fpo);
+  const fmaps = M.autoMap(finv, fcolors, { [M.aliasKey("NAVY 10", "24S")]: "NAVY 10 24S" });
+  const fdraft = M.buildPvDraft(finv, fmaps, fpo);
+  assert.deepEqual(fdraft.colorEntries.map((c) => [c.lengan, c.rolls, c.codeRolls]), [["PENDEK", [20], ["ZZROL00001"]], ["PANJANG", [20.5], ["ZZROL00002"]]]);
+  // invoice tanpa kode (KNITTO) -> tidak ada codeRolls
+  assert.ok(draft.colorEntries.every((c) => c.codeRolls === undefined), "KNITTO tidak memakai kode roll");
+  console.log("FABRIKU (parser, nama file, kode roll): OK");
+}
 
 fs.rmSync(out, { recursive: true, force: true });
 console.log("\nSEMUA UJI LULUS");

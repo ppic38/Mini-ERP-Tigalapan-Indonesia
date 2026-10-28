@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { InvoiceBatchReview, type BatchReadFailure, type BatchReviewItem, type PvBookInput } from "@/components/mrp/invoice-batch-review";
 import { assessBatch } from "@/lib/invoice-import/batch";
+import { checkInvoiceFileName } from "@/lib/invoice-import/filename";
 import { aliasesToSave, autoMap, buildPvDraft, evaluateMapping, findDuplicateInvoices, findFileNameVendorMismatch, poColorsFromPo, type AliasMap, type GroupMapping, aliasKey } from "@/lib/invoice-import/mapping";
 import { lineOk, parseMoney, parseWeight, round2 } from "@/lib/invoice-import/parser-knitto";
 import { pdfToText, terminateOcr } from "@/lib/invoice-import/pdf-text";
@@ -111,6 +112,14 @@ export function InvoiceUploadPanel({
       setError("File harus berformat PDF.");
       return;
     }
+    // Nama file WAJIB NOINVOICE.KODETRANSAKSI.pdf (nomor invoice & kode transaksi diambil dari nama file). Kalau ada yang tidak
+    // sesuai, SEMUA file ditolak dengan pesan format yang benar -- perbaiki nama file lalu unggah ulang.
+    const rejected = pdfs.map((f) => checkInvoiceFileName(f.name, adapter.fileNameRule)).filter((c) => !c.ok);
+    if (rejected.length > 0) {
+      setError(rejected.map((c) => (c.ok ? "" : c.message)).join("\n"));
+      if (fileInput.current) fileInput.current.value = "";
+      return;
+    }
     // Urut sesuai nama supaya antreannya terduga (OH...1, OH...2, ...).
     pdfs.sort((a, b) => a.name.localeCompare(b.name, "id-ID", { numeric: true }));
     // Ada penyimpan langsung (wizard) -> ringkasan banyak invoice; kalau tidak, antrean satu per satu.
@@ -156,6 +165,11 @@ export function InvoiceUploadPanel({
     if (!f) return;
     if (!/\.pdf$/i.test(f.name) && f.type !== "application/pdf") {
       setError("File harus berformat PDF.");
+      return;
+    }
+    const nameCheck = checkInvoiceFileName(f.name, adapter.fileNameRule);
+    if (!nameCheck.ok) {
+      setError(nameCheck.message);
       return;
     }
     setError("");
@@ -300,7 +314,7 @@ export function InvoiceUploadPanel({
       aliases: aliasesToSave(mappings),
     };
     onApply({
-      colorEntries: draft.colorEntries.map((c) => ({ warna: c.warna, lengan: c.lengan as Lengan, hargaPerRoll: c.hargaPerRoll, rolls: c.rolls })),
+      colorEntries: draft.colorEntries.map((c) => ({ warna: c.warna, lengan: c.lengan as Lengan, hargaPerRoll: c.hargaPerRoll, rolls: c.rolls, ...(c.codeRolls ? { codeRolls: c.codeRolls } : {}) })),
       addBuys: draft.addBuys.map((a) => ({ id: a.id, item: a.item, warna: a.warna, beratKg: a.beratKg, hargaPerKg: a.hargaPerKg, totalHarga: a.totalHarga, remark: a.remark })),
       diskon: draft.diskon,
       noInvoiceVendor: parsed.noPenjualan,
@@ -382,13 +396,13 @@ export function InvoiceUploadPanel({
               <div className="text-[13px] font-semibold text-text-primary">Tarik &amp; lepas PDF invoice {adapter.label} di sini, atau klik untuk memilih file</div>
               <div className="mt-1 text-[11.5px] font-medium text-info-fg">Bisa banyak file sekaligus — dibaca semua, lalu ringkasan menunjukkan yang siap disimpan (tiap invoice jadi Paying Voucher sendiri).</div>
               <div className="mt-1.5 text-[11.5px] text-text-muted">
-                Nama file: <span className="font-mono">NOINVOICE.KODETRANSAKSI.pdf</span> — mis. <span className="font-mono">OH300726111.1234.pdf</span>
+                Nama file WAJIB: <span className="font-mono">NOINVOICE.KODETRANSAKSI.pdf</span> (kode transaksi 4 digit) — mis. <span className="font-mono">{adapter.fileNameRule.example}</span>. File dengan nama lain ditolak.
               </div>
               <div className="mt-1 text-[11px] text-text-muted">PDF dibaca langsung di browser Anda (tidak dikirim ke server). Hasil bisa dicek &amp; diedit sebelum dipakai.</div>
             </>
           )}
         </div>
-        {error && <div className="mt-2 font-sans text-[11.5px] font-medium text-danger-fg">{error}</div>}
+        {error && <div className="mt-2 whitespace-pre-line font-sans text-[11.5px] font-medium text-danger-fg">{error}</div>}
       </div>
     );
   }
