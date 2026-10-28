@@ -982,7 +982,8 @@ export async function approveMaklonPoAction(id: string): Promise<void> {
 
 /** Finance membatalkan persetujuan PO Produksi yang SUDAH disetujui (satu PO atau semua PO satu vendor), supaya kembali ke daftar
  *  menunggu approval Finance. Hanya selagi vendor belum bergerak: PO belum dimulai/ditutup, belum ada roll resting/cutting, belum ada koli.
- *  Persetujuan Finance dihapus dari approval_log (persetujuan SCM/GM tetap); PO lama tanpa matriks cukup approved=false. Semua-atau-tidak:
+ *  Persetujuan Finance dihapus dari approval_log (persetujuan SCM/GM tetap); PO di bawah Level 3 (tanpa langkah Finance) menarik persetujuan
+ *  terakhir yang menutupnya sehingga kembali ke antrean approver itu (mis. SCM); PO lama tanpa matriks cukup approved=false. Semua-atau-tidak:
  *  satu PO yang tidak memenuhi syarat menggagalkan seluruh permintaan. Alasan ditolak dikembalikan sebagai nilai (ActionResult). */
 export async function cancelMaklonPoApprovalAction(ids: string[], reason: string): Promise<ActionResult<{ cancelled: number }>> {
   return toActionResult(async () => {
@@ -1027,8 +1028,15 @@ export async function cancelMaklonPoApprovalAction(ids: string[], reason: string
           break;
         }
       }
-      const nextLog = log.filter((e, i) => !(i >= start && e.role === "finance" && e.action === "APPROVED"));
-      if (nextLog.length === log.length) throw new Error(`${label} disetujui tanpa langkah Finance (nilainya di bawah Level 3) -- tidak ada persetujuan Finance yang bisa dibatalkan.`);
+      // PO Level 3-4: hapus persetujuan Finance (PO kembali ke antrean Finance). PO di bawah Level 3 tidak melewati langkah Finance:
+      // yang ditarik adalah persetujuan terakhir yang menutup PO itu (mis. SCM di Level 2), jadi PO kembali ke antrean approver itu.
+      let nextLog = log.filter((e, i) => !(i >= start && e.role === "finance" && e.action === "APPROVED"));
+      if (nextLog.length === log.length) {
+        const steps = log.filter((e, i) => i >= start && e.action === "APPROVED" && e.step > 1).map((e) => e.step);
+        if (steps.length === 0) throw new Error(`${label} berada di Level 1 (disetujui otomatis saat diajukan Procurement) -- tidak ada langkah persetujuan yang bisa ditarik. Gunakan Tarik kembali/Batalkan dari Procurement atau Sysadmin.`);
+        const lastStep = Math.max(...steps);
+        nextLog = log.filter((e, i) => !(i >= start && e.action === "APPROVED" && e.step === lastStep));
+      }
       plans.push({ po, nextLog });
     }
 
@@ -1042,7 +1050,7 @@ export async function cancelMaklonPoApprovalAction(ids: string[], reason: string
     }
     // Tanggal "PO Approved" MRP = saat SEMUA PO-nya approved; begitu ada yang ditarik, kosongkan (terisi lagi otomatis saat semuanya approved).
     for (const mrpId of new Set(plans.map((p) => p.po.mrp_id))) await db.from("mrp").update({ po_approved_at: null }).eq("id", mrpId);
-    await insertNotification(notif(`Persetujuan ${plans.length} PO Produksi dibatalkan Finance (${plans.map((p) => p.po.id).join(", ")}) — alasan: ${reason.trim()}. PO kembali menunggu approval Finance.`, ["procurement", "scm"]));
+    await insertNotification(notif(`Persetujuan ${plans.length} PO Produksi dibatalkan Finance (${plans.map((p) => p.po.id).join(", ")}) — alasan: ${reason.trim()}. PO kembali menunggu approval ulang.`, ["procurement", "scm", "finance"]));
     return { cancelled: plans.length };
   });
 }

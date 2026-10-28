@@ -473,7 +473,7 @@ export function PoMaklonPanel() {
             <div className="px-5 py-4 font-sans text-xs text-[#31414F]">
               <div className="font-semibold text-text-primary">{cancelTarget.title}</div>
               <ul className="mt-2 list-disc space-y-1 pl-4 text-[11.5px] leading-[1.5] text-text-muted">
-                <li>PO kembali ke daftar menunggu approval Finance dan ditarik dari PO Produksi Saya milik vendor.</li>
+                <li>PO kembali menunggu approval (PO Level 3-4: antrean Finance; PO di bawah Level 3: antrean approver terakhirnya, mis. SCM) dan ditarik dari PO Produksi Saya milik vendor.</li>
                 <li>Hanya bisa selagi vendor belum mulai produksi (belum ada roll Resting/Cutting atau koli).</li>
                 <li>Vendor, Procurement, dan SCM menerima notifikasi.</li>
               </ul>
