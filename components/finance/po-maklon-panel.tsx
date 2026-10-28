@@ -351,7 +351,18 @@ export function PoMaklonPanel() {
                         <td className="px-3 py-[11px]">
                           <StatusPill tone="neutral">{m.pos.length} PO</StatusPill>
                         </td>
-                        <td />
+                        <td className="px-3 py-[11px] text-right">
+                          <Button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openCancel(`${m.mrpId} · semua vendor (${m.pos.length} PO)`, m.pos.map((p) => p.id));
+                            }}
+                            variant="danger"
+                            size="xs"
+                          >
+                            Cancel approval MRP ini
+                          </Button>
+                        </td>
                       </tr>
                       {mrpActive &&
                         allVendorSummariesForMrp(m.pos).map((v) => {
@@ -385,7 +396,7 @@ export function PoMaklonPanel() {
                                     variant="danger"
                                     size="xs"
                                   >
-                                    Batalkan approval vendor ini
+                                    Cancel approval vendor ini
                                   </Button>
                                 </td>
                               </tr>
@@ -420,7 +431,7 @@ export function PoMaklonPanel() {
                                             variant="danger"
                                             size="xs"
                                           >
-                                            Batalkan approval
+                                            Cancel approval
                                           </Button>
                                         </td>
                                       </tr>
@@ -469,7 +480,7 @@ export function PoMaklonPanel() {
       {cancelTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={() => !cancelBusy && setCancelTarget(null)}>
           <div className="w-full max-w-[440px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
-            <div className="border-b border-border-subtle px-5 py-3.5 font-sans text-[13px] font-semibold text-text-primary">Batalkan approval PO Produksi</div>
+            <div className="border-b border-border-subtle px-5 py-3.5 font-sans text-[13px] font-semibold text-text-primary">Cancel approval PO Produksi</div>
             <div className="px-5 py-4 font-sans text-xs text-[#31414F]">
               <div className="font-semibold text-text-primary">{cancelTarget.title}</div>
               <ul className="mt-2 list-disc space-y-1 pl-4 text-[11.5px] leading-[1.5] text-text-muted">
@@ -490,7 +501,7 @@ export function PoMaklonPanel() {
                   Batal
                 </Button>
                 <Button onClick={submitCancel} variant="danger" size="xs" disabled={cancelBusy || !cancelReason.trim()}>
-                  {cancelBusy ? "Memproses…" : "Batalkan approval"}
+                  {cancelBusy ? "Memproses…" : "Cancel approval"}
                 </Button>
               </div>
             </div>
