@@ -3697,7 +3697,7 @@ function materialCostForWarna(warna: string, vendorProduksi: string, rawInvoices
  *  `hargaPerKg` (nama field asli di ColorEntry: `hargaPerRoll`, TAPI ITU HARGA PER KG -- lihat
  *  catatan bug fix di materialCostForWarna) dikembalikan APA ADANYA (belum dikali berat) --
  *  caller yang mengalikan dengan `grossKg` roll ini sendiri untuk dapat total biaya roll itu. */
-function findRawMaterialRollForBatch(batch: ProductionBatch, rawInvoices: RawMaterialInvoice[]): { hargaPerKg: number; grossKg: number; netKg: number } | null {
+export function findRawMaterialRollForBatch(batch: ProductionBatch, rawInvoices: RawMaterialInvoice[]): { hargaPerKg: number; grossKg: number; netKg: number } | null {
   if (!batch.codeRoll) return null;
   for (const rawInv of rawInvoices) {
     if (rawInv.destinationVendor !== batch.vendorProduksi) continue;

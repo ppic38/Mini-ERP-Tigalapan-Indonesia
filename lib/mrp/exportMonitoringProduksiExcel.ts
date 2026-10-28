@@ -1,14 +1,38 @@
 import type { Workbook, Worksheet } from "exceljs";
 
 // Export Monitoring Produksi ke Excel (owner 2026-10-19: "download report dalam bentuk excel ... per warna ada tipe lengan ada
-// juga sizenya"). Dua sheet dalam 1 file:
+// juga sizenya"). Tiga sheet dalam 1 file:
 //  - "Ringkasan": 1 baris per MRP · vendor · warna · lengan (deadline, status, qty, roll, yield, reject/rework) + kolom FG per size
 //    (urutan size mengikuti SIZE_ORDER) supaya satu baris sudah memperlihatkan sebaran size-nya.
 //  - "Detail Size": 1 baris per MRP · vendor · warna · lengan · size (target, cutting, FG, reject, rework, selisih, % FG) --
 //    bentuk datar, siap difilter / dijadikan pivot.
+//  - "Detail Roll" (permintaan Produksi 2026-10-28: validasi yield rendah karena berat / gramasi / setting): 1 baris per roll
+//    (berat kotor, berat bersih, selisih, gramasi, setting, target, hasil cutting, yield, berat bersih per pcs, FG).
 // Angka sama persis dengan layar (vendorItemSizeProgress dst.); halaman yang menyusun datanya, file ini hanya menata sel.
 
 export type MonitoringExportSize = { size: string; target: number; cutting: number; finishGood: number; reject: number; rework: number };
+
+export type MonitoringExportRoll = {
+  codeRoll: string;
+  /** Kode Aduan Pola roll ini (mis. "M-XL"). */
+  aduanKode: string;
+  status: string;
+  /** yyyy-mm-dd atau kosong. */
+  restingAt: string;
+  /** Berat kotor (invoice) dan bersih (timbang vendor); null kalau roll tidak bisa ditelusuri ke invoice bahan. */
+  grossKg: number | null;
+  netKg: number | null;
+  /** 0 = belum diisi. */
+  gramasi: number;
+  setting: string;
+  /** Target pcs roll ini (rencana Aduan Pola diprorata roll). */
+  target: number;
+  /** null = belum cutting / hasil belum diisi. */
+  cutting: number | null;
+  /** null = belum ada FG. */
+  finishGood: number | null;
+  shiftNote: string;
+};
 
 export type MonitoringExportGroup = {
   mrpId: string;
@@ -26,6 +50,7 @@ export type MonitoringExportGroup = {
   /** Catatan alih size sisa kain (kosong kalau tidak ada). */
   shiftNote: string;
   sizes: MonitoringExportSize[];
+  rolls: MonitoringExportRoll[];
 };
 
 const INK = "FF1A1A1F";
@@ -215,7 +240,91 @@ function detailSheet(wb: Workbook, groups: MonitoringExportGroup[]) {
   ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
 }
 
-/** Download 1 file Excel (2 sheet). No-op kalau tidak ada data. ExcelJS di-import dinamis (tidak ikut bundle awal). */
+const YIELD_FLAG_PCT = 99;
+
+function rollSheet(wb: Workbook, groups: MonitoringExportGroup[]) {
+  const ws = wb.addWorksheet("Detail Roll", { views: [{ state: "frozen", xSplit: 5, ySplit: 3 }] });
+  const head = [
+    "No. MRP", "Vendor", "Warna", "Lengan", "Code Roll", "Aduan Pola", "Status", "Mulai Resting",
+    "Berat Kotor (kg)", "Berat Bersih (kg)", "Selisih Berat (kg)", "Selisih Berat (%)", "Gramasi (gsm)", "Setting",
+    "Target (pcs)", "Hasil Cutting", "Yield Cutting", "Berat Bersih / pcs (kg)", "Finish Good", "Alih Size", `Yield < ${YIELD_FLAG_PCT}%`,
+  ];
+  const cols = head.length;
+
+  ws.mergeCells(1, 1, 1, 8);
+  const t = ws.getCell(1, 1);
+  t.value = "Monitoring Produksi — Detail per Roll";
+  t.font = { name: FONT, size: 14, bold: true, color: { argb: INK } };
+  ws.getCell(2, 1).value =
+    "Satu baris per roll. Berat kotor = invoice bahan, berat bersih = hasil timbang vendor; gramasi dan setting diisi vendor saat Resting. Yield Cutting = hasil cutting / target roll; kosong kalau roll belum dicutting.";
+  ws.getCell(2, 1).font = { name: FONT, size: 9, italic: true, color: { argb: "FF828290" } };
+  ws.getRow(3).values = head;
+  styleHeader(ws, 3, cols);
+
+  let r = 4;
+  const lowYieldRows: number[] = [];
+  for (const g of groups) {
+    for (const b of [...g.rolls].sort((x, y) => x.codeRoll.localeCompare(y.codeRoll, "id-ID", { numeric: true }))) {
+      const weighed = b.grossKg != null && b.netKg != null;
+      const diff = weighed ? b.netKg! - b.grossKg! : "";
+      const diffPct = weighed && b.grossKg! > 0 ? (b.netKg! - b.grossKg!) / b.grossKg! : "";
+      const yieldPct = b.cutting != null && b.target > 0 ? b.cutting / b.target : "";
+      const kgPerPcs = b.netKg != null && b.cutting != null && b.cutting > 0 ? b.netKg / b.cutting : "";
+      const low = yieldPct !== "" && yieldPct * 100 < YIELD_FLAG_PCT;
+      if (low) lowYieldRows.push(r);
+      ws.getRow(r).values = [
+        g.mrpId,
+        g.vendor,
+        g.warna,
+        g.lengan,
+        b.codeRoll,
+        b.aduanKode,
+        b.status,
+        dateCell(b.restingAt),
+        b.grossKg ?? "",
+        b.netKg ?? "",
+        diff,
+        diffPct,
+        b.gramasi > 0 ? b.gramasi : "",
+        b.setting,
+        b.target,
+        b.cutting ?? "",
+        yieldPct,
+        kgPerPcs,
+        b.finishGood ?? "",
+        b.shiftNote,
+        low ? "Ya" : "",
+      ];
+      r++;
+    }
+  }
+  const last = r - 1;
+  if (last >= 4) {
+    styleBody(ws, 4, last, cols, 8);
+    for (let i = 4; i <= last; i++) {
+      ws.getCell(i, 8).numFmt = "dd/mm/yyyy";
+      for (const c of [9, 10, 11]) ws.getCell(i, c).numFmt = "#,##0.00;[Red]-#,##0.00";
+      ws.getCell(i, 12).numFmt = "0.0%;[Red]-0.0%";
+      ws.getCell(i, 13).numFmt = "#,##0.##";
+      ws.getCell(i, 14).alignment = { vertical: "middle", horizontal: "left" };
+      ws.getCell(i, 15).numFmt = "#,##0";
+      ws.getCell(i, 16).numFmt = "#,##0";
+      ws.getCell(i, 17).numFmt = "0.0%";
+      ws.getCell(i, 18).numFmt = "0.000";
+      ws.getCell(i, 19).numFmt = "#,##0";
+      ws.getCell(i, 20).alignment = { vertical: "middle", horizontal: "left", wrapText: true };
+      ws.getCell(i, 21).alignment = { vertical: "middle", horizontal: "center" };
+    }
+    for (const i of lowYieldRows) {
+      for (const c of [17, 21]) ws.getCell(i, c).font = { name: FONT, size: 10, bold: true, color: { argb: "FFB42318" } };
+    }
+    ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: last, column: cols } };
+  }
+  [14, 20, 20, 10, 16, 11, 11, 12, 11, 11, 11, 11, 10, 18, 10, 10, 10, 12, 10, 28, 10].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
+}
+
+/** Download 1 file Excel (3 sheet). No-op kalau tidak ada data. ExcelJS di-import dinamis (tidak ikut bundle awal). */
 export async function exportMonitoringProduksiExcel(groups: MonitoringExportGroup[], fileName: string) {
   if (groups.length === 0) return;
   const ExcelJS = (await import("exceljs")).default;
@@ -229,6 +338,7 @@ export async function exportMonitoringProduksiExcel(groups: MonitoringExportGrou
   const allSizes = Array.from(new Set(sorted.flatMap((g) => g.sizes.map((s) => s.size)))).sort(compareSize);
   summarySheet(wb, sorted, allSizes);
   detailSheet(wb, sorted);
+  rollSheet(wb, sorted);
 
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });

@@ -16,12 +16,15 @@ import {
   sizeShiftsForGroup,
   completedRollCountForColor,
   cuttingYieldForGroup,
+  findRawMaterialRollForBatch,
+  mrpDetailFor,
+  targetSizesForBatch,
   YIELD_ALERT_THRESHOLD_PCT,
   targetDoneProduksiForGroup,
   totalRollCountForColor,
   vendorItemSizeProgress,
 } from "@/lib/mrp/derive";
-import { exportMonitoringProduksiExcel, type MonitoringExportGroup } from "@/lib/mrp/exportMonitoringProduksiExcel";
+import { exportMonitoringProduksiExcel, type MonitoringExportGroup, type MonitoringExportRoll } from "@/lib/mrp/exportMonitoringProduksiExcel";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { Lengan, MaklonPO, RawMaterialInvoice } from "@/lib/mrp/types";
 
@@ -70,8 +73,29 @@ function buildExportGroups(
       if (!byGroup.has(key)) byGroup.set(key, []);
       byGroup.get(key)!.push(r);
     }
+    const aduanRows = mrpDetailFor(po.mrpId, mrpDetails)?.aduanRows ?? [];
     for (const groupRows of byGroup.values()) {
       const { warna, lengan } = groupRows[0];
+      const rolls: MonitoringExportRoll[] = batches
+        .filter((b) => b.mrpId === po.mrpId && b.vendorProduksi === po.vendorProduksi && b.warna === warna && b.lengan === lengan)
+        .map((b) => {
+          const raw = findRawMaterialRollForBatch(b, invoices);
+          const sum = (q?: Record<string, number>) => (q ? Object.values(q).reduce((a, c) => a + c, 0) : 0);
+          return {
+            codeRoll: b.codeRoll ?? b.kode,
+            aduanKode: b.kode,
+            status: b.closedAt ? "Selesai" : b.cuttingAt ? "Cutting" : "Resting",
+            restingAt: b.restingAt ? b.restingAt.slice(0, 10) : "",
+            grossKg: raw ? raw.grossKg : null,
+            netKg: raw ? raw.netKg : null,
+            gramasi: b.gramasi || 0,
+            setting: b.setting?.trim() ?? "",
+            target: sum(targetSizesForBatch(b, aduanRows)),
+            cutting: b.cuttingAt && b.sizeQty ? sum(b.sizeQty) : null,
+            finishGood: b.fgSizeQty ? sum(b.fgSizeQty) : null,
+            shiftNote: (b.sizeShifts ?? []).map((sh) => `${sh.qty} pcs ${sh.from} → ${sh.to}`).join("; "),
+          };
+        });
       const s = groupRows.reduce((a, r) => ({ target: a.target + r.target, cutting: a.cutting + r.cutting, finishGood: a.finishGood + r.finishGood }), { target: 0, cutting: 0, finishGood: 0 });
       const info = deadlineInfoFor(po.mrpId, po.vendorProduksi, warna, invoices);
       out.push({
@@ -89,6 +113,7 @@ function buildExportGroups(
           .map((sh) => `${sh.codeRoll}: ${sh.qty} pcs ${sh.from} → ${sh.to}`)
           .join("; "),
         sizes: groupRows.map((r) => ({ size: r.size, target: r.target, cutting: r.cutting, finishGood: r.finishGood, reject: r.reject, rework: r.rework })),
+        rolls,
       });
     }
   }
