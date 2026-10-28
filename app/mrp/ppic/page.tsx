@@ -15,6 +15,9 @@ import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { useMrpStore } from "@/lib/mrp/store";
 import { mrpStatusBadges, mrpStatusBadgeTone, mrpWarnaBreakdown, effectiveMrpQty, formatPcs, formatDate, ppicApprovalBadge, vendorsForMrp } from "@/lib/mrp/derive";
 import type { ParsedMrpImport } from "@/lib/mrp/parseImport";
+import { exportMaklonPoRasioExcel } from "@/lib/mrp/exportPoExcel";
+import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import type { MaklonPO } from "@/lib/mrp/types";
 
 const badgeTone = mrpStatusBadgeTone;
 
@@ -34,6 +37,69 @@ const COLUMNS: { key: ColKey; label: string; default: boolean }[] = [
   { key: "statusRM", label: "Status Raw Material", default: true },
   { key: "statusProduksi", label: "Status Produksi", default: true },
 ];
+
+/** Popup pilih vendor untuk Form Rasio satu MRP: ceklis (boleh lebih dari satu), hasilnya satu file Excel dengan satu sheet per vendor. */
+function RasioVendorDialog({
+  mrpId,
+  options,
+  picked,
+  busy,
+  onToggle,
+  onToggleAll,
+  onDownload,
+  onClose,
+}: {
+  mrpId: string;
+  options: { code: string; name: string; qty: number }[];
+  picked: Set<string>;
+  busy: boolean;
+  onToggle: (code: string) => void;
+  onToggleAll: (all: boolean) => void;
+  onDownload: () => void;
+  onClose: () => void;
+}) {
+  const allPicked = options.length > 0 && picked.size === options.length;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={onClose}>
+      <div className="w-full max-w-[420px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-border-subtle px-5 py-3.5">
+          <span className="font-sans text-[13px] font-semibold text-text-primary">Form Rasio · {mrpId}</span>
+          <button onClick={onClose} className="font-sans text-[13px] font-semibold text-text-muted hover:text-text-primary">
+            ✕
+          </button>
+        </div>
+        <div className="px-5 py-4">
+          {options.length === 0 ? (
+            <div className="font-sans text-xs text-text-muted">MRP ini belum punya vendor produksi.</div>
+          ) : (
+            <>
+              <label className="flex items-center gap-2 border-b border-border-subtle pb-2 font-sans text-xs font-semibold text-text-primary">
+                <input type="checkbox" checked={allPicked} onChange={(e) => onToggleAll(e.target.checked)} className="h-3.5 w-3.5 accent-accent-blue" />
+                Pilih semua vendor
+              </label>
+              <div className="max-h-[280px] overflow-y-auto py-1">
+                {options.map((o) => (
+                  <label key={o.code} className="flex items-center gap-2 rounded px-1 py-1.5 font-sans text-xs text-[#31414F] hover:bg-[#F7F9FB]">
+                    <input type="checkbox" checked={picked.has(o.code)} onChange={() => onToggle(o.code)} className="h-3.5 w-3.5 accent-accent-blue" />
+                    <span className="flex-1">{o.name}</span>
+                    <span className="font-mono text-text-muted">{formatPcs(o.qty)} pcs</span>
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
+          <button
+            onClick={onDownload}
+            disabled={busy || picked.size === 0}
+            className="mt-3 w-full rounded-[5px] bg-action-primary px-3 py-2 font-sans text-xs font-semibold text-white disabled:opacity-50"
+          >
+            {busy ? "Membuat file…" : picked.size === 0 ? "Pilih vendor dulu" : `Download Excel (${picked.size} vendor)`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function MrpListPage() {
   const [mounted, setMounted] = useState(false);
@@ -72,6 +138,48 @@ export default function MrpListPage() {
       void alertDialog({ title: "Reset MRP gagal", message: err instanceof Error ? err.message : String(err), tone: "danger" });
     } finally {
       setResettingId(null);
+    }
+  }
+
+  // Form Rasio per MRP: popup ceklis vendor (boleh lebih dari satu) lalu unduh Excel, satu sheet per vendor.
+  const [rasioMrpId, setRasioMrpId] = useState<string | null>(null);
+  const [rasioPicked, setRasioPicked] = useState<Set<string>>(new Set());
+  const [rasioBusy, setRasioBusy] = useState(false);
+
+  // Vendor (kode) yang mengerjakan MRP ini beserta qty-nya. Pakai PO produksi yang sudah ada kalau ada; kalau belum ada PO,
+  // dibentuk PO sementara (hanya untuk isi file, tidak disimpan) dari Aduan Pola / vendor default grup.
+  function rasioVendorOptions(mrpId: string) {
+    const detail = mrpDetails.find((d) => d.mrp.id === mrpId);
+    if (!detail) return [];
+    const codes = Array.from(new Set([...detail.aduanRows.map((a) => a.vendor), ...detail.lenganGroups.map((g) => g.vendorDefault)])).filter(Boolean);
+    return codes.map((code) => {
+      const po = maklonPOs.find((p) => p.mrpId === mrpId && p.vendorProduksi === code && !p.isFob);
+      const aduanQty = detail.aduanRows.filter((a) => a.vendor === code).reduce((s, a) => s + a.qty, 0);
+      const qty = aduanQty > 0 ? aduanQty : detail.lenganGroups.filter((g) => g.vendorDefault === code).reduce((s, g) => s + g.totalQty, 0);
+      const name = VENDOR_PRODUKSI[code]?.name ?? code;
+      return { code, name, qty, po: po ?? ({ id: `MRP-${mrpId}`, mrpId, vendorProduksi: code, qty, amount: 0, entity: "", status: "FULL_WAITING_MATERIAL", approved: false, cancelledLines: [] } as MaklonPO) };
+    });
+  }
+
+  function openRasio(mrpId: string) {
+    setRasioMrpId(mrpId);
+    setRasioPicked(new Set());
+  }
+
+  async function downloadRasio() {
+    if (!rasioMrpId) return;
+    const pos = rasioVendorOptions(rasioMrpId)
+      .filter((o) => rasioPicked.has(o.code))
+      .map((o) => o.po);
+    if (pos.length === 0) return;
+    setRasioBusy(true);
+    try {
+      await exportMaklonPoRasioExcel(pos, mrpDetails, `Form-Rasio-${rasioMrpId}.xlsx`);
+      setRasioMrpId(null);
+    } catch (err) {
+      void alertDialog({ title: "Gagal membuat file", message: err instanceof Error ? err.message : String(err), tone: "danger" });
+    } finally {
+      setRasioBusy(false);
     }
   }
 
@@ -284,7 +392,19 @@ export default function MrpListPage() {
                         // "Aksi Sysadmin" yang punya pengaman jejak uang/fisik.
                         <SysadminTd className="py-[13px]" actions={mrpCorrections(mrp.id, { detail, materialPOs, maklonPOs, invoices, vendorInvoices, maklonInvoices, productionBatches, deliveryKolis })} />
                       ) : (
-                        <td className="px-3 py-[13px]">
+                        <td className="whitespace-nowrap px-3 py-[13px]">
+                          {detail && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openRasio(mrp.id);
+                              }}
+                              title="Download Form Rasio (Excel) -- pilih vendor dulu"
+                              className="mr-1.5 rounded-[5px] border border-[#CBD5DF] px-2.5 py-[5px] font-sans text-[11px] font-semibold text-action-primary hover:bg-info-bg"
+                            >
+                              Form Rasio
+                            </button>
+                          )}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -333,6 +453,25 @@ export default function MrpListPage() {
           </table>
         </div>
       </div>
+      {rasioMrpId && (
+        <RasioVendorDialog
+          mrpId={rasioMrpId}
+          options={rasioVendorOptions(rasioMrpId)}
+          picked={rasioPicked}
+          busy={rasioBusy}
+          onToggle={(code) =>
+            setRasioPicked((prev) => {
+              const next = new Set(prev);
+              if (next.has(code)) next.delete(code);
+              else next.add(code);
+              return next;
+            })
+          }
+          onToggleAll={(all) => setRasioPicked(all ? new Set(rasioVendorOptions(rasioMrpId).map((o) => o.code)) : new Set())}
+          onDownload={downloadRasio}
+          onClose={() => setRasioMrpId(null)}
+        />
+      )}
     </AppShell>
   );
 }
