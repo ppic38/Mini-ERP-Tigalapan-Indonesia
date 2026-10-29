@@ -17,6 +17,19 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [koliFilter, setKoliFilter] = useState("");
+  const [hppFilter, setHppFilter] = useState("");
+
+  // HPP baru ditampilkan kalau parameternya lengkap: invoice vendor sudah dibayar (tidak ada gateReason) dan roll sudah final.
+  // Selama belum, nilainya disembunyikan supaya tidak terbaca sebagai HPP final.
+  const hppReady = !group.gateReason;
+  const koliOptions = Array.from(new Set(group.items.map((it) => it.noKoli ?? it.deliveryKoliId))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const hppQuery = hppFilter.replace(/D/g, "");
+  const visibleItems = group.items.filter((it) => {
+    if (koliFilter && (it.noKoli ?? it.deliveryKoliId) !== koliFilter) return false;
+    if (hppQuery && !(hppReady && !it.sementara && String(Math.round(it.hppPerItem)).includes(hppQuery))) return false;
+    return true;
+  });
 
   async function handleBongkar() {
     setSubmitting(true);
@@ -32,6 +45,33 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
 
   return (
     <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <select value={koliFilter} onChange={(e) => setKoliFilter(e.target.value)} className="input !w-auto !py-1.5 !text-[11.5px]">
+          <option value="">Semua nomor koli</option>
+          {koliOptions.map((k) => (
+            <option key={k} value={k}>
+              Koli {k}
+            </option>
+          ))}
+        </select>
+        <input
+          value={hppFilter}
+          onChange={(e) => setHppFilter(e.target.value)}
+          inputMode="numeric"
+          disabled={!hppReady}
+          title={!hppReady ? "HPP belum tersedia" : undefined}
+          placeholder="Filter HPP/item (angka)…"
+          className="input !w-[190px] !py-1.5 !text-[11.5px] disabled:opacity-50"
+        />
+        {(koliFilter || hppFilter) && (
+          <button onClick={() => { setKoliFilter(""); setHppFilter(""); }} className="font-sans text-[11px] font-semibold text-accent-blue">
+            Reset
+          </button>
+        )}
+        <span className="font-sans text-[10.5px] text-text-muted">
+          {visibleItems.length} dari {group.items.length} baris
+        </span>
+      </div>
       <div className="overflow-x-auto rounded-md border border-[#E4E9EE] bg-white">
         <table className="w-full min-w-[760px] border-collapse">
           <thead>
@@ -46,23 +86,23 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
             </tr>
           </thead>
           <tbody>
-            {group.items.map((it, i) => (
+            {visibleItems.map((it, i) => (
               <tr key={i} className="border-b border-[#EEF1F4] font-sans text-[11.5px] text-[#31414F] last:border-b-0">
-                <td className="px-3 py-1.5 font-mono text-text-muted">{it.deliveryKoliId}</td>
+                <td className="px-3 py-1.5 font-mono text-text-muted">{it.noKoli ?? it.deliveryKoliId}</td>
                 <td className="px-3 py-1.5">
                   {it.warna} · {it.lengan}
                 </td>
                 <td className="px-3 py-1.5">{it.size}</td>
                 <td className="px-3 py-1.5">{it.kind === "FG" ? "FG" : it.kind === "REWORK" ? "Rework" : "Reject"}</td>
                 <td className="px-3 py-1.5 text-right font-mono">{formatPcs(it.qty)}</td>
-                <td className="px-3 py-1.5 text-right font-mono">{formatRupiah(it.hppPerItem)}</td>
-                <td className="px-3 py-1.5 text-right font-mono font-semibold text-text-primary">{formatRupiah(it.qty * it.hppPerItem)}</td>
+                <td className="px-3 py-1.5 text-right font-mono">{hppReady && !it.sementara ? formatRupiah(it.hppPerItem) : "—"}</td>
+                <td className="px-3 py-1.5 text-right font-mono font-semibold text-text-primary">{hppReady && !it.sementara ? formatRupiah(it.qty * it.hppPerItem) : "—"}</td>
               </tr>
             ))}
-            {group.items.length === 0 && (
+            {visibleItems.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-3 py-4 text-center font-sans text-[11.5px] text-text-muted">
-                  Koli dalam resi ini belum punya item.
+                  {group.items.length === 0 ? "Koli dalam resi ini belum punya item." : "Tidak ada baris yang cocok dengan filter."}
                 </td>
               </tr>
             )}
@@ -130,7 +170,7 @@ export default function WarehousePenerimaanPage() {
     { key: "tanggalKirim", label: "Tanggal Kirim", default: true, render: (g) => formatDate(g.deliveredAt) },
     { key: "mrp", label: "No MRP", default: true, render: (g) => <span className="font-mono">{g.mrpLabel || g.mrpId}</span> },
     { key: "vendor", label: "Vendor Produksi", default: true, render: (g) => VENDOR_PRODUKSI[g.vendorProduksi]?.name ?? g.vendorProduksi },
-    { key: "invoice", label: "No Invoice Vendor", default: true, render: (g) => (g.invoiceIds.length > 0 ? g.invoiceIds.join(", ") : "—") },
+    { key: "invoice", label: "No Invoice Vendor", default: false, render: (g) => (g.invoiceIds.length > 0 ? g.invoiceIds.join(", ") : "—") },
     { key: "qty", label: "Total Qty", default: true, align: "right", render: (g) => formatPcs(g.totalQty) },
     {
       // Item 2026-09-16 (integrasi WMS, migration 0041) -- status TERPISAH dari kolom "Status" di
@@ -138,7 +178,7 @@ export default function WarehousePenerimaanPage() {
       // WMS atau belum, tidak memengaruhi boleh/tidaknya "Bongkar Koli".
       key: "statusWms",
       label: "Status WMS",
-      default: true,
+      default: false,
       render: (g) =>
         g.wmsReceivedAt ? (
           <span className="font-sans text-[10.5px] font-semibold text-success-fg">✓ Diterima WMS · {formatDate(g.wmsReceivedAt)}</span>

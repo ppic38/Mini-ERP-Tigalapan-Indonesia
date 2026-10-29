@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Warehouse Penerimaan: kolom disembunyikan, nomor koli vendor, filter, HPP hanya saat lengkap (2026-10-29, tanpa migration)
+Owner: di Warehouse > Penerimaan, kolom "Status WMS" dan "No Invoice Vendor" disembunyikan secara default (masih bisa dimunculkan lewat menu Kolom). Sub-tabel rincian resi menampilkan NOMOR KOLI YANG DIKETIK VENDOR (bukan id internal KOLI-xxxx; `WarehouseReceivableItem.noKoli`) dan punya filter nomor koli (dropdown) dan HPP/item (angka), plus penghitung baris dan Reset. HPP/item dan Nilai hanya tampil kalau parameter HPP sudah lengkap: invoice vendor resi itu sudah dibayar (tanpa `gateReason`) dan roll sudah final (bukan `sementara`); selain itu tampil "—". Hanya tampilan; perhitungan HPP dan alur Bongkar Koli tidak berubah.
+
 ## Approval MRP SCM hanya untuk scm02 (2026-10-29, tanpa migration)
 Owner: SCM01 (SCM Manager) hanya Level 3 approval PO, SCM02 (Asisten Manager) Level 2 PO dan satu-satunya yang boleh Approval MRP. Pembatasan level PO per username sudah ada (revisi 2026-10-28, `scmMayActAtStep`). Baru: `scmMayApproveMrp` (lib/mrp/poApproval.ts) dipakai `approvePpicMrpAction` dan `rejectPpicMrpAction` lewat `requireScmMrpApprover` (actions.ts) -- akun utama SCM dan scm01 ditolak server; di SCM > Approval MRP tombol Setujui/Tolak dinonaktifkan untuk akun selain scm02 (`app/scm/approval-mrp/page.tsx`).
 

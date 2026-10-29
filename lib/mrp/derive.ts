@@ -4538,6 +4538,10 @@ export function invoiceKoliBreakdown(
 // =========================================================================
 
 export type WarehouseReceivableItem = {
+  /** Nomor koli yang diketik vendor (BEDA dari `deliveryKoliId` = id internal KOLI-xxxx) -- dipakai tampilan dan filter Warehouse. */
+  noKoli?: string;
+  /** HPP baris ini masih sementara (roll belum ditutup) -- angkanya belum final. */
+  sementara?: boolean;
   /** Item 2026-09-12 (R10 di spec: "warehouse_receipt_items.qty SELALU sama dengan qty di
    *  DeliveryKoliItem") -- SATU baris di sini = SATU `DeliveryKoliItem` apa adanya (TIDAK
    *  dijumlahkan lintas koli/kind meskipun warna+lengan+size-nya kebetulan sama), supaya qty
@@ -4683,7 +4687,7 @@ export function warehouseReceivableGroups(
       for (const it of koli.items) {
         if (it.kind === "REJECT") {
           // Reject (owner 2026-10-23): hanya dicatat -- tanpa HPP, tidak ikut gate invoice, tidak dikirim ke WMS.
-          items.push({ deliveryKoliId: koli.id, warna: it.warna, lengan: it.lengan, size: it.size, kind: it.kind, qty: it.qty, sourceBatchId: it.sourceBatchId, hppPerItem: 0 });
+          items.push({ deliveryKoliId: koli.id, noKoli: koli.noKoli, warna: it.warna, lengan: it.lengan, size: it.size, kind: it.kind, qty: it.qty, sourceBatchId: it.sourceBatchId, hppPerItem: 0 });
           continue;
         }
         const isRework = it.kind === "REWORK";
@@ -4698,7 +4702,7 @@ export function warehouseReceivableGroups(
           hppPerItem = totalFg > 0 ? matches.reduce((s, r) => s + r.hppPerItem * r.fg, 0) / totalFg : matches[0].hppPerItem;
           for (const r of matches) invoiceIdSet.add(r.invoiceId);
         }
-        items.push({ deliveryKoliId: koli.id, warna: it.warna, lengan: it.lengan, size: it.size, kind: it.kind, qty: it.qty, sourceBatchId: it.sourceBatchId, hppPerItem });
+        items.push({ deliveryKoliId: koli.id, noKoli: koli.noKoli, warna: it.warna, lengan: it.lengan, size: it.size, kind: it.kind, qty: it.qty, sourceBatchId: it.sourceBatchId, hppPerItem, sementara: matches.some((r) => r.sementara) || undefined });
       }
     }
 
