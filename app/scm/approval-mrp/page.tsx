@@ -8,6 +8,8 @@ import { MrpWarnaBreakdownTable } from "@/components/mrp/mrp-warna-breakdown-tab
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { mrpApprovalCorrections } from "@/components/sysadmin/ppic-corrections";
 import { useMrpStore } from "@/lib/mrp/store";
+import { useInternalAuthStore } from "@/lib/internal-auth-store";
+import { scmMayApproveMrp } from "@/lib/mrp/poApproval";
 import type { MrpDetail } from "@/lib/mrp/store";
 import { effectiveMrpQty, formatDate, formatPcs, mrpWarnaBreakdown, ppicApprovalBadge, vendorsForMrp } from "@/lib/mrp/derive";
 
@@ -20,6 +22,11 @@ export default function ScmApprovalMrpPage() {
   const materialPOs = useMrpStore((s) => s.materialPOs);
   const approvePpicMrp = useMrpStore((s) => s.approvePpicMrp);
   const rejectPpicMrp = useMrpStore((s) => s.rejectPpicMrp);
+
+  // Approval MRP hanya untuk scm02 (Asisten Manager SCM).
+  const scmUsername = useInternalAuthStore((s) => s.actors.scm?.username);
+  const mayDecide = scmMayApproveMrp(scmUsername);
+  const notAllowedTitle = "Approval MRP hanya untuk akun scm02 (Asisten Manager SCM)";
 
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({});
 
@@ -103,14 +110,16 @@ export default function ScmApprovalMrpPage() {
               />
               <button
                 onClick={() => approvePpicMrp(d.mrp.id)}
-                className="rounded-md bg-success px-3.5 py-[7px] font-sans text-[11.5px] font-semibold text-white"
+                disabled={!mayDecide}
+                title={!mayDecide ? notAllowedTitle : undefined}
+                className="rounded-md bg-success px-3.5 py-[7px] font-sans text-[11.5px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Setujui
               </button>
               <button
                 onClick={() => reject(d.mrp.id)}
-                disabled={!(noteDraft[d.mrp.id] ?? "").trim()}
-                title={!(noteDraft[d.mrp.id] ?? "").trim() ? "Isi alasan penolakan dulu" : undefined}
+                disabled={!mayDecide || !(noteDraft[d.mrp.id] ?? "").trim()}
+                title={!mayDecide ? notAllowedTitle : !(noteDraft[d.mrp.id] ?? "").trim() ? "Isi alasan penolakan dulu" : undefined}
                 className="rounded-md border border-[#EFC9C4] bg-white px-3.5 py-[7px] font-sans text-[11.5px] font-semibold text-danger-fg disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Tolak

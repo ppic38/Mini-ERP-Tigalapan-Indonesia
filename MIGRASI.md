@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Approval MRP SCM hanya untuk scm02 (2026-10-29, tanpa migration)
+Owner: SCM01 (SCM Manager) hanya Level 3 approval PO, SCM02 (Asisten Manager) Level 2 PO dan satu-satunya yang boleh Approval MRP. Pembatasan level PO per username sudah ada (revisi 2026-10-28, `scmMayActAtStep`). Baru: `scmMayApproveMrp` (lib/mrp/poApproval.ts) dipakai `approvePpicMrpAction` dan `rejectPpicMrpAction` lewat `requireScmMrpApprover` (actions.ts) -- akun utama SCM dan scm01 ditolak server; di SCM > Approval MRP tombol Setujui/Tolak dinonaktifkan untuk akun selain scm02 (`app/scm/approval-mrp/page.tsx`).
+
 ## Upload invoice FABRIKU + nama file seragam + kode roll otomatis (2026-10-29, tanpa migration)
 Owner: Paying Voucher dari invoice supplier FABRIKU (PT Kenari Mulia Lestari), sebelumnya hanya KNITTO. Invoice FABRIKU yang dipakai adalah invoice FINAL (bukan proforma biasa), dibaca dari text layer PDF di browser.
 - **Nama file seragam untuk SEMUA supplier**: `NOINVOICE.KODETRANSAKSI.pdf` (kode transaksi 4 digit; contoh `A027.1234.pdf`, `OH131026179.5393.pdf`) -- `lib/invoice-import/filename.ts` (`checkInvoiceFileName`). Nomor invoice dan kode transaksi diambil dari nama file, TIDAK dari isi PDF; vendor tujuan tidak lagi dibaca dari nama file (sudah ditentukan PO yang dibuka). Pola nomor per supplier ada di `fileNameRule` tiap adapter (KNITTO: 2 huruf + angka; FABRIKU: huruf/angka mengandung angka). File yang tidak sesuai DITOLAK (semua file dalam satu pilihan) dengan pesan yang menyebut format dan contoh; area unggah menampilkan format ini. Nama file lama dengan bagian tengah (`OH...YOGI01.5393.pdf`) kini ditolak.

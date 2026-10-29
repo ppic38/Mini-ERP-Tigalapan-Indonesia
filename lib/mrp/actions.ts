@@ -80,6 +80,7 @@ import {
   SCM_POSITION_FOR_STEP,
   SCM_POSITION_LABEL,
   scmMayActAtStep,
+  scmMayApproveMrp,
   type ApprovalRole,
   type PoApprovalEntry,
   type PoApprovalState,
@@ -398,8 +399,18 @@ export async function importMrpAction(parsed: ParsedMrpImport, customId?: string
   return id;
 }
 
+/** Approval MRP hanya untuk akun SCM bernama scm02 (Asisten Manager) -- revisi 2026-10-29, owner. */
+async function requireScmMrpApprover(): Promise<void> {
+  const session = await requireSession();
+  requireInternalRole(session, "scm");
+  const username = internalActorForRole(session, "scm")?.username;
+  if (!scmMayApproveMrp(username)) {
+    throw new Error(`Approval MRP khusus ${SCM_POSITION_LABEL.asisten} (scm02)${username ? ` -- akun ${username} tidak berwenang` : " -- akun utama SCM tidak bisa menyetujui MRP, login dengan akun scm02"}.`);
+  }
+}
+
 export async function approvePpicMrpAction(mrpId: string): Promise<void> {
-  await requireInternalRole(await requireSession(), "scm");
+  await requireScmMrpApprover();
   const db = supabaseServer();
   const { error } = await db.from("mrp").update({ ppic_approval: "PPIC_APPROVED", ppic_approved_at: today() }).eq("id", mrpId);
   if (error) throw new Error(error.message);
@@ -462,7 +473,7 @@ export async function switchAduanVendorByRollAction(mrpId: string, warna: string
 }
 
 export async function rejectPpicMrpAction(mrpId: string, reason: string): Promise<void> {
-  await requireInternalRole(await requireSession(), "scm");
+  await requireScmMrpApprover();
   const db = supabaseServer();
   const { error } = await db.from("mrp").update({ ppic_approval: "REJECTED", ppic_rejection_note: reason }).eq("id", mrpId);
   if (error) throw new Error(error.message);

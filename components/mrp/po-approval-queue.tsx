@@ -441,9 +441,10 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
   const [openMrps, setOpenMrps] = useState<Set<string>>(new Set());
   function toggleMrp(key: string) {
     setOpenMrps((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+      // Satu MRP terbuka per tabel (section): membuka yang baru menutup yang lain di tabel yang sama.
+      const section = key.slice(0, key.indexOf(":") + 1);
+      const next = new Set(Array.from(prev).filter((k) => !k.startsWith(section)));
+      if (!prev.has(key)) next.add(key);
       return next;
     });
   }

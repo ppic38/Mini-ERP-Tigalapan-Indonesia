@@ -70,6 +70,11 @@ export function scmPositionOf(username?: string | null): ScmPosition | null {
   return username ? SCM_POSITION_BY_USERNAME[username.trim().toLowerCase()] ?? null : null;
 }
 
+/** Approval MRP (menu SCM > Approval MRP) hanya untuk Asisten Manager SCM / scm02 (revisi 2026-10-29, owner). */
+export function scmMayApproveMrp(username: string | null | undefined): boolean {
+  return scmPositionOf(username) === "asisten";
+}
+
 /** Boleh tidaknya akun SCM (berdasarkan username-nya) bertindak di langkah `step`. */
 export function scmMayActAtStep(username: string | null | undefined, step: number | null): boolean {
   if (step == null) return false;
