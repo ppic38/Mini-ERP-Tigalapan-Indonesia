@@ -3327,6 +3327,62 @@ export function resiGroupInvoiceLines(koliIds: string[], allKolis: DeliveryKoli[
   return Array.from(map.values());
 }
 
+/** Total qty satu kumpulan koli: yang ditagihkan (FG/Rework, bukan reject) dan reject (tidak ditagihkan). */
+export function koliQtyTotals(kolis: DeliveryKoli[]): { billable: number; reject: number } {
+  let billable = 0;
+  let reject = 0;
+  for (const k of kolis) for (const it of k.items) (isBillableKoliItem(it) ? (billable += it.qty) : (reject += it.qty));
+  return { billable, reject };
+}
+
+export type ShipmentInvoiceReconRow = {
+  mrpId: string;
+  /** Qty ditagihkan di koli yang sudah Delivery DAN sudah diajukan invoicenya. */
+  shippedInvoiced: number;
+  /** Total qty di semua baris invoice vendor ini untuk MRP itu. */
+  invoiced: number;
+  /** Qty ditagihkan di koli yang sudah Delivery tapi invoicenya belum diajukan. */
+  shippedNotInvoiced: number;
+  /** Selisih per warna/lengan/usia antara yang dikirim (sudah diajukan invoice) dan yang diinvoice. */
+  mismatches: { label: string; shipped: number; invoiced: number }[];
+};
+
+/** Validasi qty: yang DIKIRIM (koli Delivery, sudah diajukan invoice) vs yang DIINVOICEKAN, per MRP, plus daftar warna/lengan yang
+ *  tidak cocok. Reject tidak ditagihkan sehingga tidak ikut dihitung. Seharusnya selalu cocok (invoice dibuat dari koli yang sama);
+ *  selisih berarti ada koli yang diedit atau invoice yang diubah sesudah diajukan. */
+export function shipmentInvoiceReconciliation(vendorProduksi: string, kolis: DeliveryKoli[], vendorInvoices: VendorInvoice[]): ShipmentInvoiceReconRow[] {
+  const shipped = new Map<string, number>();
+  const pending = new Map<string, number>();
+  const invoiced = new Map<string, number>();
+  const mrpIds = new Set<string>();
+  const add = (m: Map<string, number>, key: string, qty: number) => m.set(key, (m.get(key) ?? 0) + qty);
+  for (const k of kolis) {
+    if (k.vendorProduksi !== vendorProduksi || !k.deliveredAt) continue;
+    for (const it of k.items.filter(isBillableKoliItem)) {
+      mrpIds.add(k.mrpId);
+      add(k.resiInvoicedAt ? shipped : pending, invoiceLineKey(k.mrpId, it.warna, it.lengan, it.usia), it.qty);
+    }
+  }
+  for (const inv of vendorInvoices) {
+    if (inv.vendorProduksi !== vendorProduksi) continue;
+    for (const l of inv.lines) {
+      mrpIds.add(l.mrpId);
+      add(invoiced, invoiceLineKey(l.mrpId, l.warna, l.lengan, l.usia), l.qty);
+    }
+  }
+  const rows: ShipmentInvoiceReconRow[] = [];
+  for (const mrpId of Array.from(mrpIds).sort()) {
+    const prefix = mrpId + "|";
+    const sumOf = (m: Map<string, number>) => Array.from(m.entries()).filter(([k]) => k.startsWith(prefix)).reduce((n, [, q]) => n + q, 0);
+    const keys = new Set([...shipped.keys(), ...invoiced.keys()].filter((k) => k.startsWith(prefix)));
+    const mismatches = Array.from(keys)
+      .map((k) => ({ label: k.slice(prefix.length).split("|").filter(Boolean).join(" · "), shipped: shipped.get(k) ?? 0, invoiced: invoiced.get(k) ?? 0 }))
+      .filter((m) => m.shipped !== m.invoiced);
+    rows.push({ mrpId, shippedInvoiced: sumOf(shipped), invoiced: sumOf(invoiced), shippedNotInvoiced: sumOf(pending), mismatches });
+  }
+  return rows;
+}
+
 export type KoliBreakdownRow = { koliId: string; noKoli: string; deliveredAt?: string; qty: number };
 
 /** Rincian qty per NOMOR KOLI untuk 1 baris "sudah dikirim, belum diinvoice" (mrpId+warna+lengan

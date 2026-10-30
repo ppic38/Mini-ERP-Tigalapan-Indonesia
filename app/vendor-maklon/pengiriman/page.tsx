@@ -21,6 +21,7 @@ import {
   availableFgToShip,
   formatDate,
   formatDecimal,
+  koliQtyTotals,
   compareNoKoli,
   mrpIdsWithClosedRolls,
   mrpIdsWithUnpackedFg,
@@ -1100,6 +1101,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
               const first = kolis[0];
               const totalWeight = kolis.reduce((s, k) => s + (k.beratKoli ?? 0), 0);
               const alreadyInvoiced = kolis.some((k) => k.resiInvoicedAt);
+              const qtyTotals = koliQtyTotals(kolis);
               return (
                 <div key={groupKey} className="overflow-hidden rounded-md border border-border-subtle bg-white">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-2 font-sans text-[11.5px] text-[#31414F]">
@@ -1109,6 +1111,11 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     </span>
                     <span>
                       Total berat: <span className="font-mono">{formatDecimal(totalWeight)} kg</span>
+                    </span>
+                    <span>
+                      Total qty: <span className="font-mono font-semibold">{qtyTotals.billable.toLocaleString("id-ID")} pcs</span>
+                      <span className="text-text-muted"> · {kolis.length} koli</span>
+                      {qtyTotals.reject > 0 && <span className="text-text-muted"> · + {qtyTotals.reject.toLocaleString("id-ID")} reject (tidak ditagihkan)</span>}
                     </span>
                     <span className="font-mono text-[11px] text-text-muted">{formatDate(first.deliveredAt)}</span>
                     {first.ekspedisiNoteAt && (

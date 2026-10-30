@@ -56,7 +56,7 @@ export function InvoiceVendorReviewPanel() {
   const setVendorInvoiceStatus = useMrpStore((s) => s.setVendorInvoiceStatus);
 
   const [expandedInvoiceId, setExpandedInvoiceId] = useState("");
-  const [adjKind, setAdjKind] = useState<VendorInvoiceAdjustmentKind>("DENDA");
+  const [adjKind, setAdjKind] = useState<VendorInvoiceAdjustmentKind>("TIDAK_ADA");
   const [adjLabel, setAdjLabel] = useState("");
   const [adjAmount, setAdjAmount] = useState(0);
 

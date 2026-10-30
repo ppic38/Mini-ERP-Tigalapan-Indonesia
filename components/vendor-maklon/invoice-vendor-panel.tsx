@@ -19,6 +19,8 @@ import {
   invoiceProductionStatus,
   invoiceYieldSummary,
   isBillableKoliItem,
+  koliQtyTotals,
+  shipmentInvoiceReconciliation,
   productionYieldByWarna,
   productionYieldBySize,
   resiGroupInvoiceLines,
@@ -96,6 +98,8 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
     return hargaMaklonLineRate(hargaMaklon, vendorId, maklonTipeForWarna(l.mrpId, l.warna, l.lengan, mrpDetails), l.lengan, cumulativeByTipe).rate;
   }
   const deliveredMine = deliveryKolis.filter((k) => k.vendorProduksi === vendorId && k.deliveredAt);
+  const recon = shipmentInvoiceReconciliation(vendorId, deliveryKolis, vendorInvoices);
+  const reconMismatch = recon.some((r) => r.mismatches.length > 0);
   // Resi yang HANYA berisi reject tidak ditagihkan (owner 2026-10-23) -- tidak muncul sebagai "siap diajukan invoice".
   const readyGroups = groupByResi(deliveredMine).filter(([, kolis]) => kolis.every((k) => !k.resiInvoicedAt) && kolis.some((k) => k.items.some(isBillableKoliItem)));
 
@@ -138,6 +142,7 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
               const first = kolis[0];
               const totalWeight = kolis.reduce((s, k) => s + (k.beratKoli ?? 0), 0);
               const koliIds = kolis.map((k) => k.id);
+              const qtyTotals = koliQtyTotals(kolis);
               return (
                 <div key={groupKey} className="overflow-hidden rounded-md border border-border-subtle bg-white">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-2 font-sans text-[11.5px] text-[#31414F]">
@@ -147,6 +152,10 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                     </span>
                     <span>
                       Total berat: <span className="font-mono">{formatDecimal(totalWeight)} kg</span>
+                    </span>
+                    <span>
+                      Total qty: <span className="font-mono font-semibold">{formatPcs(qtyTotals.billable)} pcs</span>
+                      <span className="text-text-muted"> · {kolis.length} koli</span>
                     </span>
                     <span className="font-mono text-[11px] text-text-muted">{formatDate(first.deliveredAt)}</span>
                     {first.ekspedisiNoteAt && (
@@ -190,6 +199,47 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                       </Fragment>
                     );
                   })}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {recon.length > 0 && (
+        <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
+          <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
+            <span className="font-sans text-[13px] font-semibold text-text-primary">Validasi qty: dikirim vs diinvoice</span>
+            {reconMismatch ? <StatusPill tone="warning">ADA SELISIH</StatusPill> : <StatusPill tone="success">SEMUA COCOK</StatusPill>}
+          </div>
+          <div className="px-4 py-2">
+            <div className="grid grid-cols-5 gap-2 py-1.5 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+              <span>MRP</span>
+              <span className="text-right">Dikirim (sudah diajukan invoice)</span>
+              <span className="text-right">Diinvoice</span>
+              <span className="text-right">Selisih</span>
+              <span className="text-right">Dikirim, belum diajukan</span>
+            </div>
+            {recon.map((r) => {
+              const diff = r.invoiced - r.shippedInvoiced;
+              return (
+                <div key={r.mrpId} className="border-t border-[#F1F4F7]">
+                  <div className="grid grid-cols-5 items-center gap-2 py-1.5 font-mono text-[11.5px] text-[#31414F]">
+                    <span className="font-semibold">{r.mrpId}</span>
+                    <span className="text-right">{formatPcs(r.shippedInvoiced)}</span>
+                    <span className="text-right">{formatPcs(r.invoiced)}</span>
+                    <span className={"text-right font-semibold " + (diff === 0 ? "text-success-fg" : "text-danger-fg")}>{diff === 0 ? "cocok" : (diff > 0 ? "+" : "") + formatPcs(diff)}</span>
+                    <span className="text-right text-text-muted">{formatPcs(r.shippedNotInvoiced)}</span>
+                  </div>
+                  {r.mismatches.map((m) => (
+                    <div key={m.label} className="grid grid-cols-5 gap-2 pb-1 pl-3 font-mono text-[10.5px] text-danger-fg">
+                      <span className="col-span-1 truncate" title={m.label}>{m.label}</span>
+                      <span className="text-right">{formatPcs(m.shipped)}</span>
+                      <span className="text-right">{formatPcs(m.invoiced)}</span>
+                      <span className="text-right">{formatPcs(m.invoiced - m.shipped)}</span>
+                      <span />
+                    </div>
+                  ))}
                 </div>
               );
             })}
