@@ -646,6 +646,27 @@ export function PaymentMaklonPanel() {
           columns={readyColumns}
           rows={readyRows}
           keyOf={(inv) => inv.id}
+          search={{
+            placeholder: "Cari no invoice, vendor, no PO…",
+            getText: (inv) => inv.id + " " + (VENDOR_PRODUKSI[inv.vendorProduksi]?.name ?? inv.vendorProduksi) + " " + Array.from(new Set(inv.lines.map((l) => l.mrpId))).join(" "),
+          }}
+          filterDefs={[
+            {
+              label: "Vendor",
+              options: Array.from(new Set(readyRows.map((inv) => VENDOR_PRODUKSI[inv.vendorProduksi]?.name ?? inv.vendorProduksi))).sort(),
+              test: (inv, v) => (VENDOR_PRODUKSI[inv.vendorProduksi]?.name ?? inv.vendorProduksi) === v,
+            },
+            {
+              label: "Status",
+              options: Array.from(new Set(readyRows.map((inv) => vendorInvoiceBadge(inv.status).label))),
+              test: (inv, v) => vendorInvoiceBadge(inv.status).label === v,
+            },
+            {
+              label: "Status Payment",
+              options: Array.from(new Set(readyRows.map((inv) => vendorInvoicePaymentStatus(inv).label))),
+              test: (inv, v) => vendorInvoicePaymentStatus(inv).label === v,
+            },
+          ]}
           firstColumnLabel="No Invoice"
           firstColumnRender={(inv) => (
             <span className="flex items-center gap-2.5">
