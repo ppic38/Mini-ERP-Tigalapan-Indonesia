@@ -456,7 +456,8 @@ export function PaymentMaklonPanel() {
     {
       key: "lampiranEkspedisi",
       label: "Lampiran Ekspedisi",
-      default: true,
+      // Disembunyikan secara default (owner 2026-10-30): resi dan lampirannya sudah ada di rincian saat baris invoice dibuka.
+      default: false,
       render: (inv) => (
         <LampiranEkspedisiCell
           inv={inv}
@@ -525,7 +526,8 @@ export function PaymentMaklonPanel() {
     {
       key: "lampiranEkspedisi",
       label: "Lampiran Ekspedisi",
-      default: true,
+      // Disembunyikan secara default (owner 2026-10-30): resi dan lampirannya sudah ada di rincian saat baris invoice dibuka.
+      default: false,
       render: (inv) => (
         <LampiranEkspedisiCell
           inv={inv}

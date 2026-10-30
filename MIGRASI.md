@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Kolom Lampiran Ekspedisi disembunyikan di Payment Maklon (2026-10-30, tanpa migration)
+Owner: resi dan lampirannya sudah ada di rincian saat baris invoice dibuka, jadi kolom "Lampiran Ekspedisi" di Finance > Payment Maklon (tabel siap bayar dan tabel sudah dibayar) tidak tampil secara default (`default: false`, masih bisa dimunculkan lewat menu Kolom). Hanya tampilan.
+
 ## Hasil tambahan dari sisa kain saat Input Hasil Cutting -- migration 0084 (2026-10-30)
 Owner: kain roll yang masih bersisa setelah target tercapai boleh dijadikan baju lain (lengan, usia, size apa pun). Form Input Hasil Cutting punya bagian opsional per roll **"+ Hasil tambahan"** (lengan Pendek/Panjang, usia Dewasa/Kids, size, qty). Aturan owner: ditagih maklon dengan tarif TIPE barangnya (usia Kids = tipe KIDS lewat `maklonTipeForWarna(..., usia)`); tanpa approval kalau disimpan akun UTAMA vendor (langsung sah), tapi kalau disimpan ANGGOTA TIM selalu menunggu persetujuan akun utama (roll PENDING lewat mekanisme persetujuan cutting migration 0068; tidak tergantung pengaturan vendor); SKU tidak dicek (pilihan lengan/usia/size sama dengan tujuan rework).
 - **Migration 0084** (`0084_cutting_extra_results.sql`, owner menjalankan manual): kolom jsonb `production_batches.extra_results` (`[{lengan, usia, size, qty, resultId?}]`); ikut snapshot lewat to_jsonb jadi fungsi snapshot tidak diubah. Tanpa migration, simpan hasil tambahan menjawab "jalankan migration 0084" (simpan cutting biasa tidak terganggu).
