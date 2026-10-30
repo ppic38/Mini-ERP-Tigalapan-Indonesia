@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Laporan Invoice Vendor (Excel) di Procurement (2026-10-30, tanpa migration)
+Owner: Procurement > Invoice Vendor > "Semua invoice vendor" punya tombol **Download laporan (Excel)** (`lib/mrp/exportVendorInvoiceExcel.ts`): header berwarna hijau, baris header ber-filter (autoFilter) dan dibekukan, lengkap dengan kategori item. Dua sheet: **Detail Item** (satu baris per baris invoice: invoice, vendor, MRP, kategori item, warna, lengan, tipe harga, qty, harga/pc, jumlah, status, tanggal, PIC menyetujui/membayar) dan **Ringkasan Invoice** (satu baris per invoice: kategori yang tercakup, total qty, subtotal, denda, reward, total tagihan, status, PIC). Mencakup semua invoice vendor (bukan hanya yang sedang dibuka).
+
 ## PIC di tanda tangan proposal pembayaran (2026-10-30, migration 0083)
 Owner: tanda tangan PDF proposal pembayaran menampilkan PIC. Kolom baru `vendor_invoices.approved_by` (PIC Procurement yang menyetujui, diisi saat status APPROVED; dikosongkan kalau invoice kembali ke SUBMITTED/REVISION; tidak dikirim ke browser vendor). Blok tanda tangan: Diajukan oleh = pengaju vendor (`submitted_by`), Disetujui oleh = `approved_by`, Dibayar oleh = `paid_by` (migration 0082). Invoice yang disetujui/dibayar SEBELUM migration ini tampil "-" untuk PIC-nya. **Jalankan `supabase/migrations/0083_vendor_invoice_approved_by.sql`.**
 

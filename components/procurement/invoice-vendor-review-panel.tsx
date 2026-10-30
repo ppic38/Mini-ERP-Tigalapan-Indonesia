@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/mrp/number-input";
 import { viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
 import { useMrpStore } from "@/lib/mrp/store";
+import { exportVendorInvoiceExcel } from "@/lib/mrp/exportVendorInvoiceExcel";
 import {
   formatPcs,
   formatRupiah,
@@ -151,6 +152,16 @@ export function InvoiceVendorReviewPanel() {
       <div className="overflow-hidden border border-border-subtle bg-surface-card">
         <div className="flex items-center justify-between gap-3 border-b border-border-subtle px-4 py-3">
           <span className="font-sans text-[13px] font-semibold text-text-primary">Semua invoice vendor</span>
+          <span className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="xs"
+            disabled={vendorInvoices.length === 0}
+            title="Unduh laporan Excel semua invoice vendor: header berwarna, ada filter, lengkap dengan kategori item."
+            onClick={() => exportVendorInvoiceExcel(vendorInvoices, mrpDetails, "Laporan-Invoice-Vendor-" + new Date().toISOString().slice(0, 10) + ".xlsx")}
+          >
+            Download laporan (Excel)
+          </Button>
           <Button
             variant="ghost"
             size="xs"
@@ -170,6 +181,7 @@ export function InvoiceVendorReviewPanel() {
           >
             {repricing ? "Menghitung…" : "Terapkan harga master terbaru"}
           </Button>
+          </span>
         </div>
         {vendorMrpSummaries.length === 0 && <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada invoice vendor.</div>}
         {vendorMrpSummaries.length > 0 && (
