@@ -266,10 +266,26 @@ export function hargaMaklonRateInfoByTipe(hargaMaklon: HargaMaklonRow[], vendorK
   return standar ? { rate: standar.harga, source: "Standar", cumulativeQty, band: standar } : null;
 }
 
+export type MaklonProgressStatus = "SELESAI" | "BERJALAN" | "BELUM";
+
+export type MaklonWarnaRow = {
+  warna: string;
+  qty: number;
+  jadi: number;
+  status: MaklonProgressStatus;
+};
+
 export type MaklonKategoriRow = {
   kategori: string;
   lengan: Lengan;
+  /** Target hasil jadi (dari Aduan Pola vendor ini di MRP itu). */
   qty: number;
+  /** Finish Good yang sudah tercatat (Input Hasil Cutting) untuk kategori+lengan ini. */
+  jadi: number;
+  /** SELESAI = semua warna di baris ini sudah "Selesai Produksi" (FG terkunci) atau jadi >= target. */
+  status: MaklonProgressStatus;
+  /** Rincian per warna (untuk popup detail kategori). */
+  warna: MaklonWarnaRow[];
   /** Tipe di Master Data yang dicocokkan (hargaMaklonTipeFor). */
   tipe: string;
   /** Harga Master Data untuk kategori+lengan ini; null = tidak ada barisnya di Master Data vendor ini. */
@@ -279,37 +295,84 @@ export type MaklonKategoriRow = {
   billedRate: number;
 };
 
-/** Rincian target hasil jadi sebuah PO per kategori (kolom KATEGORI Excel MRP) x lengan, lengkap
- *  dengan harga maklon Master Data per kategori vs harga yang saat ini dipakai tagihan. Qty tier
- *  PKS dihitung per PO (sama seperti estimasi di PO Approval). */
-export function maklonKategoriBreakdown(hargaMaklon: HargaMaklonRow[], vendorKey: string, aduanRows: AduanPolaRow[], lenganGroups: LenganGroup[]): MaklonKategoriRow[] {
+function progressStatus(qty: number, jadi: number, confirmed: boolean): MaklonProgressStatus {
+  if (confirmed || (qty > 0 && jadi >= qty)) return "SELESAI";
+  return jadi > 0 ? "BERJALAN" : "BELUM";
+}
+
+/** Rincian target & hasil jadi sebuah PO per kategori (kolom KATEGORI Excel MRP) x lengan x warna, lengkap
+ *  dengan status selesai dan harga maklon Master Data per kategori vs harga yang saat ini dipakai tagihan.
+ *  Qty tier PKS dihitung per PO (sama seperti estimasi di PO Approval). Kategori tanpa target tidak muncul. */
+export function maklonKategoriBreakdown(
+  hargaMaklon: HargaMaklonRow[],
+  vendorKey: string,
+  mrpId: string,
+  aduanRows: AduanPolaRow[],
+  lenganGroups: LenganGroup[],
+  results: ProductionResult[],
+  metas: ProductionGroupMeta[]
+): MaklonKategoriRow[] {
   const groupKategori = new Map(lenganGroups.map((g) => [g.id, g.kategori]));
+  const kategoriByWarnaLengan = new Map(lenganGroups.map((g) => [g.warna + "|" + g.lengan, g.kategori]));
   const byLengan = new Map<Lengan, number>();
-  const cells = new Map<string, { kategori: string; lengan: Lengan; qty: number }>();
+  type Cell = { kategori: string; lengan: Lengan; warna: Map<string, { qty: number; jadi: number }> };
+  const cells = new Map<string, Cell>();
+  const cellFor = (kategori: string, lengan: Lengan) => {
+    const key = kategori + "|" + lengan;
+    let cell = cells.get(key);
+    if (!cell) {
+      cell = { kategori, lengan, warna: new Map() };
+      cells.set(key, cell);
+    }
+    return cell;
+  };
+  const warnaFor = (cell: Cell, warna: string) => {
+    let w = cell.warna.get(warna);
+    if (!w) {
+      w = { qty: 0, jadi: 0 };
+      cell.warna.set(warna, w);
+    }
+    return w;
+  };
   for (const a of aduanRows) {
     if (a.qty <= 0) continue;
-    const kategori = groupKategori.get(a.lenganGroupId) || "(tanpa kategori)";
     byLengan.set(a.lengan, (byLengan.get(a.lengan) ?? 0) + a.qty);
-    const key = `${kategori}|${a.lengan}`;
-    const cell = cells.get(key) ?? { kategori, lengan: a.lengan, qty: 0 };
-    cell.qty += a.qty;
-    cells.set(key, cell);
+    warnaFor(cellFor(groupKategori.get(a.lenganGroupId) || "(tanpa kategori)", a.lengan), a.warna).qty += a.qty;
+  }
+  for (const r of results) {
+    if (r.mrpId !== mrpId || r.vendorProduksi !== vendorKey || r.kind !== "FG") continue;
+    const kategori = kategoriByWarnaLengan.get(r.warna + "|" + r.lengan) || "(tanpa kategori)";
+    const w = cells.get(kategori + "|" + r.lengan)?.warna.get(r.warna);
+    if (!w) continue;
+    for (const q of Object.values(r.sizeQty)) w.jadi += q;
   }
   const out: MaklonKategoriRow[] = [];
   for (const c of cells.values()) {
+    const warna: MaklonWarnaRow[] = Array.from(c.warna.entries())
+      .map(([name, w]) => {
+        const meta = productionGroupMetaFor(mrpId + "|" + name + "|" + c.lengan, metas, vendorKey);
+        return { warna: name, qty: w.qty, jadi: w.jadi, status: progressStatus(w.qty, w.jadi, !!(meta?.fgConfirmedAt || meta?.doneAt)) };
+      })
+      .sort((x, y) => x.warna.localeCompare(y.warna));
+    const qty = warna.reduce((n, w) => n + w.qty, 0);
+    const jadi = warna.reduce((n, w) => n + w.jadi, 0);
+    const status: MaklonProgressStatus = warna.every((w) => w.status === "SELESAI") ? "SELESAI" : warna.some((w) => w.status !== "BELUM") ? "BERJALAN" : "BELUM";
     const tipe = hargaMaklonTipeFor(c.kategori, c.lengan);
-    const master = hargaMaklonRateInfoByTipe(hargaMaklon, vendorKey, tipe, c.qty);
+    const master = hargaMaklonRateInfoByTipe(hargaMaklon, vendorKey, tipe, qty);
     out.push({
       kategori: c.kategori,
       lengan: c.lengan,
-      qty: c.qty,
+      qty,
+      jadi,
+      status,
+      warna,
       tipe,
       masterRate: master?.rate ?? null,
       masterSource: master?.source ?? null,
       billedRate: hargaMaklonRate(hargaMaklon, vendorKey, c.lengan, byLengan.get(c.lengan) ?? 0),
     });
   }
-  return out.sort((a, b) => a.kategori.localeCompare(b.kategori) || (a.lengan === b.lengan ? 0 : a.lengan === "PENDEK" ? -1 : 1));
+  return out.sort((x, y) => x.kategori.localeCompare(y.kategori) || (x.lengan === y.lengan ? 0 : x.lengan === "PENDEK" ? -1 : 1));
 }
 
 export function hargaMaklonRate(hargaMaklon: HargaMaklonRow[], vendorKey: string, lengan: Lengan, cumulativeQty: number): number {

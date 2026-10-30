@@ -6,7 +6,7 @@ import Link from "next/link";
 import { ChevronDown, ChevronRight, Download } from "lucide-react";
 import { exportMaklonPoRasioExcel } from "@/lib/mrp/exportPoExcel";
 import { AppShell } from "@/components/shell/app-shell";
-import { StatusPill } from "@/components/ui/status-pill";
+import { StatusPill, type PillTone } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -194,16 +194,113 @@ function LenganQtyCards({ rows, detail }: { rows: AduanPolaRow[]; detail?: MrpDe
   );
 }
 
-/** Target hasil jadi sebuah PO per kategori (COMBED, KIDS, TUNIK, RIB, dst) x lengan, plus harga
- *  maklon Master Data per kategori. Tertutup secara default -- dibuka lewat klik. Kolom "Dipakai
- *  tagihan" = harga per lengan yang saat ini dipakai PO/invoice (belum membedakan kategori), ditandai
- *  kalau beda dari harga Master Data kategori itu. */
-function KategoriTargetPanel({ rows, detail, vendorId }: { rows: AduanPolaRow[]; detail?: MrpDetail; vendorId: string }) {
+type KategoriRowData = ReturnType<typeof maklonKategoriBreakdown>[number];
+
+const STATUS_PILL: Record<KategoriRowData["status"], { label: string; tone: PillTone }> = {
+  SELESAI: { label: "SELESAI", tone: "success" },
+  BERJALAN: { label: "BERJALAN", tone: "warning" },
+  BELUM: { label: "BELUM MULAI", tone: "neutral" },
+};
+
+function rateOfRow(r: KategoriRowData): number {
+  return r.masterRate ?? r.billedRate;
+}
+
+/** Popup rincian satu kategori: per warna x lengan -> target, hasil jadi (Finish Good), sisa, status, harga maklon,
+ *  estimasi maklon (target x harga) dan maklon yang sudah jadi (jadi x harga). */
+function KategoriDetailModal({ kategori, rows, onClose }: { kategori: string; rows: KategoriRowData[]; onClose: () => void }) {
+  const lines = rows.flatMap((r) => r.warna.map((w) => ({ ...w, lengan: r.lengan, tipe: r.tipe, rate: rateOfRow(r), noMaster: r.masterRate === null })));
+  const target = lines.reduce((n, l) => n + l.qty, 0);
+  const jadi = lines.reduce((n, l) => n + l.jadi, 0);
+  const estimasi = lines.reduce((n, l) => n + l.qty * l.rate, 0);
+  const maklonJadi = lines.reduce((n, l) => n + l.jadi * l.rate, 0);
+  const allDone = lines.length > 0 && lines.every((l) => l.status === "SELESAI");
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={onClose}>
+      <div className="flex max-h-[88vh] w-full max-w-[980px] flex-col rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 border-b border-border-subtle px-5 py-3.5">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-sans text-[14px] font-semibold text-text-primary">{kategori}</span>
+              <StatusPill tone={allDone ? "success" : "warning"}>{allDone ? "SEMUA SELESAI" : "BELUM SELESAI SEMUA"}</StatusPill>
+            </div>
+            <div className="mt-0.5 font-mono text-[11px] text-text-muted">
+              Jadi {formatPcs(jadi)} / target {formatPcs(target)} pcs · Estimasi {formatRupiah(estimasi)} · Maklon jadi {formatRupiah(maklonJadi)}
+            </div>
+          </div>
+          <button onClick={onClose} className="rounded-md border border-[#CBD5DF] bg-white px-2.5 py-1 font-sans text-[11px] font-semibold text-action-primary">
+            Tutup
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto px-5 py-3">
+          <table className="w-full border-collapse font-sans text-[12px]">
+            <thead>
+              <tr className="border-b border-border-subtle text-left font-mono text-[10px] uppercase tracking-[0.08em] text-text-muted">
+                <th className="py-2 pr-3 font-medium">Warna</th>
+                <th className="py-2 pr-3 font-medium">Lengan</th>
+                <th className="py-2 pr-3 text-right font-medium">Target</th>
+                <th className="py-2 pr-3 text-right font-medium">Jadi (FG)</th>
+                <th className="py-2 pr-3 text-right font-medium">Sisa</th>
+                <th className="py-2 pr-3 font-medium">Status</th>
+                <th className="py-2 pr-3 text-right font-medium">Harga/pc</th>
+                <th className="py-2 pr-3 text-right font-medium">Estimasi maklon</th>
+                <th className="py-2 text-right font-medium">Maklon jadi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l) => (
+                <tr key={l.warna + "|" + l.lengan} className="border-b border-border-subtle/60 text-text-primary">
+                  <td className="py-2 pr-3 font-medium">{l.warna}</td>
+                  <td className="py-2 pr-3 text-text-secondary">{l.lengan === "PENDEK" ? "Pendek" : "Panjang"}</td>
+                  <td className="py-2 pr-3 text-right font-mono">{formatPcs(l.qty)}</td>
+                  <td className="py-2 pr-3 text-right font-mono">{formatPcs(l.jadi)}</td>
+                  <td className="py-2 pr-3 text-right font-mono text-text-muted">{formatPcs(Math.max(0, l.qty - l.jadi))}</td>
+                  <td className="py-2 pr-3">
+                    <StatusPill tone={STATUS_PILL[l.status].tone}>{STATUS_PILL[l.status].label}</StatusPill>
+                  </td>
+                  <td className={`py-2 pr-3 text-right font-mono ${l.noMaster ? "text-warning-fg" : ""}`} title={l.noMaster ? "Master Data belum punya baris " + l.tipe : l.tipe}>
+                    {formatRupiah(l.rate)}
+                  </td>
+                  <td className="py-2 pr-3 text-right font-mono">{formatRupiah(l.qty * l.rate)}</td>
+                  <td className="py-2 text-right font-mono">{formatRupiah(l.jadi * l.rate)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-accent-blue bg-info-bg font-semibold text-info-fg">
+                <td className="px-1 py-2" colSpan={2}>Total</td>
+                <td className="py-2 pr-3 text-right font-mono">{formatPcs(target)}</td>
+                <td className="py-2 pr-3 text-right font-mono">{formatPcs(jadi)}</td>
+                <td className="py-2 pr-3 text-right font-mono">{formatPcs(Math.max(0, target - jadi))}</td>
+                <td colSpan={2} />
+                <td className="py-2 pr-3 text-right font-mono">{formatRupiah(estimasi)}</td>
+                <td className="py-2 text-right font-mono">{formatRupiah(maklonJadi)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Target hasil jadi sebuah PO per kategori (COMBED, KIDS, TUNIK, RIB, dst) x lengan, plus hasil jadi (Finish Good),
+ *  status selesai, dan harga maklon Master Data per kategori. Tertutup secara default -- dibuka lewat klik; klik baris
+ *  kategori membuka popup rincian per warna. "Dipakai tagihan" = harga per lengan yang saat ini dipakai PO/invoice
+ *  (belum membedakan kategori), ditandai kuning kalau beda dari harga Master Data kategori itu. */
+function KategoriTargetPanel({ rows, detail, vendorId, mrpId }: { rows: AduanPolaRow[]; detail?: MrpDetail; vendorId: string; mrpId: string }) {
   const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
+  const productionResults = useMrpStore((s) => s.productionResults);
+  const productionGroupMeta = useMrpStore((s) => s.productionGroupMeta);
   const [open, setOpen] = useState(false);
-  const items = maklonKategoriBreakdown(hargaMaklon, vendorId, rows, detail?.lenganGroups ?? []);
+  const [detailKategori, setDetailKategori] = useState<string | null>(null);
+  const items = maklonKategoriBreakdown(hargaMaklon, vendorId, mrpId, rows, detail?.lenganGroups ?? [], productionResults, productionGroupMeta);
   const total = items.reduce((n, r) => n + r.qty, 0);
-  const nilaiMaster = items.reduce((n, r) => n + r.qty * (r.masterRate ?? r.billedRate), 0);
+  const totalJadi = items.reduce((n, r) => n + r.jadi, 0);
+  const estimasi = items.reduce((n, r) => n + r.qty * rateOfRow(r), 0);
+  const maklonJadi = items.reduce((n, r) => n + r.jadi * rateOfRow(r), 0);
+  const selesai = items.filter((r) => r.status === "SELESAI").length;
+  const allDone = items.length > 0 && selesai === items.length;
   const adaBeda = items.some((r) => r.masterRate !== null && r.masterRate !== r.billedRate);
   const adaKosong = items.some((r) => r.masterRate === null);
   return (
@@ -211,45 +308,69 @@ function KategoriTargetPanel({ rows, detail, vendorId }: { rows: AduanPolaRow[];
       <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2 px-4 py-2.5 text-left">
         {open ? <ChevronDown className="h-3.5 w-3.5 text-text-muted" /> : <ChevronRight className="h-3.5 w-3.5 text-text-muted" />}
         <span className="font-sans text-[12px] font-semibold text-text-primary">Target hasil jadi per kategori &amp; harga maklon</span>
-        <span className="ml-auto font-mono text-[11px] text-text-muted">{items.length} kategori·lengan · {formatPcs(total)} pcs</span>
+        <StatusPill tone={allDone ? "success" : "warning"}>{allDone ? "SEMUA SELESAI" : `${selesai}/${items.length} SELESAI`}</StatusPill>
+        <span className="ml-auto font-mono text-[11px] text-text-muted">Jadi {formatPcs(totalJadi)} / {formatPcs(total)} pcs</span>
       </button>
       {open && (
-        <div className="border-t border-border-subtle px-4 pb-3 pt-2">
-          <div className="grid grid-cols-[1.4fr_0.8fr_0.9fr_1fr_1fr_1fr_1.2fr] gap-x-2 py-1 font-mono text-[10.5px] uppercase tracking-[0.08em] text-text-muted">
-            <span>Kategori</span>
-            <span>Lengan</span>
-            <span className="text-right">Target (pcs)</span>
-            <span>Tipe harga</span>
-            <span className="text-right">Harga master</span>
-            <span className="text-right">Dipakai tagihan</span>
-            <span className="text-right">Nilai (master)</span>
-          </div>
-          {items.map((r) => {
-            const beda = r.masterRate !== null && r.masterRate !== r.billedRate;
-            return (
-              <div key={`${r.kategori}|${r.lengan}`} className="grid grid-cols-[1.4fr_0.8fr_0.9fr_1fr_1fr_1fr_1.2fr] gap-x-2 border-t border-border-subtle py-1.5 font-sans text-[12px] text-text-primary">
-                <span className="font-medium">{r.kategori}</span>
-                <span>{r.lengan === "PENDEK" ? "Pendek" : "Panjang"}</span>
-                <span className="text-right font-mono">{formatPcs(r.qty)}</span>
-                <span className="font-mono text-[11px] text-text-secondary">{r.tipe}</span>
-                <span className="text-right font-mono">
-                  {r.masterRate === null ? <span className="text-warning-fg">belum ada</span> : formatRupiah(r.masterRate)}
-                  {r.masterSource && <span className="ml-1 text-[10px] text-text-muted">{r.masterSource}</span>}
-                </span>
-                <span className={`text-right font-mono ${beda ? "text-warning-fg" : "text-text-secondary"}`}>{formatRupiah(r.billedRate)}</span>
-                <span className="text-right font-mono">{formatRupiah(r.qty * (r.masterRate ?? r.billedRate))}</span>
-              </div>
-            );
-          })}
-          <div className="grid grid-cols-[1.4fr_0.8fr_0.9fr_1fr_1fr_1fr_1.2fr] gap-x-2 border-t-2 border-accent-blue bg-info-bg px-1 py-1.5 font-sans text-[11.5px] font-semibold text-info-fg">
-            <span>Total</span>
-            <span />
-            <span className="text-right font-mono">{formatPcs(total)}</span>
-            <span />
-            <span />
-            <span />
-            <span className="text-right font-mono">{formatRupiah(nilaiMaster)}</span>
-          </div>
+        <div className="overflow-x-auto border-t border-border-subtle px-4 pb-3 pt-1">
+          <table className="w-full min-w-[860px] border-collapse font-sans text-[12px]">
+            <thead>
+              <tr className="border-b border-border-subtle text-left font-mono text-[10px] uppercase tracking-[0.08em] text-text-muted">
+                <th className="py-2 pr-3 font-medium">Kategori</th>
+                <th className="py-2 pr-3 font-medium">Lengan</th>
+                <th className="py-2 pr-3 text-right font-medium">Target</th>
+                <th className="py-2 pr-3 text-right font-medium">Jadi (FG)</th>
+                <th className="py-2 pr-3 font-medium">Status</th>
+                <th className="py-2 pr-3 font-medium">Tipe harga</th>
+                <th className="py-2 pr-3 text-right font-medium">Harga master</th>
+                <th className="py-2 pr-3 text-right font-medium">Dipakai tagihan</th>
+                <th className="py-2 pr-3 text-right font-medium">Estimasi maklon</th>
+                <th className="py-2 text-right font-medium">Maklon jadi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((r) => {
+                const beda = r.masterRate !== null && r.masterRate !== r.billedRate;
+                const pct = r.qty > 0 ? Math.min(100, Math.round((r.jadi / r.qty) * 100)) : 0;
+                return (
+                  <tr key={r.kategori + "|" + r.lengan} onClick={() => setDetailKategori(r.kategori)} className="cursor-pointer border-b border-border-subtle/60 text-text-primary hover:bg-info-bg/50" title="Klik untuk rincian per warna">
+                    <td className="py-2 pr-3 font-semibold">{r.kategori}</td>
+                    <td className="py-2 pr-3 text-text-secondary">{r.lengan === "PENDEK" ? "Pendek" : "Panjang"}</td>
+                    <td className="py-2 pr-3 text-right font-mono">{formatPcs(r.qty)}</td>
+                    <td className="py-2 pr-3 text-right">
+                      <div className="font-mono">{formatPcs(r.jadi)} <span className="text-[10px] text-text-muted">{pct}%</span></div>
+                      <div className="ml-auto mt-0.5 h-[3px] w-16 overflow-hidden rounded-full bg-border-subtle">
+                        <div className="h-full bg-accent-blue" style={{ width: `${pct}%` }} />
+                      </div>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <StatusPill tone={STATUS_PILL[r.status].tone}>{STATUS_PILL[r.status].label}</StatusPill>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span className="rounded bg-info-bg px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-info-fg">{r.tipe}</span>
+                    </td>
+                    <td className="py-2 pr-3 text-right font-mono">
+                      {r.masterRate === null ? <span className="text-warning-fg">belum ada</span> : formatRupiah(r.masterRate)}
+                      {r.masterSource && <span className="ml-1 text-[10px] text-text-muted">{r.masterSource}</span>}
+                    </td>
+                    <td className={`py-2 pr-3 text-right font-mono ${beda ? "text-warning-fg" : "text-text-secondary"}`}>{formatRupiah(r.billedRate)}</td>
+                    <td className="py-2 pr-3 text-right font-mono">{formatRupiah(r.qty * rateOfRow(r))}</td>
+                    <td className="py-2 text-right font-mono">{formatRupiah(r.jadi * rateOfRow(r))}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-accent-blue bg-info-bg font-semibold text-info-fg">
+                <td className="px-1 py-2" colSpan={2}>Total</td>
+                <td className="py-2 pr-3 text-right font-mono">{formatPcs(total)}</td>
+                <td className="py-2 pr-3 text-right font-mono">{formatPcs(totalJadi)}</td>
+                <td colSpan={4} />
+                <td className="py-2 pr-3 text-right font-mono">{formatRupiah(estimasi)}</td>
+                <td className="py-2 text-right font-mono">{formatRupiah(maklonJadi)}</td>
+              </tr>
+            </tfoot>
+          </table>
           {(adaBeda || adaKosong) && (
             <p className="mt-2 font-sans text-[11px] text-text-muted">
               {adaBeda && "Harga kuning = harga per lengan yang dipakai tagihan saat ini berbeda dari harga Master Data kategori itu. "}
@@ -258,6 +379,7 @@ function KategoriTargetPanel({ rows, detail, vendorId }: { rows: AduanPolaRow[];
           )}
         </div>
       )}
+      {detailKategori && <KategoriDetailModal kategori={detailKategori} rows={items.filter((r) => r.kategori === detailKategori)} onClose={() => setDetailKategori(null)} />}
     </div>
   );
 }
@@ -505,7 +627,7 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
           return (
             <>
               <LenganQtyCards rows={rows} detail={detail} />
-              <KategoriTargetPanel rows={rows} detail={detail} vendorId={p.vendorProduksi} />
+              <KategoriTargetPanel rows={rows} detail={detail} vendorId={p.vendorProduksi} mrpId={p.mrpId} />
               <AduanDetailTree rows={rows} />
             </>
           );
