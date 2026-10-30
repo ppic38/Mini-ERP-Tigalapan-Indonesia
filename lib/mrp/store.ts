@@ -36,7 +36,7 @@ function notifyError(message: string): void {
 }
 import * as rawActions from "./actions";
 import { poApprovalState, type ApprovalRole, type PoApprovalEntry } from "./poApproval";
-import type { SkuImportInputRow, SkuImportSummary, WarnaAliasImportInputRow, HargaKainImportInputRow } from "./actions";
+import type { SkuImportInputRow, SkuImportSummary, WarnaAliasImportInputRow, HargaKainImportInputRow, SavePaymentProposalInput } from "./actions";
 import { unwrapAction } from "./action-result";
 
 // Setiap Server Action di lib/mrp/actions.ts lempar Error("Unauthorized: ...") / Error("Forbidden:
@@ -431,6 +431,9 @@ type FlowActions = {
   repriceVendorInvoices: () => Promise<number>;
   addVendorInvoiceAdjustment: (invoiceId: string, input: { kind: VendorInvoiceAdjustmentKind; label: string; amount: number; note?: string }) => Promise<void>;
   payVendorInvoices: (invoiceIds: string[], proof: { dataUrl: string; fileName?: string }) => Promise<void>;
+  /** Proposal Pembayaran invoice vendor produksi (migration 0082): simpan/ubah dan hapus. */
+  savePaymentProposal: (input: SavePaymentProposalInput) => Promise<void>;
+  deletePaymentProposal: (no: string) => Promise<void>;
   setVendorInvoicePaymentProof: (invoiceIds: string[], proof: { dataUrl: string; fileName?: string }) => Promise<void>;
   /** Spec Portal Warehouse — "Bongkar Koli", SELALU per resi group & SELALU utuh (Q5). Lihat
    *  receiveWarehouseResiGroupAction di actions.ts — qty TIDAK dipercaya dari client. */
@@ -1616,6 +1619,25 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // bisa dipastikan dari argumen saja tanpa risiko id sementara yang harus direkonsiliasi.
   addVendorInvoiceAdjustment: async (invoiceId, input) => {
     await actions.addVendorInvoiceAdjustmentAction(invoiceId, input);
+    backgroundRefresh();
+  },
+  // TIDAK optimistic -- nomor unik dan DP/sisa dihitung/dicek di server; hasilnya dimuat ulang sesudah sukses.
+  savePaymentProposal: async (input) => {
+    try {
+      unwrapAction(await actions.savePaymentProposalAction(input));
+    } catch (err) {
+      notifyError("Gagal menyimpan proposal pembayaran. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  deletePaymentProposal: async (no) => {
+    try {
+      unwrapAction(await actions.deletePaymentProposalAction(no));
+    } catch (err) {
+      notifyError("Gagal menghapus proposal pembayaran. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
     backgroundRefresh();
   },
   payVendorInvoices: async (invoiceIds, proof) => {

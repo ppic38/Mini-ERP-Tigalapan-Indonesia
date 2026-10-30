@@ -5,6 +5,10 @@ import { alertDialog } from "@/components/ui/confirm-dialog";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/mrp/number-input";
+import { PaymentProposalModal } from "@/components/procurement/payment-proposal-modal";
+import { proposalInvoiceRows } from "@/components/finance/proposal-cell";
+import { downloadPaymentProposalPdf } from "@/lib/mrp/exportProposalPdf";
+import { invoicesOfProposal } from "@/lib/mrp/proposal";
 import { viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
 import { useMrpStore } from "@/lib/mrp/store";
 import {
@@ -56,6 +60,8 @@ export function InvoiceVendorReviewPanel() {
   const setVendorInvoiceStatus = useMrpStore((s) => s.setVendorInvoiceStatus);
 
   const [expandedInvoiceId, setExpandedInvoiceId] = useState("");
+  // Invoice yang proposal pembayarannya sedang dibuat/diubah (migration 0082).
+  const [proposalFor, setProposalFor] = useState<VendorInvoice | null>(null);
   const [adjKind, setAdjKind] = useState<VendorInvoiceAdjustmentKind>("TIDAK_ADA");
   const [adjLabel, setAdjLabel] = useState("");
   const [adjAmount, setAdjAmount] = useState(0);
@@ -148,6 +154,7 @@ export function InvoiceVendorReviewPanel() {
         </div>
       )}
 
+      {proposalFor && <PaymentProposalModal invoice={proposalFor} onClose={() => setProposalFor(null)} />}
       <div className="overflow-hidden border border-border-subtle bg-surface-card">
         <div className="flex items-center justify-between gap-3 border-b border-border-subtle px-4 py-3">
           <span className="font-sans text-[13px] font-semibold text-text-primary">Semua invoice vendor</span>
@@ -390,6 +397,40 @@ export function InvoiceVendorReviewPanel() {
                      catatan ditulis lengkap), sekarang 1 baris ringkas + 1 tombol per koli --
                      komponen kartu itu SENGAJA tidak disentuh (masih dipakai apa adanya di
                      payment-maklon-panel.tsx), di sini cukup panggil viewEkspedisiPhoto langsung. */}
+                  <div className="mt-3 rounded-md border border-[#E4E9EE] bg-white p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Proposal pembayaran</div>
+                      <div className="flex items-center gap-2">
+                        {inv.proposal && (
+                          <Button variant="ghost" size="xs" onClick={() => downloadPaymentProposalPdf(inv.proposal!, proposalInvoiceRows(inv, vendorInvoices))}>
+                            Download PDF
+                          </Button>
+                        )}
+                        {inv.status !== "PAID" && (
+                          <Button variant="ghost" size="xs" onClick={() => setProposalFor(inv)}>
+                            {inv.proposal ? "Ubah proposal" : "Buat proposal"}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    {inv.proposal ? (
+                      <div className="mt-1.5 font-sans text-[11.5px] text-[#31414F]">
+                        <div>
+                          <span className="font-mono font-semibold">{inv.proposal.no}</span> · {inv.proposal.activity}
+                        </div>
+                        <div className="mt-0.5 font-mono text-[11px] text-text-muted">
+                          Tagihan {formatRupiah(inv.proposal.tagihan)} · DP {inv.proposal.dpPercent}% {formatRupiah(inv.proposal.dpAmount)} · Sisa {formatRupiah(inv.proposal.sisa)}
+                        </div>
+                        <div className="mt-0.5 text-[10.5px] text-text-muted">
+                          {invoicesOfProposal(vendorInvoices, inv.proposal.no).length} invoice
+                          {inv.proposal.createdBy ? " · dibuat " + inv.proposal.createdBy : ""}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-1.5 font-sans text-[11.5px] text-text-muted">Belum ada proposal. Kalau dibuat, Finance melihat nomor proposal dan nama kegiatannya di halaman Payment.</div>
+                    )}
+                  </div>
+
                   {koliBreakdown && (
                     <div className="mt-3 rounded-md border border-[#E4E9EE] bg-white p-3">
                       <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Lampiran ekspedisi</div>

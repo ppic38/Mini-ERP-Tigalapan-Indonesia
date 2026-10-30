@@ -345,6 +345,8 @@ export type RawMaterialInvoice = {
    */
   sourceClaimId?: string;
   paidAt?: string;
+  /** Migration 0082: PIC Finance yang memproses pembayaran. */
+  paidBy?: string;
   /** Penanda Finance "transaksi sudah dibuat" (migration 0071) -- status invoice tidak berubah. */
   txnCreatedAt?: string;
   txnCreatedBy?: string;
@@ -584,6 +586,27 @@ export type VendorInvoiceAdjustmentKind = "DENDA" | "REWARD" | "TIDAK_ADA";
 
 export type VendorInvoiceAdjustment = { id: string; kind: VendorInvoiceAdjustmentKind; label: string; amount: number; note?: string; addedAt: string };
 
+/** Proposal Pembayaran (migration 0082) yang dibuat Procurement untuk invoice vendor produksi. Disimpan sebagai jsonb di
+ *  vendor_invoices.proposal; satu proposal boleh menaungi beberapa invoice vendor yang sama (isi disalin, dibedakan `no`). */
+export type PaymentProposal = {
+  no: string;
+  /** YYYY-MM-DD */
+  date: string;
+  location: string;
+  /** Nama kegiatan, mis. "Pembayaran Tagihan Produksi Vendor ARTHA PO ARTMM ...". */
+  activity: string;
+  /** Rekening tujuan apa adanya, mis. "Bank Central Asia (BCA) : 3791573970 Bayu Pamungkas". */
+  rekTujuan: string;
+  tagihan: number;
+  dpPercent: number;
+  dpAmount: number;
+  sisa: number;
+  /** YYYY-MM-DD */
+  startDate: string;
+  createdBy?: string;
+  createdAt?: string;
+};
+
 export type VendorInvoice = {
   id: string;
   vendorProduksi: string;
@@ -610,6 +633,10 @@ export type VendorInvoice = {
    *  lewat getVendorInvoicePaymentProofAction supaya tidak ikut snapshot. */
   buktiBayarAt?: string;
   buktiBayarFileName?: string;
+  /** Migration 0082: Proposal Pembayaran yang menaungi invoice ini (kosong = belum ada proposal). */
+  proposal?: PaymentProposal;
+  /** Migration 0082: PIC Finance yang memproses pembayaran (akun sub-user atau akun utama). */
+  paidBy?: string;
 };
 
 export type ProductionGroupMeta = {

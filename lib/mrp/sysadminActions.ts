@@ -560,6 +560,7 @@ export async function sysadminRevertVendorInvoicePaidAction(invoiceId: string, r
     if (inv.status !== "PAID") throw new Error(`Invoice ini berstatus ${inv.status}, bukan PAID -- tidak ada pembayaran yang bisa dibatalkan.`);
     const { error: updErr } = await db.from("vendor_invoices").update({ status: "APPROVED", paid_at: null, bukti_bayar_at: null, bukti_bayar_file_name: null }).eq("id", invoiceId);
     if (updErr) throw new Error(updErr.message);
+    await db.from("vendor_invoices").update({ paid_by: null }).eq("id", invoiceId); // PIC pembayaran (migration 0082), best-effort
     // Bukti pembayaran lama ikut dihapus (best-effort): pembayaran ulang wajib melampirkan bukti baru (migration 0075).
     await db.from("vendor_invoice_payment_proofs").delete().eq("invoice_id", invoiceId);
     // File tambahan bukti bayar (migration 0080) ikut dihapus; tabelnya mungkin belum ada, jadi kegagalannya diabaikan.

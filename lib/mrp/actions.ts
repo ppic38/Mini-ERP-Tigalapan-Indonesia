@@ -37,6 +37,7 @@ import { getFlowSnapshot, getFlowSnapshotWithMeta } from "./repo/snapshot";
 import { scopeStateToVendor, stripVendorActorNames } from "./vendorScope";
 import { loadWeightTolerancePct, WEIGHT_TOLERANCE_KEY } from "./weightToleranceServer";
 import { assertRollCodesUnique } from "./rollCodeServer";
+import { normalizeProposal, validateProposal } from "./proposal";
 import {
   localDateString,
   maklonAmountForLenganBuckets,
@@ -1740,6 +1741,8 @@ export async function setInvoicesPaidAction(
   for (const inv of invoices ?? []) {
     if (paid && inv.status === "INVOICED") {
       await db.from("raw_material_invoices").update({ status: "PAID", paid_at: today() }).eq("id", inv.id);
+      // PIC pembayaran (migration 0082): best-effort, terpisah dari status PAID.
+      await stampActor(db, "raw_material_invoices", [inv.id], { paid_by: actor.actorName });
       if (proof) {
         const { error: proofErr } = await db
           .from("invoice_payment_proofs")
@@ -1751,7 +1754,10 @@ export async function setInvoicesPaidAction(
     // Item 2: "Batalkan Bayar" SENGAJA tidak menghapus invoice_payment_proofs -- file itu bukti
     // audit yang sudah pernah diserahkan, dan Status pill sudah cukup menunjukkan status aslinya
     // sekarang (INVOICED lagi). Menghapusnya cuma menghilangkan jejak tanpa manfaat.
-    if (!paid && inv.status === "PAID") await db.from("raw_material_invoices").update({ status: "INVOICED", paid_at: null }).eq("id", inv.id);
+    if (!paid && inv.status === "PAID") {
+      await db.from("raw_material_invoices").update({ status: "INVOICED", paid_at: null }).eq("id", inv.id);
+      await db.from("raw_material_invoices").update({ paid_by: null }).eq("id", inv.id); // migration 0082, best-effort
+    }
   }
   if (overpay > 0 && payable.length > 0) {
     const refs = payable.map((i) => i.kode_transaksi || i.id).join(", ");
@@ -5670,6 +5676,79 @@ export async function setVendorInvoiceStatusAction(invoiceId: string, status: "S
   if (invoice && status === "PAID") await insertNotification(notif(`Invoice vendor ${invoice.id} telah dibayar Finance`, ["vendorMaklon"], invoice.vendor_produksi));
 }
 
+const PROPOSAL_COLUMN_MISSING = "Jalankan migration 0082 (kolom proposal dan paid_by di vendor_invoices) di Supabase dulu.";
+
+export type SavePaymentProposalInput = {
+  /** Invoice vendor yang dinaungi proposal ini (satu vendor produksi, belum lunas). */
+  invoiceIds: string[];
+  /** Nomor proposal yang sedang diedit; kosong untuk proposal baru. Invoice lama bernomor ini yang tidak ada di `invoiceIds` dilepas. */
+  previousNo?: string;
+  proposal: { no: string; date: string; location: string; activity: string; rekTujuan: string; tagihan: number; dpPercent: number; startDate: string };
+};
+
+/** Procurement membuat/mengubah Proposal Pembayaran untuk invoice vendor produksi (migration 0082). DP dan sisa selalu dihitung ulang di
+ *  server. Nomor proposal harus unik (nomor yang sama hanya boleh dipakai invoice milik proposal itu sendiri). Invoice yang sudah lunas
+ *  tidak bisa dimasukkan/dilepas. Alasan penolakan dikembalikan sebagai nilai (Next menyembunyikan pesan Error di production). */
+export async function savePaymentProposalAction(input: SavePaymentProposalInput): Promise<ActionResult<void>> {
+  try {
+    const actor = await requireInternalRoleWithActor("procurement");
+    const ids = Array.from(new Set(input.invoiceIds));
+    if (ids.length === 0) throw new Error("Pilih minimal satu invoice vendor untuk proposal ini.");
+    const proposal = normalizeProposal(input.proposal);
+    const invalid = validateProposal(proposal);
+    if (invalid) throw new Error(invalid);
+    const db = supabaseServer();
+    const { data: invs, error } = await db.from("vendor_invoices").select("id,vendor_produksi,status").in("id", ids);
+    if (error) throw new Error(error.message);
+    if ((invs ?? []).length !== ids.length) throw new Error("Sebagian invoice vendor tidak ditemukan.");
+    if (new Set((invs ?? []).map((i) => i.vendor_produksi)).size > 1) throw new Error("Satu proposal hanya boleh menaungi invoice dari satu vendor produksi.");
+    const paid = (invs ?? []).filter((i) => i.status === "PAID");
+    if (paid.length > 0) throw new Error(`Invoice ${paid.map((i) => i.id).join(", ")} sudah lunas, jadi tidak bisa dimasukkan ke proposal.`);
+    // Nomor unik: baris lain (di luar invoice terpilih) yang sudah memakai nomor ini hanya boleh yang milik proposal yang sedang diedit.
+    const { data: sameNo, error: noErr } = await db.from("vendor_invoices").select("id").eq("proposal->>no", proposal.no);
+    if (noErr) throw new Error(noErr.message.includes("proposal") ? PROPOSAL_COLUMN_MISSING : noErr.message);
+    const idSet = new Set(ids);
+    const foreign = (sameNo ?? []).filter((r) => !idSet.has(r.id));
+    if (foreign.length > 0 && proposal.no !== input.previousNo) throw new Error(`Nomor proposal ${proposal.no} sudah dipakai invoice lain (${foreign.map((r) => r.id).join(", ")}). Gunakan nomor lain.`);
+    // Invoice lama milik proposal yang diedit tetapi sekarang tidak dipilih lagi: dilepas.
+    if (input.previousNo) {
+      const { data: prevRows, error: prevErr } = await db.from("vendor_invoices").select("id,status").eq("proposal->>no", input.previousNo);
+      if (prevErr) throw new Error(prevErr.message);
+      const drop = (prevRows ?? []).filter((r) => !idSet.has(r.id) && r.status !== "PAID").map((r) => r.id);
+      if (drop.length > 0) {
+        const { error: dropErr } = await db.from("vendor_invoices").update({ proposal: null }).in("id", drop);
+        if (dropErr) throw new Error(dropErr.message);
+      }
+    }
+    const createdAt = nowIso();
+    const { error: updErr } = await db.from("vendor_invoices").update({ proposal: { ...proposal, createdBy: actor.actorName, createdAt } }).in("id", ids);
+    if (updErr) throw new Error(updErr.message.includes("proposal") ? PROPOSAL_COLUMN_MISSING : updErr.message);
+    await logInternalAction(actor, `Simpan proposal pembayaran ${proposal.no} untuk invoice vendor ${ids.join(", ")}`, "vendor_invoices", ids[0]);
+    await insertNotification(notif(`Proposal pembayaran ${proposal.no} (${proposal.activity}) dibuat ${actor.actorName} untuk invoice vendor ${ids.join(", ")}`, ["finance"]));
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Hapus proposal dari semua invoice yang belum lunas bernomor itu. Invoice yang sudah lunas tetap menyimpan proposalnya sebagai arsip. */
+export async function deletePaymentProposalAction(no: string): Promise<ActionResult<void>> {
+  try {
+    const actor = await requireInternalRoleWithActor("procurement");
+    const db = supabaseServer();
+    const { data: rows, error } = await db.from("vendor_invoices").select("id,status").eq("proposal->>no", no);
+    if (error) throw new Error(error.message.includes("proposal") ? PROPOSAL_COLUMN_MISSING : error.message);
+    const ids = (rows ?? []).filter((r) => r.status !== "PAID").map((r) => r.id);
+    if (ids.length === 0) throw new Error((rows ?? []).length > 0 ? "Semua invoice proposal ini sudah lunas, proposal disimpan sebagai arsip." : "Proposal tidak ditemukan.");
+    const { error: updErr } = await db.from("vendor_invoices").update({ proposal: null }).in("id", ids);
+    if (updErr) throw new Error(updErr.message);
+    await logInternalAction(actor, `Hapus proposal pembayaran ${no} dari invoice vendor ${ids.join(", ")}`, "vendor_invoices", ids[0]);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /** Bukti pembayaran invoice vendor produksi (migration 0075). Format dicek di server juga (klien sudah membatasi tipe dan ukuran). */
 function assertVendorInvoiceProof(proof: { dataUrl?: string; fileName?: string } | undefined): asserts proof is { dataUrl: string; fileName?: string } {
   if (!proof?.dataUrl) throw new Error("Bukti pembayaran (PDF/JPG/PNG) wajib diupload sebelum invoice bisa dibayar.");
@@ -5683,7 +5762,7 @@ const VENDOR_PROOF_TABLE_MISSING = "Jalankan migration 0075 (tabel vendor_invoic
  *  beberapa invoice yang dibayar bersamaan. Alasan penolakan dikembalikan sebagai nilai (Next menyembunyikan pesan Error di production). */
 export async function payVendorInvoicesAction(invoiceIds: string[], proof: { dataUrl: string; fileName?: string }): Promise<ActionResult<void>> {
   try {
-    await requireInternalRole(await requireSession(), "finance");
+    const actor = await requireInternalRoleWithActor("finance");
     assertVendorInvoiceProof(proof);
     const ids = Array.from(new Set(invoiceIds));
     if (ids.length === 0) return { ok: true, data: undefined };
@@ -5707,6 +5786,8 @@ export async function payVendorInvoicesAction(invoiceIds: string[], proof: { dat
       .update({ status: "PAID", paid_at: today(), bukti_bayar_at: uploadedAt, bukti_bayar_file_name: proof.fileName ?? null })
       .in("id", toPay.map((i) => i.id));
     if (updErr) throw new Error(updErr.message);
+    // PIC pembayaran (migration 0082): best-effort, terpisah supaya pembayaran tidak gagal kalau migration belum jalan.
+    await stampActor(db, "vendor_invoices", toPay.map((i) => i.id), { paid_by: actor.actorName });
     for (const inv of toPay) {
       await insertNotification(notif(`Invoice vendor ${inv.id} telah dibayar lunas oleh Finance — bukti pembayaran tersedia di Invoice & Payment`, ["vendorMaklon"], inv.vendor_produksi));
     }

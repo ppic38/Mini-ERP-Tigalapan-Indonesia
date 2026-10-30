@@ -709,6 +709,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
       supportFileName: inv.support_file_name ?? undefined,
       sourceClaimId: inv.source_claim_id ?? undefined,
       paidAt: inv.paid_at ?? undefined,
+      paidBy: inv.paid_by ?? undefined,
       txnCreatedAt: inv.txn_created_at ?? undefined,
       txnCreatedBy: inv.txn_created_by ?? undefined,
       deliveredAt: inv.delivered_at ?? undefined,
@@ -898,6 +899,8 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     ongkirTotal: v.ongkir_total == null ? undefined : Number(v.ongkir_total),
     buktiBayarAt: v.bukti_bayar_at ?? undefined,
     buktiBayarFileName: v.bukti_bayar_file_name ?? undefined,
+    proposal: v.proposal ?? undefined,
+    paidBy: v.paid_by ?? undefined,
   }));
 
   // ---- Warehouse (migration 0031) -- pola sama deliveryKoliBatchRows di atas, tabel belum tentu
