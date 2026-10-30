@@ -321,9 +321,10 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                     </div>
                   )}
                   <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Lampiran — detail per MRP</div>
-                  <div className="m-hide mt-2 grid grid-cols-3 gap-2 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+                  <div className="m-hide mt-2 grid grid-cols-4 gap-2 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
                     <span>MRP</span>
                     <span className="text-right">Qty diinvoice</span>
+                    <span className="text-right">Harga maklon</span>
                     <span className="text-right">Nilai</span>
                   </div>
                   {inv.lines.map((line) => {
@@ -336,12 +337,16 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                             setExpandedMrpKey(mrpExpanded ? "" : mrpKey);
                             setExpandedWarnaKey("");
                           }}
-                          className="m-stack m-grid2 grid w-full grid-cols-3 items-center gap-2 border-t border-[#F1F4F7] py-1.5 text-left font-mono text-[11.5px] text-action-primary max-md:py-2.5"
+                          className="m-stack m-grid2 grid w-full grid-cols-4 items-center gap-2 border-t border-[#F1F4F7] py-1.5 text-left font-mono text-[11.5px] text-action-primary max-md:py-2.5"
                         >
                           <span>
                             {line.mrpId} <span className="text-[#94A3B0]">({line.warna} · {line.lengan}{line.usia ? " · " + line.usia : ""})</span>
                           </span>
                           <span data-label="Qty diinvoice" className="text-right">{formatPcs(line.qty)}</span>
+                          <span data-label="Harga maklon" className="text-right">
+                            <span className="mr-1.5 rounded bg-info-bg px-1.5 py-0.5 text-[10px] font-semibold text-info-fg">{maklonTipeForWarna(line.mrpId, line.warna, line.lengan, mrpDetails)}</span>
+                            {formatRupiah(line.ratePerPc)}/pc
+                          </span>
                           <span data-label="Nilai" className="text-right">{formatRupiah(line.amount)}</span>
                         </button>
                         {mrpExpanded && (
