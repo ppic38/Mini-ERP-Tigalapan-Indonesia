@@ -342,8 +342,9 @@ export function maklonKategoriBreakdown(
   for (const r of results) {
     if (r.mrpId !== mrpId || r.vendorProduksi !== vendorKey || r.kind !== "FG") continue;
     const kategori = kategoriByWarnaLengan.get(r.warna + "|" + r.lengan) || "(tanpa kategori)";
-    const w = cells.get(kategori + "|" + r.lengan)?.warna.get(r.warna);
-    if (!w) continue;
+    // Finish Good tanpa target di warna+lengan itu (mis. hasil rework dari reject lengan lain) TETAP dihitung,
+    // sebagai baris target 0 -- sama seperti tab Produksi > Finish Good yang menampilkannya sebagai "n dari rework".
+    const w = warnaFor(cellFor(kategori, r.lengan), r.warna);
     for (const q of Object.values(r.sizeQty)) w.jadi += q;
   }
   const out: MaklonKategoriRow[] = [];
