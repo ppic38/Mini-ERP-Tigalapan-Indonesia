@@ -1,4 +1,7 @@
 import type { PaymentProposal, VendorInvoice } from "./types";
+import type { MrpDetail } from "./store";
+import { mrpDetailFor, vendorInvoiceFinalAmount } from "./derive";
+import { VENDOR_PRODUKSI } from "./seed";
 
 // Proposal Pembayaran (migration 0082). Fungsi murni -- dipakai klien (form, saran nomor) dan server (validasi, hitung ulang DP).
 
@@ -66,4 +69,39 @@ export function validateProposal(p: ReturnType<typeof normalizeProposal>): strin
   if (!(p.tagihan > 0)) return "Tagihan produksi harus lebih dari 0.";
   if (!(p.dpPercent >= 0 && p.dpPercent <= 100)) return "DP harus antara 0 dan 100 persen.";
   return null;
+}
+
+/** Urutan stabil invoice (tanggal diajukan, lalu nomor) -- dasar nomor proposal otomatis. */
+function invoiceOrderKey(i: VendorInvoice): string {
+  return i.submittedAt + "|" + String(Number(i.id.replace(/\D/g, ""))).padStart(8, "0");
+}
+
+/** Proposal Pembayaran yang DIBUAT OTOMATIS sistem untuk satu invoice vendor produksi (owner 2026-10-30: Finance mengunduh sendiri di
+ *  Payment Maklon, Procurement tidak perlu membuat). Nomor = urutan invoice di tahun itu (stabil, unik per invoice); nama kegiatan =
+ *  "Pembayaran Tagihan Produksi Vendor {vendor} PO {MRP} - Kategori {kategori}"; tagihan = total akhir invoice; DP default 60%.
+ *  Rekening tujuan belum ada di sistem, jadi dikosongkan. */
+export function buildAutoProposal(inv: VendorInvoice, allInvoices: VendorInvoice[], mrpDetails: MrpDetail[], todayIso: string): PaymentProposal {
+  const year = inv.submittedAt.slice(0, 4);
+  const sameYear = allInvoices.filter((i) => i.submittedAt.slice(0, 4) === year).sort((a, b) => invoiceOrderKey(a).localeCompare(invoiceOrderKey(b)));
+  const seq = Math.max(1, sameYear.findIndex((i) => i.id === inv.id) + 1);
+  const month = Math.min(12, Math.max(1, Number(inv.submittedAt.slice(5, 7)) || 1));
+  const mrpIds = Array.from(new Set(inv.lines.map((l) => l.mrpId)));
+  const kategori: string[] = [];
+  for (const l of inv.lines) {
+    const k = mrpDetailFor(l.mrpId, mrpDetails)?.lenganGroups.find((g) => g.warna === l.warna && g.lengan === l.lengan)?.kategori;
+    if (k && !kategori.includes(k)) kategori.push(k);
+  }
+  const vendorName = VENDOR_PRODUKSI[inv.vendorProduksi]?.name ?? inv.vendorProduksi;
+  const poDates = mrpIds.map((m) => mrpDetailFor(m, mrpDetails)?.dates.poSent).filter((d): d is string => !!d && /^\d{4}-\d{2}-\d{2}/.test(d)).map((d) => d.slice(0, 10));
+  const startDate = poDates.length > 0 ? poDates.sort()[0] : inv.submittedAt.slice(0, 10);
+  return normalizeProposal({
+    no: `${String(seq).padStart(4, "0")}/${PROPOSAL_NO_SUFFIX}/${ROMAN[month - 1]}/${year}`,
+    date: todayIso,
+    location: PROPOSAL_DEFAULT_LOCATION,
+    activity: `Pembayaran Tagihan Produksi Vendor ${vendorName} PO ${mrpIds.join(", ")}${kategori.length > 0 ? " - Kategori " + kategori.join(", ") : ""}`,
+    rekTujuan: "",
+    tagihan: vendorInvoiceFinalAmount(inv),
+    dpPercent: PROPOSAL_DEFAULT_DP_PERCENT,
+    startDate,
+  });
 }

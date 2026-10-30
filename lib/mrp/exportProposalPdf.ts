@@ -134,7 +134,7 @@ export function buildPaymentProposalPdf(p: PaymentProposal, invoices: ProposalIn
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
   doc.setTextColor(110, 110, 110);
-  const by = p.createdBy ? `Diajukan oleh ${p.createdBy}` : "Diajukan oleh Procurement";
+  const by = p.createdBy ? `Diajukan oleh ${p.createdBy}` : "Dibuat otomatis oleh sistem";
   doc.text(by + (p.createdAt ? ` · ${p.createdAt}` : ""), LABEL_X, 575);
   return doc;
 }
