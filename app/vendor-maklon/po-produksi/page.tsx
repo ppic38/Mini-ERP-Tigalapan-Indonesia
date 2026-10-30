@@ -157,66 +157,107 @@ function AduanDetailTree({ rows }: { rows: AduanPolaRow[] }) {
   );
 }
 
-/** Satu KPI card per KATEGORI (COMBED, KIDS, TUNIK, RIB, Wangki, dst) yang benar-benar dikerjakan di PO ini --
- *  kategori tanpa target tidak muncul. Isi: jadi (Finish Good) vs target, estimasi maklon (target x harga Master Data
- *  kategori+lengan) dan maklon yang sudah jadi (jadi x harga yang sama). Harga bisa beda per lengan, jadi rincian per
- *  lengan ada di bawah angka utama; tanda kuning = harga per lengan yang dipakai tagihan saat ini berbeda. */
-function KategoriKpiCards({ rows, detail, vendorId, mrpId }: { rows: AduanPolaRow[]; detail?: MrpDetail; vendorId: string; mrpId: string }) {
-  const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
-  const productionResults = useMrpStore((s) => s.productionResults);
-  const items = maklonKategoriBreakdown(hargaMaklon, vendorId, mrpId, rows, detail?.lenganGroups ?? [], productionResults);
-  const byKategori = new Map<string, typeof items>();
-  for (const r of items) byKategori.set(r.kategori, [...(byKategori.get(r.kategori) ?? []), r]);
-  const rateOf = (r: (typeof items)[number]) => r.masterRate ?? r.billedRate;
-  const total = items.reduce((n, r) => n + r.qty, 0);
+/** Qty satu PO per jenis lengan: Pendek, Panjang, Wangki Pendek, Wangki Panjang (Wangki = grup berkategori WANGKI MYNO), dari Aduan Pola vendor ini di MRP itu.
+ *  Ditaruh di atas daftar warna saat baris PO dibuka, untuk menjelaskan kenapa harga maklon MRP itu sebesar itu (tarif ditentukan per lengan dari qty kumulatif). */
+function LenganQtyCards({ rows, detail }: { rows: AduanPolaRow[]; detail?: MrpDetail }) {
+  const totals = { pdk: 0, pjg: 0, wPdk: 0, wPjg: 0 };
+  for (const a of rows) {
+    const kategori = detail?.lenganGroups.find((g) => g.id === a.lenganGroupId)?.kategori ?? "";
+    const wangki = /wangk[iy]/i.test(kategori);
+    if (a.lengan === "PENDEK") totals[wangki ? "wPdk" : "pdk"] += a.qty;
+    else totals[wangki ? "wPjg" : "pjg"] += a.qty;
+  }
+  const total = totals.pdk + totals.pjg + totals.wPdk + totals.wPjg;
+  const cards: { label: string; value: number }[] = [
+    { label: "Pendek (PDK)", value: totals.pdk },
+    { label: "Panjang (PJG)", value: totals.pjg },
+    { label: "Wangki Pendek", value: totals.wPdk },
+    { label: "Wangki Panjang", value: totals.wPjg },
+  ];
   return (
     <div className="mb-3">
       <div className="mb-2 flex items-center gap-2">
-        <span className="font-sans text-[12px] font-semibold text-text-primary">Target hasil jadi &amp; maklon per kategori</span>
-        <span className="ml-auto font-mono text-[11px] text-text-muted">Total target {formatPcs(total)} pcs</span>
+        <span className="font-sans text-[12px] font-semibold text-text-primary">Qty per jenis lengan</span>
+        <span className="ml-auto font-mono text-[11px] text-text-muted">Total {formatPcs(total)} pcs</span>
       </div>
-      <div className="grid grid-cols-4 gap-3 max-xl:grid-cols-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
-        {Array.from(byKategori.entries()).map(([kategori, list]) => {
-          const target = list.reduce((n, r) => n + r.qty, 0);
-          const jadi = list.reduce((n, r) => n + r.jadi, 0);
-          const estimasi = list.reduce((n, r) => n + r.qty * rateOf(r), 0);
-          const maklonJadi = list.reduce((n, r) => n + r.jadi * rateOf(r), 0);
-          return (
-            <div key={kategori} className="relative overflow-hidden rounded-xl border border-border-subtle bg-surface-card px-5 pb-4 pt-5">
-              <div className="absolute inset-x-0 top-0 h-[3px] bg-[#38BDF8]" />
-              <div className="truncate font-mono text-[10.5px] uppercase tracking-[0.14em] text-text-muted">{kategori}</div>
-              <div className="mt-2 flex items-baseline gap-1.5">
-                <span className="font-sans text-[26px] font-bold leading-none tracking-tight text-text-primary">{formatPcs(jadi)}</span>
-                <span className="font-mono text-[12px] text-text-muted">/ {formatPcs(target)} pcs</span>
-              </div>
-              <div className="mt-1 font-mono text-[10.5px] text-text-muted">jadi dari target{target > 0 ? ` · ${Math.round((jadi / target) * 100)}%` : ""}</div>
-              <div className="mt-3 grid grid-cols-2 gap-2 border-t border-border-subtle pt-2.5">
-                <div>
-                  <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-text-muted">Estimasi maklon</div>
-                  <div className="mt-0.5 font-mono text-[12.5px] font-semibold text-text-primary">{formatRupiah(estimasi)}</div>
-                </div>
-                <div>
-                  <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-text-muted">Maklon jadi</div>
-                  <div className="mt-0.5 font-mono text-[12.5px] font-semibold text-text-primary">{formatRupiah(maklonJadi)}</div>
-                </div>
-              </div>
-              <div className="mt-2.5 space-y-0.5 font-mono text-[10.5px] text-text-muted">
-                {list.map((r) => {
-                  const beda = r.masterRate !== null && r.masterRate !== r.billedRate;
-                  return (
-                    <div key={r.lengan} className="flex justify-between gap-2">
-                      <span>{r.lengan === "PENDEK" ? "Pendek" : "Panjang"} {formatPcs(r.jadi)}/{formatPcs(r.qty)}</span>
-                      <span className={beda || r.masterRate === null ? "text-warning-fg" : ""} title={r.masterRate === null ? `Master Data belum punya baris ${r.tipe}; dihitung dengan harga tagihan` : beda ? `Tagihan saat ini memakai ${formatRupiah(r.billedRate)}/pc` : undefined}>
-                        {r.tipe} · {r.masterRate === null ? `${formatRupiah(r.billedRate)} (belum ada)` : formatRupiah(r.masterRate)}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
+      <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
+        {cards.map((c) => (
+          <div key={c.label} className="relative overflow-hidden rounded-xl border border-border-subtle bg-surface-card px-5 pb-4 pt-5">
+            <div className="absolute inset-x-0 top-0 h-[3px] bg-[#38BDF8]" />
+            <div className="truncate font-mono text-[10.5px] uppercase tracking-[0.14em] text-text-muted">{c.label}</div>
+            <div className="mt-2 font-sans text-[26px] font-bold leading-none tracking-tight text-text-primary">{formatPcs(c.value)}</div>
+            <div className="mt-2 truncate font-mono text-[10.5px] text-text-muted">pcs{total > 0 ? ` · ${Math.round((c.value / total) * 100)}% dari total` : ""}</div>
+          </div>
+        ))}
       </div>
+    </div>
+  );
+}
+
+/** Target hasil jadi sebuah PO per kategori (COMBED, KIDS, TUNIK, RIB, dst) x lengan, plus harga
+ *  maklon Master Data per kategori. Tertutup secara default -- dibuka lewat klik. Kolom "Dipakai
+ *  tagihan" = harga per lengan yang saat ini dipakai PO/invoice (belum membedakan kategori), ditandai
+ *  kalau beda dari harga Master Data kategori itu. */
+function KategoriTargetPanel({ rows, detail, vendorId }: { rows: AduanPolaRow[]; detail?: MrpDetail; vendorId: string }) {
+  const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
+  const [open, setOpen] = useState(false);
+  const items = maklonKategoriBreakdown(hargaMaklon, vendorId, rows, detail?.lenganGroups ?? []);
+  const total = items.reduce((n, r) => n + r.qty, 0);
+  const nilaiMaster = items.reduce((n, r) => n + r.qty * (r.masterRate ?? r.billedRate), 0);
+  const adaBeda = items.some((r) => r.masterRate !== null && r.masterRate !== r.billedRate);
+  const adaKosong = items.some((r) => r.masterRate === null);
+  return (
+    <div className="mb-3 rounded-xl border border-border-subtle bg-surface-card">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2 px-4 py-2.5 text-left">
+        {open ? <ChevronDown className="h-3.5 w-3.5 text-text-muted" /> : <ChevronRight className="h-3.5 w-3.5 text-text-muted" />}
+        <span className="font-sans text-[12px] font-semibold text-text-primary">Target hasil jadi per kategori &amp; harga maklon</span>
+        <span className="ml-auto font-mono text-[11px] text-text-muted">{items.length} kategori·lengan · {formatPcs(total)} pcs</span>
+      </button>
+      {open && (
+        <div className="border-t border-border-subtle px-4 pb-3 pt-2">
+          <div className="grid grid-cols-[1.4fr_0.8fr_0.9fr_1fr_1fr_1fr_1.2fr] gap-x-2 py-1 font-mono text-[10.5px] uppercase tracking-[0.08em] text-text-muted">
+            <span>Kategori</span>
+            <span>Lengan</span>
+            <span className="text-right">Target (pcs)</span>
+            <span>Tipe harga</span>
+            <span className="text-right">Harga master</span>
+            <span className="text-right">Dipakai tagihan</span>
+            <span className="text-right">Nilai (master)</span>
+          </div>
+          {items.map((r) => {
+            const beda = r.masterRate !== null && r.masterRate !== r.billedRate;
+            return (
+              <div key={`${r.kategori}|${r.lengan}`} className="grid grid-cols-[1.4fr_0.8fr_0.9fr_1fr_1fr_1fr_1.2fr] gap-x-2 border-t border-border-subtle py-1.5 font-sans text-[12px] text-text-primary">
+                <span className="font-medium">{r.kategori}</span>
+                <span>{r.lengan === "PENDEK" ? "Pendek" : "Panjang"}</span>
+                <span className="text-right font-mono">{formatPcs(r.qty)}</span>
+                <span className="font-mono text-[11px] text-text-secondary">{r.tipe}</span>
+                <span className="text-right font-mono">
+                  {r.masterRate === null ? <span className="text-warning-fg">belum ada</span> : formatRupiah(r.masterRate)}
+                  {r.masterSource && <span className="ml-1 text-[10px] text-text-muted">{r.masterSource}</span>}
+                </span>
+                <span className={`text-right font-mono ${beda ? "text-warning-fg" : "text-text-secondary"}`}>{formatRupiah(r.billedRate)}</span>
+                <span className="text-right font-mono">{formatRupiah(r.qty * (r.masterRate ?? r.billedRate))}</span>
+              </div>
+            );
+          })}
+          <div className="grid grid-cols-[1.4fr_0.8fr_0.9fr_1fr_1fr_1fr_1.2fr] gap-x-2 border-t-2 border-accent-blue bg-info-bg px-1 py-1.5 font-sans text-[11.5px] font-semibold text-info-fg">
+            <span>Total</span>
+            <span />
+            <span className="text-right font-mono">{formatPcs(total)}</span>
+            <span />
+            <span />
+            <span />
+            <span className="text-right font-mono">{formatRupiah(nilaiMaster)}</span>
+          </div>
+          {(adaBeda || adaKosong) && (
+            <p className="mt-2 font-sans text-[11px] text-text-muted">
+              {adaBeda && "Harga kuning = harga per lengan yang dipakai tagihan saat ini berbeda dari harga Master Data kategori itu. "}
+              {adaKosong && "\"Belum ada\" = Master Data Harga Maklon vendor ini belum punya baris untuk tipe tersebut (nilai dihitung dengan harga tagihan)."}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -463,7 +504,8 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
           }
           return (
             <>
-              <KategoriKpiCards rows={rows} detail={detail} vendorId={p.vendorProduksi} mrpId={p.mrpId} />
+              <LenganQtyCards rows={rows} detail={detail} />
+              <KategoriTargetPanel rows={rows} detail={detail} vendorId={p.vendorProduksi} />
               <AduanDetailTree rows={rows} />
             </>
           );

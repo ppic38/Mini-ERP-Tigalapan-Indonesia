@@ -269,10 +269,7 @@ export function hargaMaklonRateInfoByTipe(hargaMaklon: HargaMaklonRow[], vendorK
 export type MaklonKategoriRow = {
   kategori: string;
   lengan: Lengan;
-  /** Target hasil jadi (dari Aduan Pola vendor ini di MRP itu). */
   qty: number;
-  /** Finish Good yang sudah tercatat (Input Hasil Cutting) untuk kategori+lengan ini. */
-  jadi: number;
   /** Tipe di Master Data yang dicocokkan (hargaMaklonTipeFor). */
   tipe: string;
   /** Harga Master Data untuk kategori+lengan ini; null = tidak ada barisnya di Master Data vendor ini. */
@@ -282,48 +279,30 @@ export type MaklonKategoriRow = {
   billedRate: number;
 };
 
-/** Rincian target & hasil jadi sebuah PO per kategori (kolom KATEGORI Excel MRP) x lengan, lengkap
+/** Rincian target hasil jadi sebuah PO per kategori (kolom KATEGORI Excel MRP) x lengan, lengkap
  *  dengan harga maklon Master Data per kategori vs harga yang saat ini dipakai tagihan. Qty tier
- *  PKS dihitung per PO (sama seperti estimasi di PO Approval). Kategori tanpa target tidak muncul. */
-export function maklonKategoriBreakdown(
-  hargaMaklon: HargaMaklonRow[],
-  vendorKey: string,
-  mrpId: string,
-  aduanRows: AduanPolaRow[],
-  lenganGroups: LenganGroup[],
-  results: ProductionResult[]
-): MaklonKategoriRow[] {
+ *  PKS dihitung per PO (sama seperti estimasi di PO Approval). */
+export function maklonKategoriBreakdown(hargaMaklon: HargaMaklonRow[], vendorKey: string, aduanRows: AduanPolaRow[], lenganGroups: LenganGroup[]): MaklonKategoriRow[] {
   const groupKategori = new Map(lenganGroups.map((g) => [g.id, g.kategori]));
-  const kategoriByWarnaLengan = new Map(lenganGroups.map((g) => [g.warna + "|" + g.lengan, g.kategori]));
   const byLengan = new Map<Lengan, number>();
-  const cells = new Map<string, { kategori: string; lengan: Lengan; qty: number; jadi: number }>();
-  const cellFor = (kategori: string, lengan: Lengan) => {
-    const key = kategori + "|" + lengan;
-    let cell = cells.get(key);
-    if (!cell) {
-      cell = { kategori, lengan, qty: 0, jadi: 0 };
-      cells.set(key, cell);
-    }
-    return cell;
-  };
+  const cells = new Map<string, { kategori: string; lengan: Lengan; qty: number }>();
   for (const a of aduanRows) {
     if (a.qty <= 0) continue;
+    const kategori = groupKategori.get(a.lenganGroupId) || "(tanpa kategori)";
     byLengan.set(a.lengan, (byLengan.get(a.lengan) ?? 0) + a.qty);
-    cellFor(groupKategori.get(a.lenganGroupId) || "(tanpa kategori)", a.lengan).qty += a.qty;
-  }
-  for (const r of results) {
-    if (r.mrpId !== mrpId || r.vendorProduksi !== vendorKey || r.kind !== "FG") continue;
-    const kategori = kategoriByWarnaLengan.get(r.warna + "|" + r.lengan) || "(tanpa kategori)";
-    const cell = cells.get(kategori + "|" + r.lengan);
-    if (!cell) continue;
-    for (const q of Object.values(r.sizeQty)) cell.jadi += q;
+    const key = `${kategori}|${a.lengan}`;
+    const cell = cells.get(key) ?? { kategori, lengan: a.lengan, qty: 0 };
+    cell.qty += a.qty;
+    cells.set(key, cell);
   }
   const out: MaklonKategoriRow[] = [];
   for (const c of cells.values()) {
     const tipe = hargaMaklonTipeFor(c.kategori, c.lengan);
     const master = hargaMaklonRateInfoByTipe(hargaMaklon, vendorKey, tipe, c.qty);
     out.push({
-      ...c,
+      kategori: c.kategori,
+      lengan: c.lengan,
+      qty: c.qty,
       tipe,
       masterRate: master?.rate ?? null,
       masterSource: master?.source ?? null,
