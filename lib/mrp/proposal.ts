@@ -79,7 +79,7 @@ function invoiceOrderKey(i: VendorInvoice): string {
 /** Proposal Pembayaran yang DIBUAT OTOMATIS sistem untuk satu invoice vendor produksi (owner 2026-10-30: Finance mengunduh sendiri di
  *  Payment Maklon, Procurement tidak perlu membuat). Nomor = urutan invoice di tahun itu (stabil, unik per invoice); nama kegiatan =
  *  "Pembayaran Tagihan Produksi Vendor {vendor} PO {MRP} - Kategori {kategori}"; tagihan = total akhir invoice; DP default 60%.
- *  Rekening tujuan belum ada di sistem, jadi dikosongkan. */
+ *  Rekening tujuan belum ada di sistem, jadi dikosongkan. DP/sisa TIDAK ditampilkan di PDF otomatis (owner 2026-10-30), datanya hanya dari invoice. */
 export function buildAutoProposal(inv: VendorInvoice, allInvoices: VendorInvoice[], mrpDetails: MrpDetail[], todayIso: string): PaymentProposal {
   const year = inv.submittedAt.slice(0, 4);
   const sameYear = allInvoices.filter((i) => i.submittedAt.slice(0, 4) === year).sort((a, b) => invoiceOrderKey(a).localeCompare(invoiceOrderKey(b)));

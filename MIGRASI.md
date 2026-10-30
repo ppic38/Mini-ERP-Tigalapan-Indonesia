@@ -1,7 +1,7 @@
 # Migrasi Project — Status & Riwayat
 
 ## Proposal pembayaran dibuat otomatis oleh sistem di Payment Maklon (2026-10-30, tanpa migration)
-Owner: Procurement TIDAK perlu membuat proposal. Setiap invoice vendor di Finance > Payment Maklon punya tombol **Download proposal** yang membuat PDF otomatis (`buildAutoProposal` di lib/mrp/proposal.ts): nomor = urutan invoice di tahun itu (`0001/PSCM-PRODUKSI/X/2026`), tanggal = hari unduh, nama kegiatan = "Pembayaran Tagihan Produksi Vendor {vendor} PO {MRP} - Kategori {kategori}", tagihan = total akhir invoice, DP default 60%, rekening tujuan dikosongkan (belum ada datanya di sistem). Kotak "Proposal pembayaran" dan modal buat proposal di Procurement dihapus; kolom/aksi simpan proposal dari migration 0082 dibiarkan (tidak dipakai).
+Owner: Procurement TIDAK perlu membuat proposal. Setiap invoice vendor di Finance > Payment Maklon punya tombol **Download proposal** yang membuat PDF otomatis (`buildAutoProposal` di lib/mrp/proposal.ts): nomor = urutan invoice di tahun itu (`0001/PSCM-PRODUKSI/X/2026`), tanggal = hari unduh, nama kegiatan = "Pembayaran Tagihan Produksi Vendor {vendor} PO {MRP} - Kategori {kategori}", tagihan = total akhir invoice (DP/sisa TIDAK ditampilkan, lampiran murni dari data invoice), rekening tujuan dikosongkan (belum ada datanya di sistem). Kotak "Proposal pembayaran" dan modal buat proposal di Procurement dihapus; kolom/aksi simpan proposal dari migration 0082 dibiarkan (tidak dipakai).
 
 ## Proposal Pembayaran vendor produksi + PIC pembayaran Finance -- migration 0082 (2026-10-30)
 Owner: Finance perlu tahu invoice vendor dibayar untuk proposal/kegiatan apa (format formulir proposal PSCM-PRODUKSI) dan siapa PIC yang memproses pembayaran (Finance punya dua akun).

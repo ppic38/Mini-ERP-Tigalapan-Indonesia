@@ -104,16 +104,12 @@ export function buildPaymentProposalPdf(p: PaymentProposal, invoices: ProposalIn
   y += rekH + 22;
   label(doc, "TAGIHAN PRODUKSI", LABEL_X, y - 1);
   amountBox(doc, y, p.tagihan);
-  label(doc, `DP ${p.dpPercent}%`, LABEL_X, y + 14);
-  amountBox(doc, y + 15, p.dpAmount);
-  label(doc, "SISA TAGIHAN", LABEL_X, y + 29);
-  amountBox(doc, y + 30, p.sisa, RED);
 
   label(doc, "TANGGAL MULAI KEGIATAN", 475, y + 6);
   box(doc, 650, y + 3, 160, BOX_H, proposalDate(p.startDate));
 
   // Invoice vendor yang dinaungi proposal ini.
-  y += 66;
+  y += 44;
   if (invoices.length > 0) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9);
