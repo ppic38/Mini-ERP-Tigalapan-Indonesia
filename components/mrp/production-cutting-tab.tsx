@@ -1827,12 +1827,21 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                                         + Hasil tambahan
                                       </button>
                                     </div>
+                                    {extras.length > 0 && (
+                                      <div className="mt-2 grid grid-cols-[1fr_1fr_1fr_1.1fr_64px] gap-2 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                                        <span>Lengan</span>
+                                        <span>Usia</span>
+                                        <span>Size</span>
+                                        <span className="text-right">Qty (pcs)</span>
+                                        <span />
+                                      </div>
+                                    )}
                                     {extras.map((x, i) => {
                                       const sizeOptions = x.usia === "KIDS" ? KIDS_SIZES : Array.from(new Set(["XS", ...SIZE_ORDER, ...knownSizes]));
                                       const patch = (p: Partial<typeof x>) => setExtras(extras.map((y, j) => (j === i ? { ...y, ...p } : y)));
                                       return (
-                                        <div key={i} className="mt-1.5 flex flex-wrap items-end gap-2">
-                                          <select value={x.lengan} onChange={(e) => patch({ lengan: e.target.value as Lengan })} className="rounded-md border border-[#DDE4EB] bg-white px-2 py-1.5 font-sans text-[11.5px]" aria-label="Lengan hasil tambahan">
+                                        <div key={i} className="mt-1 grid grid-cols-[1fr_1fr_1fr_1.1fr_64px] items-center gap-2">
+                                          <select value={x.lengan} onChange={(e) => patch({ lengan: e.target.value as Lengan })} className="h-9 w-full rounded-md border border-[#DDE4EB] bg-white px-2.5 font-sans text-[12px] text-text-primary" aria-label="Lengan hasil tambahan">
                                             <option value="PENDEK">Pendek</option>
                                             <option value="PANJANG">Panjang</option>
                                           </select>
@@ -1842,24 +1851,22 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                                               const usia = e.target.value as Usia;
                                               patch({ usia, size: usia === "KIDS" && !KIDS_SIZES.includes(x.size) ? "" : x.size });
                                             }}
-                                            className="rounded-md border border-[#DDE4EB] bg-white px-2 py-1.5 font-sans text-[11.5px]"
+                                            className="h-9 w-full rounded-md border border-[#DDE4EB] bg-white px-2.5 font-sans text-[12px] text-text-primary"
                                             aria-label="Usia hasil tambahan"
                                           >
                                             <option value="DEWASA">Dewasa</option>
                                             <option value="KIDS">Kids</option>
                                           </select>
-                                          <select value={x.size} onChange={(e) => patch({ size: e.target.value })} className="rounded-md border border-[#DDE4EB] bg-white px-2 py-1.5 font-sans text-[11.5px]" aria-label="Size hasil tambahan">
-                                            <option value="">Size…</option>
+                                          <select value={x.size} onChange={(e) => patch({ size: e.target.value })} className="h-9 w-full rounded-md border border-[#DDE4EB] bg-white px-2.5 font-sans text-[12px] text-text-primary" aria-label="Size hasil tambahan">
+                                            <option value="">Pilih size</option>
                                             {sizeOptions.map((sz) => (
                                               <option key={sz} value={sz}>
                                                 {sz}
                                               </option>
                                             ))}
                                           </select>
-                                          <div className="w-[130px]">
-                                            <NumberInput value={x.qty} onChange={(v) => patch({ qty: v })} emptyWhenZero placeholder="Qty (pcs)" className="input w-full text-right" />
-                                          </div>
-                                          <button type="button" onClick={() => setExtras(extras.filter((_, j) => j !== i))} className="rounded-md border border-[#E7C9C9] bg-white px-2 py-1 font-sans text-[10.5px] font-semibold text-danger-fg">
+                                          <NumberInput value={x.qty} onChange={(v) => patch({ qty: v })} emptyWhenZero placeholder="0" className="h-9 w-full rounded-md border border-[#DDE4EB] bg-white px-2.5 text-right font-mono text-[12px] font-medium text-text-primary" />
+                                          <button type="button" onClick={() => setExtras(extras.filter((_, j) => j !== i))} className="h-9 rounded-md border border-[#E7C9C9] bg-white font-sans text-[11px] font-semibold text-danger-fg">
                                             Hapus
                                           </button>
                                         </div>
