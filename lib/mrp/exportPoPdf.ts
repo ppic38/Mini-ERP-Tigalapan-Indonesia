@@ -1,10 +1,10 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { CellHookData } from "jspdf-autotable";
-import { formatDate, formatDecimal, formatPcs, localDateString, materialKgPerRollForGroup, mrpDetailFor, type AduanMaterialKind } from "./derive";
+import { formatDate, formatDecimal, formatPcs, formatRupiah, localDateString, materialKgPerRollForGroup, mrpDetailFor, vendorInvoiceAdjustmentTotal, vendorInvoiceFinalAmount, type AduanMaterialKind } from "./derive";
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "./seed";
 import type { MrpDetail } from "./store";
-import type { MaklonPO, MaterialPO } from "./types";
+import type { MaklonPO, MaterialPO, PaymentProposal, VendorInvoice } from "./types";
 import { poApprovalSignBoxes, type PoApprovalSignBox } from "./poApproval";
 
 // Revisi 2026-09-28 (owner: "versi internal pake sekarang dan versi eksternal (untuk ke supplier
@@ -574,4 +574,66 @@ export function exportMaklonPoPdfBatch(pos: MaklonPO[], mrpDetails: MrpDetail[],
     renderMaklonPoPage(doc, po, mrpDetails, variant);
   });
   doc.save(fileName);
+}
+
+/** Proposal Pembayaran invoice vendor produksi (Finance > Payment Maklon, dibuat otomatis dari data invoice) -- kop, kotak info,
+ *  tabel bergaris header hijau, dan blok tanda tangan SAMA dengan PDF PO. Tanpa rekening tujuan dan tanpa DP/sisa (owner 2026-10-30). */
+function renderInvoiceProposalPage(doc: jsPDF, inv: VendorInvoice, proposal: PaymentProposal, mrpDetails: MrpDetail[]) {
+  const vendorName = VENDOR_PRODUKSI[inv.vendorProduksi]?.name ?? inv.vendorProduksi;
+  const mrpIds = Array.from(new Set(inv.lines.map((l) => l.mrpId)));
+  const totalQty = inv.lines.reduce((n, l) => n + l.qty, 0);
+  const denda = vendorInvoiceAdjustmentTotal(inv, "DENDA");
+  const reward = vendorInvoiceAdjustmentTotal(inv, "REWARD");
+  const statusLabel = inv.status === "PAID" ? "Lunas" : inv.status === "APPROVED" ? "Disetujui Procurement - belum dibayar" : "Menunggu persetujuan Procurement";
+
+  let y = drawHeader(doc, "PROPOSAL PEMBAYARAN TAGIHAN PRODUKSI");
+  y = drawInfoGrid(
+    doc,
+    y,
+    [
+      ["No. Proposal", proposal.no],
+      ["Tanggal", formatDate(proposal.date)],
+      ["Location", proposal.location],
+      ["Nama Kegiatan", proposal.activity],
+    ],
+    [
+      ["No. Invoice", inv.id],
+      ["Vendor Produksi", vendorName],
+      ["No. MRP / PO", mrpIds.join(", ")],
+      ["Tanggal Invoice", formatDate(inv.submittedAt)],
+      ["Mulai Kegiatan", formatDate(proposal.startDate)],
+      ["Status Invoice", statusLabel],
+    ]
+  );
+
+  y = drawSectionHeading(doc, y, `1. Rincian Invoice ${inv.id} - ${vendorName}`);
+  const kategoriOf = (mrpId: string, warna: string, lengan: string) => mrpDetailFor(mrpId, mrpDetails)?.lenganGroups.find((g) => g.warna === warna && g.lengan === lengan)?.kategori ?? "—";
+  const body = inv.lines.map((l, i) => [String(i + 1), l.mrpId, kategoriOf(l.mrpId, l.warna, l.lengan), `${l.warna} · ${l.lengan}`, formatPcs(l.qty), formatRupiah(l.ratePerPc), formatRupiah(l.amount)]);
+  const foot: string[][] = [["", "", "", "TOTAL", formatPcs(totalQty), "", formatRupiah(inv.totalTagihan)]];
+  if (denda > 0) foot.push(["", "", "", "Denda", "", "", "- " + formatRupiah(denda)]);
+  if (reward > 0) foot.push(["", "", "", "Reward", "", "", "+ " + formatRupiah(reward)]);
+  foot.push(["", "", "", "TOTAL TAGIHAN PRODUKSI", "", "", formatRupiah(vendorInvoiceFinalAmount(inv))]);
+  autoTable(doc, {
+    ...TABLE_BASE,
+    startY: y,
+    head: [["No", "No. MRP", "Kategori", "Warna", "Qty", "Harga/pc", "Jumlah"]],
+    body,
+    foot,
+    showFoot: "lastPage",
+    columnStyles: { 0: { cellWidth: 26, halign: "center" }, 1: { cellWidth: 44 }, 4: { halign: "right", cellWidth: 44 }, 5: { halign: "right", cellWidth: 62 }, 6: { halign: "right", cellWidth: 80 } },
+  });
+  y = lastAutoTableY(doc) + 22;
+
+  const boxes: PoApprovalSignBox[] = [
+    { heading: "Diajukan oleh", role: "Vendor Produksi", short: "Vendor", step: 1, state: "SUBMITTED", name: inv.submittedBy ?? vendorName, date: inv.submittedAt },
+    { heading: "Disetujui oleh", role: "Procurement", short: "Procurement", step: 2, state: inv.approvedAt || inv.status === "PAID" ? "APPROVED" : "PENDING", name: "Procurement", date: inv.approvedAt },
+    { heading: "Dibayar oleh", role: "Finance", short: "Finance", step: 3, state: inv.status === "PAID" ? "APPROVED" : "PENDING", name: inv.paidBy ?? "Finance", date: inv.paidAt },
+  ];
+  drawApprovalBoxesSafe(doc, y, boxes);
+}
+
+export function exportInvoiceProposalPdf(inv: VendorInvoice, proposal: PaymentProposal, mrpDetails: MrpDetail[]) {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  renderInvoiceProposalPage(doc, inv, proposal, mrpDetails);
+  doc.save(`Proposal-${proposal.no.replace(/[\\/:*?"<>|\s]+/g, "-")}.pdf`);
 }
