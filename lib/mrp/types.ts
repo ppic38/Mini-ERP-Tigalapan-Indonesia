@@ -392,6 +392,11 @@ export type MaklonInvoice = {
   paidAt?: string;
 };
 
+/** Hasil tambahan dari sisa kain saat Input Hasil Cutting (migration 0084): baju lain (lengan/usia/size apa pun) dari kain roll yang
+ *  masih bersisa setelah target tercapai. `resultId` terisi begitu SAH dan tercatat sebagai Finish Good (tanpa target). */
+export type CuttingExtra = { lengan: Lengan; usia: Usia; size: string; qty: number };
+export type CuttingExtraStored = CuttingExtra & { resultId?: string };
+
 export type ProductionBatch = {
   id: string;
   mrpId: string;
@@ -413,6 +418,8 @@ export type ProductionBatch = {
    *  Input Hasil Cutting (mis. target L 100 -> 99 L + 1 M => [{from:"L",to:"M",qty:1}]). HANYA penanda --
    *  qty resminya tetap di `sizeQty`. Kosong = tidak ada alih size. */
   sizeShifts?: { from: string; to: string; qty: number }[];
+  /** Migration 0084: hasil tambahan dari sisa kain roll ini (kosong = tidak ada). Tanpa `resultId` = masih menunggu persetujuan akun utama. */
+  extraResults?: CuttingExtraStored[];
   /** Hasil aduan AKTUAL (qty per size) dari roll ini, dicatat vendor saat "Update ke Cutting" —
    *  kosong kalau belum diisi (batch lama sebelum fitur ini ada, atau memang belum diinput).
    *  Dipakai untuk target/yield per roll (lihat productionYieldAlertsList di derive.ts), BUKAN

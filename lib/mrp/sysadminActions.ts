@@ -12,6 +12,7 @@ import { reassignAduanRowsVendor, resiGroupInvoiceLines, weightVariance } from "
 import { getFlowSnapshot } from "./repo/snapshot";
 import { loadWeightTolerancePct } from "./weightToleranceServer";
 import { assertRollCodesUnique } from "./rollCodeServer";
+import { removeBatchExtras } from "./cuttingExtras";
 
 /** Bungkus aksi supaya alasan gagalnya sampai ke user di production (sama pola dengan lib/mrp/actions.ts). */
 async function toActionResult<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
@@ -913,6 +914,8 @@ export async function sysadminUndoCuttingAction(batchId: string, reason: string)
     const db = supabaseServer();
     const batch = await loadBatchUntouchedByFg(db, batchId);
     if (!batch.cutting_at) throw new Error("Roll ini belum punya hasil cutting.");
+    // Hasil tambahan sisa kain (migration 0084) ikut dibatalkan; ditolak kalau grup tujuannya sudah dikonfirmasi Finish Good.
+    await removeBatchExtras(db, [batch]);
     const { data: sizes, error: sizesErr } = await db.from("production_batch_sizes").select("size,qty").eq("production_batch_id", batchId);
     if (sizesErr) throw new Error(sizesErr.message);
     const { error: sizeErr } = await db.from("production_batch_sizes").delete().eq("production_batch_id", batchId);

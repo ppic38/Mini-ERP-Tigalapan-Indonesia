@@ -25,6 +25,7 @@ import type {
   VendorInvoice,
   VendorInvoiceAdjustmentKind,
   WarehouseReceipt,
+  CuttingExtra,
 } from "./types";
 import type { ParsedMrpImport } from "./parseImport";
 import type { EkspedisiRateRow, EntitasRow, HargaFobRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, MaterialSupplierRow, SupplierRow, VendorProduksiMasterRow, WarnaAliasRow } from "./masterData";
@@ -520,7 +521,9 @@ type FlowActions = {
     sizeQtyByBatchId: Record<string, Record<string, number>>,
     sizeShiftsByBatchId?: Record<string, { from: string; to: string; qty: number }[]>,
     /** Keadaan roll saat modal dibuka -- server menolak simpanan kalau roll sudah diubah orang lain (anti-timpa). */
-    expectedByBatchId?: Record<string, { cuttingAt?: string | null; sizeQty?: Record<string, number> }>
+    expectedByBatchId?: Record<string, { cuttingAt?: string | null; sizeQty?: Record<string, number> }>,
+    /** Hasil tambahan dari sisa kain per roll (migration 0084): baju lain dari kain yang bersisa setelah target tercapai. */
+    extrasByBatchId?: Record<string, CuttingExtra[]>
   ) => Promise<void>;
   /** Item 14 (feedback batch 2026-09-10): edit resting_at untuk 1 sesi resting (beberapa batch
    *  sekaligus, semuanya berbagi resting_at yang sama). */
@@ -2292,14 +2295,14 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // Fix-nya: 1 round-trip untuk SEMUA batchIds sekaligus (updateBatchesToCuttingAction), patch
   // optimistic PENUH SEBELUM await (pola sama seperti markRollArrived di atas), 1 kali
   // backgroundRefresh() di akhir saja (bukan N kali).
-  updateBatchesToCutting: async (batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId = {}, expectedByBatchId) => {
+  updateBatchesToCutting: async (batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId = {}, expectedByBatchId, extrasByBatchId = {}) => {
     const idSet = new Set(batchIds);
     const previous = get().productionBatches;
     set({
-      productionBatches: previous.map((b) => (idSet.has(b.id) ? { ...b, cuttingAt, sizeQty: sizeQtyByBatchId[b.id] ?? b.sizeQty, sizeShifts: (sizeShiftsByBatchId[b.id] ?? []).length > 0 ? sizeShiftsByBatchId[b.id] : undefined } : b)),
+      productionBatches: previous.map((b) => (idSet.has(b.id) ? { ...b, cuttingAt, sizeQty: sizeQtyByBatchId[b.id] ?? b.sizeQty, sizeShifts: (sizeShiftsByBatchId[b.id] ?? []).length > 0 ? sizeShiftsByBatchId[b.id] : undefined, extraResults: (extrasByBatchId[b.id] ?? []).length > 0 ? extrasByBatchId[b.id] : undefined } : b)),
     });
     try {
-      unwrapAction(await actions.updateBatchesToCuttingAction(batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId, expectedByBatchId));
+      unwrapAction(await actions.updateBatchesToCuttingAction(batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId, expectedByBatchId, extrasByBatchId));
     } catch (err) {
       set({ productionBatches: previous });
       notifyError("Gagal menyimpan hasil cutting -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));

@@ -38,6 +38,8 @@ import { scopeStateToVendor, stripVendorActorNames } from "./vendorScope";
 import { loadWeightTolerancePct, WEIGHT_TOLERANCE_KEY } from "./weightToleranceServer";
 import { assertRollCodesUnique } from "./rollCodeServer";
 import { normalizeProposal, validateProposal } from "./proposal";
+import { materializeExtras, normalizeExtras, removeBatchExtras } from "./cuttingExtras";
+import type { CuttingExtra, CuttingExtraStored } from "./types";
 import {
   localDateString,
   maklonAmountForLenganBuckets,
@@ -2615,10 +2617,13 @@ async function applyCuttingApproval(
   actor: { vendorId: string; vendorUserId: string | null; actorName: string },
   batchIds: string[],
   sizeQtyByBatchId: Record<string, Record<string, number>>,
-  shiftsByBatchId: Record<string, SizeShift[]>
+  shiftsByBatchId: Record<string, SizeShift[]>,
+  extraBatchIds: Set<string> = new Set()
 ): Promise<void> {
   const required = actor.vendorUserId != null && (await loadCuttingApprovalRequired(db, actor.vendorId));
   const pending: { id: string; short: string[] }[] = [];
+  // Hasil tambahan dari sisa kain yang disimpan anggota tim SELALU menunggu persetujuan akun utama (tidak tergantung pengaturan vendor).
+  for (const id of extraBatchIds) pending.push({ id, short: ["hasil tambahan dari sisa kain"] });
   if (required) {
     for (const id of batchIds) {
       const target = await loadBatchTargetSizes(db, id);
@@ -2628,7 +2633,11 @@ async function applyCuttingApproval(
       const short = Object.entries(target)
         .filter(([size, t]) => t - (actual[size] ?? 0) - (shiftedFrom[size] ?? 0) > 0)
         .map(([size, t]) => `${size} ${actual[size] ?? 0}/${t}`);
-      if (short.length > 0) pending.push({ id, short });
+      if (short.length > 0) {
+        const already = pending.find((p) => p.id === id);
+        if (already) already.short.push(...short);
+        else pending.push({ id, short });
+      }
     }
   }
   const pendingIds = new Set(pending.map((p) => p.id));
@@ -2650,8 +2659,8 @@ async function applyCuttingApproval(
     if (error) throw new Error("Gagal mengajukan persetujuan hasil cutting -- jalankan migration 0068 di Supabase dulu. " + error.message);
     const { data: labels } = await db.from("production_batches").select("id,code_roll,warna,lengan").in("id", pending.map((p) => p.id));
     const names = (labels ?? []).map((b) => `${b.code_roll ?? b.id} (${b.warna} · ${b.lengan})`).join(", ");
-    await insertNotification(notif(`Hasil cutting dari ${actor.actorName} kurang dari target dan menunggu persetujuan akun utama: ${names}`, ["vendorMaklon"], actor.vendorId));
-    await logVendorAction(actor, `Ajukan persetujuan hasil cutting ${pending.length} roll (kurang dari target)`, "production_batches", pending.map((p) => p.id).join(","));
+    await insertNotification(notif(`Hasil cutting dari ${actor.actorName} kurang dari target atau berisi hasil tambahan sisa kain, dan menunggu persetujuan akun utama: ${names}`, ["vendorMaklon"], actor.vendorId));
+    await logVendorAction(actor, `Ajukan persetujuan hasil cutting ${pending.length} roll (kurang dari target / hasil tambahan sisa kain)`, "production_batches", pending.map((p) => p.id).join(","));
   }
 }
 
@@ -2676,7 +2685,7 @@ export async function decideCuttingApprovalAction(batchIds: string[], decision: 
     const db = supabaseServer();
     const { data: rows, error } = await db
       .from("production_batches")
-      .select("id,vendor_produksi,code_roll,warna,lengan,mrp_id,cutting_approval_status,closed_at")
+      .select("id,vendor_produksi,code_roll,warna,lengan,mrp_id,cutting_approval_status,closed_at,extra_results")
       .in("id", batchIds);
     if (error) throw new Error(error.message);
     if (!rows || rows.length !== batchIds.length) throw new Error("Sebagian roll tidak ditemukan.");
@@ -2686,12 +2695,22 @@ export async function decideCuttingApprovalAction(batchIds: string[], decision: 
     }
     const now = new Date().toISOString();
     if (decision === "APPROVE") {
+      // Hasil tambahan sisa kain yang menunggu: jadi sah sekarang (tercatat sebagai Finish Good di grup tujuannya).
+      for (const b of rows) {
+        const stored = ((b.extra_results as CuttingExtraStored[] | null) ?? []).filter((e) => !e.resultId);
+        if (stored.length === 0) continue;
+        const done = await materializeExtras(db, b, stored, now);
+        const kept = ((b.extra_results as CuttingExtraStored[] | null) ?? []).filter((e) => !!e.resultId);
+        const { error: exErr } = await db.from("production_batches").update({ extra_results: [...kept, ...done] }).eq("id", b.id);
+        if (exErr) throw new Error(exErr.message);
+      }
       const { error: upErr } = await db
         .from("production_batches")
         .update({ cutting_approval_status: "APPROVED", cutting_decided_by: actor.actorName, cutting_decided_at: now, cutting_decision_note: reason || null })
         .in("id", batchIds);
       if (upErr) throw new Error(upErr.message);
     } else {
+      await removeBatchExtras(db, rows);
       const { error: delErr } = await db.from("production_batch_sizes").delete().in("production_batch_id", batchIds);
       if (delErr) throw new Error(delErr.message);
       const { error: upErr } = await db
@@ -2805,14 +2824,15 @@ export async function updateBatchesToCuttingAction(
   cuttingAt: string,
   sizeQtyByBatchId: Record<string, Record<string, number>>,
   sizeShiftsByBatchId: Record<string, SizeShift[]> = {},
-  expectedByBatchId?: Record<string, { cuttingAt?: string | null; sizeQty?: Record<string, number> }>
+  expectedByBatchId?: Record<string, { cuttingAt?: string | null; sizeQty?: Record<string, number> }>,
+  extrasByBatchId: Record<string, CuttingExtra[]> = {}
 ): Promise<ActionResult<{ batchId: string; cuttingAt: string; sizeQty?: Record<string, number> }[]>> {
   // Revisi 2026-09-19: di production Next.js MENYEMBUNYIKAN pesan Error yang di-throw Server Action
   // (klien hanya menerima "Minified React error #441" -- alasan sebenarnya, mis. 'grup sudah Selesai
   // Produksi', tidak pernah sampai ke user). Makanya alasan penolakan dikembalikan sebagai nilai
   // ({ ok: false, error }) dan store yang melempar ulang di sisi klien.
   try {
-    return { ok: true, data: await updateBatchesToCuttingImpl(batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId, expectedByBatchId) };
+    return { ok: true, data: await updateBatchesToCuttingImpl(batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId, expectedByBatchId, extrasByBatchId) };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -2823,7 +2843,8 @@ async function updateBatchesToCuttingImpl(
   cuttingAt: string,
   sizeQtyByBatchId: Record<string, Record<string, number>>,
   sizeShiftsByBatchId: Record<string, SizeShift[]> = {},
-  expectedByBatchId?: Record<string, { cuttingAt?: string | null; sizeQty?: Record<string, number> }>
+  expectedByBatchId?: Record<string, { cuttingAt?: string | null; sizeQty?: Record<string, number> }>,
+  extrasByBatchId: Record<string, CuttingExtra[]> = {}
 ): Promise<{ batchId: string; cuttingAt: string; sizeQty?: Record<string, number> }[]> {
   const actor = await requireVendorSessionWithActor();
   if (batchIds.length === 0) return [];
@@ -2839,6 +2860,18 @@ async function updateBatchesToCuttingImpl(
     .in("id", batchIds);
   if (batchErr) throw new Error(batchErr.message);
   if (!batchRows || batchRows.length !== batchIds.length) throw new Error("Sebagian roll tidak ditemukan.");
+  // Hasil tambahan dari sisa kain (migration 0084): validasi SEBELUM ada yang ditulis; grup tujuan tidak boleh sudah "Selesai Produksi".
+  const cleanExtras: Record<string, CuttingExtra[]> = {};
+  for (const b of batchRows) {
+    const list = normalizeExtras(extrasByBatchId[b.id], b.code_roll ?? b.id);
+    if (list.length > 0) cleanExtras[b.id] = list;
+  }
+  for (const b of batchRows) {
+    for (const x of cleanExtras[b.id] ?? []) {
+      const { data: meta } = await db.from("production_group_meta").select("done_at").eq("group_key", `${b.mrp_id}|${b.warna}|${x.lengan}`).eq("vendor_produksi", b.vendor_produksi).maybeSingle();
+      if (meta?.done_at) throw new Error(`Grup ${b.warna} · ${x.lengan} sudah "Selesai Produksi" -- hasil tambahan sisa kain untuk grup itu tidak bisa disimpan. Buka kunci dulu di tab Final Produksi.`);
+    }
+  }
   if (batchRows.some((b) => b.vendor_produksi !== actor.vendorId)) throw new Error("Sebagian roll bukan milik vendor Anda.");
   // Aturan owner 2026-10-23: hasil cutting roll yang SUDAH punya Finish Good (>0) atau sudah ditutup tidak bisa diubah lagi,
   // supaya angka cutting tidak bertentangan dengan Finish Good yang tercatat (mis. cutting diedit lebih kecil dari FG).
@@ -2879,6 +2912,10 @@ async function updateBatchesToCuttingImpl(
     if (shifts.length > 0) await validateSizeShifts(db, batchId, sizeQtyByBatchId[batchId] ?? {}, shifts);
   }
 
+  // Hasil tambahan sisa kain lama roll-roll ini dihapus SEBELUM hasil cutting ditulis (ditolak kalau grup tujuannya sudah dikonfirmasi
+  // Selesai Produksi), supaya penolakan tidak meninggalkan data setengah jadi; yang baru dicatat setelah hasil cutting tersimpan.
+  await removeBatchExtras(db, batchRows);
+
   // 1 UPDATE untuk SEMUA batchId sekaligus (cuttingAt seragam untuk 1 grup, lihat komentar
   // saveGroup di production-cutting-tab.tsx) -- bukan N update terpisah seperti versi single.
   const { error } = await db.from("production_batches").update({ cutting_at: cuttingAt }).in("id", batchIds);
@@ -2914,9 +2951,29 @@ async function updateBatchesToCuttingImpl(
     }
   }
 
+  // Hasil tambahan sisa kain (migration 0084): hasil lama roll ini diganti. Akun utama = langsung sah (tercatat sebagai Finish Good);
+  // anggota tim = disimpan menunggu persetujuan akun utama (lihat applyCuttingApproval di bawah).
+  const pendingExtraBatchIds = new Set<string>();
+  {
+    const recordedAt = new Date().toISOString();
+    for (const b of batchRows) {
+      const list = cleanExtras[b.id] ?? [];
+      if (list.length === 0) continue;
+      if (actor.vendorUserId != null) {
+        pendingExtraBatchIds.add(b.id);
+        const { error: exErr } = await db.from("production_batches").update({ extra_results: list }).eq("id", b.id);
+        if (exErr) throw new Error("Gagal menyimpan hasil tambahan sisa kain -- jalankan migration 0084 (production_batches.extra_results) di Supabase dulu. " + exErr.message);
+      } else {
+        const stored = await materializeExtras(db, b, list, recordedAt);
+        const { error: exErr } = await db.from("production_batches").update({ extra_results: stored }).eq("id", b.id);
+        if (exErr) throw new Error("Gagal menyimpan hasil tambahan sisa kain -- jalankan migration 0084 (production_batches.extra_results) di Supabase dulu. " + exErr.message);
+      }
+    }
+  }
+
   // Persetujuan akun utama (migration 0068, opsional per vendor): hasil cutting anggota tim yang ada size di bawah target
-  // menunggu persetujuan; Finish Good roll itu terkunci sampai diputuskan.
-  await applyCuttingApproval(db, actor, batchIds, sizeQtyByBatchId, sizeShiftsByBatchId);
+  // menunggu persetujuan; Finish Good roll itu terkunci sampai diputuskan. Hasil tambahan sisa kain dari anggota tim selalu menunggu.
+  await applyCuttingApproval(db, actor, batchIds, sizeQtyByBatchId, sizeShiftsByBatchId, pendingExtraBatchIds);
 
   // recomputeAutoRejectForGroup 1x untuk groupKey ini (bukan N kali seperti kalau ini dipanggil
   // lewat loop versi single) -- fungsi ini SUDAH ada & dipakai versi single, reuse apa adanya.
@@ -5585,7 +5642,7 @@ export async function submitResiGroupInvoiceAction(koliIds: string[]): Promise<v
     lengan: l.lengan,
     usia: l.usia,
     qty: l.qty,
-    ratePerPc: hargaMaklonLineRate(snapshot.hargaMaklon, vendorId, maklonTipeForWarna(l.mrpId, l.warna, l.lengan, snapshot.mrpDetails), l.lengan, cumulativeByTipe).rate,
+    ratePerPc: hargaMaklonLineRate(snapshot.hargaMaklon, vendorId, maklonTipeForWarna(l.mrpId, l.warna, l.lengan, snapshot.mrpDetails, l.usia), l.lengan, cumulativeByTipe).rate,
   }));
 
   await createVendorInvoiceAction({ vendorProduksi: vendorId, lines: invoiceLines });
@@ -5610,7 +5667,7 @@ async function repriceUnpaidVendorInvoices(): Promise<number> {
   const vendorByInvoice = new Map(invs.map((i) => [i.id, i.vendor_produksi as string]));
   const { data: lines, error: lineErr } = await db
     .from("vendor_invoice_lines")
-    .select("id,vendor_invoice_id,mrp_id,warna,lengan,qty,rate_per_pc")
+    .select("id,vendor_invoice_id,mrp_id,warna,lengan,usia,qty,rate_per_pc")
     .in("vendor_invoice_id", Array.from(vendorByInvoice.keys()));
   if (lineErr) throw new Error(lineErr.message);
   const snapshot = await getFlowSnapshot();
@@ -5627,7 +5684,7 @@ async function repriceUnpaidVendorInvoices(): Promise<number> {
       cum = vendorCumulativeQtyByTipe(vendor, snapshot.mrpDetails);
       cumByVendor.set(vendor, cum);
     }
-    const tipe = maklonTipeForWarna(l.mrp_id, l.warna, l.lengan, snapshot.mrpDetails);
+    const tipe = maklonTipeForWarna(l.mrp_id, l.warna, l.lengan, snapshot.mrpDetails, (l.usia ?? undefined) as Usia | undefined);
     const rate = hargaMaklonLineRate(snapshot.hargaMaklon, vendor, tipe, l.lengan, cum).rate;
     totals.set(l.vendor_invoice_id, (totals.get(l.vendor_invoice_id) ?? 0) + l.qty * rate);
     if (rate !== Number(l.rate_per_pc)) {

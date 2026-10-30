@@ -446,7 +446,7 @@ export function InvoiceVendorReviewPanel() {
                     const mrp = mrpMetaFor(line.mrpId, mrpDetails, staticMrps);
                     const sizes = productionYieldBySize(line.mrpId, line.warna, line.lengan, mrpDetails, productionBatches, productionResults);
                     // Validasi harga untuk Procurement: tipe harga Master Data item ini (kategori + lengan) dan harga master-nya sekarang.
-                    const lineTipe = maklonTipeForWarna(line.mrpId, line.warna, line.lengan, mrpDetails);
+                    const lineTipe = maklonTipeForWarna(line.mrpId, line.warna, line.lengan, mrpDetails, line.usia);
                     const lineMaster = hargaMaklonLineRate(hargaMaklon, inv.vendorProduksi, lineTipe, line.lengan, vendorCumulativeQtyByTipe(inv.vendorProduksi, mrpDetails));
                     const rateSelisih = inv.status !== "PAID" && lineMaster.rate !== line.ratePerPc;
                     return (

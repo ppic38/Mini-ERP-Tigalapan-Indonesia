@@ -92,7 +92,7 @@ export async function exportVendorInvoiceExcel(invoices: VendorInvoice[], mrpDet
         kategoriOf(l.mrpId, l.warna, l.lengan) || "—",
         l.warna,
         l.lengan === "PENDEK" ? "Pendek" : "Panjang",
-        maklonTipeForWarna(l.mrpId, l.warna, l.lengan, mrpDetails),
+        maklonTipeForWarna(l.mrpId, l.warna, l.lengan, mrpDetails, l.usia),
         l.qty,
         l.ratePerPc,
         l.amount,

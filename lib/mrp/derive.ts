@@ -379,10 +379,11 @@ export function maklonKategoriBreakdown(
 /** Tipe harga Master Data untuk satu baris invoice/PO (warna + lengan di MRP itu): diambil dari kategori grup MRP-nya
  *  (KIDS 24S -> PDK/PJG KIDS, PANJANG + RIB -> PJG RIB, TUNIK 24S -> TUNIK, COMBED -> PDK/PJG), dengan fallback dari akhiran
  *  nama warna (" KID", " RIB", " TUNIK") kalau grupnya tidak ditemukan. */
-export function maklonTipeForWarna(mrpId: string, warna: string, lengan: Lengan, mrpDetails: MrpDetail[]): string {
+export function maklonTipeForWarna(mrpId: string, warna: string, lengan: Lengan, mrpDetails: MrpDetail[], usia?: Usia): string {
   const group = mrpDetailFor(mrpId, mrpDetails)?.lenganGroups.find((g) => g.warna === warna && g.lengan === lengan);
   const suffix = /\sKIDS?$/i.test(warna) ? "KIDS" : /\sRIB$/i.test(warna) ? "RIB" : /\sTUNIK$/i.test(warna) ? "TUNIK" : "";
-  return hargaMaklonTipeFor(group?.kategori || suffix, lengan);
+  // Baju Kids (mis. dari sisa kain atau rework) ditagih dengan tipe Kids walau warnanya bukan warna Kids.
+  return hargaMaklonTipeFor(usia === "KIDS" ? "KIDS" : group?.kategori || suffix, lengan);
 }
 
 /** Kapasitas kumulatif TRUE vendor per TIPE harga (kategori + lengan) dari Aduan Pola semua MRP historisnya. Baris Master Data

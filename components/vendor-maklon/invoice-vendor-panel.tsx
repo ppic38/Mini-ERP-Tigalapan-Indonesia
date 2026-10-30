@@ -94,8 +94,8 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
   // dihitung dari kapasitas kumulatif TRUE vendor ini (semua PO Produksi historisnya) + tier
   // Standar/PKS Master Data Harga Maklon -- murni pratinjau, server menghitung ulang persis sama.
   const cumulativeByTipe = vendorCumulativeQtyByTipe(vendorId, mrpDetails);
-  function rateForLine(l: { mrpId: string; warna: string; lengan: Lengan }): number {
-    return hargaMaklonLineRate(hargaMaklon, vendorId, maklonTipeForWarna(l.mrpId, l.warna, l.lengan, mrpDetails), l.lengan, cumulativeByTipe).rate;
+  function rateForLine(l: { mrpId: string; warna: string; lengan: Lengan; usia?: Usia }): number {
+    return hargaMaklonLineRate(hargaMaklon, vendorId, maklonTipeForWarna(l.mrpId, l.warna, l.lengan, mrpDetails, l.usia), l.lengan, cumulativeByTipe).rate;
   }
   const deliveredMine = deliveryKolis.filter((k) => k.vendorProduksi === vendorId && k.deliveredAt);
   const recon = shipmentInvoiceReconciliation(vendorId, deliveryKolis, vendorInvoices);
@@ -394,7 +394,7 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                           </span>
                           <span data-label="Qty diinvoice" className="text-right">{formatPcs(line.qty)}</span>
                           <span data-label="Harga maklon" className="text-right">
-                            <span className="mr-1.5 rounded bg-info-bg px-1.5 py-0.5 text-[10px] font-semibold text-info-fg">{maklonTipeForWarna(line.mrpId, line.warna, line.lengan, mrpDetails)}</span>
+                            <span className="mr-1.5 rounded bg-info-bg px-1.5 py-0.5 text-[10px] font-semibold text-info-fg">{maklonTipeForWarna(line.mrpId, line.warna, line.lengan, mrpDetails, line.usia)}</span>
                             {formatRupiah(line.ratePerPc)}/pc
                           </span>
                           <span data-label="Nilai" className="text-right">{formatRupiah(line.amount)}</span>
