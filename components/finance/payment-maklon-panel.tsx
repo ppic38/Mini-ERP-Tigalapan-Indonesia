@@ -231,17 +231,31 @@ function LampiranEkspedisiCell({
   if (breakdown.groups.length === 0) {
     return <span className="font-sans text-[11px] text-text-muted">—</span>;
   }
+  // Satu baris per RESI (grup koli yang berangkat bersama): nomor resi, nomor koli, ekspedisi, qty, dan tombol lampiran resi -- supaya Finance
+  // bisa mencocokkan invoice dengan resi dan bukti kirimnya tanpa membuka detail (revisi 2026-10-30, owner).
+  const adaLampiran = breakdown.groups.filter((g) => g.ekspedisiNoteAt).length;
   return (
-    <span onClick={(e) => e.stopPropagation()} className="flex flex-col items-start gap-1">
+    <span onClick={(e) => e.stopPropagation()} className="flex min-w-[250px] flex-col items-stretch gap-1.5">
+      <span className="font-sans text-[10px] text-text-muted">
+        {breakdown.groups.length} resi · lampiran {adaLampiran}/{breakdown.groups.length}
+      </span>
       {breakdown.groups.map((g) => (
-        <span key={g.koliId} className="flex items-center gap-1.5 font-sans text-[10.5px] text-[#31414F]">
-          <span className="font-medium">{g.ekspedisi || "—"}</span>
+        <span key={g.koliId} className="flex items-start justify-between gap-2 rounded border border-[#E4E9EE] bg-white px-2 py-1 font-sans text-[10.5px] text-[#31414F]">
+          <span className="flex flex-col">
+            <span>
+              <span className="font-mono font-semibold">{g.noResi || "tanpa resi"}</span>
+              <span className="text-text-muted"> · {g.ekspedisi || "—"}</span>
+            </span>
+            <span className="text-text-muted">
+              {g.noKoli} · {formatPcs(g.totalQty)} pcs
+            </span>
+          </span>
           {g.ekspedisiNoteAt ? (
-            <button onClick={() => viewEkspedisiPhoto(g.koliId)} className="font-semibold text-action-primary underline">
-              Lihat foto
+            <button onClick={() => viewEkspedisiPhoto(g.koliId)} className="whitespace-nowrap font-semibold text-action-primary underline">
+              Lampiran resi
             </button>
           ) : (
-            <span className="text-text-muted">foto —</span>
+            <span className="whitespace-nowrap text-warning-fg">belum ada lampiran</span>
           )}
         </span>
       ))}

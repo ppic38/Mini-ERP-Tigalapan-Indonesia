@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Lampiran resi per invoice di Finance > Payment Maklon (2026-10-30, tanpa migration)
+Owner: kolom "Lampiran Ekspedisi" (`LampiranEkspedisiCell`, components/finance/payment-maklon-panel.tsx) kini satu baris PER RESI per invoice: nomor resi, ekspedisi, nomor koli dan qty resi itu, plus tombol **Lampiran resi** (membuka foto/berkas resi; "belum ada lampiran" kalau vendor belum mengunggah) dan ringkasan "N resi · lampiran x/N" di atasnya. Sebelumnya hanya nama ekspedisi per baris sehingga baris-barisnya tampak sama dan tidak bisa dicocokkan ke resi. Hanya tampilan.
+
 ## Hasil tambahan dari sisa kain saat Input Hasil Cutting -- migration 0084 (2026-10-30)
 Owner: kain roll yang masih bersisa setelah target tercapai boleh dijadikan baju lain (lengan, usia, size apa pun). Form Input Hasil Cutting punya bagian opsional per roll **"+ Hasil tambahan"** (lengan Pendek/Panjang, usia Dewasa/Kids, size, qty). Aturan owner: ditagih maklon dengan tarif TIPE barangnya (usia Kids = tipe KIDS lewat `maklonTipeForWarna(..., usia)`); tanpa approval kalau disimpan akun UTAMA vendor (langsung sah), tapi kalau disimpan ANGGOTA TIM selalu menunggu persetujuan akun utama (roll PENDING lewat mekanisme persetujuan cutting migration 0068; tidak tergantung pengaturan vendor); SKU tidak dicek (pilihan lengan/usia/size sama dengan tujuan rework).
 - **Migration 0084** (`0084_cutting_extra_results.sql`, owner menjalankan manual): kolom jsonb `production_batches.extra_results` (`[{lengan, usia, size, qty, resultId?}]`); ikut snapshot lewat to_jsonb jadi fungsi snapshot tidak diubah. Tanpa migration, simpan hasil tambahan menjawab "jalankan migration 0084" (simpan cutting biasa tidak terganggu).
