@@ -237,6 +237,81 @@ export function vendorCumulativeQtyByLengan(vendorKey: string, mrpDetails: MrpDe
   return totals;
 }
 
+/** Nama `tipeLengan` di Master Data Harga Maklon untuk kombinasi kategori MRP + lengan (revisi
+ *  2026-10-30, owner: harga maklon beda per kategori DAN tipe lengan). Contoh: "COMBED 24S" PENDEK
+ *  -> "PDK", "KIDS 24S" PANJANG -> "PJG KIDS", "PANJANG + RIB" -> "PJG RIB", "TUNIK 24S" -> "TUNIK",
+ *  kategori WANGKI/WANGKY -> "Wangky PDK"/"Wangky PJG". Hanya dipakai untuk INFORMASI monitoring
+ *  (lihat maklonKategoriBreakdown) -- perhitungan PO/invoice tetap per lengan saja. */
+export function hargaMaklonTipeFor(kategori: string, lengan: Lengan): string {
+  const abbr = lenganAbbr(lengan);
+  const k = kategori.toUpperCase();
+  if (/WANGK[IY]/.test(k)) return `Wangky ${abbr}`;
+  if (/TUNIK/.test(k)) return "TUNIK";
+  if (/RIB/.test(k)) return `${abbr} RIB`;
+  if (/KID/.test(k)) return `${abbr} KIDS`;
+  return abbr;
+}
+
+/** Sama seperti hargaMaklonRateInfo tapi kunci barisnya `tipeLengan` persis (bukan hanya PDK/PJG)
+ *  -- null kalau vendor tidak punya baris PKS/Standar sama sekali untuk tipe itu. */
+export function hargaMaklonRateInfoByTipe(hargaMaklon: HargaMaklonRow[], vendorKey: string, tipeLengan: string, cumulativeQty: number): MaklonRateInfo | null {
+  const t = normKey(tipeLengan);
+  const rows = hargaMaklon.filter((r) => hargaMaklonRowMatchesVendor(r, vendorKey) && normKey(r.tipeLengan) === t);
+  const pks = rows.filter((r) => r.jenisHarga === "PKS" && cumulativeQty >= (r.kapasitasMin ?? 0) && cumulativeQty < (r.kapasitasMax ?? Infinity));
+  if (pks.length > 0) {
+    const best = pks.reduce((a, b) => ((b.kapasitasMin ?? 0) > (a.kapasitasMin ?? 0) ? b : a));
+    return { rate: best.harga, source: "PKS", cumulativeQty, band: best };
+  }
+  const standar = rows.find((r) => r.jenisHarga === "Standar");
+  return standar ? { rate: standar.harga, source: "Standar", cumulativeQty, band: standar } : null;
+}
+
+export type MaklonKategoriRow = {
+  kategori: string;
+  lengan: Lengan;
+  qty: number;
+  /** Tipe di Master Data yang dicocokkan (hargaMaklonTipeFor). */
+  tipe: string;
+  /** Harga Master Data untuk kategori+lengan ini; null = tidak ada barisnya di Master Data vendor ini. */
+  masterRate: number | null;
+  masterSource: RateSource | null;
+  /** Harga yang dipakai perhitungan PO/invoice saat ini (hanya per lengan, tanpa kategori). */
+  billedRate: number;
+};
+
+/** Rincian target hasil jadi sebuah PO per kategori (kolom KATEGORI Excel MRP) x lengan, lengkap
+ *  dengan harga maklon Master Data per kategori vs harga yang saat ini dipakai tagihan. Qty tier
+ *  PKS dihitung per PO (sama seperti estimasi di PO Approval). */
+export function maklonKategoriBreakdown(hargaMaklon: HargaMaklonRow[], vendorKey: string, aduanRows: AduanPolaRow[], lenganGroups: LenganGroup[]): MaklonKategoriRow[] {
+  const groupKategori = new Map(lenganGroups.map((g) => [g.id, g.kategori]));
+  const byLengan = new Map<Lengan, number>();
+  const cells = new Map<string, { kategori: string; lengan: Lengan; qty: number }>();
+  for (const a of aduanRows) {
+    if (a.qty <= 0) continue;
+    const kategori = groupKategori.get(a.lenganGroupId) || "(tanpa kategori)";
+    byLengan.set(a.lengan, (byLengan.get(a.lengan) ?? 0) + a.qty);
+    const key = `${kategori}|${a.lengan}`;
+    const cell = cells.get(key) ?? { kategori, lengan: a.lengan, qty: 0 };
+    cell.qty += a.qty;
+    cells.set(key, cell);
+  }
+  const out: MaklonKategoriRow[] = [];
+  for (const c of cells.values()) {
+    const tipe = hargaMaklonTipeFor(c.kategori, c.lengan);
+    const master = hargaMaklonRateInfoByTipe(hargaMaklon, vendorKey, tipe, c.qty);
+    out.push({
+      kategori: c.kategori,
+      lengan: c.lengan,
+      qty: c.qty,
+      tipe,
+      masterRate: master?.rate ?? null,
+      masterSource: master?.source ?? null,
+      billedRate: hargaMaklonRate(hargaMaklon, vendorKey, c.lengan, byLengan.get(c.lengan) ?? 0),
+    });
+  }
+  return out.sort((a, b) => a.kategori.localeCompare(b.kategori) || (a.lengan === b.lengan ? 0 : a.lengan === "PENDEK" ? -1 : 1));
+}
+
 export function hargaMaklonRate(hargaMaklon: HargaMaklonRow[], vendorKey: string, lengan: Lengan, cumulativeQty: number): number {
   return hargaMaklonRateInfo(hargaMaklon, vendorKey, lengan, cumulativeQty).rate;
 }

@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## PO Produksi Saya: panel target hasil jadi per kategori + harga maklon (2026-10-30, tanpa migration)
+Owner: harga maklon ternyata beda per kategori (COMBED, KIDS, TUNIK, RIB) dan tipe lengan, jadi PO perlu bisa dimonitor per kategori. Di halaman vendor PO Produksi Saya, baris PO yang dibuka punya panel baru "Target hasil jadi per kategori & harga maklon" (TERTUTUP default, klik untuk buka): per kategori x lengan -> target pcs, tipe harga Master Data (`hargaMaklonTipeFor`: COMBED -> PDK/PJG, KIDS -> PDK/PJG KIDS, PANJANG + RIB -> PJG RIB, TUNIK -> TUNIK, WANGKI -> Wangky PDK/PJG), harga master (Standar/PKS, tier per PO), harga yang dipakai tagihan saat ini, dan nilai. Murni informasi: perhitungan nilai PO/invoice TETAP per lengan saja (belum membedakan kategori) -- perbedaan ditandai kuning di panel. Kode: `maklonKategoriBreakdown` di `lib/mrp/derive.ts`, `KategoriTargetPanel` di `app/vendor-maklon/po-produksi/page.tsx`.
+
 ## Warehouse Penerimaan: kolom disembunyikan, nomor koli vendor, filter, HPP hanya saat lengkap (2026-10-29, tanpa migration)
 Owner: di Warehouse > Penerimaan, kolom "Status WMS" dan "No Invoice Vendor" disembunyikan secara default (masih bisa dimunculkan lewat menu Kolom). Sub-tabel rincian resi menampilkan NOMOR KOLI YANG DIKETIK VENDOR (bukan id internal KOLI-xxxx; `WarehouseReceivableItem.noKoli`) dan punya filter nomor koli (dropdown) dan HPP/item (angka), plus penghitung baris dan Reset. HPP/item dan Nilai hanya tampil kalau parameter HPP sudah lengkap: invoice vendor resi itu sudah dibayar (tanpa `gateReason`) dan roll sudah final (bukan `sementara`); selain itu tampil "—". Hanya tampilan; perhitungan HPP dan alur Bongkar Koli tidak berubah.
 

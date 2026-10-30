@@ -10,7 +10,7 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { VendorAuthGuard } from "@/components/mrp/vendor-auth-guard";
 import { useMrpStore } from "@/lib/mrp/store";
-import { addDays, formatDate, formatPcs, formatRupiah, maklonMaterialStageBadge, maklonPoBadgeWithApproval, maklonPoDisplayStatus, materialReceivedForMaklon, mrpDetailFor, compareNewestFirst } from "@/lib/mrp/derive";
+import { addDays, formatDate, formatPcs, formatRupiah, maklonKategoriBreakdown, maklonMaterialStageBadge, maklonPoBadgeWithApproval, maklonPoDisplayStatus, materialReceivedForMaklon, mrpDetailFor, compareNewestFirst } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { AduanPolaRow, MaklonPO } from "@/lib/mrp/types";
 import type { MrpDetail } from "@/lib/mrp/store";
@@ -190,6 +190,74 @@ function LenganQtyCards({ rows, detail }: { rows: AduanPolaRow[]; detail?: MrpDe
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** Target hasil jadi sebuah PO per kategori (COMBED, KIDS, TUNIK, RIB, dst) x lengan, plus harga
+ *  maklon Master Data per kategori. Tertutup secara default -- dibuka lewat klik. Kolom "Dipakai
+ *  tagihan" = harga per lengan yang saat ini dipakai PO/invoice (belum membedakan kategori), ditandai
+ *  kalau beda dari harga Master Data kategori itu. */
+function KategoriTargetPanel({ rows, detail, vendorId }: { rows: AduanPolaRow[]; detail?: MrpDetail; vendorId: string }) {
+  const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
+  const [open, setOpen] = useState(false);
+  const items = maklonKategoriBreakdown(hargaMaklon, vendorId, rows, detail?.lenganGroups ?? []);
+  const total = items.reduce((n, r) => n + r.qty, 0);
+  const nilaiMaster = items.reduce((n, r) => n + r.qty * (r.masterRate ?? r.billedRate), 0);
+  const adaBeda = items.some((r) => r.masterRate !== null && r.masterRate !== r.billedRate);
+  const adaKosong = items.some((r) => r.masterRate === null);
+  return (
+    <div className="mb-3 rounded-xl border border-border-subtle bg-surface-card">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2 px-4 py-2.5 text-left">
+        {open ? <ChevronDown className="h-3.5 w-3.5 text-text-muted" /> : <ChevronRight className="h-3.5 w-3.5 text-text-muted" />}
+        <span className="font-sans text-[12px] font-semibold text-text-primary">Target hasil jadi per kategori &amp; harga maklon</span>
+        <span className="ml-auto font-mono text-[11px] text-text-muted">{items.length} kategori·lengan · {formatPcs(total)} pcs</span>
+      </button>
+      {open && (
+        <div className="border-t border-border-subtle px-4 pb-3 pt-2">
+          <div className="grid grid-cols-[1.4fr_0.8fr_0.9fr_1fr_1fr_1fr_1.2fr] gap-x-2 py-1 font-mono text-[10.5px] uppercase tracking-[0.08em] text-text-muted">
+            <span>Kategori</span>
+            <span>Lengan</span>
+            <span className="text-right">Target (pcs)</span>
+            <span>Tipe harga</span>
+            <span className="text-right">Harga master</span>
+            <span className="text-right">Dipakai tagihan</span>
+            <span className="text-right">Nilai (master)</span>
+          </div>
+          {items.map((r) => {
+            const beda = r.masterRate !== null && r.masterRate !== r.billedRate;
+            return (
+              <div key={`${r.kategori}|${r.lengan}`} className="grid grid-cols-[1.4fr_0.8fr_0.9fr_1fr_1fr_1fr_1.2fr] gap-x-2 border-t border-border-subtle py-1.5 font-sans text-[12px] text-text-primary">
+                <span className="font-medium">{r.kategori}</span>
+                <span>{r.lengan === "PENDEK" ? "Pendek" : "Panjang"}</span>
+                <span className="text-right font-mono">{formatPcs(r.qty)}</span>
+                <span className="font-mono text-[11px] text-text-secondary">{r.tipe}</span>
+                <span className="text-right font-mono">
+                  {r.masterRate === null ? <span className="text-warning-fg">belum ada</span> : formatRupiah(r.masterRate)}
+                  {r.masterSource && <span className="ml-1 text-[10px] text-text-muted">{r.masterSource}</span>}
+                </span>
+                <span className={`text-right font-mono ${beda ? "text-warning-fg" : "text-text-secondary"}`}>{formatRupiah(r.billedRate)}</span>
+                <span className="text-right font-mono">{formatRupiah(r.qty * (r.masterRate ?? r.billedRate))}</span>
+              </div>
+            );
+          })}
+          <div className="grid grid-cols-[1.4fr_0.8fr_0.9fr_1fr_1fr_1fr_1.2fr] gap-x-2 border-t-2 border-accent-blue bg-info-bg px-1 py-1.5 font-sans text-[11.5px] font-semibold text-info-fg">
+            <span>Total</span>
+            <span />
+            <span className="text-right font-mono">{formatPcs(total)}</span>
+            <span />
+            <span />
+            <span />
+            <span className="text-right font-mono">{formatRupiah(nilaiMaster)}</span>
+          </div>
+          {(adaBeda || adaKosong) && (
+            <p className="mt-2 font-sans text-[11px] text-text-muted">
+              {adaBeda && "Harga kuning = harga per lengan yang dipakai tagihan saat ini berbeda dari harga Master Data kategori itu. "}
+              {adaKosong && "\"Belum ada\" = Master Data Harga Maklon vendor ini belum punya baris untuk tipe tersebut (nilai dihitung dengan harga tagihan)."}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
