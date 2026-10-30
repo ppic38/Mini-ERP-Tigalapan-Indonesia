@@ -3771,6 +3771,17 @@ export function reworkBySizeForGroup(groupKey: string, results: ProductionResult
  *  yang dipotong ulang jadi baju) -- murni + rework = totalFg dari cumulativeSizeQtyForGroup.
  *  Contoh kasus yang diminta: Finish Good murni 100, lalu 3 reject di-rework jadi baju -> total
  *  Finish Good tampil 103, dengan rincian "100 murni + 3 dari rework". */
+/** Finish Good per size untuk satu grup, dipisah asalnya: rework=true -> hanya hasil rework (reject dipotong ulang jadi
+ *  baju), rework=false -> Finish Good murni (hasil cutting langsung). Dipakai sub-tab Finish Good vs Finish Good (Rework). */
+export function fgSizesByOrigin(groupKey: string, results: ProductionResult[], rework: boolean): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const r of results) {
+    if (r.groupKey !== groupKey || r.kind !== "FG" || isReworkResult(r) !== rework) continue;
+    for (const [size, qty] of Object.entries(r.sizeQty)) out[size] = (out[size] ?? 0) + qty;
+  }
+  return out;
+}
+
 export function fgMurniAndReworkForGroup(groupKey: string, results: ProductionResult[]): { murni: number; rework: number } {
   let murni = 0;
   let rework = 0;

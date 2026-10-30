@@ -18,7 +18,9 @@ import { usePendingActions } from "@/lib/mrp/usePendingActions";
 import {
   restingCandidateRolls,
   cumulativeSizeQtyForGroup,
+  cutWarnaLenganGroups,
   expectedRejectGrossForGroup,
+  fgSizesByOrigin,
   fgMurniAndReworkForGroup,
   groupCloseSummary,
   groupCloseWarningLines,
@@ -293,6 +295,8 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
   const saveFgProgress = useMrpStore((s) => s.saveFgProgress);
 
   const [selectedMrpId, setSelectedMrpId] = useState("");
+  // Sub-tab di tab Finish Good (2026-10-30, owner): Finish Good murni vs Finish Good hasil rework dipisah.
+  const [fgView, setFgView] = useState<"MURNI" | "REWORK">("MURNI");
   const [expandedGroupKey, setExpandedGroupKey] = useState("");
   // Tab gabungan Reject & Rework (2026-10-07): size yang form reworknya sedang terbuka (kosong = tidak ada).
   const [reworkOpen, setReworkOpen] = useState<{ groupKey: string; size: string } | null>(null);
@@ -332,10 +336,17 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
   const allGroups = selectedMrpId ? warnaLenganGroupsWithFg(selectedMrpId, vendorId, productionBatches, productionResults) : [];
   // Revisi 2026-09-20 (owner): tab Reject hanya menampilkan warna/lengan yang ADA rejectnya (reject kotor > 0, termasuk yang
   // sudah dirework); warna tanpa reject tidak perlu tampil. Tab Finish Good tetap menampilkan semua.
+  const cutKeys = new Set(cutWarnaLenganGroups(selectedMrpId, vendorId, productionBatches).map((g) => g.warna + "|" + g.lengan));
+  const fgOrigin = (g: { warna: string; lengan: string }) => fgMurniAndReworkForGroup(selectedMrpId + "|" + g.warna + "|" + g.lengan, productionResults);
+  // Sub-tab "Finish Good": grup yang dicutting (atau punya FG murni). Sub-tab "Finish Good (Rework)": grup yang punya FG hasil rework.
+  const fgMurniGroups = kind === "FG" ? allGroups.filter((g) => cutKeys.has(g.warna + "|" + g.lengan) || fgOrigin(g).murni > 0) : [];
+  const fgReworkGroups = kind === "FG" ? allGroups.filter((g) => fgOrigin(g).rework > 0) : [];
   const groups =
     kind === "REJECT"
       ? allGroups.filter((g) => Object.values(rejectGrossForGroup(selectedMrpId + "|" + g.warna + "|" + g.lengan, productionResults)).some((q) => q > 0))
-      : allGroups;
+      : fgView === "REWORK"
+        ? fgReworkGroups
+        : fgMurniGroups;
   const gridColumns = kind === "FG" ? FG_COLUMNS : REJECT_COLUMNS;
   // Revisi 2026-09-19 (owner: "Selesai Produksi di paling kanan, level judul tabel"): tombol pindah
   // ke header tabel Finish Good -- menutup SEMUA grup warna/lengan MRP ini yang belum "FG Selesai"
@@ -448,6 +459,28 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
             <span className="font-sans text-[13px] font-semibold text-text-primary">
               {title} — {selectedMrpId}
             </span>
+            {kind === "FG" && (
+              <div className="flex gap-1 rounded-md bg-[#EEF0F3] p-0.5">
+                {(
+                  [
+                    ["MURNI", "Finish Good", fgMurniGroups.length],
+                    ["REWORK", "Finish Good (Rework)", fgReworkGroups.length],
+                  ] as const
+                ).map(([key, label, n]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => {
+                      setFgView(key);
+                      setExpandedGroupKey("");
+                    }}
+                    className={"rounded px-3 py-1 font-sans text-[11.5px] font-semibold " + (fgView === key ? "bg-white text-action-primary shadow-sm" : "text-text-muted")}
+                  >
+                    {label} <span className="font-mono text-[10px] opacity-70">{n}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div className="overflow-x-auto">
             <div className="min-w-[820px] m-fluid">
@@ -472,7 +505,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
               </div>
               {groups.length === 0 && (
                 <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">
-                  {kind === "REJECT" ? "Belum ada reject untuk MRP ini." : "Belum ada warna yang tercutting untuk MRP ini."}
+                  {kind === "REJECT" ? "Belum ada reject untuk MRP ini." : fgView === "REWORK" ? "Belum ada Finish Good hasil rework untuk MRP ini." : "Belum ada warna yang tercutting untuk MRP ini."}
                 </div>
               )}
               {groups.map((g, gi) => {
@@ -483,7 +516,9 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                 // Cutting (cuttingSizesForGroup), bukan lagi murni estimasi rasio dari target MRP —
                 // fallback otomatis ke estimasi lama kalau grup ini belum ada batch yang diisi.
                 const target = cuttingSizesForGroup(selectedMrpId, g.warna, g.lengan, mrpDetails, productionBatches);
-                const recorded = cumulativeSizeQtyForGroup(groupKey, kind, productionResults);
+                // Total semua Finish Good (murni + rework) -- tetap dipakai ringkasan pengiriman; `recorded` per sub-tab saja.
+                const recordedAll = cumulativeSizeQtyForGroup(groupKey, kind, productionResults);
+                const recorded = kind === "FG" ? fgSizesByOrigin(groupKey, productionResults, fgView === "REWORK") : recordedAll;
                 const totalCuttingTarget = Object.values(target).reduce((a, b) => a + b, 0);
                 const totalRecorded = Object.values(recorded).reduce((a, b) => a + b, 0);
                 const totalFgRecorded = Object.values(cumulativeSizeQtyForGroup(groupKey, "FG", productionResults)).reduce((a, b) => a + b, 0);
@@ -500,10 +535,6 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                 const isFinalDone = !!meta?.doneAt;
                 const targetDoneAt = kind === "FG" ? targetDoneProduksiForGroup(selectedMrpId, vendorId, g.warna, rawInvoices) : undefined;
                 const progressPct = totalTarget > 0 ? Math.min(100, Math.round((totalRecorded / totalTarget) * 100)) : 0;
-                // Finish Good murni (hasil cutting langsung) vs dari rework (reject dipotong ulang
-                // jadi baju) -- contoh: murni 100, dirework 3, totalnya tampil 103 (100 murni + 3
-                // rework), diminta supaya kelihatan jelas asalnya masing-masing.
-                const fgSplit = kind === "FG" ? fgMurniAndReworkForGroup(groupKey, productionResults) : null;
                 // Revisi 2026-09-07 (HPP per roll) -- roll (ProductionBatch) tercutting grup ini,
                 // dipakai buat daftar "Tutup Roll" (opsional, boleh dikunci manual per roll kapan
                 // saja). Sejak revisi 2026-09-12, tombol "Selesai Produksi" TIDAK lagi menunggu
@@ -554,18 +585,17 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                             <div className="flex items-center justify-center gap-3 max-md:w-full max-md:justify-start max-md:gap-2">
                               <div className="flex w-[130px] shrink-0 items-baseline justify-end gap-1 font-mono text-[12px] max-md:w-auto max-md:justify-start">
                                 <span className="font-semibold text-[#31414F]">{totalRecorded}</span>
-                                <span className="text-text-muted">/ {totalTarget} pcs</span>
+                                <span className="text-text-muted">{fgView === "REWORK" ? "pcs dari rework" : `/ ${totalTarget} pcs`}</span>
                               </div>
-                              <span className="h-1.5 w-[150px] shrink-0 overflow-hidden rounded-full bg-[#EEF0F3] max-md:w-auto max-md:flex-1">
-                                <span className="block h-full rounded-full bg-success" style={{ width: `${progressPct}%` }} />
-                              </span>
-                              <span className="w-9 shrink-0 text-left font-mono text-[10.5px] text-text-muted">{progressPct}%</span>
+                              {fgView === "MURNI" && (
+                                <>
+                                  <span className="h-1.5 w-[150px] shrink-0 overflow-hidden rounded-full bg-[#EEF0F3] max-md:w-auto max-md:flex-1">
+                                    <span className="block h-full rounded-full bg-success" style={{ width: `${progressPct}%` }} />
+                                  </span>
+                                  <span className="w-9 shrink-0 text-left font-mono text-[10.5px] text-text-muted">{progressPct}%</span>
+                                </>
+                              )}
                             </div>
-                            {!!fgSplit?.rework && (
-                              <span className="font-mono text-[10px] text-text-muted">
-                                ({fgSplit.murni} Finish Good Saja + {fgSplit.rework} dari rework)
-                              </span>
-                            )}
                           </div>
                           <span data-label="Target done" className="text-center font-mono text-[11px] text-text-muted">{targetDoneAt ? formatDate(targetDoneAt) : "— (belum ada material diterima)"}</span>
                         </>
@@ -579,7 +609,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                           <SysadminActionsBar actions={fgConfirmCorrections({ groupKey, vendorProduksi: vendorId, warna: g.warna, lengan: g.lengan, isFinalDone })} />
                         )}
                         <Button onClick={() => toggleGroup(g.warna, g.lengan)} variant="accent" size="xs">
-                          {expanded ? "Tutup" : kind === "FG" ? "Input Finish Good →" : "Lihat by size →"}
+                          {expanded ? "Tutup" : kind === "FG" && fgView === "MURNI" ? "Input Finish Good →" : "Lihat by size →"}
                         </Button>
                       </span>
                     </div>
@@ -669,7 +699,50 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                         />
                       </div>
                     )}
-                    {expanded && kind === "FG" && (
+                    {expanded && kind === "FG" && fgView === "REWORK" && (
+                      <div className="border-b border-[#CFE0EF] bg-info-bg p-4">
+                        <div className="overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
+                          <div className="flex items-center justify-between gap-2 border-b border-[#CFE0EF] px-4 py-2 font-sans text-[11.5px] font-semibold text-text-primary">
+                            <span>Finish Good hasil rework per size</span>
+                            <FgShippingDetailButton mrpId={selectedMrpId} vendorId={vendorId} warna={g.warna} lengan={g.lengan as Lengan} sizes={Array.from(new Set([...sizes, ...Object.keys(recordedAll)]))} recorded={recordedAll} kolis={deliveryKolis} />
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-2 bg-[#F7F9FB] px-4 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                            <span>Size</span>
+                            <span className="text-right">Finish Good (rework)</span>
+                          </div>
+                          {Object.entries(recorded)
+                            .filter(([, q]) => q > 0)
+                            .map(([size, q]) => (
+                              <div key={size} className="grid grid-cols-2 items-center gap-x-2 border-t border-[#F1F4F7] px-4 py-1.5 font-sans text-xs text-[#31414F]">
+                                <span className="font-mono font-medium">{size}</span>
+                                <span className="text-right font-mono font-semibold">{q}</span>
+                              </div>
+                            ))}
+                        </div>
+                        {cutKeys.has(g.warna + "|" + g.lengan) ? (
+                          <div className="mt-2 font-sans text-[11px] text-text-muted">Warna/lengan ini juga punya Finish Good murni -- selesaikan lewat sub-tab Finish Good.</div>
+                        ) : (
+                          !isFinalDone &&
+                          groupNeedsFinish(g) && (
+                            <div className="mt-3 flex items-center justify-between gap-4 rounded-md border border-[#CFE0EF] bg-[#F3F8FD] px-4 py-3 max-md:flex-col max-md:items-stretch max-md:gap-2.5">
+                              <span className="font-sans text-[11px] leading-[1.5] text-text-muted">Finish Good hasil rework ini sudah bisa dikirim setelah diselesaikan.</span>
+                              <Button
+                                onClick={async () => {
+                                  if (await confirmFinish([g])) runAction(groupKey, confirmFgDone(groupKey, selectedMrpId, vendorId, g.warna, g.lengan));
+                                }}
+                                disabled={isPending(groupKey)}
+                                variant="primary"
+                                size="md"
+                                className="min-w-[160px] border-transparent bg-success hover:opacity-90"
+                              >
+                                {isPending(groupKey) ? "Menyimpan…" : "Selesai Produksi ✓"}
+                              </Button>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    )}
+                    {expanded && kind === "FG" && fgView === "MURNI" && (
                       <div className="border-b border-[#CFE0EF] bg-info-bg p-4">
                         {/* Revisi 2026-09-20 (owner): rekap Finish Good PER SIZE untuk monitoring -- selalu tampil begitu
                             baris dibuka (juga saat semua roll sudah tertutup tapi warna belum diklik Selesai). */}
@@ -677,7 +750,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                           <div className="mb-3 overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
                             <div className="flex items-center justify-between gap-2 border-b border-[#CFE0EF] bg-white px-4 py-2 font-sans text-[11.5px] font-semibold text-text-primary">
                               <span>Finish Good per size</span>
-                              <FgShippingDetailButton mrpId={selectedMrpId} vendorId={vendorId} warna={g.warna} lengan={g.lengan as Lengan} sizes={sizes} recorded={recorded} kolis={deliveryKolis} />
+                              <FgShippingDetailButton mrpId={selectedMrpId} vendorId={vendorId} warna={g.warna} lengan={g.lengan as Lengan} sizes={Array.from(new Set([...sizes, ...Object.keys(recordedAll)]))} recorded={recordedAll} kolis={deliveryKolis} />
                             </div>
                             <div className="grid grid-cols-4 gap-x-2 bg-[#F7F9FB] px-4 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                               <span>Size</span>
