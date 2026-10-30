@@ -427,6 +427,8 @@ type FlowActions = {
   submitResiGroupInvoice: (koliIds: string[]) => Promise<void>;
   createVendorInvoice: (input: { vendorProduksi: string; lines: { mrpId: string; warna: string; lengan: Lengan; usia?: Usia; qty: number; ratePerPc: number }[]; note?: string }) => Promise<void>;
   setVendorInvoiceStatus: (invoiceId: string, status: VendorInvoice["status"]) => Promise<void>;
+  /** Hitung ulang invoice vendor yang belum dibayar dari Master Data Harga Maklon terbaru; mengembalikan jumlah invoice yang berubah. */
+  repriceVendorInvoices: () => Promise<number>;
   addVendorInvoiceAdjustment: (invoiceId: string, input: { kind: VendorInvoiceAdjustmentKind; label: string; amount: number; note?: string }) => Promise<void>;
   payVendorInvoices: (invoiceIds: string[], proof: { dataUrl: string; fileName?: string }) => Promise<void>;
   setVendorInvoicePaymentProof: (invoiceIds: string[], proof: { dataUrl: string; fileName?: string }) => Promise<void>;
@@ -1603,6 +1605,12 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       throw err;
     }
     backgroundRefresh();
+  },
+  repriceVendorInvoices: async () => {
+    const res = await actions.repriceVendorInvoicesAction();
+    if (!res.ok) throw new Error(res.error);
+    backgroundRefresh();
+    return res.data;
   },
   // TIDAK dibuat optimistic -- adjustment baru butuh id baru dari server (nextReadableId), tidak
   // bisa dipastikan dari argumen saja tanpa risiko id sementara yang harus direkonsiliasi.

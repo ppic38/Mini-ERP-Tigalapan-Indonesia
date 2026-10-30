@@ -376,6 +376,47 @@ export function maklonKategoriBreakdown(
   return out.sort((x, y) => x.kategori.localeCompare(y.kategori) || (x.lengan === y.lengan ? 0 : x.lengan === "PENDEK" ? -1 : 1));
 }
 
+/** Tipe harga Master Data untuk satu baris invoice/PO (warna + lengan di MRP itu): diambil dari kategori grup MRP-nya
+ *  (KIDS 24S -> PDK/PJG KIDS, PANJANG + RIB -> PJG RIB, TUNIK 24S -> TUNIK, COMBED -> PDK/PJG), dengan fallback dari akhiran
+ *  nama warna (" KID", " RIB", " TUNIK") kalau grupnya tidak ditemukan. */
+export function maklonTipeForWarna(mrpId: string, warna: string, lengan: Lengan, mrpDetails: MrpDetail[]): string {
+  const group = mrpDetailFor(mrpId, mrpDetails)?.lenganGroups.find((g) => g.warna === warna && g.lengan === lengan);
+  const suffix = /\sKIDS?$/i.test(warna) ? "KIDS" : /\sRIB$/i.test(warna) ? "RIB" : /\sTUNIK$/i.test(warna) ? "TUNIK" : "";
+  return hargaMaklonTipeFor(group?.kategori || suffix, lengan);
+}
+
+/** Kapasitas kumulatif TRUE vendor per TIPE harga (kategori + lengan) dari Aduan Pola semua MRP historisnya. Baris Master Data
+ *  Harga Maklon per tipe, jadi tier PKS tiap tipe dihitung dari volume tipe itu sendiri. */
+export function vendorCumulativeQtyByTipe(vendorKey: string, mrpDetails: MrpDetail[]): Record<string, number> {
+  const totals: Record<string, number> = {};
+  for (const detail of mrpDetails) {
+    const kategoriByGroup = new Map(detail.lenganGroups.map((g) => [g.id, g.kategori]));
+    for (const a of detail.aduanRows) {
+      if (a.vendor !== vendorKey) continue;
+      const tipe = normKey(hargaMaklonTipeFor(kategoriByGroup.get(a.lenganGroupId) ?? "", a.lengan));
+      totals[tipe] = (totals[tipe] ?? 0) + a.qty;
+    }
+  }
+  return totals;
+}
+
+export type MaklonLineRate = MaklonRateInfo & {
+  tipe: string;
+  /** true = vendor tidak punya baris untuk tipe ini di Master Data, dipakai harga PDK/PJG biasa. */
+  fallbackBase: boolean;
+};
+
+/** Harga maklon satu baris invoice per TIPE (revisi 2026-10-30): baris Master Data tipe itu dulu (PKS kalau kapasitas tipe
+ *  terpenuhi, kalau tidak Standar -- baris Standar boleh berkapasitas kosong, dipakai walau produksi belum mencapai kapasitas),
+ *  kalau tipe itu tidak ada di Master Data vendor ini jatuh ke harga PDK/PJG biasa. */
+export function hargaMaklonLineRate(hargaMaklon: HargaMaklonRow[], vendorKey: string, tipe: string, lengan: Lengan, cumulativeByTipe: Record<string, number>): MaklonLineRate {
+  const own = hargaMaklonRateInfoByTipe(hargaMaklon, vendorKey, tipe, cumulativeByTipe[normKey(tipe)] ?? 0);
+  if (own) return { ...own, tipe, fallbackBase: false };
+  const baseTipe = lenganAbbr(lengan);
+  const base = hargaMaklonRateInfo(hargaMaklon, vendorKey, lengan, cumulativeByTipe[normKey(baseTipe)] ?? 0);
+  return { ...base, tipe, fallbackBase: normKey(tipe) !== normKey(baseTipe) };
+}
+
 export function hargaMaklonRate(hargaMaklon: HargaMaklonRow[], vendorKey: string, lengan: Lengan, cumulativeQty: number): number {
   return hargaMaklonRateInfo(hargaMaklon, vendorKey, lengan, cumulativeQty).rate;
 }

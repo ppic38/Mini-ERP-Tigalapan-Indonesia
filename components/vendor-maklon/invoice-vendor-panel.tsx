@@ -14,14 +14,15 @@ import {
   formatDecimal,
   formatPcs,
   formatRupiah,
-  hargaMaklonRateInfo,
+  hargaMaklonLineRate,
+  maklonTipeForWarna,
   invoiceProductionStatus,
   invoiceYieldSummary,
   isBillableKoliItem,
   productionYieldByWarna,
   productionYieldBySize,
   resiGroupInvoiceLines,
-  vendorCumulativeQtyByLengan,
+  vendorCumulativeQtyByTipe,
   vendorInvoiceAdjustmentTotal,
   vendorInvoiceBadge,
   vendorInvoiceFinalAmount,
@@ -90,9 +91,9 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
   // Grup resi yang sudah delivered TAPI belum diinvoice -- siap diajukan. Rate per baris read-only,
   // dihitung dari kapasitas kumulatif TRUE vendor ini (semua PO Produksi historisnya) + tier
   // Standar/PKS Master Data Harga Maklon -- murni pratinjau, server menghitung ulang persis sama.
-  const cumulativeByLengan = vendorCumulativeQtyByLengan(vendorId, mrpDetails);
-  function rateForLine(l: { lengan: Lengan }): number {
-    return hargaMaklonRateInfo(hargaMaklon, vendorId, l.lengan, cumulativeByLengan[l.lengan] ?? 0).rate;
+  const cumulativeByTipe = vendorCumulativeQtyByTipe(vendorId, mrpDetails);
+  function rateForLine(l: { mrpId: string; warna: string; lengan: Lengan }): number {
+    return hargaMaklonLineRate(hargaMaklon, vendorId, maklonTipeForWarna(l.mrpId, l.warna, l.lengan, mrpDetails), l.lengan, cumulativeByTipe).rate;
   }
   const deliveredMine = deliveryKolis.filter((k) => k.vendorProduksi === vendorId && k.deliveredAt);
   // Resi yang HANYA berisi reject tidak ditagihkan (owner 2026-10-23) -- tidak muncul sebagai "siap diajukan invoice".

@@ -11,8 +11,11 @@ import {
   formatPcs,
   formatRupiah,
   invoiceCategoryLabel,
+  hargaMaklonLineRate,
   invoiceKoliBreakdown,
+  maklonTipeForWarna,
   mrpMetaFor,
+  vendorCumulativeQtyByTipe,
   productionYieldBySize,
   vendorInvoiceAdjustmentTotal,
   vendorInvoiceBadge,
@@ -38,6 +41,9 @@ export function InvoiceVendorReviewPanel() {
   const sysadminMode = useSysadminMode();
   const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
+  const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
+  const repriceVendorInvoices = useMrpStore((s) => s.repriceVendorInvoices);
+  const [repricing, setRepricing] = useState(false);
   const staticMrps = useMrpStore((s) => s.staticMrps);
   const productionBatches = useMrpStore((s) => s.productionBatches);
   const productionResults = useMrpStore((s) => s.productionResults);
@@ -143,7 +149,28 @@ export function InvoiceVendorReviewPanel() {
       )}
 
       <div className="overflow-hidden border border-border-subtle bg-surface-card">
-        <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Semua invoice vendor</div>
+        <div className="flex items-center justify-between gap-3 border-b border-border-subtle px-4 py-3">
+          <span className="font-sans text-[13px] font-semibold text-text-primary">Semua invoice vendor</span>
+          <Button
+            variant="ghost"
+            size="xs"
+            disabled={repricing}
+            title="Sementara: invoice vendor yang belum dibayar Finance selalu memakai Harga Maklon Master Data terbaru. Klik untuk menghitung ulang sekarang."
+            onClick={async () => {
+              setRepricing(true);
+              try {
+                const n = await repriceVendorInvoices();
+                void alertDialog({ title: "Harga master terbaru diterapkan", message: n > 0 ? n + " invoice yang belum dibayar dihitung ulang dari Master Data Harga Maklon." : "Semua invoice yang belum dibayar sudah memakai harga Master Data terbaru.", tone: "default" });
+              } catch (err) {
+                void alertDialog({ title: "Gagal menghitung ulang", message: err instanceof Error ? err.message : String(err), tone: "danger" });
+              } finally {
+                setRepricing(false);
+              }
+            }}
+          >
+            {repricing ? "Menghitung…" : "Terapkan harga master terbaru"}
+          </Button>
+        </div>
         {vendorMrpSummaries.length === 0 && <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada invoice vendor.</div>}
         {vendorMrpSummaries.length > 0 && (
           <div className="overflow-x-auto">
@@ -406,6 +433,10 @@ export function InvoiceVendorReviewPanel() {
                     const lineKey = inv.id + "|" + line.mrpId + "|" + line.warna + "|" + line.lengan + "|" + (line.usia ?? "");
                     const mrp = mrpMetaFor(line.mrpId, mrpDetails, staticMrps);
                     const sizes = productionYieldBySize(line.mrpId, line.warna, line.lengan, mrpDetails, productionBatches, productionResults);
+                    // Validasi harga untuk Procurement: tipe harga Master Data item ini (kategori + lengan) dan harga master-nya sekarang.
+                    const lineTipe = maklonTipeForWarna(line.mrpId, line.warna, line.lengan, mrpDetails);
+                    const lineMaster = hargaMaklonLineRate(hargaMaklon, inv.vendorProduksi, lineTipe, line.lengan, vendorCumulativeQtyByTipe(inv.vendorProduksi, mrpDetails));
+                    const rateSelisih = inv.status !== "PAID" && lineMaster.rate !== line.ratePerPc;
                     return (
                       <div key={lineKey} className="mt-2 overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
                         <div className="flex items-center justify-between gap-2 bg-[#F2F4F7] px-3 py-1.5 font-mono text-[11px] text-text-primary">
@@ -419,16 +450,25 @@ export function InvoiceVendorReviewPanel() {
                             {formatPcs(line.qty)} pcs · {formatRupiah(line.amount)}
                           </span>
                         </div>
-                        <div className="grid grid-cols-3 gap-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11px] text-text-muted">
+                          <span>Harga maklon item ini:</span>
+                          <span className="rounded bg-info-bg px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-info-fg">{lineTipe}</span>
+                          <span className="font-mono text-[12px] font-semibold text-text-primary">{formatRupiah(line.ratePerPc)}/pc</span>
+                          <span className="text-[10px]">{lineMaster.fallbackBase ? "(tipe belum ada di Master Data, pakai harga PDK/PJG biasa)" : lineMaster.source}</span>
+                          {rateSelisih && <span className="text-warning-fg">Master Data sekarang {formatRupiah(lineMaster.rate)}/pc</span>}
+                        </div>
+                        <div className="grid grid-cols-4 gap-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                           <span>Size</span>
                           <span className="text-right">Qty</span>
+                          <span className="text-right">Harga/pc</span>
                           <span className="text-right">Nilai</span>
                         </div>
                         {sizes.length === 0 && <div className="border-t border-[#F1F4F7] px-3 py-2 font-sans text-[11.5px] text-text-muted">Belum ada rincian per size.</div>}
                         {sizes.map((s) => (
-                          <div key={s.size} className="grid grid-cols-3 items-center gap-2 border-t border-[#F1F4F7] px-3 py-1.5 font-mono text-[11.5px] text-[#31414F]">
+                          <div key={s.size} className="grid grid-cols-4 items-center gap-2 border-t border-[#F1F4F7] px-3 py-1.5 font-mono text-[11.5px] text-[#31414F]">
                             <span>{s.size}</span>
                             <span className="text-right">{s.target}</span>
+                            <span className="text-right text-text-muted">{formatRupiah(line.ratePerPc)}</span>
                             <span className="text-right">{formatRupiah(s.target * line.ratePerPc)}</span>
                           </div>
                         ))}

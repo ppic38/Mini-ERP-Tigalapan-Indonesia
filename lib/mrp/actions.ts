@@ -65,8 +65,9 @@ import {
   rollRemainingBySizeForMrp,
   resiGroupInvoiceLines,
   warehouseReceivableGroups,
-  hargaMaklonRateInfo,
-  vendorCumulativeQtyByLengan,
+  hargaMaklonLineRate,
+  maklonTipeForWarna,
+  vendorCumulativeQtyByTipe,
   isSyntheticSupplier,
   DEFAULT_WEIGHT_TOLERANCE_PCT,
 } from "./derive";
@@ -5571,20 +5572,90 @@ export async function submitResiGroupInvoiceAction(koliIds: string[]): Promise<v
   // (hargaMaklonRateInfo), PERSIS logika yang sama dipakai untuk badge estimasi di PO Approval
   // Procurement -- sekarang dijadikan otoritatif untuk invoice sungguhan (sama prinsipnya dengan
   // qty yang sudah lebih dulu tidak dipercaya dari client di action ini).
-  const cumulativeByLengan = vendorCumulativeQtyByLengan(vendorId, snapshot.mrpDetails);
+  const cumulativeByTipe = vendorCumulativeQtyByTipe(vendorId, snapshot.mrpDetails);
   const invoiceLines = lines.map((l) => ({
     mrpId: l.mrpId,
     warna: l.warna,
     lengan: l.lengan,
     usia: l.usia,
     qty: l.qty,
-    ratePerPc: hargaMaklonRateInfo(snapshot.hargaMaklon, vendorId, l.lengan, cumulativeByLengan[l.lengan] ?? 0).rate,
+    ratePerPc: hargaMaklonLineRate(snapshot.hargaMaklon, vendorId, maklonTipeForWarna(l.mrpId, l.warna, l.lengan, snapshot.mrpDetails), l.lengan, cumulativeByTipe).rate,
   }));
 
   await createVendorInvoiceAction({ vendorProduksi: vendorId, lines: invoiceLines });
 
   const { error } = await db.from("delivery_kolis").update({ resi_invoiced_at: nowIso() }).in("id", koliIds);
   if (error) throw new Error(error.message);
+}
+
+/** SEMENTARA (owner 2026-10-30): Master Data Harga Maklon belum final, jadi invoice vendor yang BELUM DIBAYAR Finance (SUBMITTED, REVISION,
+ *  APPROVED) selalu dihitung ulang dari Master Data TERBARU -- walau vendor sudah mengajukannya sebelum master diubah. Setelah PAID, harga
+ *  terkunci permanen. Ubah ke false kalau master sudah final, supaya harga invoice dikunci saat diajukan lagi. */
+const MAKLON_RATE_LIVE_UNTIL_PAID = true;
+
+/** Hitung ulang rate per pc + total semua invoice vendor yang belum PAID dari Master Data Harga Maklon sekarang (per tipe kategori+lengan).
+ *  Mengembalikan jumlah invoice yang berubah. */
+async function repriceUnpaidVendorInvoices(): Promise<number> {
+  if (!MAKLON_RATE_LIVE_UNTIL_PAID) return 0;
+  const db = supabaseServer();
+  const { data: invs, error: invErr } = await db.from("vendor_invoices").select("id,vendor_produksi").neq("status", "PAID");
+  if (invErr) throw new Error(invErr.message);
+  if (!invs || invs.length === 0) return 0;
+  const vendorByInvoice = new Map(invs.map((i) => [i.id, i.vendor_produksi as string]));
+  const { data: lines, error: lineErr } = await db
+    .from("vendor_invoice_lines")
+    .select("id,vendor_invoice_id,mrp_id,warna,lengan,qty,rate_per_pc")
+    .in("vendor_invoice_id", Array.from(vendorByInvoice.keys()));
+  if (lineErr) throw new Error(lineErr.message);
+  const snapshot = await getFlowSnapshot();
+  if (snapshot.hargaMaklon.length === 0) return 0; // master belum termuat -- jangan menimpa dengan harga fallback
+  const cumByVendor = new Map<string, Record<string, number>>();
+  const totals = new Map<string, number>();
+  const changed = new Set<string>();
+  const updates: PromiseLike<unknown>[] = [];
+  for (const l of lines ?? []) {
+    const vendor = vendorByInvoice.get(l.vendor_invoice_id);
+    if (!vendor) continue;
+    let cum = cumByVendor.get(vendor);
+    if (!cum) {
+      cum = vendorCumulativeQtyByTipe(vendor, snapshot.mrpDetails);
+      cumByVendor.set(vendor, cum);
+    }
+    const tipe = maklonTipeForWarna(l.mrp_id, l.warna, l.lengan, snapshot.mrpDetails);
+    const rate = hargaMaklonLineRate(snapshot.hargaMaklon, vendor, tipe, l.lengan, cum).rate;
+    totals.set(l.vendor_invoice_id, (totals.get(l.vendor_invoice_id) ?? 0) + l.qty * rate);
+    if (rate !== Number(l.rate_per_pc)) {
+      changed.add(l.vendor_invoice_id);
+      updates.push(db.from("vendor_invoice_lines").update({ rate_per_pc: rate, amount: l.qty * rate }).eq("id", l.id).then((r) => { if (r.error) throw new Error(r.error.message); }));
+    }
+  }
+  await Promise.all(updates);
+  for (const id of changed) {
+    const total = totals.get(id) ?? 0;
+    const { error } = await db.from("vendor_invoices").update({ total_tagihan: total, net_tagihan: total }).eq("id", id);
+    if (error) throw new Error(error.message);
+  }
+  return changed.size;
+}
+
+/** Tombol "Terapkan harga master terbaru" di Procurement/Finance -- menjalankan repriceUnpaidVendorInvoices secara manual. */
+export async function repriceVendorInvoicesAction(): Promise<ActionResult<number>> {
+  try {
+    requireAnyInternalRole(await requireSession(), ["procurement", "finance"]);
+    return { ok: true, data: await repriceUnpaidVendorInvoices() };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Setelah Master Data Harga Maklon berubah: invoice yang belum dibayar ikut dihitung ulang. Gagal di sini TIDAK menggagalkan edit master
+ *  (tombol manual masih bisa dipakai), cuma dicatat. */
+async function repriceAfterMasterChange(): Promise<void> {
+  try {
+    await repriceUnpaidVendorInvoices();
+  } catch (e) {
+    console.error("[repriceAfterMasterChange]", e);
+  }
 }
 
 export async function setVendorInvoiceStatusAction(invoiceId: string, status: "SUBMITTED" | "REVISION" | "APPROVED" | "PAID"): Promise<void> {
@@ -5624,6 +5695,8 @@ export async function payVendorInvoicesAction(invoiceIds: string[], proof: { dat
     if (notApproved.length > 0) throw new Error(`Invoice ${notApproved.map((i) => i.id).join(", ")} belum disetujui Procurement, jadi belum bisa dibayar.`);
     const toPay = (invs ?? []).filter((i) => i.status === "APPROVED");
     if (toPay.length === 0) return { ok: true, data: undefined };
+    // Harga terkunci permanen begitu PAID -- pastikan yang dikunci adalah harga Master Data terbaru.
+    await repriceUnpaidVendorInvoices();
     const uploadedAt = nowIso();
     for (const inv of toPay) {
       const { error: proofErr } = await db.from("vendor_invoice_payment_proofs").upsert({ invoice_id: inv.id, data_url: proof.dataUrl, file_name: proof.fileName ?? null, uploaded_at: uploadedAt });
@@ -6375,6 +6448,7 @@ export async function addHargaMaklonRowAction(data: Omit<HargaMaklonRow, "id">):
       harga: data.harga,
     });
   if (error) throw new Error(error.message);
+  await repriceAfterMasterChange();
 }
 export async function updateHargaMaklonRowAction(id: string, patch: Partial<HargaMaklonRow>): Promise<void> {
   await requireMasterDataRole();
@@ -6388,11 +6462,13 @@ export async function updateHargaMaklonRowAction(id: string, patch: Partial<Harg
   if (patch.harga !== undefined) p.harga = patch.harga;
   const { error } = await supabaseServer().from("harga_maklon").update(p).eq("id", id);
   if (error) throw new Error(error.message);
+  await repriceAfterMasterChange();
 }
 export async function deleteHargaMaklonRowAction(id: string): Promise<void> {
   await requireMasterDataRole();
   const { error } = await supabaseServer().from("harga_maklon").delete().eq("id", id);
   if (error) throw new Error(error.message);
+  await repriceAfterMasterChange();
 }
 export async function replaceHargaMaklonAction(rows: HargaMaklonRow[]): Promise<void> {
   await requireMasterDataRole();
@@ -6405,6 +6481,7 @@ export async function replaceHargaMaklonAction(rows: HargaMaklonRow[]): Promise<
     rows.map((r, i) => ({ id: ids[i], kode_vendor: r.kodeVendor, nama_vendor: r.namaVendor, tipe_lengan: r.tipeLengan, jenis_harga: r.jenisHarga, kapasitas_min: r.kapasitasMin ?? null, kapasitas_max: r.kapasitasMax ?? null, harga: r.harga }))
   );
   if (error) throw new Error(error.message);
+  await repriceAfterMasterChange();
 }
 
 export async function addHargaKainRowAction(data: Omit<HargaKainRow, "id">): Promise<void> {
