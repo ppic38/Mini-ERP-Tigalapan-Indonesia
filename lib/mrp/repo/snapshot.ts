@@ -901,6 +901,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     buktiBayarFileName: v.bukti_bayar_file_name ?? undefined,
     proposal: v.proposal ?? undefined,
     paidBy: v.paid_by ?? undefined,
+    approvedBy: v.approved_by ?? undefined,
   }));
 
   // ---- Warehouse (migration 0031) -- pola sama deliveryKoliBatchRows di atas, tabel belum tentu

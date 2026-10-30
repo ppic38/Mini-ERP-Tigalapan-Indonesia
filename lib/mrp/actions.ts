@@ -5665,13 +5665,16 @@ async function repriceAfterMasterChange(): Promise<void> {
 }
 
 export async function setVendorInvoiceStatusAction(invoiceId: string, status: "SUBMITTED" | "REVISION" | "APPROVED" | "PAID"): Promise<void> {
-  await requireInternalRole(await requireSession(), "procurement");
+  const actor = await requireInternalRoleWithActor("procurement");
   const db = supabaseServer();
   const { data: invoice } = await db.from("vendor_invoices").select("id,vendor_produksi").eq("id", invoiceId).single();
   await db
     .from("vendor_invoices")
     .update({ status, approved_at: status === "APPROVED" ? today() : undefined, paid_at: status === "PAID" ? today() : undefined })
     .eq("id", invoiceId);
+  // PIC Procurement yang menyetujui (migration 0083): best-effort, terpisah dari status. Kembali ke SUBMITTED/REVISION = PIC dikosongkan.
+  if (status === "APPROVED") await stampActor(db, "vendor_invoices", [invoiceId], { approved_by: actor.actorName });
+  else if (status === "SUBMITTED" || status === "REVISION") await db.from("vendor_invoices").update({ approved_by: null }).eq("id", invoiceId);
   if (invoice && status === "APPROVED") await insertNotification(notif(`Invoice vendor ${invoice.id} disetujui Procurement — menunggu payment Finance`, ["finance", "vendorMaklon"], invoice.vendor_produksi));
   if (invoice && status === "PAID") await insertNotification(notif(`Invoice vendor ${invoice.id} telah dibayar Finance`, ["vendorMaklon"], invoice.vendor_produksi));
 }

@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## PIC di tanda tangan proposal pembayaran (2026-10-30, migration 0083)
+Owner: tanda tangan PDF proposal pembayaran menampilkan PIC. Kolom baru `vendor_invoices.approved_by` (PIC Procurement yang menyetujui, diisi saat status APPROVED; dikosongkan kalau invoice kembali ke SUBMITTED/REVISION; tidak dikirim ke browser vendor). Blok tanda tangan: Diajukan oleh = pengaju vendor (`submitted_by`), Disetujui oleh = `approved_by`, Dibayar oleh = `paid_by` (migration 0082). Invoice yang disetujui/dibayar SEBELUM migration ini tampil "-" untuk PIC-nya. **Jalankan `supabase/migrations/0083_vendor_invoice_approved_by.sql`.**
+
 ## Proposal pembayaran dibuat otomatis oleh sistem di Payment Maklon (2026-10-30, tanpa migration)
 Owner: Procurement TIDAK perlu membuat proposal. Setiap invoice vendor di Finance > Payment Maklon punya tombol **Download proposal** yang membuat PDF otomatis dari data invoice (`buildAutoProposal` di lib/mrp/proposal.ts + `exportInvoiceProposalPdf` di lib/mrp/exportPoPdf.ts). Format SAMA dengan PDF PO (kop logo + TIGALAPAN INDONESIA, kotak info 2 kolom, tabel bergaris header hijau, blok tanda tangan Diajukan/Disetujui/Dibayar): No. Proposal otomatis ERP (urutan invoice di tahun itu, `0001/PSCM-PRODUKSI/X/2026`), tanggal unduh, location Bandung, nama kegiatan "Pembayaran Tagihan Produksi Vendor {vendor} PO {MRP} - Kategori {kategori}", rincian baris invoice (kategori, warna, qty, harga/pc, jumlah, denda/reward) dan total tagihan. TANPA rekening tujuan dan TANPA DP/sisa. Kotak proposal + modal buat proposal di Procurement dihapus; kolom/aksi simpan proposal dari migration 0082 dibiarkan (tidak dipakai).
 

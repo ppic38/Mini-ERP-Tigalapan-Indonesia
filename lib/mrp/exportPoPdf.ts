@@ -626,8 +626,8 @@ function renderInvoiceProposalPage(doc: jsPDF, inv: VendorInvoice, proposal: Pay
 
   const boxes: PoApprovalSignBox[] = [
     { heading: "Diajukan oleh", role: "Vendor Produksi", short: "Vendor", step: 1, state: "SUBMITTED", name: inv.submittedBy ?? vendorName, date: inv.submittedAt },
-    { heading: "Disetujui oleh", role: "Procurement", short: "Procurement", step: 2, state: inv.approvedAt || inv.status === "PAID" ? "APPROVED" : "PENDING", name: "Procurement", date: inv.approvedAt },
-    { heading: "Dibayar oleh", role: "Finance", short: "Finance", step: 3, state: inv.status === "PAID" ? "APPROVED" : "PENDING", name: inv.paidBy ?? "Finance", date: inv.paidAt },
+    { heading: "Disetujui oleh", role: "Procurement", short: "Procurement", step: 2, state: inv.approvedAt || inv.status === "PAID" ? "APPROVED" : "PENDING", name: inv.approvedBy ?? "-", date: inv.approvedAt },
+    { heading: "Dibayar oleh", role: "Finance", short: "Finance", step: 3, state: inv.status === "PAID" ? "APPROVED" : "PENDING", name: inv.paidBy ?? "-", date: inv.paidAt },
   ];
   drawApprovalBoxesSafe(doc, y, boxes);
 }

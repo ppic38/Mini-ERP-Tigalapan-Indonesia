@@ -637,6 +637,8 @@ export type VendorInvoice = {
   proposal?: PaymentProposal;
   /** Migration 0082: PIC Finance yang memproses pembayaran (akun sub-user atau akun utama). */
   paidBy?: string;
+  /** Migration 0083: PIC Procurement yang menyetujui invoice (akun sub-user atau akun utama). */
+  approvedBy?: string;
 };
 
 export type ProductionGroupMeta = {

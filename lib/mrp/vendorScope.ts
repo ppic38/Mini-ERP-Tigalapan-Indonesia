@@ -38,7 +38,7 @@ export function scopeStateToVendor<T extends FlowState>(state: T, vendorId: stri
   const productionGroupMeta = state.productionGroupMeta.filter((m) => isMine(m.vendorProduksi));
   const deliveryKolis = state.deliveryKolis.filter((k) => isMine(k.vendorProduksi));
   // Proposal Pembayaran dan PIC Finance (migration 0082) bersifat internal: tidak dikirim ke browser vendor.
-  const vendorInvoices = state.vendorInvoices.filter((i) => isMine(i.vendorProduksi)).map((i) => ({ ...i, proposal: undefined, paidBy: undefined }));
+  const vendorInvoices = state.vendorInvoices.filter((i) => isMine(i.vendorProduksi)).map((i) => ({ ...i, proposal: undefined, paidBy: undefined, approvedBy: undefined }));
   const warehouseReceipts = state.warehouseReceipts.filter((r) => isMine(r.vendorProduksi));
 
   const invoiceIds = new Set(invoices.map((i) => i.id));
