@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Alokasi invoice vendor hanya ke koli yang sudah terkirim (2026-10-30, tanpa migration)
+Temuan owner: lampiran ekspedisi invoice VINV-12150 (KK, W39) menampilkan koli 019 dan 020 tanpa ekspedisi/resi. Dicek di database: koli itu BELUM dikirim (delivered_at, resi, ekspedisi kosong), dan TIDAK ada koli terkirim di MRP/vendor mana pun yang tanpa resi, ekspedisi, atau foto. Penyebab: alokasi FIFO invoice ke koli per roll (`hppRowsForInvoicePerRoll`, lib/mrp/derive.ts) ikut memasukkan koli yang baru dikemas (belum Delivery). Perbaikan: klaim koli yang belum `deliveredAt` dilewati. Dampak: lampiran ekspedisi per invoice (Procurement/Finance) tidak lagi menampilkan koli belum dikirim, dan atribusi koli di HPP per roll hanya ke koli terkirim (angka HPP per baris invoice yang tadinya sebagian teralokasi ke koli belum kirim bisa bergeser ke koli terkirim yang benar).
+
 ## Kolom Lampiran Ekspedisi disembunyikan di Payment Maklon (2026-10-30, tanpa migration)
 Owner: resi dan lampirannya sudah ada di rincian saat baris invoice dibuka, jadi kolom "Lampiran Ekspedisi" di Finance > Payment Maklon (tabel siap bayar dan tabel sudah dibayar) tidak tampil secara default (`default: false`, masih bisa dimunculkan lewat menu Kolom). Hanya tampilan.
 

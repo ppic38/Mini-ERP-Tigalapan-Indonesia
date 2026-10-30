@@ -4391,6 +4391,10 @@ export function hppRowsForInvoicePerRoll(
         const netRejectQty = rejectRaw - reworkQty;
         const claims = koliClaimsForRollSize(roll, size, deliveryKolis);
         for (const claim of claims) {
+          // Hanya koli yang SUDAH terkirim yang jadi sumber alokasi invoice (2026-10-30): invoice hanya mencakup barang terkirim, jadi koli yang
+          // baru dikemas (belum diberi resi/ekspedisi) tidak boleh ikut dialokasikan -- dulu koli belum dikirim bisa "dimakan" alokasi FIFO
+          // dan muncul di lampiran invoice tanpa resi/ekspedisi ("019 · — · —").
+          if (!claim.koli.deliveredAt) continue;
           const portion = claim.qty / fgQtyRaw;
           chunks.push({
             roll,
