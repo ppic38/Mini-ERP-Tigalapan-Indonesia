@@ -158,9 +158,9 @@ function AduanDetailTree({ rows }: { rows: AduanPolaRow[] }) {
 }
 
 /** Satu KPI card per KATEGORI (COMBED, KIDS, TUNIK, RIB, Wangki, dst) yang benar-benar dikerjakan di PO ini --
- *  kategori tanpa target tidak muncul. Isi: jadi (Finish Good) vs target, estimasi maklon (target x harga Master Data
- *  kategori+lengan) dan maklon yang sudah jadi (jadi x harga yang sama). Harga bisa beda per lengan, jadi rincian per
- *  lengan ada di bawah angka utama; tanda kuning = harga per lengan yang dipakai tagihan saat ini berbeda. */
+ *  kategori tanpa target tidak muncul. Sorotan utama: tipe lengan per kategori (tipe harga Master Data + harga/pc),
+ *  lalu jadi vs target, dan estimasi vs maklon yang sudah jadi (jadi x harga yang sama). Harga kuning = harga per
+ *  lengan yang dipakai tagihan saat ini berbeda dari Master Data kategori itu (atau barisnya belum ada). */
 function KategoriKpiCards({ rows, detail, vendorId, mrpId }: { rows: AduanPolaRow[]; detail?: MrpDetail; vendorId: string; mrpId: string }) {
   const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
   const productionResults = useMrpStore((s) => s.productionResults);
@@ -179,39 +179,45 @@ function KategoriKpiCards({ rows, detail, vendorId, mrpId }: { rows: AduanPolaRo
         {Array.from(byKategori.entries()).map(([kategori, list]) => {
           const target = list.reduce((n, r) => n + r.qty, 0);
           const jadi = list.reduce((n, r) => n + r.jadi, 0);
+          const pct = target > 0 ? Math.min(100, Math.round((jadi / target) * 100)) : 0;
           const estimasi = list.reduce((n, r) => n + r.qty * rateOf(r), 0);
           const maklonJadi = list.reduce((n, r) => n + r.jadi * rateOf(r), 0);
           return (
-            <div key={kategori} className="relative overflow-hidden rounded-xl border border-border-subtle bg-surface-card px-5 pb-4 pt-5">
-              <div className="absolute inset-x-0 top-0 h-[3px] bg-[#38BDF8]" />
-              <div className="truncate font-mono text-[10.5px] uppercase tracking-[0.14em] text-text-muted">{kategori}</div>
-              <div className="mt-2 flex items-baseline gap-1.5">
-                <span className="font-sans text-[26px] font-bold leading-none tracking-tight text-text-primary">{formatPcs(jadi)}</span>
-                <span className="font-mono text-[12px] text-text-muted">/ {formatPcs(target)} pcs</span>
+            <div key={kategori} className="rounded-xl border border-border-subtle bg-surface-card p-4">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="truncate font-sans text-[12.5px] font-semibold text-text-primary">{kategori}</span>
+                <span className="font-mono text-[11px] text-text-muted">{pct}%</span>
               </div>
-              <div className="mt-1 font-mono text-[10.5px] text-text-muted">jadi dari target{target > 0 ? ` · ${Math.round((jadi / target) * 100)}%` : ""}</div>
-              <div className="mt-3 grid grid-cols-2 gap-2 border-t border-border-subtle pt-2.5">
-                <div>
-                  <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-text-muted">Estimasi maklon</div>
-                  <div className="mt-0.5 font-mono text-[12.5px] font-semibold text-text-primary">{formatRupiah(estimasi)}</div>
-                </div>
-                <div>
-                  <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-text-muted">Maklon jadi</div>
-                  <div className="mt-0.5 font-mono text-[12.5px] font-semibold text-text-primary">{formatRupiah(maklonJadi)}</div>
-                </div>
+              <div className="mt-1 font-mono text-[11.5px] text-text-secondary">
+                <span className="text-[17px] font-bold text-text-primary">{formatPcs(jadi)}</span> / {formatPcs(target)} pcs jadi
               </div>
-              <div className="mt-2.5 space-y-0.5 font-mono text-[10.5px] text-text-muted">
+              <div className="mt-2 h-1 overflow-hidden rounded-full bg-border-subtle">
+                <div className="h-full rounded-full bg-accent-blue" style={{ width: `${pct}%` }} />
+              </div>
+              <div className="mt-3 space-y-1.5">
                 {list.map((r) => {
                   const beda = r.masterRate !== null && r.masterRate !== r.billedRate;
+                  const warn = beda || r.masterRate === null;
                   return (
-                    <div key={r.lengan} className="flex justify-between gap-2">
-                      <span>{r.lengan === "PENDEK" ? "Pendek" : "Panjang"} {formatPcs(r.jadi)}/{formatPcs(r.qty)}</span>
-                      <span className={beda || r.masterRate === null ? "text-warning-fg" : ""} title={r.masterRate === null ? `Master Data belum punya baris ${r.tipe}; dihitung dengan harga tagihan` : beda ? `Tagihan saat ini memakai ${formatRupiah(r.billedRate)}/pc` : undefined}>
-                        {r.tipe} · {r.masterRate === null ? `${formatRupiah(r.billedRate)} (belum ada)` : formatRupiah(r.masterRate)}
-                      </span>
+                    <div
+                      key={r.lengan}
+                      className={`rounded-lg px-2.5 py-1.5 ${warn ? "bg-warning-bg" : "bg-info-bg"}`}
+                      title={r.masterRate === null ? `Master Data belum punya baris ${r.tipe}; dihitung dengan harga tagihan` : beda ? `Tagihan saat ini memakai ${formatRupiah(r.billedRate)}/pc` : undefined}
+                    >
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className={`font-mono text-[12px] font-bold ${warn ? "text-warning-fg" : "text-info-fg"}`}>{r.tipe}</span>
+                        <span className={`font-mono text-[12px] font-semibold ${warn ? "text-warning-fg" : "text-info-fg"}`}>
+                          {r.masterRate === null ? `${formatRupiah(r.billedRate)} (belum ada)` : formatRupiah(r.masterRate)}
+                        </span>
+                      </div>
+                      <div className="font-mono text-[10.5px] text-text-muted">{formatPcs(r.jadi)} / {formatPcs(r.qty)} pcs</div>
                     </div>
                   );
                 })}
+              </div>
+              <div className="mt-3 flex justify-between gap-2 border-t border-border-subtle pt-2 font-mono text-[11px] text-text-muted">
+                <span>Estimasi <span className="font-semibold text-text-primary">{formatRupiah(estimasi)}</span></span>
+                <span>Jadi <span className="font-semibold text-text-primary">{formatRupiah(maklonJadi)}</span></span>
               </div>
             </div>
           );
