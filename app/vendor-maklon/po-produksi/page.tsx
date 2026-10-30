@@ -505,6 +505,7 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
           return (
             <>
               <LenganQtyCards rows={rows} detail={detail} />
+              <KategoriTargetPanel rows={rows} detail={detail} vendorId={p.vendorProduksi} />
               <AduanDetailTree rows={rows} />
             </>
           );
