@@ -40,7 +40,7 @@ import {
   compareNoKoli,
 } from "@/lib/mrp/derive";
 import { countFgShortfallGroupsForMrp, countRejectActionableGroupsForMrp, pendingMarker } from "@/lib/shell/badges";
-import type { DeliveryKoli, Lengan, ProductionResult } from "@/lib/mrp/types";
+import type { DeliveryKoli, Lengan, ProductionBatch, ProductionResult } from "@/lib/mrp/types";
 
 // FG: Warna/lengan | Progres (target+terinput+bar digabung jadi satu kolom, bukan 3 kolom
 // sempit terpisah — jauh lebih mudah dipindai sekilas) | Target done produksi | Aksi.
@@ -270,6 +270,88 @@ function FgShippingDetailButton({
         </div>
       )}
     </>
+  );
+}
+
+/** Input Finish Good hasil tambahan dari sisa kain per roll (migration 0084): tiap baris punya hasil cutting (qty) dan Finish Good yang diinput
+ *  (0..cutting). Selisihnya baru jadi reject setelah roll ditutup dan grup tujuan diselesaikan (sama seperti size biasa). */
+function ExtraFgSection({ batches, locked }: { batches: ProductionBatch[]; locked: boolean }) {
+  const saveBatchExtraFg = useMrpStore((s) => s.saveBatchExtraFg);
+  const [draft, setDraft] = useState<Record<string, number>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const withExtras = batches.filter((b) => (b.extraResults ?? []).length > 0);
+  if (withExtras.length === 0) return null;
+  const keyOf = (b: ProductionBatch, x: { lengan: string; usia: string; size: string }) => `${b.id}|${x.lengan}|${x.usia}|${x.size}`;
+  return (
+    <div className="border-t border-[#CFE0EF] bg-white px-4 py-3">
+      <div className="font-sans text-[12px] font-semibold text-info-fg">Hasil tambahan dari sisa kain</div>
+      <div className="mt-0.5 font-sans text-[10.5px] text-text-muted">Isi Finish Good tiap size tambahan (maks sebesar hasil cutting-nya). Selisihnya dihitung reject saat roll ditutup dan grup diselesaikan.</div>
+      {error && <div className="mt-1.5 font-sans text-[11px] text-danger-fg">{error}</div>}
+      {withExtras.map((b) => {
+        const pending = b.cuttingApproval?.status === "PENDING";
+        const rows = b.extraResults ?? [];
+        const changed = rows.filter((x) => draft[keyOf(b, x)] !== undefined && draft[keyOf(b, x)] !== (x.fgQty ?? 0));
+        return (
+          <div key={b.id} className="mt-2 rounded-md border border-[#E4E8EE] bg-[#FAFBFC] px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-mono text-[11.5px] font-semibold text-[#31414F]">{b.codeRoll || b.id}</span>
+              {pending && <span className="font-sans text-[10.5px] text-warning-fg">menunggu persetujuan akun utama</span>}
+              {!pending && locked && <span className="font-sans text-[10.5px] text-text-muted">Finish Good grup sudah dikonfirmasi</span>}
+            </div>
+            <div className="mt-1.5 grid grid-cols-[1.6fr_0.9fr_1fr_0.9fr] items-center gap-2 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+              <span>Size tambahan</span>
+              <span className="text-right">Hasil cutting</span>
+              <span className="text-right">Finish Good</span>
+              <span className="text-right">Reject</span>
+            </div>
+            {rows.map((x) => {
+              const fg = draft[keyOf(b, x)] ?? x.fgQty ?? 0;
+              return (
+                <div key={keyOf(b, x)} className="mt-1 grid grid-cols-[1.6fr_0.9fr_1fr_0.9fr] items-center gap-2 font-sans text-[11.5px] text-[#31414F]">
+                  <span>
+                    <span className="font-mono font-semibold">{x.size}</span> {x.usia === "KIDS" ? "Kids" : "Dewasa"} · {x.lengan === "PENDEK" ? "Pendek" : "Panjang"}
+                  </span>
+                  <span className="text-right font-mono">{x.qty}</span>
+                  <NumberInput
+                    value={fg}
+                    onChange={(v) => setDraft((prev) => ({ ...prev, [keyOf(b, x)]: Math.min(Math.max(0, v), x.qty) }))}
+                    disabled={pending || locked}
+                    className="h-8 w-full rounded-md border border-[#DDE4EB] bg-white px-2 text-right font-mono text-[12px]"
+                  />
+                  <span className={"text-right font-mono " + (b.closedAt && x.qty - fg > 0 ? "text-danger-fg" : "text-text-muted")}>{b.closedAt ? Math.max(0, x.qty - fg) : "—"}</span>
+                </div>
+              );
+            })}
+            <div className="mt-2 flex justify-end">
+              <Button
+                size="xs"
+                variant="primary"
+                disabled={pending || locked || changed.length === 0 || busy === b.id}
+                onClick={async () => {
+                  setError(null);
+                  setBusy(b.id);
+                  try {
+                    await saveBatchExtraFg(b.id, changed.map((x) => ({ lengan: x.lengan, usia: x.usia, size: x.size, fgQty: draft[keyOf(b, x)] })));
+                    setDraft((prev) => {
+                      const next = { ...prev };
+                      for (const x of changed) delete next[keyOf(b, x)];
+                      return next;
+                    });
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : String(err));
+                  } finally {
+                    setBusy(null);
+                  }
+                }}
+              >
+                {busy === b.id ? "Menyimpan…" : "Simpan Finish Good tambahan"}
+              </Button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1106,6 +1188,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                 </div>
                               );
                             })}
+                            <ExtraFgSection batches={groupBatches} locked={isFgConfirmed || isFinalDone} />
                             {!isFinalDone && groupNeedsFinish(g) && (
                               <div className="flex items-center justify-between gap-4 border-t border-[#CFE0EF] bg-[#F3F8FD] px-4 py-3 max-md:flex-col max-md:items-stretch max-md:gap-2.5">
                                 <span className="font-sans text-[11px] leading-[1.5] text-text-muted">

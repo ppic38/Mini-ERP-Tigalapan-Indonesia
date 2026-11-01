@@ -1372,8 +1372,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                               )}
                               {b.extraResults && b.extraResults.length > 0 && (
                                 <div className="mt-0.5 font-sans text-[10.5px] text-text-muted">
-                                  Hasil tambahan sisa kain:{" "}
-                                  {b.extraResults.map((x) => `${x.qty} pcs ${x.lengan === "PENDEK" ? "Pendek" : "Panjang"} ${x.size} (${x.usia === "KIDS" ? "Kids" : "Dewasa"})`).join(", ")}
+                                  Hasil tambahan sisa kain (cutting):{" "}
+                                  {b.extraResults.map((x) => `${x.size} ${x.usia === "KIDS" ? "Kids" : "Dewasa"} ${x.lengan === "PENDEK" ? "Pendek" : "Panjang"} ${x.qty} pcs (FG ${x.fgQty ?? 0})`).join(", ")}
                                   {b.extraResults.some((x) => !x.resultId) ? " — menunggu persetujuan akun utama" : ""}
                                 </div>
                               )}
@@ -1816,7 +1816,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                                   <div className="mt-2 rounded-md border border-dashed border-[#CFE0EF] bg-white px-2.5 py-2">
                                     <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
                                       <span className="font-sans text-[10.5px] text-text-muted">
-                                        Kain masih bersisa setelah target tercapai? Opsional: catat baju lain dari sisa kain (lengan, usia, dan size apa pun).
+                                        Kain masih bersisa setelah target tercapai? Opsional: catat HASIL CUTTING baju lain dari sisa kain (lengan, usia, dan size apa pun). Finish Good-nya diinput nanti di tab Finish Good (bisa lebih kecil; selisihnya jadi reject).
                                         {isMainAccount ? "" : " Hasil tambahan menunggu persetujuan akun utama."}
                                       </span>
                                       <button

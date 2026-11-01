@@ -2508,6 +2508,14 @@ export function warnaLenganGroupsWithFg(mrpId: string, vendorProduksi: string, b
     const key = r.warna + "|" + r.lengan;
     if (!seen.has(key)) seen.set(key, { warna: r.warna, lengan: r.lengan });
   }
+  // Grup tujuan hasil tambahan sisa kain (migration 0084) tetap terlihat walau Finish Good-nya belum diinput, supaya rejectnya bisa diselesaikan.
+  for (const b of batches) {
+    if (b.mrpId !== mrpId || b.vendorProduksi !== vendorProduksi) continue;
+    for (const x of b.extraResults ?? []) {
+      const key = b.warna + "|" + x.lengan;
+      if (!seen.has(key)) seen.set(key, { warna: b.warna, lengan: x.lengan });
+    }
+  }
   return sortWarnaLengan(Array.from(seen.values()));
 }
 
@@ -3690,6 +3698,16 @@ export function expectedRejectGrossForGroup(
     if (b.mrpId !== mrpId || b.warna !== warna || b.lengan !== lengan || !b.cuttingAt || !b.closedAt) continue;
     for (const [size, qty] of Object.entries(b.sizeQty ?? {})) target[size] = (target[size] ?? 0) + qty;
     for (const [size, qty] of Object.entries(b.fgSizeQty ?? {})) fg[size] = (fg[size] ?? 0) + qty;
+  }
+  // Hasil tambahan dari sisa kain (migration 0084) roll yang SUDAH ditutup: hasil cutting-nya jadi target, Finish Good-nya (fgQty) jadi FG,
+  // jadi selisihnya ikut menjadi reject grup warna·lengan tujuannya -- sama seperti size biasa.
+  for (const b of batches) {
+    if (b.mrpId !== mrpId || b.warna !== warna || !b.cuttingAt || !b.closedAt) continue;
+    for (const x of b.extraResults ?? []) {
+      if (x.lengan !== lengan) continue;
+      target[x.size] = (target[x.size] ?? 0) + x.qty;
+      fg[x.size] = (fg[x.size] ?? 0) + (x.fgQty ?? 0);
+    }
   }
   const rework = reworkBySizeForGroup(groupKey, results);
   const out: Record<string, number> = {};

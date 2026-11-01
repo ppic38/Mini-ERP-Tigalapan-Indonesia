@@ -38,7 +38,7 @@ import { scopeStateToVendor, stripVendorActorNames } from "./vendorScope";
 import { loadWeightTolerancePct, WEIGHT_TOLERANCE_KEY } from "./weightToleranceServer";
 import { assertRollCodesUnique } from "./rollCodeServer";
 import { normalizeProposal, validateProposal } from "./proposal";
-import { materializeExtras, normalizeExtras, removeBatchExtras } from "./cuttingExtras";
+import { detachBatchExtras, normalizeExtras, persistBatchExtras, removeBatchExtras, saveBatchExtraFg } from "./cuttingExtras";
 import type { CuttingExtra, CuttingExtraStored } from "./types";
 import {
   localDateString,
@@ -2664,6 +2664,22 @@ async function applyCuttingApproval(
   }
 }
 
+/** Input Finish Good hasil tambahan dari sisa kain sebuah roll (tab Finish Good). fgQty per baris, 0..hasil cutting; selisihnya jadi reject saat
+ *  roll ditutup dan grup tujuan diselesaikan. Ditolak selama hasil cutting roll masih menunggu persetujuan akun utama. */
+export async function saveBatchExtraFgAction(batchId: string, entries: { lengan: string; usia: string; size: string; fgQty: number }[]): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    const actor = await requireVendorSessionWithActor();
+    const db = supabaseServer();
+    const { data: batch, error } = await db.from("production_batches").select("id,mrp_id,vendor_produksi,warna,lengan,code_roll").eq("id", batchId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!batch) throw new Error("Roll tidak ditemukan.");
+    assertSameVendor(actor.vendorId, batch.vendor_produksi, "Roll ini");
+    await assertCuttingNotPending(db, batchId);
+    await saveBatchExtraFg(db, batch, entries);
+    await logVendorAction(actor, `Input Finish Good hasil tambahan sisa kain roll ${batch.code_roll ?? batch.id}`, "production_batches", batchId);
+  });
+}
+
 /** Finish Good roll yang hasil cuttingnya masih menunggu persetujuan akun utama ditolak. */
 async function assertCuttingNotPending(db: ReturnType<typeof supabaseServer>, batchId: string): Promise<void> {
   const { data, error } = await db.from("production_batches").select("cutting_approval_status").eq("id", batchId).maybeSingle();
@@ -2685,7 +2701,7 @@ export async function decideCuttingApprovalAction(batchIds: string[], decision: 
     const db = supabaseServer();
     const { data: rows, error } = await db
       .from("production_batches")
-      .select("id,vendor_produksi,code_roll,warna,lengan,mrp_id,cutting_approval_status,closed_at,extra_results")
+      .select("id,vendor_produksi,code_roll,warna,lengan,mrp_id,cutting_approval_status,closed_at")
       .in("id", batchIds);
     if (error) throw new Error(error.message);
     if (!rows || rows.length !== batchIds.length) throw new Error("Sebagian roll tidak ditemukan.");
@@ -2695,15 +2711,6 @@ export async function decideCuttingApprovalAction(batchIds: string[], decision: 
     }
     const now = new Date().toISOString();
     if (decision === "APPROVE") {
-      // Hasil tambahan sisa kain yang menunggu: jadi sah sekarang (tercatat sebagai Finish Good di grup tujuannya).
-      for (const b of rows) {
-        const stored = ((b.extra_results as CuttingExtraStored[] | null) ?? []).filter((e) => !e.resultId);
-        if (stored.length === 0) continue;
-        const done = await materializeExtras(db, b, stored, now);
-        const kept = ((b.extra_results as CuttingExtraStored[] | null) ?? []).filter((e) => !!e.resultId);
-        const { error: exErr } = await db.from("production_batches").update({ extra_results: [...kept, ...done] }).eq("id", b.id);
-        if (exErr) throw new Error(exErr.message);
-      }
       const { error: upErr } = await db
         .from("production_batches")
         .update({ cutting_approval_status: "APPROVED", cutting_decided_by: actor.actorName, cutting_decided_at: now, cutting_decision_note: reason || null })
@@ -2914,7 +2921,7 @@ async function updateBatchesToCuttingImpl(
 
   // Hasil tambahan sisa kain lama roll-roll ini dihapus SEBELUM hasil cutting ditulis (ditolak kalau grup tujuannya sudah dikonfirmasi
   // Selesai Produksi), supaya penolakan tidak meninggalkan data setengah jadi; yang baru dicatat setelah hasil cutting tersimpan.
-  await removeBatchExtras(db, batchRows);
+  const oldExtras = await detachBatchExtras(db, batchRows);
 
   // 1 UPDATE untuk SEMUA batchId sekaligus (cuttingAt seragam untuk 1 grup, lihat komentar
   // saveGroup di production-cutting-tab.tsx) -- bukan N update terpisah seperti versi single.
@@ -2959,15 +2966,9 @@ async function updateBatchesToCuttingImpl(
     for (const b of batchRows) {
       const list = cleanExtras[b.id] ?? [];
       if (list.length === 0) continue;
-      if (actor.vendorUserId != null) {
-        pendingExtraBatchIds.add(b.id);
-        const { error: exErr } = await db.from("production_batches").update({ extra_results: list }).eq("id", b.id);
-        if (exErr) throw new Error("Gagal menyimpan hasil tambahan sisa kain -- jalankan migration 0084 (production_batches.extra_results) di Supabase dulu. " + exErr.message);
-      } else {
-        const stored = await materializeExtras(db, b, list, recordedAt);
-        const { error: exErr } = await db.from("production_batches").update({ extra_results: stored }).eq("id", b.id);
-        if (exErr) throw new Error("Gagal menyimpan hasil tambahan sisa kain -- jalankan migration 0084 (production_batches.extra_results) di Supabase dulu. " + exErr.message);
-      }
+      // qty = hasil cutting hasil tambahan; Finish Good-nya diinput belakangan di tab Finish Good (fgQty yang lama dipertahankan).
+      await persistBatchExtras(db, b, list, oldExtras.get(b.id) ?? [], recordedAt);
+      if (actor.vendorUserId != null) pendingExtraBatchIds.add(b.id);
     }
   }
 
@@ -4913,6 +4914,8 @@ async function fetchProductionScopeForMrp(
       // guard itu ditambahkan (item 9, PR #38) -- lubang ini sudah ada dari situ, bukan regresi
       // dari perubahan sesi ini.
       closedAt: b.closed_at ?? undefined,
+      // Hasil tambahan sisa kain (migration 0084): dipakai expectedRejectGrossForGroup untuk reject grup tujuan.
+      extraResults: Array.isArray(b.extra_results) && b.extra_results.length > 0 ? (b.extra_results as CuttingExtraStored[]) : undefined,
       // Pola sama persis dengan lib/mrp/repo/snapshot.ts -- undefined (bukan {}) kalau belum ada
       // hasil aduan sama sekali, supaya `!b.sizeQty` di actualCutSizesForGroup (derive.ts) tetap
       // konsisten membedakan "belum diisi" vs "diisi tapi semua size kebetulan 0".

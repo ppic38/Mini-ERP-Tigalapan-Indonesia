@@ -395,7 +395,8 @@ export type MaklonInvoice = {
 /** Hasil tambahan dari sisa kain saat Input Hasil Cutting (migration 0084): baju lain (lengan/usia/size apa pun) dari kain roll yang
  *  masih bersisa setelah target tercapai. `resultId` terisi begitu SAH dan tercatat sebagai Finish Good (tanpa target). */
 export type CuttingExtra = { lengan: Lengan; usia: Usia; size: string; qty: number };
-export type CuttingExtraStored = CuttingExtra & { resultId?: string };
+/** `qty` = hasil cutting size tambahan itu; `fgQty` = Finish Good yang sudah diinput (kosong = 0); `resultId` = catatan Finish Good-nya. */
+export type CuttingExtraStored = CuttingExtra & { fgQty?: number; resultId?: string };
 
 export type ProductionBatch = {
   id: string;

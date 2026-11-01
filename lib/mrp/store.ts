@@ -531,6 +531,8 @@ type FlowActions = {
   /** Migration 0068 (opsional per vendor): akun UTAMA vendor menyetujui / menolak hasil cutting anggota tim yang kurang
    *  dari target. Tolak mengosongkan lagi hasil cutting roll itu (alasan wajib). Melempar kalau ditolak server. */
   decideCuttingApproval: (batchIds: string[], decision: "APPROVE" | "REJECT", note?: string) => Promise<void>;
+  /** Input Finish Good hasil tambahan dari sisa kain sebuah roll (migration 0084): fgQty per baris (0..hasil cutting). */
+  saveBatchExtraFg: (batchId: string, entries: { lengan: Lengan; usia: Usia; size: string; fgQty: number }[]) => Promise<void>;
   resolveProductionYield: (batchId: string, note: string) => Promise<void>;
   unresolveProductionYield: (batchId: string) => Promise<void>;
   reworkRejectSize: (input: { mrpId: string; vendorProduksi: string; warna: string; lengan: Lengan; fromSize: string; qty: number; toLengan: Lengan; toSize: string; usia: Usia }) => Promise<void>;
@@ -2314,6 +2316,25 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       // itu baru kebetulan ke-sync lagi kalau ada aksi LAIN yang memicu backgroundRefresh. Sekarang
       // dipanggil eksplisit di sini juga supaya client selalu balik konsisten dengan DB, apa pun
       // hasil aslinya di server (bukan cuma percaya revert optimistic lokal).
+      backgroundRefresh();
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  saveBatchExtraFg: async (batchId, entries) => {
+    const previous = get().productionBatches;
+    set({
+      productionBatches: previous.map((b) =>
+        b.id === batchId
+          ? { ...b, extraResults: (b.extraResults ?? []).map((x) => entries.find((e) => e.lengan === x.lengan && e.usia === x.usia && e.size === x.size) ? { ...x, fgQty: entries.find((e) => e.lengan === x.lengan && e.usia === x.usia && e.size === x.size)!.fgQty } : x) }
+          : b
+      ),
+    });
+    try {
+      unwrapAction(await actions.saveBatchExtraFgAction(batchId, entries));
+    } catch (err) {
+      set({ productionBatches: previous });
+      notifyError("Gagal menyimpan Finish Good hasil tambahan -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       backgroundRefresh();
       throw err;
     }
