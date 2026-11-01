@@ -14,3 +14,17 @@ where id in ('GI-01', 'GI-02') and bank_account_no is null;
 update public.vendors_produksi
 set bank_account_no = '367801027482532', bank_account_name = 'OKON RIZKON'
 where id = 'KK' and bank_account_no is null;
+
+-- Rekening vendor lain (diberikan owner 2026-11-01). BAYU punya dua rekening (Mandiri a.n. Rani Aryani 1300021879427 dan BCA a.n. Bayu Puji
+-- 3791440724); satu vendor hanya menyimpan satu rekening, dipakai yang BCA a.n. Bayu Puji (sesuai nama vendor).
+update public.vendors_produksi
+set bank_name = 'Bank Central Asia (BCA)', bank_account_no = '3791440724', bank_account_name = 'BAYU PUJI'
+where id = 'BAYU' and bank_account_no is null;
+
+update public.vendors_produksi
+set bank_name = 'Bank Central Asia (BCA)', bank_account_no = '3462683593', bank_account_name = 'NELI NURAENI'
+where id = 'CE' and bank_account_no is null;
+
+update public.vendors_produksi
+set bank_name = 'Bank Central Asia (BCA)', bank_account_no = '3462600779', bank_account_name = 'DESI PURNAMA SARI'
+where id = 'ELMN' and bank_account_no is null;
