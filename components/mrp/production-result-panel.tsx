@@ -273,114 +273,6 @@ function FgShippingDetailButton({
   );
 }
 
-/** Input Finish Good hasil tambahan dari sisa kain per roll (migration 0084): tiap baris punya hasil cutting (qty) dan Finish Good yang diinput
- *  (0..cutting). Selisihnya baru jadi reject setelah roll ditutup dan grup tujuan diselesaikan (sama seperti size biasa). */
-function ExtraFgSection({ batches, locked }: { batches: ProductionBatch[]; locked: boolean }) {
-  const saveBatchExtraFg = useMrpStore((s) => s.saveBatchExtraFg);
-  const [draft, setDraft] = useState<Record<string, number>>({});
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const withExtras = batches.filter((b) => (b.extraResults ?? []).length > 0);
-  if (withExtras.length === 0) return null;
-  const keyOf = (b: ProductionBatch, x: { lengan: string; usia: string; size: string }) => `${b.id}|${x.lengan}|${x.usia}|${x.size}`;
-  return (
-    <div className="border-t border-[#CFE0EF] bg-info-bg/40">
-      <div className="border-b border-[#CFE0EF] bg-info-bg px-4 py-2.5">
-        <span className="font-sans text-[12px] font-semibold text-info-fg">Hasil tambahan dari sisa kain</span>
-        <span className="ml-2 font-sans text-[11px] text-text-muted">Finish Good maks sebesar hasil cutting; selisihnya jadi reject saat roll ditutup dan grup diselesaikan.</span>
-      </div>
-      {error && <div className="border-b border-[#F0DFC2] bg-danger-bg px-4 py-1.5 font-sans text-[11px] text-danger-fg">{error}</div>}
-      {withExtras.map((b) => {
-        const pending = b.cuttingApproval?.status === "PENDING";
-        const rows = b.extraResults ?? [];
-        const changed = rows.filter((x) => draft[keyOf(b, x)] !== undefined && draft[keyOf(b, x)] !== (x.fgQty ?? 0));
-        return (
-          <div key={b.id}>
-            <div className="flex items-center justify-between gap-2 px-4 pt-3">
-              <span className="font-mono text-[11.5px] font-semibold text-[#31414F]">Roll {b.codeRoll || b.id}</span>
-              {pending && <span className="font-sans text-[10.5px] text-warning-fg">menunggu persetujuan akun utama</span>}
-              {!pending && locked && <span className="font-sans text-[10.5px] text-text-muted">Finish Good grup sudah dikonfirmasi</span>}
-            </div>
-            <div className="grid grid-cols-[repeat(auto-fit,minmax(210px,1fr))] gap-3 px-4 py-3">
-              {rows.map((x) => {
-                const fg = draft[keyOf(b, x)] ?? x.fgQty ?? 0;
-                const pct = x.qty > 0 ? Math.min(100, Math.round((fg / x.qty) * 100)) : 0;
-                const reject = b.closedAt ? Math.max(0, x.qty - fg) : null;
-                return (
-                  <div key={keyOf(b, x)} className="flex flex-col gap-2.5 rounded-lg border-2 border-[#BCD3E8] bg-white px-3.5 py-3 shadow-[0_1px_3px_rgba(11,19,27,.08)]">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="flex items-center gap-1.5">
-                        <span className="whitespace-nowrap rounded-md border-[1.5px] border-[#8FB3D3] bg-info-bg px-2.5 py-1 font-sans text-[12.5px] font-bold text-info-fg">{x.size}</span>
-                        <span className="font-sans text-[10.5px] text-text-muted">
-                          {x.usia === "KIDS" ? "Kids" : "Dewasa"} · {x.lengan === "PENDEK" ? "Pendek" : "Panjang"}
-                        </span>
-                      </span>
-                      <span className="whitespace-nowrap rounded-full bg-warning-bg px-2 py-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-wide text-warning-fg">Size tambahan</span>
-                    </div>
-                    <div className="flex items-baseline justify-between font-mono text-[10px] text-text-muted">
-                      <span>
-                        hasil cutting <span className="font-semibold text-[#31414F]">{x.qty}</span>
-                      </span>
-                      <span>
-                        maks <span className="font-semibold text-[#31414F]">{x.qty}</span>
-                      </span>
-                    </div>
-                    <NumberInput
-                      value={fg}
-                      decimals={0}
-                      emptyWhenZero
-                      placeholder="Finish Good"
-                      onChange={(v) => setDraft((prev) => ({ ...prev, [keyOf(b, x)]: Math.min(Math.max(0, v), x.qty) }))}
-                      disabled={pending || locked}
-                      className="input h-9 w-full text-right text-[13px] font-semibold"
-                    />
-                    <div className="flex items-center gap-2">
-                      <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#EEF0F3]">
-                        <span className="block h-full rounded-full bg-success" style={{ width: `${pct}%` }} />
-                      </span>
-                      <span className="whitespace-nowrap font-mono text-[10px] text-text-muted">
-                        {fg}/{x.qty} pcs
-                      </span>
-                    </div>
-                    {reject !== null && reject > 0 && <span className="font-mono text-[10px] text-danger-fg">reject {reject} pcs</span>}
-                  </div>
-                );
-              })}
-            </div>
-            <div className="flex items-center justify-between gap-4 border-t border-[#CFE0EF] bg-[#F3F8FD] px-4 py-3 max-md:flex-col max-md:items-stretch max-md:gap-2.5">
-              <span className="font-sans text-[11px] text-text-muted">Simpan Finish Good hasil tambahan roll ini — masih bisa diubah sebelum grup diselesaikan.</span>
-              <Button
-                size="md"
-                variant="primary"
-                className="min-w-[120px]"
-                disabled={pending || locked || changed.length === 0 || busy === b.id}
-                onClick={async () => {
-                  setError(null);
-                  setBusy(b.id);
-                  try {
-                    await saveBatchExtraFg(b.id, changed.map((x) => ({ lengan: x.lengan, usia: x.usia, size: x.size, fgQty: draft[keyOf(b, x)] })));
-                    setDraft((prev) => {
-                      const next = { ...prev };
-                      for (const x of changed) delete next[keyOf(b, x)];
-                      return next;
-                    });
-                  } catch (err) {
-                    setError(err instanceof Error ? err.message : String(err));
-                  } finally {
-                    setBusy(null);
-                  }
-                }}
-              >
-                {busy === b.id ? "Menyimpan…" : "Simpan →"}
-              </Button>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 export function ProductionResultPanel({ vendorId, kind, title, canRework = false }: { vendorId: string; kind: "FG" | "REJECT"; title: string; canRework?: boolean }) {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   // Hanya data vendor ini: satu warna·lengan bisa dikerjakan beberapa vendor (lihat useVendorProduction).
@@ -414,6 +306,10 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
   // tersisa di komponen ini -- roll TETAP sumber kebenaran untuk HPP, cuma tidak lagi punya UI
   // draft tersendiri (lihat saveSizeTotals di bawah).
   const [sizeTotalDraft, setSizeTotalDraft] = useState<Record<string, number>>({});
+  // Finish Good hasil tambahan dari sisa kain (migration 0084) yang sedang diisi, kunci "roll|lengan|usia|size". Disimpan bareng tombol Simpan "Input qty per size".
+  const [extraFgDraft, setExtraFgDraft] = useState<Record<string, number>>({});
+  const saveBatchExtraFg = useMrpStore((s) => s.saveBatchExtraFg);
+  const extraKey = (b: { id: string }, x: { lengan: string; usia: string; size: string }) => b.id + "|" + x.lengan + "|" + x.usia + "|" + x.size;
   const [expandedPoId, setExpandedPoId] = useState("");
   // Item 2026-09-12 (user-requested): tabel "Roll" (daftar roll + tombol Tutup Roll) di bawah
   // form "Isi qty per size" default TERSEMBUNYI -- dulu selalu tampil, bikin panel FG kepanjangan
@@ -912,6 +808,20 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                             totalCapacity[size] = openBatches.reduce((a, b) => a + Math.max(0, (b.sizeQty?.[size] ?? 0) - (b.fgSizeQty?.[size] ?? 0)), 0);
                           }
                           const overflow = sizesOpen.filter((size) => (sizeTotalDraft[size] ?? 0) > totalCapacity[size]);
+                          // Size tambahan dari sisa kain: tiap baris = 1 card di samping card size biasa, disimpan bareng tombol Simpan.
+                          const extraRows = groupBatches.flatMap((rb) => (rb.extraResults ?? []).map((x) => ({ rb, x })));
+                          const extraLocked = isFgConfirmed || isFinalDone;
+                          const extraChanged = extraRows.filter(({ rb, x }) => extraFgDraft[extraKey(rb, x)] !== undefined && extraFgDraft[extraKey(rb, x)] !== (x.fgQty ?? 0) && rb.cuttingApproval?.status !== "PENDING");
+                          async function saveExtras() {
+                            const byBatch = new Map<string, { lengan: Lengan; usia: "KIDS" | "DEWASA"; size: string; fgQty: number }[]>();
+                            for (const { rb, x } of extraChanged) byBatch.set(rb.id, [...(byBatch.get(rb.id) ?? []), { lengan: x.lengan, usia: x.usia, size: x.size, fgQty: extraFgDraft[extraKey(rb, x)] }]);
+                            await Promise.all(Array.from(byBatch.entries()).map(([id, entries]) => saveBatchExtraFg(id, entries)));
+                            setExtraFgDraft((prev) => {
+                              const next = { ...prev };
+                              for (const { rb, x } of extraChanged) delete next[extraKey(rb, x)];
+                              return next;
+                            });
+                          }
                           // Item 2026-09-12 (user-reported, gambar 2): size yang sizesOpen-nya
                           // "pairing" (1 roll dicutting untuk 2 size sekaligus, mis. M-XL) tapi
                           // salah satu size-nya sudah full (totalCapacity 0 karena FG size itu di
@@ -979,7 +889,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                             );
                             setSizeTotalDraft({});
                           }
-                          if (sizesOpen.length === 0) {
+                          if (sizesOpen.length === 0 && extraRows.length === 0) {
                             return groupBatches.length > 0 ? (
                               <div className="overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
                                 <div className="px-3 py-3 text-center font-sans text-[11.5px] text-text-muted">Semua roll grup ini sudah tertutup.</div>
@@ -991,7 +901,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                               <div className="border-b border-[#CFE0EF] bg-info-bg px-4 py-2.5 font-sans text-[11.5px] font-semibold leading-[1.5] text-info-fg">
                                 Input qty per size
                               </div>
-                              {sizesToShow.length === 0 ? (
+                              {sizesToShow.length === 0 && extraRows.length === 0 ? (
                                 <div className="px-3 py-3 text-center font-sans text-[11.5px] text-text-muted">
                                   Semua size sudah mencapai target finish good — tinggal Tutup Roll (lihat di bawah) untuk menyelesaikan roll yang tersisa.
                                 </div>
@@ -1033,6 +943,53 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                       </div>
                                     );
                                   })}
+                                  {extraRows.map(({ rb, x }) => {
+                                    const k = extraKey(rb, x);
+                                    const fgNow = extraFgDraft[k] ?? x.fgQty ?? 0;
+                                    const pendingApproval = rb.cuttingApproval?.status === "PENDING";
+                                    const pctX = x.qty > 0 ? Math.min(100, Math.round((fgNow / x.qty) * 100)) : 0;
+                                    const rejectX = rb.closedAt ? Math.max(0, x.qty - fgNow) : null;
+                                    return (
+                                      <div key={k} className="flex flex-col gap-2.5 rounded-lg border-2 border-[#BCD3E8] bg-white px-3.5 py-3 shadow-[0_1px_3px_rgba(11,19,27,.08)]">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <span className="flex items-center gap-1.5">
+                                            <span className="whitespace-nowrap rounded-md border-[1.5px] border-[#8FB3D3] bg-info-bg px-2.5 py-1 font-sans text-[12.5px] font-bold text-info-fg">{x.size}</span>
+                                            <span className="font-sans text-[10.5px] text-text-muted">
+                                              {x.usia === "KIDS" ? "Kids" : "Dewasa"} · {x.lengan === "PENDEK" ? "Pendek" : "Panjang"}
+                                            </span>
+                                          </span>
+                                          <span className="whitespace-nowrap rounded-full bg-warning-bg px-2 py-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-wide text-warning-fg">Size tambahan</span>
+                                        </div>
+                                        <div className="flex items-baseline justify-between font-mono text-[10px] text-text-muted">
+                                          <span>
+                                            roll <span className="font-semibold text-[#31414F]">{rb.codeRoll || rb.id}</span>
+                                          </span>
+                                          <span>
+                                            hasil cutting <span className="font-semibold text-[#31414F]">{x.qty}</span> · maks <span className="font-semibold text-[#31414F]">{x.qty}</span>
+                                          </span>
+                                        </div>
+                                        <NumberInput
+                                          value={fgNow}
+                                          decimals={0}
+                                          emptyWhenZero
+                                          placeholder="Finish Good"
+                                          onChange={(v) => setExtraFgDraft((prev) => ({ ...prev, [k]: Math.min(Math.max(0, v), x.qty) }))}
+                                          disabled={pendingApproval || extraLocked}
+                                          className="input h-9 w-full text-right text-[13px] font-semibold"
+                                        />
+                                        <div className="flex items-center gap-2">
+                                          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#EEF0F3]">
+                                            <span className="block h-full rounded-full bg-success" style={{ width: `${pctX}%` }} />
+                                          </span>
+                                          <span className="whitespace-nowrap font-mono text-[10px] text-text-muted">
+                                            {fgNow}/{x.qty} pcs
+                                          </span>
+                                        </div>
+                                        {pendingApproval && <span className="font-sans text-[10px] text-warning-fg">menunggu persetujuan akun utama</span>}
+                                        {rejectX !== null && rejectX > 0 && <span className="font-mono text-[10px] text-danger-fg">reject {rejectX} pcs</span>}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               )}
                               <div className="flex items-center justify-between gap-4 border-t border-[#CFE0EF] bg-[#F3F8FD] px-4 py-3 max-md:flex-col max-md:items-stretch max-md:gap-2.5">
@@ -1042,7 +999,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                    (owner): tombol "Selesai Produksi" dipindah ke kartu roll per batch
                                    di bawah (lihat "Progres per batch") -- di sini cuma "Simpan". */}
                                 <span className="font-sans text-[11px] text-text-muted">Simpan progres Finish Good tanpa menutup roll — masih bisa diisi lagi nanti.</span>
-                                <Button onClick={() => runAction(quickSaveKey, saveSizeTotals())} disabled={sizesToShow.length === 0} variant="primary" size="md" className="min-w-[120px]">
+                                <Button onClick={() => runAction(quickSaveKey, (async () => { await saveSizeTotals(); await saveExtras(); })())} disabled={sizesToShow.length === 0 && extraChanged.length === 0} variant="primary" size="md" className="min-w-[120px]">
                                   Simpan →
                                 </Button>
                               </div>
@@ -1133,6 +1090,15 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                           </span>
                                         );
                                       })}
+                                    {(b.extraResults ?? []).map((x) => (
+                                      <span
+                                        key={x.lengan + x.usia + x.size}
+                                        className={"rounded-md border px-2 py-[3px] font-mono text-[10.5px] " + ((x.fgQty ?? 0) >= x.qty ? "border-[#BFE3CF] bg-success-bg text-success-fg" : "border-[#F0DFC2] bg-warning-bg text-warning-fg")}
+                                        title="Size tambahan dari sisa kain (hasil cutting dan Finish Good)"
+                                      >
+                                        <b>{x.size}</b> {x.usia === "KIDS" ? "Kids" : "Dewasa"} · {x.lengan === "PENDEK" ? "Pdk" : "Pjg"} {x.fgQty ?? 0}/{x.qty}
+                                      </span>
+                                    ))}
                                   </span>
                                   <span data-label="Total FG" className="text-center font-mono text-[12px]">
                                     <b className="text-text-primary">{totalFg}</b> <span className="text-text-muted">/ {totalTarget}</span>
@@ -1140,14 +1106,23 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                   <span data-label="Reject" className="flex flex-wrap items-center justify-center gap-1">
                                     {!b.closedAt ? (
                                       <span className="font-mono text-[11px] text-text-muted" title="Reject dihitung setelah roll ditutup">—</span>
-                                    ) : rollReject.length === 0 ? (
+                                    ) : rollReject.length === 0 && (b.extraResults ?? []).every((x) => (x.fgQty ?? 0) >= x.qty) ? (
                                       <span className="font-mono text-[11px] text-text-muted">0</span>
                                     ) : (
-                                      rollReject.map(([sz, v]) => (
-                                        <span key={sz} className="rounded-md border border-[#EFC9C4] bg-danger-bg px-2 py-[3px] font-mono text-[10.5px] text-danger-fg">
-                                          <b>{sz}</b> {v}
-                                        </span>
-                                      ))
+                                      <>
+                                        {rollReject.map(([sz, v]) => (
+                                          <span key={sz} className="rounded-md border border-[#EFC9C4] bg-danger-bg px-2 py-[3px] font-mono text-[10.5px] text-danger-fg">
+                                            <b>{sz}</b> {v}
+                                          </span>
+                                        ))}
+                                        {(b.extraResults ?? [])
+                                          .filter((x) => (x.fgQty ?? 0) < x.qty)
+                                          .map((x) => (
+                                            <span key={"x" + x.lengan + x.usia + x.size} className="rounded-md border border-[#EFC9C4] bg-danger-bg px-2 py-[3px] font-mono text-[10.5px] text-danger-fg">
+                                              <b>{x.size}</b> {x.usia === "KIDS" ? "Kids" : "Dewasa"} {x.qty - (x.fgQty ?? 0)}
+                                            </span>
+                                          ))}
+                                      </>
                                     )}
                                   </span>
                                   <span data-label="Status" className="text-center">
@@ -1214,7 +1189,6 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                 </div>
                               );
                             })}
-                            <ExtraFgSection batches={groupBatches} locked={isFgConfirmed || isFinalDone} />
                             {!isFinalDone && groupNeedsFinish(g) && (
                               <div className="flex items-center justify-between gap-4 border-t border-[#CFE0EF] bg-[#F3F8FD] px-4 py-3 max-md:flex-col max-md:items-stretch max-md:gap-2.5">
                                 <span className="font-sans text-[11px] leading-[1.5] text-text-muted">
