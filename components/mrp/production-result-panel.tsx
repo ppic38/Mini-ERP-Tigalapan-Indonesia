@@ -284,49 +284,75 @@ function ExtraFgSection({ batches, locked }: { batches: ProductionBatch[]; locke
   if (withExtras.length === 0) return null;
   const keyOf = (b: ProductionBatch, x: { lengan: string; usia: string; size: string }) => `${b.id}|${x.lengan}|${x.usia}|${x.size}`;
   return (
-    <div className="border-t border-[#CFE0EF] bg-white px-4 py-3">
-      <div className="font-sans text-[12px] font-semibold text-info-fg">Hasil tambahan dari sisa kain</div>
-      <div className="mt-0.5 font-sans text-[10.5px] text-text-muted">Isi Finish Good tiap size tambahan (maks sebesar hasil cutting-nya). Selisihnya dihitung reject saat roll ditutup dan grup diselesaikan.</div>
-      {error && <div className="mt-1.5 font-sans text-[11px] text-danger-fg">{error}</div>}
+    <div className="border-t border-[#CFE0EF] bg-info-bg/40">
+      <div className="border-b border-[#CFE0EF] bg-info-bg px-4 py-2.5">
+        <span className="font-sans text-[12px] font-semibold text-info-fg">Hasil tambahan dari sisa kain</span>
+        <span className="ml-2 font-sans text-[11px] text-text-muted">Finish Good maks sebesar hasil cutting; selisihnya jadi reject saat roll ditutup dan grup diselesaikan.</span>
+      </div>
+      {error && <div className="border-b border-[#F0DFC2] bg-danger-bg px-4 py-1.5 font-sans text-[11px] text-danger-fg">{error}</div>}
       {withExtras.map((b) => {
         const pending = b.cuttingApproval?.status === "PENDING";
         const rows = b.extraResults ?? [];
         const changed = rows.filter((x) => draft[keyOf(b, x)] !== undefined && draft[keyOf(b, x)] !== (x.fgQty ?? 0));
         return (
-          <div key={b.id} className="mt-2 rounded-md border border-[#E4E8EE] bg-[#FAFBFC] px-3 py-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-mono text-[11.5px] font-semibold text-[#31414F]">{b.codeRoll || b.id}</span>
+          <div key={b.id}>
+            <div className="flex items-center justify-between gap-2 px-4 pt-3">
+              <span className="font-mono text-[11.5px] font-semibold text-[#31414F]">Roll {b.codeRoll || b.id}</span>
               {pending && <span className="font-sans text-[10.5px] text-warning-fg">menunggu persetujuan akun utama</span>}
               {!pending && locked && <span className="font-sans text-[10.5px] text-text-muted">Finish Good grup sudah dikonfirmasi</span>}
             </div>
-            <div className="mt-1.5 grid grid-cols-[1.6fr_0.9fr_1fr_0.9fr] items-center gap-2 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-              <span>Size tambahan</span>
-              <span className="text-right">Hasil cutting</span>
-              <span className="text-right">Finish Good</span>
-              <span className="text-right">Reject</span>
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(210px,1fr))] gap-3 px-4 py-3">
+              {rows.map((x) => {
+                const fg = draft[keyOf(b, x)] ?? x.fgQty ?? 0;
+                const pct = x.qty > 0 ? Math.min(100, Math.round((fg / x.qty) * 100)) : 0;
+                const reject = b.closedAt ? Math.max(0, x.qty - fg) : null;
+                return (
+                  <div key={keyOf(b, x)} className="flex flex-col gap-2.5 rounded-lg border-2 border-[#BCD3E8] bg-white px-3.5 py-3 shadow-[0_1px_3px_rgba(11,19,27,.08)]">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5">
+                        <span className="whitespace-nowrap rounded-md border-[1.5px] border-[#8FB3D3] bg-info-bg px-2.5 py-1 font-sans text-[12.5px] font-bold text-info-fg">{x.size}</span>
+                        <span className="font-sans text-[10.5px] text-text-muted">
+                          {x.usia === "KIDS" ? "Kids" : "Dewasa"} · {x.lengan === "PENDEK" ? "Pendek" : "Panjang"}
+                        </span>
+                      </span>
+                      <span className="whitespace-nowrap rounded-full bg-warning-bg px-2 py-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-wide text-warning-fg">Size tambahan</span>
+                    </div>
+                    <div className="flex items-baseline justify-between font-mono text-[10px] text-text-muted">
+                      <span>
+                        hasil cutting <span className="font-semibold text-[#31414F]">{x.qty}</span>
+                      </span>
+                      <span>
+                        maks <span className="font-semibold text-[#31414F]">{x.qty}</span>
+                      </span>
+                    </div>
+                    <NumberInput
+                      value={fg}
+                      decimals={0}
+                      emptyWhenZero
+                      placeholder="Finish Good"
+                      onChange={(v) => setDraft((prev) => ({ ...prev, [keyOf(b, x)]: Math.min(Math.max(0, v), x.qty) }))}
+                      disabled={pending || locked}
+                      className="input h-9 w-full text-right text-[13px] font-semibold"
+                    />
+                    <div className="flex items-center gap-2">
+                      <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#EEF0F3]">
+                        <span className="block h-full rounded-full bg-success" style={{ width: `${pct}%` }} />
+                      </span>
+                      <span className="whitespace-nowrap font-mono text-[10px] text-text-muted">
+                        {fg}/{x.qty} pcs
+                      </span>
+                    </div>
+                    {reject !== null && reject > 0 && <span className="font-mono text-[10px] text-danger-fg">reject {reject} pcs</span>}
+                  </div>
+                );
+              })}
             </div>
-            {rows.map((x) => {
-              const fg = draft[keyOf(b, x)] ?? x.fgQty ?? 0;
-              return (
-                <div key={keyOf(b, x)} className="mt-1 grid grid-cols-[1.6fr_0.9fr_1fr_0.9fr] items-center gap-2 font-sans text-[11.5px] text-[#31414F]">
-                  <span>
-                    <span className="font-mono font-semibold">{x.size}</span> {x.usia === "KIDS" ? "Kids" : "Dewasa"} · {x.lengan === "PENDEK" ? "Pendek" : "Panjang"}
-                  </span>
-                  <span className="text-right font-mono">{x.qty}</span>
-                  <NumberInput
-                    value={fg}
-                    onChange={(v) => setDraft((prev) => ({ ...prev, [keyOf(b, x)]: Math.min(Math.max(0, v), x.qty) }))}
-                    disabled={pending || locked}
-                    className="h-8 w-full rounded-md border border-[#DDE4EB] bg-white px-2 text-right font-mono text-[12px]"
-                  />
-                  <span className={"text-right font-mono " + (b.closedAt && x.qty - fg > 0 ? "text-danger-fg" : "text-text-muted")}>{b.closedAt ? Math.max(0, x.qty - fg) : "—"}</span>
-                </div>
-              );
-            })}
-            <div className="mt-2 flex justify-end">
+            <div className="flex items-center justify-between gap-4 border-t border-[#CFE0EF] bg-[#F3F8FD] px-4 py-3 max-md:flex-col max-md:items-stretch max-md:gap-2.5">
+              <span className="font-sans text-[11px] text-text-muted">Simpan Finish Good hasil tambahan roll ini — masih bisa diubah sebelum grup diselesaikan.</span>
               <Button
-                size="xs"
+                size="md"
                 variant="primary"
+                className="min-w-[120px]"
                 disabled={pending || locked || changed.length === 0 || busy === b.id}
                 onClick={async () => {
                   setError(null);
@@ -345,7 +371,7 @@ function ExtraFgSection({ batches, locked }: { batches: ProductionBatch[]; locke
                   }
                 }}
               >
-                {busy === b.id ? "Menyimpan…" : "Simpan Finish Good tambahan"}
+                {busy === b.id ? "Menyimpan…" : "Simpan →"}
               </Button>
             </div>
           </div>
