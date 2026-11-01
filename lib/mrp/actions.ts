@@ -6815,6 +6815,34 @@ export async function updateVendorProduksiMasterAction(id: string, patch: { name
   const { error } = await supabaseServer().from("vendors_produksi").update(p).eq("id", id);
   if (error) throw new Error(error.message);
 }
+/** Rekening tujuan pembayaran vendor produksi (migration 0085) untuk Proposal Pembayaran. */
+export type VendorBankAccount = { bankName: string; accountNo: string; accountName: string };
+const BANK_COLUMN_MISSING = "Jalankan migration 0085 (kolom rekening di vendors_produksi) di Supabase dulu.";
+
+/** Daftar rekening semua vendor produksi (id vendor -> rekening). Hanya Procurement/Finance/Sysadmin; tidak ikut snapshot. */
+export async function listVendorBankAccountsAction(): Promise<ActionResult<Record<string, VendorBankAccount>>> {
+  return toActionResult(async () => {
+    const session = await requireSession();
+    if (!session.internalRoles.some((r) => r === "procurement" || r === "finance" || r === "sysadmin")) throw new Error("Forbidden: rekening vendor hanya untuk Procurement/Finance.");
+    const { data, error } = await supabaseServer().from("vendors_produksi").select("id,bank_name,bank_account_no,bank_account_name");
+    if (error) throw new Error(error.message.includes("bank_") ? BANK_COLUMN_MISSING : error.message);
+    const out: Record<string, VendorBankAccount> = {};
+    for (const r of data ?? []) out[r.id] = { bankName: r.bank_name ?? "", accountNo: r.bank_account_no ?? "", accountName: r.bank_account_name ?? "" };
+    return out;
+  });
+}
+
+export async function updateVendorBankAccountAction(id: string, acct: VendorBankAccount): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireMasterDataRole();
+    const { error } = await supabaseServer()
+      .from("vendors_produksi")
+      .update({ bank_name: acct.bankName.trim() || null, bank_account_no: acct.accountNo.trim() || null, bank_account_name: acct.accountName.trim() || null })
+      .eq("id", id);
+    if (error) throw new Error(error.message.includes("bank_") ? BANK_COLUMN_MISSING : error.message);
+  });
+}
+
 export async function deleteVendorProduksiMasterAction(id: string): Promise<void> {
   await requireMasterDataRole();
   const { error } = await supabaseServer().from("vendors_produksi").delete().eq("id", id);

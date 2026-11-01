@@ -80,7 +80,7 @@ function invoiceOrderKey(i: VendorInvoice): string {
  *  Payment Maklon, Procurement tidak perlu membuat). Nomor = urutan invoice di tahun itu (stabil, unik per invoice); nama kegiatan =
  *  "Pembayaran Tagihan Produksi Vendor {vendor} PO {MRP} - Kategori {kategori}"; tagihan = total akhir invoice; DP default 60%.
  *  Rekening tujuan belum ada di sistem, jadi dikosongkan. DP/sisa TIDAK ditampilkan di PDF otomatis (owner 2026-10-30), datanya hanya dari invoice. */
-export function buildAutoProposal(inv: VendorInvoice, allInvoices: VendorInvoice[], mrpDetails: MrpDetail[], todayIso: string): PaymentProposal {
+export function buildAutoProposal(inv: VendorInvoice, allInvoices: VendorInvoice[], mrpDetails: MrpDetail[], todayIso: string, rekTujuan = ""): PaymentProposal {
   const year = inv.submittedAt.slice(0, 4);
   const sameYear = allInvoices.filter((i) => i.submittedAt.slice(0, 4) === year).sort((a, b) => invoiceOrderKey(a).localeCompare(invoiceOrderKey(b)));
   const seq = Math.max(1, sameYear.findIndex((i) => i.id === inv.id) + 1);
@@ -99,9 +99,17 @@ export function buildAutoProposal(inv: VendorInvoice, allInvoices: VendorInvoice
     date: todayIso,
     location: PROPOSAL_DEFAULT_LOCATION,
     activity: `Pembayaran Tagihan Produksi Vendor ${vendorName} PO ${mrpIds.join(", ")}${kategori.length > 0 ? " - Kategori " + kategori.join(", ") : ""}`,
-    rekTujuan: "",
+    rekTujuan,
     tagihan: vendorInvoiceFinalAmount(inv),
     dpPercent: PROPOSAL_DEFAULT_DP_PERCENT,
     startDate,
   });
+}
+
+/** Teks rekening tujuan dari Master Data Vendor Produksi: "Bank Central Asia (BCA) : 3462401431 a.n. YOGI ADI WIDYATAMA". Kosong -> "-". */
+export function formatRekTujuan(acct?: { bankName: string; accountNo: string; accountName: string }): string {
+  if (!acct || !acct.accountNo.trim()) return "-";
+  const bank = acct.bankName.trim();
+  const name = acct.accountName.trim();
+  return `${bank ? bank + " : " : ""}${acct.accountNo.trim()}${name ? " a.n. " + name : ""}`;
 }

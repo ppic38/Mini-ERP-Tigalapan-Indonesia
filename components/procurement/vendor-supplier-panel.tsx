@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/mrp/number-input";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
@@ -10,12 +10,14 @@ import { MasterDataFormModal, ModalField } from "@/components/mrp/master-data-fo
 import { Tabs } from "@/components/ui/tabs";
 import { KeepAliveTab } from "@/components/ui/keep-alive-tab";
 import { useMrpStore } from "@/lib/mrp/store";
+import { listVendorBankAccountsAction, updateVendorBankAccountAction, type VendorBankAccount } from "@/lib/mrp/actions";
+import { unwrapAction } from "@/lib/mrp/action-result";
 import type { MaterialSupplierRow, VendorProduksiMasterRow } from "@/lib/mrp/masterData";
 
 type SupplierDraft = { nama: string };
 const EMPTY_SUPPLIER_DRAFT: SupplierDraft = { nama: "" };
 
-type VendorDraft = { name: string; kategori: string; weeklyCapacity: number };
+type VendorDraft = { name: string; kategori: string; weeklyCapacity: number; bankName: string; accountNo: string; accountName: string };
 
 type SubTab = "vendorProduksi" | "supplierMaterial";
 
@@ -76,12 +78,32 @@ export function VendorSupplierPanel() {
   }
 
   const [editingVendor, setEditingVendor] = useState<VendorProduksiMasterRow | null>(null);
-  const [vendorDraft, setVendorDraft] = useState<VendorDraft>({ name: "", kategori: "", weeklyCapacity: 0 });
+  const [vendorDraft, setVendorDraft] = useState<VendorDraft>({ name: "", kategori: "", weeklyCapacity: 0, bankName: "", accountNo: "", accountName: "" });
+  // Rekening tujuan pembayaran vendor (migration 0085) -- dibaca lewat aksi server khusus, tidak ikut snapshot.
+  const [bankAccounts, setBankAccounts] = useState<Record<string, VendorBankAccount>>({});
+  const [bankLoadError, setBankLoadError] = useState("");
+  useEffect(() => {
+    let alive = true;
+    listVendorBankAccountsAction()
+      .then((res) => {
+        if (!alive) return;
+        try {
+          setBankAccounts(unwrapAction(res));
+        } catch (err) {
+          setBankLoadError(err instanceof Error ? err.message : String(err));
+        }
+      })
+      .catch((err) => alive && setBankLoadError(err instanceof Error ? err.message : String(err)));
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [vendorSaving, setVendorSaving] = useState(false);
   const [vendorError, setVendorError] = useState("");
 
   function openEditVendor(v: VendorProduksiMasterRow) {
-    setVendorDraft({ name: v.name, kategori: v.kategori ?? "", weeklyCapacity: v.weeklyCapacity });
+    const b = bankAccounts[v.id];
+    setVendorDraft({ name: v.name, kategori: v.kategori ?? "", weeklyCapacity: v.weeklyCapacity, bankName: b?.bankName ?? "", accountNo: b?.accountNo ?? "", accountName: b?.accountName ?? "" });
     setEditingVendor(v);
     setVendorError("");
   }
@@ -96,6 +118,9 @@ export function VendorSupplierPanel() {
     setVendorSaving(true);
     try {
       await updateVendorProduksi(editingVendor.id, { name: vendorDraft.name.trim(), kategori: vendorDraft.kategori.trim(), weeklyCapacity: vendorDraft.weeklyCapacity });
+      const acct: VendorBankAccount = { bankName: vendorDraft.bankName.trim(), accountNo: vendorDraft.accountNo.trim(), accountName: vendorDraft.accountName.trim() };
+      unwrapAction(await updateVendorBankAccountAction(editingVendor.id, acct));
+      setBankAccounts((prev) => ({ ...prev, [editingVendor.id]: acct }));
       setEditingVendor(null);
     } catch (err) {
       setVendorError(err instanceof Error ? err.message : String(err));
@@ -108,6 +133,9 @@ export function VendorSupplierPanel() {
     { key: "name", label: "Nama Vendor Produksi", default: true, render: (v) => v.name },
     { key: "kategori", label: "Kategori", default: true, render: (v) => v.kategori || "—" },
     { key: "weeklyCapacity", label: "Kapasitas/Minggu", default: true, align: "right", render: (v) => v.weeklyCapacity.toLocaleString("id-ID") },
+    { key: "bankName", label: "Bank", default: true, render: (v) => bankAccounts[v.id]?.bankName || "—" },
+    { key: "accountNo", label: "No. Rekening", default: true, render: (v) => <span className="font-mono text-[11.5px]">{bankAccounts[v.id]?.accountNo || "—"}</span> },
+    { key: "accountName", label: "Atas Nama", default: true, render: (v) => bankAccounts[v.id]?.accountName || "—" },
     { key: "updatedAt", label: "Terakhir diupdate", default: true, render: (r) => <span className="font-mono text-[11px] text-text-muted">{formatDateTime(r.updatedAt)}</span> },
     {
       key: "aksi",
@@ -220,6 +248,16 @@ export function VendorSupplierPanel() {
           <ModalField label="Kapasitas/Minggu">
             <NumberInput value={vendorDraft.weeklyCapacity} onChange={(v) => setVendorDraft({ ...vendorDraft, weeklyCapacity: v })} className="input w-full" />
           </ModalField>
+          <ModalField label="Bank (rekening tujuan pembayaran)">
+            <input value={vendorDraft.bankName} onChange={(e) => setVendorDraft({ ...vendorDraft, bankName: e.target.value })} className="input w-full" placeholder="mis. Bank Central Asia (BCA)" />
+          </ModalField>
+          <ModalField label="No. Rekening">
+            <input value={vendorDraft.accountNo} onChange={(e) => setVendorDraft({ ...vendorDraft, accountNo: e.target.value })} className="input w-full" inputMode="numeric" placeholder="mis. 3462401431" />
+          </ModalField>
+          <ModalField label="Nama Pemilik Rekening">
+            <input value={vendorDraft.accountName} onChange={(e) => setVendorDraft({ ...vendorDraft, accountName: e.target.value })} className="input w-full" placeholder="mis. YOGI ADI WIDYATAMA" />
+          </ModalField>
+          {bankLoadError && <div className="font-sans text-[11px] text-danger-fg">{bankLoadError}</div>}
         </MasterDataFormModal>
       )}
     </div>

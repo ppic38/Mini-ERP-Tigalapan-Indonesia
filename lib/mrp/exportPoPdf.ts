@@ -602,6 +602,7 @@ function renderInvoiceProposalPage(doc: jsPDF, inv: VendorInvoice, proposal: Pay
       ["No. MRP / PO", mrpIds.join(", ")],
       ["Tanggal Invoice", formatDate(inv.submittedAt)],
       ["Mulai Kegiatan", formatDate(proposal.startDate)],
+      ["Rekening Tujuan", proposal.rekTujuan || "-"],
       ["Status Invoice", statusLabel],
     ]
   );
