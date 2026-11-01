@@ -29,6 +29,7 @@ export const NAV: Record<RoleKey, RoleNav> = {
       { label: "Purchase Order", href: "/procurement/po-approval" },
       { label: "Paying Voucher (Invoice)", href: "/raw-material" },
       { label: "Material Tracking", href: "/procurement/material-tracking" },
+      { label: "Material per Warna", href: "/procurement/material-per-warna" },
       { label: "Raw Material", href: "/procurement/raw-material" },
       { label: "Klaim Material", href: "/procurement/material-claims" },
       { label: "Master Data", href: "/procurement/master-data" },
@@ -63,6 +64,7 @@ export const NAV: Record<RoleKey, RoleNav> = {
       { label: "Approval PO", href: "/scm/approval-po" },
       { label: "Monitoring", href: "/scm/monitoring" },
       { label: "Tracking Item", href: "/scm/item-tracking" },
+      { label: "Material per Warna", href: "/scm/material-per-warna" },
       // Revisi 2026-09-30 (owner): Master Data SCM -- saat ini toleransi selisih berat (berlaku semua vendor produksi).
       { label: "Master Data", href: "/scm/master-data" },
     ],
