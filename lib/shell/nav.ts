@@ -65,6 +65,7 @@ export const NAV: Record<RoleKey, RoleNav> = {
       { label: "Monitoring", href: "/scm/monitoring" },
       { label: "Tracking Item", href: "/scm/item-tracking" },
       { label: "Material per Warna", href: "/scm/material-per-warna" },
+      { label: "Laporan HPP", href: "/scm/laporan-hpp" },
       // Revisi 2026-09-30 (owner): Master Data SCM -- saat ini toleransi selisih berat (berlaku semua vendor produksi).
       { label: "Master Data", href: "/scm/master-data" },
     ],
