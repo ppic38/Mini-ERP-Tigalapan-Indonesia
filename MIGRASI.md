@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Tracking Item: rincian koli dan pengiriman per item (2026-11-02, tanpa migration)
+Owner: di popup item Tracking Item (PPIC dan SCM) harus kelihatan koli dan set delivery-nya. Popup kini punya tabel **Koli dan pengiriman item ini** di bawah rincian per MRP dan vendor (`koliRowsForItem`, lib/mrp/itemTracking.ts; mengikuti filter MRP/vendor aktif): per koli = No. MRP, vendor, no. koli, qty item itu di koli (reject tidak dihitung, size yang sama dari beberapa roll dijumlah), berat, status (Belum dikirim / Dalam perjalanan / Diterima gudang), ekspedisi, no. resi, tanggal kirim, tanggal diterima gudang (dari penerimaan Warehouse). Hanya tampilan, murni turunan data koli dan penerimaan yang sudah ada.
+
 ## Kolom Proposal/Invoice dipindah ke paling kanan di Payment Maklon (2026-11-02, tanpa migration)
 Owner: di Finance > Payment Maklon kolom proposal dipindah ke paling kanan (tabel siap bayar dan riwayat), diberi nama kolom **Proposal/Invoice**, dan tautannya cukup berbunyi **Download** (`components/finance/proposal-cell.tsx`, urutan kolom di `payment-maklon-panel.tsx`). Isi PDF tidak berubah. Hanya tampilan.
 
