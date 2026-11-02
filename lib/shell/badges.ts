@@ -58,6 +58,15 @@ export function countPoPendingForRole(role: ApprovalRole, materialPOs: MaterialP
   return materialPOs.filter((p) => p.status !== "CANCELLED" && !p.approved && waiting(p)).length + maklonPOs.filter((p) => !p.approved && waiting(p)).length;
 }
 
+/** PO yang approval-nya MASIH BERJALAN: belum tuntas di semua level (menunggu langkah siapa pun, atau ditolak dan belum diajukan ulang). Dipakai badge menu
+ *  "PO Approval" dan badge tab PO Material / PO Produksi di semua modul penyetuju (Procurement, SCM, Finance, GM), supaya badge tetap ada selama masih ada PO
+ *  yang belum selesai, bukan hanya saat giliran role itu (owner 2026-11-02). `type` mempersempit ke satu jenis PO. */
+export function countPoInProgress(materialPOs: MaterialPO[], maklonPOs: MaklonPO[], type?: "MATERIAL" | "MAKLON"): number {
+  const material = type === "MAKLON" ? 0 : materialPOs.filter((p) => p.status !== "CANCELLED" && !p.approved && !poApprovalState(p).approved).length;
+  const maklon = type === "MATERIAL" ? 0 : maklonPOs.filter((p) => !p.closedAt && !p.approved && !poApprovalState(p).approved).length;
+  return material + maklon;
+}
+
 /** PO yang DITOLAK dan menunggu diajukan ulang Procurement. */
 export function countPoRejected(materialPOs: MaterialPO[], maklonPOs: MaklonPO[]): number {
   return materialPOs.filter((p) => p.status !== "CANCELLED" && !p.approved && poApprovalState(p).rejected).length + maklonPOs.filter((p) => !p.approved && poApprovalState(p).rejected).length;
