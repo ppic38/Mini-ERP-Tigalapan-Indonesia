@@ -276,6 +276,15 @@ async function fetchFlowRowsLegacy(db: SupabaseClient): Promise<RawTables> {
  *  Postgres, jadi cuma 1 round-trip jaringan total (dulu: 32 round-trip paralel, tiap satu
  *  tetap punya overhead koneksi/HTTP sendiri-sendiri). Throw kalau RPC-nya belum ada/gagal --
  *  fetchFlowRows di bawah yang menangkap ini dan fallback ke cara lama. */
+/** RPC-nya memang belum ada (migration belum dijalankan) -- satu-satunya kasus yang wajar untuk jatuh ke jalur lama. Error lain (timeout 57014, database sibuk)
+ *  BUKAN alasan menjalankan ulang pekerjaan yang lebih berat: itu membuat database yang sedang lambat makin lambat. */
+function isMissingFunctionError(err: unknown): boolean {
+  const e = err as { code?: string; message?: string } | null;
+  if (!e) return false;
+  if (e.code === "PGRST202" || e.code === "42883") return true;
+  return /could not find the function|function .* does not exist/i.test(e.message ?? "");
+}
+
 async function fetchFlowRowsFast(db: SupabaseClient, skipMaster: boolean): Promise<{ tables: RawTables; masterIncluded: boolean }> {
   // [hemat-egress] skipMaster: coba get_flow_snapshot_core (migration 0050, tanpa 6 tabel master harga).
   // Kalau RPC-nya belum ada / gagal, jatuh ke snapshot penuh (masterIncluded = true).
@@ -286,6 +295,9 @@ async function fetchFlowRowsFast(db: SupabaseClient, skipMaster: boolean): Promi
     if (!core.error && core.data) {
       data = core.data;
       masterIncluded = false;
+    } else if (core.error && !isMissingFunctionError(core.error)) {
+      // Timeout/beban: jangan lanjut ke snapshot penuh (lebih berat lagi) -- biar fetchFlowRows mencoba ulang yang ringan dulu.
+      throw core.error;
     }
   }
   if (!data) {
@@ -351,14 +363,27 @@ async function fetchFlowRowsFast(db: SupabaseClient, skipMaster: boolean): Promi
 }
 
 async function fetchFlowRows(db: SupabaseClient, skipMaster: boolean): Promise<{ tables: RawTables; masterIncluded: boolean }> {
+  let failure: unknown;
   try {
     return await fetchFlowRowsFast(db, skipMaster);
   } catch (err) {
-    // Migration 0008 belum di-apply, atau RPC gagal karena sebab lain -- diam-diam fallback ke
-    // cara lama (lebih lambat, tapi tetap benar) alih-alih bikin SELURUH app gagal muat data.
-    console.warn("getFlowSnapshot: get_flow_snapshot_raw gagal, fallback ke query per-tabel —", err instanceof Error ? err.message : err);
-    return { tables: await fetchFlowRowsLegacy(db), masterIncluded: true };
+    failure = err;
   }
+  // Timeout/database sibuk (bukan "RPC belum ada"): coba SEKALI lagi setelah jeda acak yang pendek -- biasanya lonjakan sesaat dan percobaan kedua
+  // selesai dalam ~1 detik. Sebelumnya langsung jatuh ke ~35 query per tabel yang menambah beban saat database justru sedang lambat (2026-11-02:
+  // 181 dari ~1.400 muat data berakhir di jalur itu).
+  if (!isMissingFunctionError(failure)) {
+    await new Promise((resolve) => setTimeout(resolve, 600 + Math.random() * 600));
+    try {
+      return await fetchFlowRowsFast(db, skipMaster);
+    } catch (err) {
+      failure = err;
+    }
+  }
+  // Migration 0008 belum di-apply, atau RPC gagal berturut-turut -- diam-diam fallback ke
+  // cara lama (lebih lambat, tapi tetap benar) alih-alih bikin SELURUH app gagal muat data.
+  console.warn("getFlowSnapshot: get_flow_snapshot_raw gagal, fallback ke query per-tabel —", failure instanceof Error ? failure.message : failure);
+  return { tables: await fetchFlowRowsLegacy(db), masterIncluded: true };
 }
 
 export async function getFlowSnapshot(): Promise<FlowState> {
