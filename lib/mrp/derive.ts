@@ -4005,6 +4005,38 @@ export function findRawMaterialRollForBatch(batch: ProductionBatch, rawInvoices:
   return null;
 }
 
+/** Porsi biaya SATU roll dari invoice materialnya (template CAL HPP ERP, revisi 2026-11-02):
+ *  - body     = harga/kg x berat kotor roll
+ *  - diskon   = diskon invoice dibagi per KG kain seluruh invoice (semua warna), dikali berat roll -- hanya mengurangi biaya bahan
+ *  - rib      = biaya item tambahan (rib/kerah/manset) warna itu di invoice, dibagi per kg kain warna itu (semua lengan), dikali berat roll
+ *  Dihitung dari berat KOTOR (sama dasar dengan nilai yang ditagih supplier). null kalau roll tidak bisa ditelusuri ke invoice material. */
+export function rawRollCostShares(batch: ProductionBatch, rawInvoices: RawMaterialInvoice[]): { invoiceNo: string; hargaPerKg: number; grossKg: number; body: number; diskonShare: number; ribShare: number } | null {
+  if (!batch.codeRoll) return null;
+  for (const rawInv of rawInvoices) {
+    if (rawInv.destinationVendor !== batch.vendorProduksi) continue;
+    for (const c of rawInv.colorEntries) {
+      if (c.warna !== batch.warna || c.lengan !== batch.lengan) continue;
+      const receipts = rawInv.rollReceipts[c.warna + "|" + c.lengan] ?? [];
+      const idx = receipts.findIndex((r) => r?.codeRoll === batch.codeRoll);
+      if (idx === -1) continue;
+      const grossKg = c.rolls[idx] ?? 0;
+      const sumKg = (rows: typeof rawInv.colorEntries) => rows.reduce((t, e) => t + e.rolls.reduce((a, w) => a + w, 0), 0);
+      const fabricKg = sumKg(rawInv.colorEntries);
+      const colorKg = sumKg(rawInv.colorEntries.filter((e) => e.warna === batch.warna));
+      const ribCost = rawInv.addBuys.filter((a) => a.warna === batch.warna).reduce((t, a) => t + a.totalHarga, 0);
+      return {
+        invoiceNo: rawInv.noInvoiceVendor?.trim() || rawInv.id,
+        hargaPerKg: c.hargaPerRoll,
+        grossKg,
+        body: c.hargaPerRoll * grossKg,
+        diskonShare: fabricKg > 0 ? (rawInv.diskon * grossKg) / fabricKg : 0,
+        ribShare: colorKg > 0 ? (ribCost * grossKg) / colorKg : 0,
+      };
+    }
+  }
+  return null;
+}
+
 export type HppRow = {
   invoiceId: string;
   vendorProduksi: string;
@@ -4049,6 +4081,21 @@ export type HppRow = {
    *  dulu), jadi angkanya bisa turun sampai roll ditutup. Setelah roll ditutup baris ini final. */
   sementara?: boolean;
   hppPerItem: number;
+  /** Rincian biaya bahan per pcs (template CAL HPP ERP, 2026-11-02): bahan setelah diskon + rib = cogsBahanPerItem. Hanya baris roll. */
+  bahanPerItem?: number;
+  diskonPerItem?: number;
+  ribPerItem?: number;
+  /** Roll asal baris ini (kosong untuk baris rework / pool lama) beserta rinciannya, untuk sheet Detail Roll. */
+  rollId?: string;
+  rollCode?: string;
+  rawInvoiceNo?: string;
+  rollGrossKg?: number;
+  rollHargaPerKg?: number;
+  rollBody?: number;
+  rollDiskon?: number;
+  rollRib?: number;
+  /** Pembagi biaya roll: roll ditutup = Finish Good aktual; roll terbuka (estimasi) = hasil cutting. */
+  divisorQty?: number;
   /** Size ASLI baris ini (variabel yang sudah ada di scope tempat `item`/`jenis` dikonstruksi,
    *  BUKAN hasil parse ulang dari `jenis`) -- dipakai lookup `sellingPriceFor` di bawah. */
   size: string;
@@ -4502,7 +4549,17 @@ export function hppRowsForInvoicePerRoll(
       const rollTotalCost = rawRoll ? rawRoll.hargaPerKg * rawRoll.grossKg : pool && pool.rollCount > 0 ? pool.hargaBahanTotal / pool.rollCount : 0;
       const netKg = rawRoll ? rawRoll.netKg : pool && pool.rollCount > 0 ? pool.totalNetWeight / pool.rollCount : 0;
       const totalFgRoll = Object.values(roll.fgSizeQty ?? {}).reduce((a, b) => a + b, 0);
-      const materialCostPerPcRoll = totalFgRoll > 0 ? rollTotalCost / totalFgRoll : 0;
+      // Template CAL HPP ERP (revisi 2026-11-02): biaya per pcs = (bahan - porsi diskon + porsi rib) / pembagi. Pembagi roll TERTUTUP = Finish Good
+      // aktual (final); roll TERBUKA = hasil cutting (estimasi, supaya tidak turun-naik selama Finish Good masih diinput).
+      const shares = rawRoll ? rawRollCostShares(roll, rawInvoices) : null;
+      const totalCuttingRoll = Object.values(roll.sizeQty ?? {}).reduce((a, b) => a + b, 0);
+      const divisorQty = roll.closedAt ? totalFgRoll : totalCuttingRoll > 0 ? totalCuttingRoll : totalFgRoll;
+      const diskonShare = shares?.diskonShare ?? 0;
+      const ribShare = shares?.ribShare ?? 0;
+      const bahanPerPc = divisorQty > 0 ? (rollTotalCost - diskonShare) / divisorQty : 0;
+      const ribPerPc = divisorQty > 0 ? ribShare / divisorQty : 0;
+      const diskonPerPc = divisorQty > 0 ? diskonShare / divisorQty : 0;
+      const materialCostPerPcRoll = bahanPerPc + ribPerPc;
 
       // Item 2026-09-10 (migration 0024): `koli` sekarang dibaca LANGSUNG dari chunk (`c.koli`,
       // sudah ditetapkan saat fragmentasi per-koli di atas) -- bukan `.find()` lagi, yang salah
@@ -4563,6 +4620,18 @@ export function hppRowsForInvoicePerRoll(
         totalOngkirRow: ongkirPerPc * fgQty,
         sementara: !roll.closedAt,
         hppPerItem,
+        bahanPerItem: bahanPerPc,
+        diskonPerItem: diskonPerPc,
+        ribPerItem: ribPerPc,
+        rollId: roll.id,
+        rollCode: roll.codeRoll ?? roll.id,
+        rawInvoiceNo: shares?.invoiceNo,
+        rollGrossKg: rawRoll?.grossKg,
+        rollHargaPerKg: rawRoll?.hargaPerKg,
+        rollBody: rollTotalCost,
+        rollDiskon: diskonShare,
+        rollRib: ribShare,
+        divisorQty,
         size: c.size,
         sellingPricePerItem,
         hppPercentage,

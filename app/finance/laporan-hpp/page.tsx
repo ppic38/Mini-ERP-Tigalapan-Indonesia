@@ -1,7 +1,8 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import * as XLSX from "xlsx";
+import { buildHppReport } from "@/lib/mrp/hppReport";
+import { exportHppExcel } from "@/lib/mrp/exportHppExcel";
 import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Button } from "@/components/ui/button";
@@ -72,43 +73,12 @@ function sortHppRowsForDetail(rows: HppTableRow[]): HppTableRow[] {
   });
 }
 
-/** Item 2026-09-11 (feedback: "Tambahkan fitur download lampiran HPP (Per no MRP)") -- export
- *  Excel dari `itemRows` (HppRow[], SUDAH dihitung lewat hppRowsForInvoicePerRoll -- granularitas
- *  per roll/koli, lebih detail dari lampiran invoice lama di Procurement) untuk 1 MRP (gabungan
- *  SEMUA vendor MRP itu, requirement D butir 21), TANPA menghitung ulang apa pun -- pola export
- *  SAMA PERSIS `exportInvoiceLampiranExcel`/`downloadInvoiceLampiran` di
- *  components/procurement/invoice-vendor-review-panel.tsx (SheetJS json_to_sheet + writeFile),
- *  cuma sumber datanya beda (baris HPP per MRP di halaman ini, bukan per invoice). Kolom pertama
- *  `VENDOR` ditambahkan (sebelum `MRP`) supaya baris antar-vendor tetap bisa dibedakan di sheet
- *  gabungan; urutan baris = vendor alfabetis lalu sorting per-resi (sortHppRowsForDetail). */
-function exportMrpHppExcel(m: MrpHppSummary): XLSX.WorkSheet {
-  const vendorsSorted = [...m.vendors].sort((a, b) => (a.vendorLabel < b.vendorLabel ? -1 : a.vendorLabel > b.vendorLabel ? 1 : 0));
-  const orderedRows = vendorsSorted.flatMap((v) => sortHppRowsForDetail(v.itemRows));
-  const rows = orderedRows.map((d) => ({
-    VENDOR: VENDOR_PRODUKSI[d.vendorProduksi]?.name ?? d.vendorProduksi,
-    MRP: d.mrpLabel,
-    "WARNA / LENGAN": `${d.warna} · ${d.lengan}`,
-    ITEM: d.item,
-    "BATCH KOLI": d.noKoli ?? "—",
-    "TANGGAL KIRIM": d.tanggalKirim ? formatDate(d.tanggalKirim) : "—",
-    "NO RESI": d.noResi ?? "—",
-    FG: d.fg,
-    REJECT: d.reject,
-    REWORK: d.rework,
-    "YIELD (%)": Number(d.yieldPct.toFixed(1)),
-    "BIAYA PRODUKSI/ITEM": Math.round(d.biayaProduksiPerItem),
-    "COGS BAHAN/ITEM": Math.round(d.cogsBahanPerItem),
-    "ONGKIR/ITEM": Math.round(d.ongkirPerItem),
-    "HPP/ITEM": Math.round(d.hppPerItem),
-  }));
-  return XLSX.utils.json_to_sheet(rows);
-}
-
+/** Unduh Laporan HPP 1 MRP (template CAL HPP ERP, revisi 2026-11-02): sheet HPP On Going (estimasi) dan HPP Final (satu baris per warna·lengan·size,
+ *  rata-rata tertimbang semua roll/koli/resi/vendor) plus Detail Roll On Going dan Final (satu baris per roll x size). Pengelompokan estimasi/final
+ *  mengikuti `sementara` (roll belum/sudah ditutup), jadi roll yang ditutup pindah ke Final otomatis. Lihat lib/mrp/hppReport.ts dan exportHppExcel.ts. */
 function downloadMrpHpp(m: MrpHppSummary) {
-  const wb = XLSX.utils.book_new();
-  const ws = exportMrpHppExcel(m);
-  XLSX.utils.book_append_sheet(wb, ws, "HPP");
-  XLSX.writeFile(wb, `HPP-${m.mrpId}.xlsx`);
+  const rows = m.vendors.flatMap((v) => v.itemRows);
+  void exportHppExcel(m.mrpId, buildHppReport(rows), `HPP-${m.mrpId}.xlsx`);
 }
 
 /** Tabel detail per item untuk 1 MRP+vendor — dipakai sebagai isi langkah-2 drill-down (pola sama
