@@ -96,7 +96,7 @@ function ProductionContent({ vendorId }: { vendorId: string }) {
 
       {/* HP: sub-menu Produksi jadi pilihan bersegmen di atas konten -- bar bawah sudah dipakai menu utama portal vendor. */}
       {TABS.length > 0 && (
-        <div className="flex gap-1 rounded-full bg-[#EFEBE6] p-1 md:hidden" role="tablist" aria-label="Menu Produksi">
+        <div className="flex gap-1 rounded-full bg-[#E5E9F0] p-1 md:hidden" role="tablist" aria-label="Menu Produksi">
           {TABS.map((t) => {
             const Icon = TAB_ICON[t.key];
             const active = effectiveTab === t.key;

@@ -275,7 +275,7 @@
   :root .vp-mobile .vp-sess + .vp-sheet,
   :root .vp-mobile .vp-inv-sheet { left: calc(50% - 280px); right: calc(50% - 280px); }
   /* Popup layar penuh (mis. Input Finish Good): jadi panel 720px di tengah dengan latar gelap di kiri-kanan. */
-  :root .vp-mobile .vp-full-row + .vp-full-body { left: calc(50% - 360px); right: calc(50% - 360px); box-shadow: 0 0 0 100vmax rgba(28, 25, 23, 0.45); }
+  :root .vp-mobile .vp-full-row + .vp-full-body { left: calc(50% - 360px); right: calc(50% - 360px); box-shadow: 0 0 0 100vmax rgba(11, 19, 27, 0.45); }
   :root .vp-mobile .vp-full-row:has(+ .vp-full-body) .vp-full-x { right: calc(50% - 346px); }
 }
 
@@ -406,23 +406,23 @@
   }
   .m-cards tr.m-grid2 > td[data-chevron] { top: 15px; right: 14px; }
 
-  /* .vp-mobile : portal Vendor Produksi di HP (dipasang AppShell, bukan mode Sysadmin). Tema oranye, minimalis:
+  /* .vp-mobile : portal Vendor Produksi di HP (dipasang AppShell, bukan mode Sysadmin). Tema biru-putih seperti ERP desktop, minimalis:
      tabel tanpa bingkai (kartu melayang di atas latar), filter berbentuk pil. Tablet/desktop & modul lain tidak kena. */
-  /* body:has(...) -- pop-up konfirmasi (confirmDialog) dirender di luar akar AppShell, jadi tema oranye dipasang juga
+  /* body:has(...) -- pop-up konfirmasi (confirmDialog) dirender di luar akar AppShell, jadi tema biru dipasang juga
      di <body> selama halaman portal vendor terbuka (tetap hanya di HP, di dalam media query ini). */
   .vp-mobile,
   body:has(.vp-mobile) {
-    --surface-page: #F7F5F2;
-    --action-primary: #D97757;
-    --accent-blue: #D97757;
-    --accent-blue-2: #C15F3C;
-    --info: #D97757;
-    --info-bg: #FBEFEA;
-    --info-fg: #B4532F;
+    --surface-page: #F3F4F7;
+    --action-primary: #2563EB;
+    --accent-blue: #2563EB;
+    --accent-blue-2: #1D4ED8;
+    --info: #2563EB;
+    --info-bg: #EFF6FF;
+    --info-fg: #1D4ED8;
   }
   .vp-mobile .m-cards { border: 0; border-radius: 0; background: transparent; overflow: visible; }
   .vp-mobile .m-cards .dt-head { padding: 0 2px 10px; border-bottom: 0; }
-  .vp-mobile .m-cards .dt-head button { border-radius: 9999px; border-color: #E7E2DC; background: #fff; }
+  .vp-mobile .m-cards .dt-head button { border-radius: 9999px; border-color: #D9E0E8; background: #fff; }
   .vp-mobile .m-cards .dt-filters {
     flex-direction: row;
     flex-wrap: nowrap;
@@ -438,20 +438,22 @@
   .vp-mobile .m-cards .dt-filters::-webkit-scrollbar { display: none; }
   /* Filter dibungkus ke baris berikut kalau tidak muat (HP kecil 320-360px), jadi tidak ada filter yang tersembunyi di luar layar. */
   .vp-mobile .m-cards .dt-filters { flex-wrap: wrap; }
-  .vp-mobile .m-cards .dt-filters > input { flex: 0 0 100%; border-radius: 9999px; padding: 9px 16px; border-color: #E7E2DC; }
+  /* Filter satu kolom selebar layar dengan tinggi sama (lurus kiri-kanan, tidak bergerigi); kolom cari tetap di baris pertama. */
+  .vp-mobile .m-cards .dt-filters { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; overflow: visible; }
+  .vp-mobile .m-cards .dt-filters > input { width: 100%; border-radius: 9999px; padding: 9px 16px; border-color: #D9E0E8; }
   .vp-mobile .m-cards .dt-filters > select {
-    width: auto;
-    flex: none;
+    width: 100%;
+    min-width: 0;
     border-radius: 9999px;
-    border-color: #E7E2DC;
+    border-color: #D9E0E8;
     background-color: #fff;
-    padding: 7px 12px;
+    padding: 8px 14px;
   }
   .vp-mobile .m-cards tbody { padding: 0; gap: 12px; background: transparent; }
   .vp-mobile .m-cards tr {
     border: 0;
     border-radius: 16px;
-    box-shadow: 0 1px 2px rgba(41, 37, 36, 0.04), 0 6px 18px rgba(41, 37, 36, 0.06);
+    box-shadow: 0 1px 2px rgba(17, 24, 39, 0.04), 0 6px 18px rgba(17, 24, 39, 0.06);
   }
   .vp-mobile .m-cards tr.m-grid2 { padding: 16px; }
   .vp-mobile .m-cards tr.m-grid2 > td:not([data-label]):not([data-chevron]) { border-bottom: 0; font-size: 16px; font-weight: 700; }
@@ -474,7 +476,7 @@
     position: fixed;
     inset: 0;
     z-index: 40;
-    background: rgba(28, 25, 23, 0.45);
+    background: rgba(11, 19, 27, 0.45);
   }
   .vp-mobile .m-cards tr.vp-pop + tr:has(> td[colspan]) {
     position: fixed;
@@ -487,7 +489,7 @@
     padding: 22px 20px 16px;
     border-radius: 20px;
     background: #fff;
-    box-shadow: 0 20px 50px rgba(28, 25, 23, 0.25);
+    box-shadow: 0 20px 50px rgba(11, 19, 27, 0.25);
     transform: translateY(-50%);
     animation: vp-pop-in 0.18s ease-out;
   }
@@ -542,7 +544,38 @@
   .vp-mobile .vp-po-row > [data-label="Status"] { order: 2; grid-column: 2; align-self: center; justify-content: flex-end; text-align: right !important; }
   .vp-mobile .vp-po-row > [data-label="Roll diterima"] { order: 3; font-size: 15px; font-weight: 600; }
   .vp-mobile .vp-po-row > [data-label="Tgl kirim"] { order: 4; font-size: 14px; color: var(--text-primary); }
-  .vp-mobile .vp-po-row > :last-child { order: 6; }
+  .vp-mobile .vp-po-row > :last-child { order: 6; margin-top: 4px; }
+
+  /* Receive -- kotak "Bahan sudah diterima": tabel 4 kolom (kepotong di HP, tombol saling mepet) jadi kartu per warna:
+     nama warna di atas, lalu Roll diterima | Estimasi | tombol Mulai sebaris dengan jarak lega. */
+  .vp-mobile .vp-rs-box { padding: 16px 14px; border-radius: 16px; }
+  .vp-mobile .vp-rs-list { margin-top: 12px; gap: 12px; }
+  .vp-mobile .vp-rs-table, .vp-mobile .vp-rs-table tbody { display: block; width: 100%; }
+  .vp-mobile .vp-rs-table thead { display: none; }
+  .vp-mobile .vp-rs-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px 14px;
+    padding: 14px 16px;
+    border-bottom: 1px solid #E5E7EB;
+  }
+  .vp-mobile .vp-rs-table tr:last-child { border-bottom: 0; }
+  .vp-mobile .vp-rs-table td { display: block; padding: 0 !important; text-align: left !important; }
+  .vp-mobile .vp-rs-table td:first-child { grid-column: 1 / -1; font-size: 14px; }
+  .vp-mobile .vp-rs-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .vp-mobile .vp-rs-table td[data-label] { font-size: 14px; font-weight: 600; }
+  .vp-mobile .vp-rs-table td:last-child { justify-self: end; }
+  .vp-mobile .vp-rs-table td:last-child button { min-height: 38px; min-width: 76px; border-radius: 9999px; }
 
   /* Baris warna di rincian PO: satu baris -- nama warna, roll diterima, tombol Terima/Lihat. Qty pendek/panjang tidak tampil. */
   .vp-mobile .m-stack.m-grid2.vp-color-row {
@@ -845,21 +878,21 @@
 
   /* Pilih warna · lengan (Buat koli): satu pilihan ringkas. Teks tetap 16px supaya iPhone tidak zoom. */
   .vp-mobile .vp-pick-select {
-    width: 100%; min-width: 0; border-radius: 9999px; border: 1px solid #E7E2DC; background-color: #fff;
+    width: 100%; min-width: 0; border-radius: 9999px; border: 1px solid #D9E0E8; background-color: #fff;
     padding: 6px 12px; font-family: var(--font-sans, inherit); font-weight: 500; color: var(--text-muted);
   }
-  .vp-mobile .vp-pick-select.vp-pick-todo { border-color: var(--action-primary, #D97757); }
+  .vp-mobile .vp-pick-select.vp-pick-todo { border-color: var(--action-primary, #2563EB); }
   .vp-mobile .vp-pick-select.vp-pick-on { color: var(--text-primary); font-weight: 600; }
 
   /* Ringkasan isi koli per warna·lengan (Buat/Edit koli): ketuk untuk pindah warna. */
-  .vp-mobile .vp-koli-isi { border: 1px solid #F0E2D8; border-radius: 14px; background: #FDF8F5; padding: 8px 10px; }
+  .vp-mobile .vp-koli-isi { border: 1px solid #DBEAFE; border-radius: 14px; background: #F8FAFF; padding: 8px 10px; }
   .vp-mobile .vp-koli-isi-head { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-muted); }
   .vp-mobile .vp-koli-isi-head b { color: var(--text-primary); font-size: 12.5px; }
   /* Dua tombol warna per baris (nama panjang dipotong "…", qty selalu terlihat). */
   .vp-mobile .vp-koli-isi-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin-top: 6px; }
   .vp-mobile .vp-koli-isi-item {
     display: flex; align-items: center; justify-content: space-between; gap: 4px; min-width: 0; min-height: 30px; padding: 3px 9px;
-    border-radius: 9999px; border: 1px solid #E7E2DC; background: #fff; font-size: 11px; font-weight: 500; color: var(--text-primary);
+    border-radius: 9999px; border: 1px solid #D9E0E8; background: #fff; font-size: 11px; font-weight: 500; color: var(--text-primary);
   }
   .vp-mobile .vp-koli-isi-item > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .vp-mobile .vp-koli-isi-item b { flex: none; font-size: 11px; color: var(--action-primary); }
@@ -878,7 +911,7 @@
   body:has(.vp-mobile) .vp-del-short { display: block; font-size: 13px; color: var(--text-primary); }
   body:has(.vp-mobile) .vp-del-line {
     display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; padding: 7px 10px; border-radius: 10px;
-    background: #FBF3EE; font-size: 12px; white-space: normal;
+    background: #EFF6FF; font-size: 12px; white-space: normal;
   }
   body:has(.vp-mobile) .vp-del-line > :first-child { font-weight: 600; }
   body:has(.vp-mobile) .vp-del-line > :last-child { text-align: right; color: var(--text-muted); }
@@ -922,7 +955,7 @@
     position: absolute; right: 14px; top: 50%; transform: translateY(-50%); font-size: 20px; line-height: 1; color: var(--action-primary);
   }
   .vp-mobile .vp-ready-head > .vp-ready-submit { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; opacity: 0; }
-  .vp-mobile .vp-ready-card:active { background: #FBF3EE; }
+  .vp-mobile .vp-ready-card:active { background: #EFF6FF; }
   /* Kartu invoice: No invoice + status | MRP · qty ... tanggal | Total + status bayar | tombol bukti bayar. PIC tidak tampil. */
   .vp-mobile .m-stack.m-grid2.vp-inv-card {
     grid-template-columns: auto minmax(0, 1fr) auto !important;
@@ -957,12 +990,12 @@
   .vp-mobile .vp-inv-sheet .vp-inv-warna-wrap { display: none; }
   /* Ringkasan popup: Tagihan akhir sebaris dengan nilainya, denda/reward kecil di bawahnya, lalu jatuh tempo · yield. Kotak 4 angka
      dan kotak Penyesuaian desktop tidak tampil. */
-  .vp-mobile .vp-inv-sum { margin-bottom: 10px; padding: 10px 12px; border: 1px solid #F0E2D8; border-radius: 12px; background: #FDF8F5; }
+  .vp-mobile .vp-inv-sum { margin-bottom: 10px; padding: 10px 12px; border: 1px solid #DBEAFE; border-radius: 12px; background: #F8FAFF; }
   .vp-mobile .vp-inv-sum-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
   .vp-mobile .vp-inv-sum-label { font-size: 12px; color: var(--text-muted); }
   .vp-mobile .vp-inv-sum-total { font-family: var(--font-sans); font-size: 15px; font-weight: 700; color: var(--text-primary); }
   .vp-mobile .vp-inv-sum-adj { display: flex; justify-content: space-between; gap: 8px; margin-top: 3px; font-size: 11.5px; color: var(--text-muted); }
-  .vp-mobile .vp-inv-sum-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 5px; padding-top: 5px; border-top: 1px dashed #EBDDD3; font-size: 11.5px; color: var(--text-muted); }
+  .vp-mobile .vp-inv-sum-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 5px; padding-top: 5px; border-top: 1px dashed #DBEAFE; font-size: 11.5px; color: var(--text-muted); }
   /* Rincian per warna (satu kotak per warna): warna·lengan ...... nilai  ›
                                               pcs · Yield · RJ · RW
      MRP hanya tampil kalau invoice berisi >1 MRP. Ketuk = tabel per size langsung tampil di bawahnya. */
@@ -1041,7 +1074,7 @@
   }
   .vp-mobile .vp-full-body > .vp-full-head {
     position: sticky; top: 0; z-index: 5; margin: 0 -12px 12px; padding: 16px 96px 12px 16px;
-    background: #fff; border-bottom: 1px solid #EDE8E2;
+    background: #fff; border-bottom: 1px solid #E5E7EB;
   }
   .vp-mobile .vp-full-row .vp-full-x { min-height: 40px; border-radius: 9999px; font-size: 12.5px; }
   .vp-mobile .vp-full-row:has(+ .vp-full-body) .vp-full-x {
@@ -1059,11 +1092,11 @@
      menutupi layar sebagai latar gelap, jadi ketuk di luar pop-up = tutup. */
   .vp-mobile .vp-modal-row:has(+ .vp-modal-body) .vp-modal-x {
     position: fixed; inset: 0; z-index: 44; width: 100%; height: 100%; min-height: 0;
-    border: 0; border-radius: 0; background: rgba(28, 25, 23, 0.45); color: transparent; font-size: 0;
+    border: 0; border-radius: 0; background: rgba(11, 19, 27, 0.45); color: transparent; font-size: 0;
   }
   .vp-mobile .vp-modal-row + .vp-modal-body {
     position: fixed; top: 50%; left: 16px; right: 16px; z-index: 45; max-height: 80vh; overflow-y: auto;
-    padding: 16px; border: 0; border-radius: 20px; background: #fff; box-shadow: 0 20px 50px rgba(28, 25, 23, 0.25);
+    padding: 16px; border: 0; border-radius: 20px; background: #fff; box-shadow: 0 20px 50px rgba(11, 19, 27, 0.25);
     transform: translateY(-50%); animation: vp-pop-in 0.18s ease-out; overscroll-behavior: contain;
   }
   @media (prefers-reduced-motion: reduce) {
@@ -1074,11 +1107,11 @@
      menutupi layar sebagai latar gelap, jadi ketuk di luar pop-up = Tutup (handler yang sama, tanpa logika baru). */
   .vp-mobile .vp-sess:has(+ .vp-sheet) > :last-child > button {
     position: fixed; inset: 0; z-index: 44; width: 100%; height: 100%; min-height: 0;
-    border: 0; border-radius: 0; background: rgba(28, 25, 23, 0.45); color: transparent; font-size: 0;
+    border: 0; border-radius: 0; background: rgba(11, 19, 27, 0.45); color: transparent; font-size: 0;
   }
   .vp-mobile .vp-sess + .vp-sheet {
     position: fixed; top: 50%; left: 16px; right: 16px; z-index: 45; max-height: 80vh; overflow-y: auto;
-    border-radius: 20px; background: #fff; box-shadow: 0 20px 50px rgba(28, 25, 23, 0.25);
+    border-radius: 20px; background: #fff; box-shadow: 0 20px 50px rgba(11, 19, 27, 0.25);
     transform: translateY(-50%); animation: vp-pop-in 0.18s ease-out; overscroll-behavior: contain;
   }
 

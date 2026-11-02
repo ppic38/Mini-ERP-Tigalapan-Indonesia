@@ -631,7 +631,7 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
               {columns
                 .filter((c) => c.key === "qtyVsKapasitas" || c.key === "nilai" || c.key === "tglPO")
                 .map((c) => (
-                  <div key={c.key} className="flex items-baseline justify-between gap-4 border-t border-[#F1EEEA] py-3 font-sans text-[14px] text-text-primary">
+                  <div key={c.key} className="flex items-baseline justify-between gap-4 border-t border-[#E5E7EB] py-3 font-sans text-[14px] text-text-primary">
                     <span className="flex-none text-[12.5px] text-text-muted">{c.label}</span>
                     <span className="min-w-0 text-right font-medium">{c.render(p)}</span>
                   </div>

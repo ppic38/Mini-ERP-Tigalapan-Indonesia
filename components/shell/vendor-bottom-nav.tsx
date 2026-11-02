@@ -24,7 +24,7 @@ export function VendorPoSwitch({ items, activeHref }: { items: NavItem[]; active
   const allowed = new Set(items.map((i) => i.href));
   if (!PO_TABS.some((t) => t.href === activeHref) || !PO_TABS.every((t) => allowed.has(t.href))) return null;
   return (
-    <div className="vp-wrap-pill mx-4 mt-4 flex rounded-full bg-[#EFEBE6] p-1 md:hidden">
+    <div className="vp-wrap-pill mx-4 mt-4 flex rounded-full bg-[#E5E9F0] p-1 md:hidden">
       {PO_TABS.map((t) => (
         <Link
           key={t.href}
@@ -48,7 +48,7 @@ export function VendorBottomNav({ items, activeHref, badgeOverrides }: { items: 
   const tabs = TABS.filter((t) => allowed.has(t.href));
   if (tabs.length === 0) return null;
   return (
-    <nav aria-label="Menu utama" className="fixed inset-x-0 bottom-0 z-20 border-t border-[#EDE8E2] bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
+    <nav aria-label="Menu utama" className="fixed inset-x-0 bottom-0 z-20 border-t border-[#E5E7EB] bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
       <div className="mx-auto flex max-w-md">
         {tabs.map((t) => {
           const active = t.href === activeHref || (!!activeHref && !!t.alsoActive?.includes(activeHref));

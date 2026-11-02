@@ -1,5 +1,12 @@
 # Migrasi Project — Status & Riwayat
 
+## Tampilan HP Vendor Produksi: tema biru-putih + rapikan PO, Receive, Pengiriman (2026-11-03, tanpa migration)
+Owner: tema HP jangan oranye, samakan dengan ERP (biru, putih). Hanya tampilan, tidak mengubah data atau alur input.
+- **Tema:** token `.vp-mobile` di `app/globals.css` (`--action-primary`/`--accent-blue` #2563EB, `--accent-blue-2` #1D4ED8, `--info-bg` #EFF6FF, `--surface-page` #F3F4F7) = nilai ERP desktop; semua warna hangat (oranye, krem, abu kecokelatan) di CSS HP, `vendor-bottom-nav.tsx`, dan halaman vendor/Produksi diganti padanan biru-abu dingin; bayangan memakai abu-biru.
+- **PO Produksi/Material:** filter (No MRP, No PO, Status) satu kolom selebar layar, tinggi sama (`.dt-filters` jadi grid). Subjudul halaman vendor di HP 11px (`app-shell.tsx`).
+- **Receive:** kotak "Bahan sudah diterima" tabel 4 kolom yang kepotong diganti kartu per warna (class `vp-rs-box`/`vp-rs-table`: nama warna, Roll diterima, Estimasi, tombol Mulai); jarak antar bagian halaman vendor di HP dilonggarkan (`gap-5`).
+- **Pengiriman:** form koli satu kolom (Pilih MRP baris 1, No koli baris 2); filter Riwayat pengiriman dua baris (Cari no resi, lalu Ekspedisi); tiap resi di HP jadi kartu ringkas (no resi, status invoice, ekspedisi, pcs · koli · kg, tanggal) dan rincian koli terbuka sebagai popup (`resiPopupKey`). Desktop tetap menampilkan rincian langsung.
+
 ## Tampilan HP & tablet portal Vendor Produksi (2026-11-02, tanpa migration)
 Owner: portal vendor produksi dipakai dari lapangan lewat HP, jadi tampilan HP dirapikan (minimalis, tema oranye, info prioritas saja, rincian lewat popup). Hanya tampilan: logic, data, aksi server tidak berubah; desktop (>= 1024px) tetap sama.
 - **Batas tampilan HP dinaikkan ke < 1024px untuk SEMUA modul** (`--breakpoint-md: 64rem` di `app/globals.css`, blok `@media (width < 64rem)`, dan dua `matchMedia("(width < 64rem)")`). HP dan tablet tegak memakai tampilan HP; tablet mendatar, laptop, PC tetap desktop. Modul internal di tablet tegak ikut memakai tampilan kartu HP bawaannya (belum didesain ulang -- owner merapikan bertahap). Di tablet tegak, isi portal vendor dipusatkan maks 720px dan popup maks 560px.

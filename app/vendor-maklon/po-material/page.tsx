@@ -171,11 +171,11 @@ function InvoiceListExpanded({ vendorId, group }: { vendorId: string; group: Row
           po.invoices.map((inv) => {
             const isOpen = openInvoiceId === inv.invoiceId;
             return (
-              <div key={inv.invoiceId} className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white max-md:rounded-xl max-md:border-[#EDE8E2]">
+              <div key={inv.invoiceId} className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white max-md:rounded-xl max-md:border-[#E5E7EB]">
                 <button
                   type="button"
                   onClick={() => setOpenInvoiceId(isOpen ? null : inv.invoiceId)}
-                  className="flex w-full flex-wrap items-center gap-2 bg-[#F2F4F7] px-3 py-1.5 text-left font-sans text-[11px] font-medium text-text-primary max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-3 max-md:gap-y-1.5 max-md:bg-[#F7F5F2] max-md:py-3 max-md:text-[13px]"
+                  className="flex w-full flex-wrap items-center gap-2 bg-[#F2F4F7] px-3 py-1.5 text-left font-sans text-[11px] font-medium text-text-primary max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-3 max-md:gap-y-1.5 max-md:bg-[#F3F4F7] max-md:py-3 max-md:text-[13px]"
                 >
                   {/* HP: tanpa drill-down (chevron & rincian disembunyikan). Baris atas: No. invoice + roll; baris bawah: status. */}
                   {isOpen ? <ChevronDown className="h-3.5 w-3.5 flex-none text-text-muted max-md:hidden" /> : <ChevronRight className="h-3.5 w-3.5 flex-none text-text-muted max-md:hidden" />}

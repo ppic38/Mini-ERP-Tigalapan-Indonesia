@@ -399,12 +399,12 @@ export function AppShell({
         <div className={"flex flex-wrap items-end gap-x-3 gap-y-2 px-4 pb-0 pt-2 sm:px-[22px]" + (vendorShell ? " vp-wrap max-md:pt-5" : "")}>
           <div className="min-w-0">
             <div className={"font-heading text-[20px] font-bold tracking-tight text-text-primary sm:text-[22px]" + (vendorShell ? " max-md:text-[24px]" : "")}>{title}</div>
-            {subtitle && <div className="mt-0.5 font-sans text-xs text-text-muted">{subtitle}</div>}
+            {subtitle && <div className={"mt-0.5 font-sans text-xs text-text-muted" + (vendorShell ? " max-md:text-[11px] max-md:leading-snug" : "")}>{subtitle}</div>}
           </div>
           {actions && <div className="flex flex-wrap gap-2 sm:ml-auto">{actions}</div>}
         </div>
         {vendorShell && <VendorPoSwitch items={sidebarItems} activeHref={activeHref} />}
-        <div className={"flex min-w-0 flex-1 flex-col gap-3.5 px-4 py-4 sm:px-[22px]" + (vendorShell ? " vp-wrap max-md:pb-28" : "")}>
+        <div className={"flex min-w-0 flex-1 flex-col gap-3.5 px-4 py-4 sm:px-[22px]" + (vendorShell ? " vp-wrap max-md:gap-5 max-md:pb-28" : "")}>
           {hydrated ? (
             children
           ) : (

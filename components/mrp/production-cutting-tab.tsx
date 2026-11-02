@@ -747,7 +747,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 )}
               </div>
 
-              <div className="mt-2 overflow-x-auto rounded-md border border-[#CFE0EF] bg-white max-md:mt-3 max-md:rounded-2xl max-md:border-[#EDE8E2]">
+              <div className="mt-2 overflow-x-auto rounded-md border border-[#CFE0EF] bg-white max-md:mt-3 max-md:rounded-2xl max-md:border-[#E5E7EB]">
                 <div
                   className="m-hide grid min-w-[1080px] gap-x-3 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted"
                   style={{ gridTemplateColumns: LIST_GRID }}
@@ -996,7 +996,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
         <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
           <div className="flex items-center justify-between gap-3 border-b border-border-subtle px-4 py-3">
             <span className="font-sans text-[13px] font-semibold text-text-primary max-md:text-[15px]">Aduan pola<span className="max-md:hidden"> — {selectedDetail.mrp.id}</span></span>
-            <span className="ml-auto flex items-center gap-1 rounded-md border border-[#CBD5DF] bg-white p-0.5 max-md:rounded-full max-md:border-0 max-md:bg-[#EFEBE6]">
+            <span className="ml-auto flex items-center gap-1 rounded-md border border-[#CBD5DF] bg-white p-0.5 max-md:rounded-full max-md:border-0 max-md:bg-[#E5E9F0]">
               {(
                 [
                   { key: "ADUAN", label: "Per Aduan Pola" },
@@ -1090,7 +1090,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                                   <button
                                     onClick={() => setWarnaOpen(open ? "" : len + "|" + w.warna)}
                                     disabled={w.available <= 0 && !open}
-                                    className="font-sans text-[11px] font-semibold text-action-primary disabled:cursor-not-allowed disabled:opacity-40 max-md:min-h-9 max-md:whitespace-nowrap max-md:rounded-full max-md:border max-md:border-[#E4DDD5] max-md:px-3.5 max-md:text-[12.5px]"
+                                    className="font-sans text-[11px] font-semibold text-action-primary disabled:cursor-not-allowed disabled:opacity-40 max-md:min-h-9 max-md:whitespace-nowrap max-md:rounded-full max-md:border max-md:border-[#D9E0E8] max-md:px-3.5 max-md:text-[12.5px]"
                                   >
                                     {open ? "Tutup ✕" : "Pilih"}
                                   </button>
@@ -1165,7 +1165,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         <button
                           onClick={() => pickGroup(key)}
                           disabled={g.totalAvailable <= 0 && !isSel}
-                          className="font-sans text-[11px] font-semibold text-action-primary disabled:cursor-not-allowed disabled:opacity-40 max-md:min-h-9 max-md:whitespace-nowrap max-md:rounded-full max-md:border max-md:border-[#E4DDD5] max-md:px-3.5 max-md:text-[12.5px]"
+                          className="font-sans text-[11px] font-semibold text-action-primary disabled:cursor-not-allowed disabled:opacity-40 max-md:min-h-9 max-md:whitespace-nowrap max-md:rounded-full max-md:border max-md:border-[#D9E0E8] max-md:px-3.5 max-md:text-[12.5px]"
                         >
                           {isSel ? "Tutup ✕" : "Pilih"}
                         </button>
@@ -1207,7 +1207,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   onClick={() => setSessionStatusFilter(sessionStatusFilter === opt.key ? "ALL" : opt.key)}
                   className={
                     "min-h-9 rounded-full border px-3.5 font-sans text-[12.5px] font-semibold " +
-                    (sessionStatusFilter === opt.key ? "border-action-primary bg-action-primary text-white" : "border-[#E4DDD5] bg-white text-text-primary")
+                    (sessionStatusFilter === opt.key ? "border-action-primary bg-action-primary text-white" : "border-[#D9E0E8] bg-white text-text-primary")
                   }
                 >
                   {opt.label}
@@ -1218,7 +1218,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               value={sessionDateFilter}
               onChange={(e) => setSessionDateFilter(e.target.value)}
               aria-label="Tanggal resting"
-              className="min-h-10 w-full rounded-full border border-[#E4DDD5] bg-white px-4 font-sans text-text-primary"
+              className="min-h-10 w-full rounded-full border border-[#D9E0E8] bg-white px-4 font-sans text-text-primary"
             >
               <option value="">Semua tanggal resting</option>
               {sessionRestingDates.map((d) => (
@@ -1368,7 +1368,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   {isExpanded && (
                     // HP: daftar roll jadi pop-up di tengah layar (lihat .vp-sheet di globals.css); ketuk di luar = Tutup.
                     <div className="vp-sheet bg-[#FAFBFC]">
-                      <div className="sticky top-0 z-10 flex items-baseline justify-between gap-3 border-b border-[#EDE8E2] bg-white px-4 pb-3 pt-4 font-sans md:hidden">
+                      <div className="sticky top-0 z-10 flex items-baseline justify-between gap-3 border-b border-[#E5E7EB] bg-white px-4 pb-3 pt-4 font-sans md:hidden">
                         <span className="text-[16px] font-bold text-text-primary">{distinctWarna}</span>
                         <span className="text-[12px] text-text-muted">
                           {g.kode} · {g.batches.length} roll
@@ -1801,7 +1801,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                     )}
                   </div>
                 </div>
-                <div className="flex-1 overflow-y-auto px-5 py-3 max-md:bg-[#F7F5F2] max-md:px-3">
+                <div className="flex-1 overflow-y-auto px-5 py-3 max-md:bg-[#F3F4F7] max-md:px-3">
                   {Array.from(byWarna.entries()).map(([warna, batches]) => (
                     <div key={warna} className="mb-4 last:mb-0">
                       <div className="mb-2 border-b border-[#CFE0EF] pb-1 font-sans text-[12px] font-semibold text-info-fg max-md:border-0 max-md:px-1 max-md:text-[13px]">{warna}</div>
@@ -1815,7 +1815,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                           const actualTotal = Object.values(sizeDraft).reduce((a, c) => a + c, 0) + shiftsNow.reduce((a, c) => a + c.qty, 0);
                           const isIncomplete = incompleteIds.some((x) => x.id === b.id);
                           return (
-                            <div key={b.id} className="rounded-md border border-[#E4E8EE] bg-[#FAFBFC] px-3 py-2.5 max-md:rounded-2xl max-md:border-[#EDE8E2] max-md:bg-white max-md:px-3.5 max-md:py-3">
+                            <div key={b.id} className="rounded-md border border-[#E4E8EE] bg-[#FAFBFC] px-3 py-2.5 max-md:rounded-2xl max-md:border-[#E5E7EB] max-md:bg-white max-md:px-3.5 max-md:py-3">
                               <div className="mb-2 flex items-center justify-between gap-2 max-md:mb-2.5">
                                 <span className="flex items-baseline gap-1.5">
                                   <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted max-md:hidden">Code roll</span>

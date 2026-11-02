@@ -655,7 +655,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                             Reject {grossReject} · sisa {totalRecorded}
                           </div>
                         </div>
-                        <div className="overflow-hidden rounded-md border border-[#CFE0EF] bg-white max-md:rounded-2xl max-md:border-[#EDE8E2]">
+                        <div className="overflow-hidden rounded-md border border-[#CFE0EF] bg-white max-md:rounded-2xl max-md:border-[#E5E7EB]">
                           <div className="m-hide grid grid-cols-5 gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                             <span>Size</span>
                             <span className="text-right">Reject (otomatis)</span>
@@ -750,7 +750,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                           disabled={s <= 0 || !canRw}
                                           className={
                                             "flex min-h-12 min-w-[68px] flex-col items-center justify-center rounded-xl border px-3 py-1 font-sans disabled:opacity-40 " +
-                                            (active ? "border-action-primary bg-action-primary text-white" : "border-[#E4DDD5] bg-white text-text-primary")
+                                            (active ? "border-action-primary bg-action-primary text-white" : "border-[#D9E0E8] bg-white text-text-primary")
                                           }
                                         >
                                           <span className="text-[15px] font-bold leading-tight">{size}</span>
@@ -1009,7 +1009,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                           // HP saja: ringkasan FG/target per size untuk size yang tidak punya kotak isian (pengganti tabel FG per size).
                           const mobileSizeSummary = (list: string[]) =>
                             list.length > 0 ? (
-                              <div className="flex flex-wrap gap-1.5 border-t border-[#EDE8E2] px-3 py-2.5 md:hidden">
+                              <div className="flex flex-wrap gap-1.5 border-t border-[#E5E7EB] px-3 py-2.5 md:hidden">
                                 {list.map((size) => {
                                   const rec = recorded[size] ?? 0;
                                   const tgt = target[size] ?? 0;
@@ -1052,7 +1052,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                     const tgt = target[size] ?? 0;
                                     const pct = tgt > 0 ? Math.min(100, Math.round((rec / tgt) * 100)) : 0;
                                     return (
-                                      <div key={size} className="flex flex-col gap-2.5 rounded-lg border-2 border-[#BCD3E8] bg-white px-3.5 py-3 shadow-[0_1px_3px_rgba(11,19,27,.08)] max-md:gap-2 max-md:rounded-xl max-md:border max-md:border-[#EDE8E2] max-md:px-2.5 max-md:py-2.5 max-md:shadow-none">
+                                      <div key={size} className="flex flex-col gap-2.5 rounded-lg border-2 border-[#BCD3E8] bg-white px-3.5 py-3 shadow-[0_1px_3px_rgba(11,19,27,.08)] max-md:gap-2 max-md:rounded-xl max-md:border max-md:border-[#E5E7EB] max-md:px-2.5 max-md:py-2.5 max-md:shadow-none">
                                         <div className="flex items-center justify-between gap-2">
                                           <span className="whitespace-nowrap rounded-md border-[1.5px] border-[#8FB3D3] bg-info-bg px-2.5 py-1 font-sans text-[12.5px] font-bold text-info-fg">{size}</span>
                                           <span className="whitespace-nowrap font-mono text-[10px] text-text-muted max-md:hidden">
@@ -1184,7 +1184,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                               <span className="font-sans text-[11px] text-text-muted max-md:hidden">Resting → Finish Good</span>
                             </div>
                             {/* HP saja: filter status roll. */}
-                            <div className="vp-chips flex gap-2 border-b border-[#EDE8E2] px-3 py-2.5 md:hidden">
+                            <div className="vp-chips flex gap-2 border-b border-[#E5E7EB] px-3 py-2.5 md:hidden">
                               {(
                                 [
                                   { key: "OPEN" as const, label: `Terbuka (${groupBatches.filter((x) => !x.closedAt).length})` },
@@ -1197,7 +1197,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                   onClick={() => setRollFilter(opt.key)}
                                   className={
                                     "min-h-9 rounded-full border px-3.5 font-sans text-[12.5px] font-semibold " +
-                                    (rollFilter === opt.key ? "border-action-primary bg-action-primary text-white" : "border-[#E4DDD5] bg-white text-text-primary")
+                                    (rollFilter === opt.key ? "border-action-primary bg-action-primary text-white" : "border-[#D9E0E8] bg-white text-text-primary")
                                   }
                                 >
                                   {opt.label}
@@ -1527,7 +1527,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                       </span>
                     )}
                     <span className="text-right">
-                      <button onClick={() => setExpandedPoId(expanded ? "" : poId)} className="vp-modal-x font-sans text-[11px] font-semibold text-action-primary max-md:min-h-10 max-md:w-full max-md:rounded-full max-md:border max-md:border-[#E4DDD5] max-md:text-[12.5px]">
+                      <button onClick={() => setExpandedPoId(expanded ? "" : poId)} className="vp-modal-x font-sans text-[11px] font-semibold text-action-primary max-md:min-h-10 max-md:w-full max-md:rounded-full max-md:border max-md:border-[#D9E0E8] max-md:text-[12.5px]">
                         {expanded ? "Sembunyikan" : "Detail →"}
                       </button>
                     </span>
@@ -1545,7 +1545,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                   {expanded && kind === "FG" && (
                     // HP: jadi pop-up di tengah layar (lihat .vp-modal-body); ketuk di luar = Sembunyikan.
                     <div className="vp-modal-body border-b border-[#F1F4F7] bg-[#FAFBFC] px-6 py-2.5">
-                      <div className="sticky top-0 z-10 -mx-4 -mt-4 mb-3 border-b border-[#EDE8E2] bg-white px-4 pb-3 pt-4 md:hidden">
+                      <div className="sticky top-0 z-10 -mx-4 -mt-4 mb-3 border-b border-[#E5E7EB] bg-white px-4 pb-3 pt-4 md:hidden">
                         <div className="font-sans text-[16px] font-bold text-text-primary">Riwayat FG</div>
                         <div className="mt-0.5 font-mono text-[12px] text-text-muted">
                           {poId} · {total} pcs

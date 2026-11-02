@@ -472,7 +472,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                         onClick={() => setColorStatusFilter(colorStatusFilter === opt.key ? "ALL" : opt.key)}
                         className={
                           "min-h-9 rounded-full border px-3.5 font-sans text-[12.5px] font-semibold " +
-                          (colorStatusFilter === opt.key ? "border-action-primary bg-action-primary text-white" : "border-[#E4DDD5] bg-white text-text-primary")
+                          (colorStatusFilter === opt.key ? "border-action-primary bg-action-primary text-white" : "border-[#D9E0E8] bg-white text-text-primary")
                         }
                       >
                         {opt.label}
@@ -610,7 +610,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                   onClick={() => setStatusFilter(statusFilter === opt.key ? "ALL" : opt.key)}
                   className={
                     "min-h-9 rounded-full border px-3.5 font-sans text-[12.5px] font-semibold " +
-                    (statusFilter === opt.key ? "border-action-primary bg-action-primary text-white" : "border-[#E4DDD5] bg-white text-text-primary")
+                    (statusFilter === opt.key ? "border-action-primary bg-action-primary text-white" : "border-[#D9E0E8] bg-white text-text-primary")
                   }
                 >
                   {opt.label}
@@ -984,12 +984,12 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
          daftar PO material & detail invoice terpilih). Kondisi render TIDAK berubah -- begitu
          "Mulai Produksi" diklik, PO itu pindah status & otomatis hilang dari readyMaklonPOs. */}
       {readyMaklonPOs.length > 0 && (
-        <div className="rounded-lg border border-[#B7DFC5] bg-success-bg px-5 py-4">
+        <div className="vp-rs-box rounded-lg border border-[#B7DFC5] bg-success-bg px-5 py-4">
           <div className="font-sans text-[12.5px] font-semibold text-success-fg">Bahan sudah diterima — siap mulai produksi</div>
           {/* Revisi 2026-09-19 (owner, Gambar 2): yang dimulai produksi = bahan yang SUDAH DITERIMA
               saat ini (bukan seluruh PO) -- daftar item + estimasi pcs di bawah dihitung langsung dari
               roll yang sudah ditandai diterima (bertambah otomatis begitu material baru masuk). */}
-          <div className="mt-2.5 flex flex-col gap-2">
+          <div className="vp-rs-list mt-2.5 flex flex-col gap-2">
             {readyMaklonPOs.map((p) => {
               const items = receivedItemsFor(p.mrpId);
               const estTotal = items.reduce((s, it) => s + it.estPcs, 0);
@@ -1047,7 +1047,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                     </div>
                   )}
                   {items.length > 0 && (
-                    <table className="w-full table-fixed border-collapse border-t border-[#CFE0EF]">
+                    <table className="vp-rs-table w-full table-fixed border-collapse border-t border-[#CFE0EF]">
                       <thead>
                         <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg">
                           <th className="px-3.5 py-1.5 text-left">Item diterima (warna · lengan)</th>
@@ -1062,10 +1062,10 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                             <td className="px-3.5 py-1.5 font-medium">
                               {it.warna} <span className="text-text-muted">· {it.lengan}</span>
                             </td>
-                            <td className="px-3 py-1.5 text-center font-mono">
+                            <td data-label="Roll diterima" className="px-3 py-1.5 text-center font-mono">
                               {it.arrived}/{it.plannedRoll}
                             </td>
-                            <td className="px-3 py-1.5 text-center font-mono">{formatPcs(it.estPcs)}</td>
+                            <td data-label="Estimasi" className="px-3 py-1.5 text-center font-mono">{formatPcs(it.estPcs)}</td>
                             <td className="px-3 py-1.5 text-center">
                               {colorStarted(it) ? (
                                 <span className="font-sans text-[11px] font-semibold text-success-fg">✓ Sudah dimulai</span>

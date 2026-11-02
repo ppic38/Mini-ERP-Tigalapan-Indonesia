@@ -102,11 +102,11 @@ export function ReworkInlineForm({
   return (
     <div
       className={
-        "border-t border-[#CFE0EF] bg-info-bg px-4 py-4 max-md:bg-[#FBF7F3] max-md:px-3 max-md:py-3" +
+        "border-t border-[#CFE0EF] bg-info-bg px-4 py-4 max-md:bg-[#F8FAFF] max-md:px-3 max-md:py-3" +
         (compact ? " max-md:border-0 max-md:bg-transparent max-md:p-0" : "")
       }
     >
-      <div className={"overflow-hidden rounded-md border border-[#A8C5DF] bg-white max-md:rounded-2xl max-md:border-[#EDE8E2]" + (compact ? " max-md:rounded-none max-md:border-0" : "")}>
+      <div className={"overflow-hidden rounded-md border border-[#A8C5DF] bg-white max-md:rounded-2xl max-md:border-[#E5E7EB]" + (compact ? " max-md:rounded-none max-md:border-0" : "")}>
         <div className={"border-b border-[#CFE0EF] bg-info-bg px-4 py-2.5" + (compact ? " max-md:hidden" : "")}>
           <span className="font-sans text-[11.5px] font-semibold text-info-fg max-md:text-[13px]">
             <span className="max-md:hidden">Input rework — {warna} · {lengan} · size {size}</span>
@@ -365,7 +365,7 @@ export function GroupRemarkBox({ groupKey, vendorProduksi, fallback }: { groupKe
   }
 
   return (
-    <div className="mt-3 rounded-md border border-[#CFE0EF] bg-white px-4 py-3 max-md:rounded-2xl max-md:border-[#EDE8E2]">
+    <div className="mt-3 rounded-md border border-[#CFE0EF] bg-white px-4 py-3 max-md:rounded-2xl max-md:border-[#E5E7EB]">
       <div className="mb-1.5 font-sans text-[10.5px] font-semibold uppercase tracking-wider text-text-muted">
         Remark<span className="max-md:hidden"> sisa reject</span>
       </div>
@@ -466,11 +466,11 @@ export function ReworkHistoryCard({ vendorId }: { vendorId: string }) {
               </div>
               <div className="mt-2 flex flex-col gap-1.5">
                 {rows.map((row) => (
-                  <div key={row.from + row.to + (row.usia ?? "")} className="flex items-center justify-between gap-3 rounded-xl bg-[#F7F5F2] px-3 py-2">
+                  <div key={row.from + row.to + (row.usia ?? "")} className="flex items-center justify-between gap-3 rounded-xl bg-[#F3F4F7] px-3 py-2">
                     <span className="flex items-center gap-2 font-mono text-[14px] font-semibold text-text-primary">
                       {row.from} <span className="font-sans text-text-muted">→</span> {row.to}
                       {row.usia && (
-                        <span className={"rounded-full px-2 py-px font-sans text-[10.5px] font-semibold " + (row.usia === "KIDS" ? "bg-info-bg text-info-fg" : "bg-[#EFEBE6] text-text-muted")}>
+                        <span className={"rounded-full px-2 py-px font-sans text-[10.5px] font-semibold " + (row.usia === "KIDS" ? "bg-info-bg text-info-fg" : "bg-[#E5E9F0] text-text-muted")}>
                           {row.usia === "KIDS" ? "Kids" : "Dewasa"}
                         </span>
                       )}

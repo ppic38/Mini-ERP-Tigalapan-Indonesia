@@ -209,6 +209,8 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   // Filter "Riwayat pengiriman" (hanya tampilan): cari No Resi (mengandung teks) dan pilih Ekspedisi (kosong = semua).
   const [histResiFilter, setHistResiFilter] = useState("");
   const [histEkspedisiFilter, setHistEkspedisiFilter] = useState("");
+  // HP: resi yang rinciannya sedang dibuka di popup (kunci grup resi); null = tertutup.
+  const [resiPopupKey, setResiPopupKey] = useState<string | null>(null);
   // Klik baris "Koli belum dikirim"/"Riwayat pengiriman" untuk expand/collapse rincian isi koli
   // per item — id koli unik lintas kedua tabel jadi aman pakai 1 Set gabungan.
   const [expandedKoli, setExpandedKoli] = useState<Set<string>>(new Set());
@@ -687,8 +689,8 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
             </Button>
           )}
         </div>
-        {/* HP: Pilih MRP & No koli berdampingan (No koli sempit). */}
-        <div className="mt-3 grid grid-cols-2 gap-3 max-md:grid-cols-[minmax(0,1fr)_92px] max-md:gap-2">
+        {/* HP: Pilih MRP di baris pertama, No koli di baris kedua (satu kolom). */}
+        <div className="mt-3 grid grid-cols-2 gap-3 max-md:grid-cols-1 max-md:gap-3">
           <div>
             <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Pilih MRP</div>
             <select value={mrpId} onChange={(e) => pickMrp(e.target.value)} disabled={!!editingKoliId} className="input mt-1 disabled:bg-[#F7F9FB] disabled:text-text-muted">
@@ -1207,16 +1209,16 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border-subtle px-4 py-3">
           <span className="font-sans text-[13px] font-semibold text-text-primary">Riwayat pengiriman</span>
           {deliveredGroups.length > 0 && (
-            <div className="ml-auto flex flex-wrap items-center gap-2 max-md:ml-0 max-md:w-full">
+            <div className="ml-auto flex flex-wrap items-center gap-2 max-md:ml-0 max-md:w-full max-md:flex-col max-md:items-stretch">
               <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted max-md:hidden">No resi</span>
               <input
                 value={histResiFilter}
                 onChange={(e) => setHistResiFilter(e.target.value)}
                 placeholder="Cari no resi…"
-                className="input w-[170px] max-md:min-w-0 max-md:flex-1"
+                className="input w-[170px] max-md:w-full max-md:min-w-0"
               />
               <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted max-md:hidden">Ekspedisi</span>
-              <select value={activeHistEkspedisi} onChange={(e) => setHistEkspedisiFilter(e.target.value)} className="input w-[240px] max-md:min-w-0 max-md:flex-1">
+              <select value={activeHistEkspedisi} onChange={(e) => setHistEkspedisiFilter(e.target.value)} className="input w-[240px] max-md:w-full max-md:min-w-0">
                 <option value="">Semua ekspedisi</option>
                 {historyEkspedisiOptions.map((e) => (
                   <option key={e} value={e}>
@@ -1254,8 +1256,9 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
               const totalWeight = kolis.reduce((s, k) => s + (k.beratKoli ?? 0), 0);
               const alreadyInvoiced = kolis.some((k) => k.resiInvoicedAt);
               const qtyTotals = koliQtyTotals(kolis);
-              return (
-                <div key={groupKey} className="overflow-hidden rounded-md border border-border-subtle bg-white">
+              // HP: tiap resi jadi kartu ringkas, rincian koli terbuka sebagai popup (inModal). Desktop tetap menampilkan rincian langsung.
+              const groupBlock = (inModal: boolean) => (
+                <div className={"overflow-hidden rounded-md border border-border-subtle bg-white" + (inModal ? "" : " max-md:hidden")}>
                   <div className="vp-resi-head flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-2 font-sans text-[11.5px] text-[#31414F]">
                     <span className="vp-resi-no font-mono font-semibold">{first.noResi || "—"}</span>
                     <span>
@@ -1330,6 +1333,48 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     );
                   })}
                 </div>
+              );
+              return (
+                <Fragment key={groupKey}>
+                  {groupBlock(false)}
+                  <button
+                    onClick={() => setResiPopupKey(groupKey)}
+                    className="vp-resi-card flex w-full items-center gap-3 rounded-xl border border-border-subtle bg-white px-4 py-3.5 text-left shadow-[0_1px_2px_rgba(17,24,39,0.04)] active:bg-info-bg md:hidden"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="truncate font-mono text-[15px] font-semibold text-text-primary">{first.noResi || "—"}</span>
+                        {alreadyInvoiced ? (
+                          <span className="flex-none rounded-full bg-success-bg px-2.5 py-1 font-sans text-[10px] font-semibold text-success-fg">Sudah diinvoice</span>
+                        ) : (
+                          <span className="flex-none rounded-full bg-warning-bg px-2.5 py-1 font-sans text-[10px] font-semibold text-warning-fg">Belum diinvoice</span>
+                        )}
+                      </span>
+                      <span className="mt-1 block truncate font-sans text-[12px] text-text-muted">{first.ekspedisi}</span>
+                      <span className="mt-2 flex items-baseline justify-between gap-2 font-sans text-[12px] text-[#31414F]">
+                        <span>
+                          <span className="font-mono font-semibold">{qtyTotals.billable.toLocaleString("id-ID")} pcs</span>
+                          <span className="text-text-muted"> · {kolis.length} koli · {formatDecimal(totalWeight)} kg</span>
+                        </span>
+                        <span className="font-mono text-[11px] text-text-muted">{formatDate(first.deliveredAt)}</span>
+                      </span>
+                    </span>
+                    <ChevronRight className="h-4 w-4 flex-none text-text-muted" />
+                  </button>
+                  {resiPopupKey === groupKey && (
+                    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0B131B]/45 p-4 md:hidden" onClick={() => setResiPopupKey(null)}>
+                      <div className="flex max-h-[85vh] w-full max-w-[480px] flex-col rounded-2xl bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-between gap-3 border-b border-border-subtle px-4 py-3">
+                          <span className="font-sans text-[15px] font-semibold text-text-primary">Detail pengiriman</span>
+                          <button onClick={() => setResiPopupKey(null)} className="min-h-9 rounded-full border border-[#D9E0E8] bg-white px-4 font-sans text-[12.5px] font-semibold text-action-primary">
+                            Tutup
+                          </button>
+                        </div>
+                        <div className="overflow-y-auto p-3">{groupBlock(true)}</div>
+                      </div>
+                    </div>
+                  )}
+                </Fragment>
               );
             })}
           </div>

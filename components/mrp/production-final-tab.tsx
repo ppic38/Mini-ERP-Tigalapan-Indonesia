@@ -412,7 +412,7 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
                       dicutting ({r.totalTarget} pcs)
                     </div>
                   </div>
-                  <div className="m-fluid min-w-[760px] overflow-hidden rounded-md border border-[#CFE0EF] bg-white max-md:rounded-xl max-md:border-[#EDE8E2]">
+                  <div className="m-fluid min-w-[760px] overflow-hidden rounded-md border border-[#CFE0EF] bg-white max-md:rounded-xl max-md:border-[#E5E7EB]">
                     <div className="m-hide grid grid-cols-7 gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                       <span>Size</span>
                       <span className="text-right">FG Target</span>
