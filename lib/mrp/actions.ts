@@ -3087,6 +3087,43 @@ export async function setGroupRejectRemarkAction(groupKey: string, remark: strin
   if (error) throw new Error(error.message);
 }
 
+/** Klasifikasi reject per warna·lengan (migration 0087, owner 2026-11-02): total reject = selisih target dan Finish Good (reject otomatis, SEBELUM rework);
+ *  vendor membaginya jadi reject MATERIAL (cacat bahan) dan reject PRODUKSI / PROSES. Jumlah keduanya WAJIB sama dengan total reject -- dihitung ulang di
+ *  server dari hasil produksi vendor ini, angka dari browser tidak dipercaya. Dikunci saat grup sudah Final Produksi. */
+export async function setGroupRejectSplitAction(groupKey: string, rejectMaterial: number, rejectProses: number): Promise<ActionResult<{ total: number }>> {
+  return toActionResult(() => setGroupRejectSplitImpl(groupKey, rejectMaterial, rejectProses));
+}
+async function setGroupRejectSplitImpl(groupKey: string, rejectMaterial: number, rejectProses: number): Promise<{ total: number }> {
+  const actor = await requireVendorSessionWithActor();
+  const vendorId = actor.vendorId;
+  if (!Number.isInteger(rejectMaterial) || !Number.isInteger(rejectProses) || rejectMaterial < 0 || rejectProses < 0) {
+    throw new Error("Reject material dan reject produksi harus bilangan bulat 0 atau lebih.");
+  }
+  const db = supabaseServer();
+  const { data: meta, error: metaErr } = await db.from("production_group_meta").select("group_key,vendor_produksi,done_at").eq("group_key", groupKey).eq("vendor_produksi", vendorId).maybeSingle();
+  if (metaErr) throw new Error(metaErr.message);
+  if (!meta) throw new Error("Reject warna ini belum dihitung — klik Selesai Produksi di tab Finish Good dulu.");
+  if (meta.done_at) throw new Error("Grup ini sudah Final Produksi — buka kunci Final dulu untuk mengubah klasifikasi reject.");
+  // Total reject = reject otomatis (baris REJECT tanpa catatan: bukan rework / buang), sama dengan rejectGrossForGroup di derive.ts.
+  const { data: results, error: resErr } = await db.from("production_results").select("id,note").eq("group_key", groupKey).eq("vendor_produksi", vendorId).eq("kind", "REJECT");
+  if (resErr) throw new Error(resErr.message);
+  const autoIds = (results ?? []).filter((r) => !r.note).map((r) => r.id);
+  let total = 0;
+  if (autoIds.length > 0) {
+    const { data: sizes, error: sizeErr } = await db.from("production_result_sizes").select("qty").in("production_result_id", autoIds);
+    if (sizeErr) throw new Error(sizeErr.message);
+    total = (sizes ?? []).reduce((a, s) => a + (s.qty ?? 0), 0);
+  }
+  if (total <= 0) throw new Error("Tidak ada reject di warna ini yang perlu diklasifikasi.");
+  if (rejectMaterial + rejectProses !== total) {
+    throw new Error(`Reject material (${rejectMaterial}) + reject produksi (${rejectProses}) harus sama dengan total reject (${total} pcs).`);
+  }
+  const { error } = await db.from("production_group_meta").update({ reject_material_qty: rejectMaterial, reject_proses_qty: rejectProses }).eq("group_key", groupKey).eq("vendor_produksi", vendorId);
+  if (error) throw new Error(/reject_material_qty|reject_proses_qty/.test(error.message) ? "Jalankan migration 0087 (klasifikasi reject) di Supabase dulu." : error.message);
+  await logVendorAction(actor, "SET_REJECT_SPLIT", "production_group", groupKey);
+  return { total };
+}
+
 export async function setRejectRemarkAction(poId: string, remark: string): Promise<void> {
   const vendorId = await requireVendorSession();
   await assertMaklonPoOwnedByVendor(supabaseServer(), poId, vendorId);

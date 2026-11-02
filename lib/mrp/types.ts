@@ -671,4 +671,8 @@ export type ProductionGroupMeta = {
    *  bukan `doneAt` per grup -- lihat availableFgToShip di lib/mrp/derive.ts. */
   doneAt?: string;
   remarkSisaReject?: string;
+  /** Klasifikasi reject (migration 0087): reject MATERIAL (cacat bahan) dan reject PRODUKSI / PROSES, dalam pcs, dari vendor. Jumlahnya harus sama dengan
+   *  total reject warna·lengan ini (selisih target dan Finish Good). Kosong = belum diklasifikasi. */
+  rejectMaterialQty?: number;
+  rejectProsesQty?: number;
 };

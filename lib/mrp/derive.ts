@@ -4010,7 +4010,10 @@ export function findRawMaterialRollForBatch(batch: ProductionBatch, rawInvoices:
  *  - diskon   = diskon invoice dibagi per KG kain seluruh invoice (semua warna), dikali berat roll -- hanya mengurangi biaya bahan
  *  - rib      = biaya item tambahan (rib/kerah/manset) warna itu di invoice, dibagi per kg kain warna itu (semua lengan), dikali berat roll
  *  Dihitung dari berat KOTOR (sama dasar dengan nilai yang ditagih supplier). null kalau roll tidak bisa ditelusuri ke invoice material. */
-export function rawRollCostShares(batch: ProductionBatch, rawInvoices: RawMaterialInvoice[]): { invoiceNo: string; hargaPerKg: number; grossKg: number; body: number; diskonShare: number; ribShare: number } | null {
+export function rawRollCostShares(
+  batch: ProductionBatch,
+  rawInvoices: RawMaterialInvoice[]
+): { invoiceNo: string; hargaPerKg: number; grossKg: number; body: number; diskonShare: number; ribShare: number; invoiceDiskon: number; invoiceKg: number; warnaRibCost: number; warnaKg: number } | null {
   if (!batch.codeRoll) return null;
   for (const rawInv of rawInvoices) {
     if (rawInv.destinationVendor !== batch.vendorProduksi) continue;
@@ -4031,6 +4034,11 @@ export function rawRollCostShares(batch: ProductionBatch, rawInvoices: RawMateri
         body: c.hargaPerRoll * grossKg,
         diskonShare: fabricKg > 0 ? (rawInv.diskon * grossKg) / fabricKg : 0,
         ribShare: colorKg > 0 ? (ribCost * grossKg) / colorKg : 0,
+        // Pembilang dan penyebut porsi di atas, supaya unduhan Excel bisa menuliskannya sebagai rumus yang bisa ditelusuri.
+        invoiceDiskon: rawInv.diskon,
+        invoiceKg: fabricKg,
+        warnaRibCost: ribCost,
+        warnaKg: colorKg,
       };
     }
   }
@@ -4094,6 +4102,11 @@ export type HppRow = {
   rollBody?: number;
   rollDiskon?: number;
   rollRib?: number;
+  /** Dasar porsi diskon dan rib roll (template CAL HPP ERP): diskon dan total kg kain invoice, biaya rib dan total kg kain warna itu. */
+  rollInvDiskon?: number;
+  rollInvKg?: number;
+  rollWarnaRib?: number;
+  rollWarnaKg?: number;
   /** Pembagi biaya roll: roll ditutup = Finish Good aktual; roll terbuka (estimasi) = hasil cutting. */
   divisorQty?: number;
   /** Size ASLI baris ini (variabel yang sudah ada di scope tempat `item`/`jenis` dikonstruksi,
@@ -4659,6 +4672,10 @@ export function hppRowsForInvoicePerRoll(
         rollBody: rollTotalCost,
         rollDiskon: diskonShare,
         rollRib: ribShare,
+        rollInvDiskon: shares?.invoiceDiskon,
+        rollInvKg: shares?.invoiceKg,
+        rollWarnaRib: shares?.warnaRibCost,
+        rollWarnaKg: shares?.warnaKg,
         divisorQty,
         size: c.size,
         sellingPricePerItem,

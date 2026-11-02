@@ -8,7 +8,7 @@ import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatPcs, vendorItemSizeProgress } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
-import type { MaklonPO } from "@/lib/mrp/types";
+import type { MaklonPO, ProductionGroupMeta } from "@/lib/mrp/types";
 
 /** Monitoring Reject & Rework (owner 2026-09-18) -- data reject/rework SUDAH ADA & sudah dihitung
  *  lewat vendorItemSizeProgress (dipakai "Monitoring Produksi"), halaman ini murni menyusun ulang
@@ -27,7 +27,21 @@ function poRejectSummary(po: MaklonPO, mrpDetails: ReturnType<typeof useMrpStore
   return { items, totalReject, totalRework, sisaReject: Math.max(0, totalReject - totalRework) };
 }
 
+/** Klasifikasi reject dari vendor (migration 0087): jumlah reject MATERIAL dan reject PRODUKSI / PROSES semua warna·lengan PO ini yang sudah diklasifikasi. */
+function poRejectSplit(po: MaklonPO, metas: ProductionGroupMeta[]) {
+  let material = 0;
+  let proses = 0;
+  for (const m of metas) {
+    if (m.mrpId !== po.mrpId || m.vendorProduksi !== po.vendorProduksi) continue;
+    material += m.rejectMaterialQty ?? 0;
+    proses += m.rejectProsesQty ?? 0;
+  }
+  return { material, proses };
+}
+
 function RejectDetailTable({ po }: { po: MaklonPO }) {
+  const productionGroupMeta = useMrpStore((s) => s.productionGroupMeta);
+  const split = poRejectSplit(po, productionGroupMeta);
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const productionBatches = useMrpStore((s) => s.productionBatches);
   const productionResults = useMrpStore((s) => s.productionResults);
@@ -41,7 +55,12 @@ function RejectDetailTable({ po }: { po: MaklonPO }) {
 
   return (
     <div className="overflow-hidden rounded-md border border-[#E4E9EE] bg-white">
-      <div className="bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Rincian reject per warna/lengan/size</div>
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+        <span>Rincian reject per warna/lengan/size</span>
+        <span className="normal-case tracking-normal">
+          Klasifikasi vendor: reject material <b className="font-mono text-warning-fg">{formatPcs(split.material)}</b> pcs · reject produksi / proses <b className="font-mono text-info-fg">{formatPcs(split.proses)}</b> pcs
+        </span>
+      </div>
       <div className="divide-y divide-[#F1F4F7]">
         {rows.map((r) => {
           const sisa = Math.max(0, r.reject - r.rework);
@@ -69,6 +88,7 @@ function MrpVendorDrilldown({ group }: { group: MrpGroup }) {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const productionBatches = useMrpStore((s) => s.productionBatches);
   const productionResults = useMrpStore((s) => s.productionResults);
+  const productionGroupMeta = useMrpStore((s) => s.productionGroupMeta);
   const selected = group.vendorPOs.find((p) => p.id === selectedId) ?? null;
 
   return (
@@ -91,6 +111,9 @@ function MrpVendorDrilldown({ group }: { group: MrpGroup }) {
                 <span className="w-[160px] flex-none truncate font-sans text-[12px] font-semibold text-[#31414F]">{VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi}</span>
                 <span className="w-[100px] flex-none font-mono text-[11px] text-danger-fg">{formatPcs(summary.totalReject)} reject</span>
                 <span className="w-[100px] flex-none font-mono text-[11px] text-warning-fg">{formatPcs(summary.totalRework)} rework</span>
+                <span className="w-[210px] flex-none font-mono text-[11px] text-text-muted">
+                  {formatPcs(poRejectSplit(po, productionGroupMeta).material)} material · {formatPcs(poRejectSplit(po, productionGroupMeta).proses)} produksi
+                </span>
                 <span className="flex-1 font-mono text-[11px] font-semibold text-[#31414F]">{formatPcs(summary.sisaReject)} sisa</span>
                 <span className="flex-none text-text-muted"><ChevronRight size={14} /></span>
               </button>
@@ -112,6 +135,7 @@ export default function ProduksiRejectPage() {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const productionBatches = useMrpStore((s) => s.productionBatches);
   const productionResults = useMrpStore((s) => s.productionResults);
+  const productionGroupMeta = useMrpStore((s) => s.productionGroupMeta);
 
   if (!mounted) return null;
 
@@ -122,7 +146,7 @@ export default function ProduksiRejectPage() {
     mrpMap.get(p.mrpId)!.vendorPOs.push(p);
   }
   const rows = Array.from(mrpMap.values())
-    .map((g) => ({ ...g, summary: g.vendorPOs.reduce((a, p) => { const s = poRejectSummary(p, mrpDetails, productionBatches, productionResults); return { reject: a.reject + s.totalReject, rework: a.rework + s.totalRework, sisa: a.sisa + s.sisaReject }; }, { reject: 0, rework: 0, sisa: 0 }) }))
+    .map((g) => ({ ...g, summary: g.vendorPOs.reduce((a, p) => { const s = poRejectSummary(p, mrpDetails, productionBatches, productionResults); const sp = poRejectSplit(p, productionGroupMeta); return { reject: a.reject + s.totalReject, rework: a.rework + s.totalRework, sisa: a.sisa + s.sisaReject, material: a.material + sp.material, proses: a.proses + sp.proses }; }, { reject: 0, rework: 0, sisa: 0, material: 0, proses: 0 }) }))
     .sort((a, b) => b.summary.sisa - a.summary.sisa);
 
   const columns: ColumnDef<(typeof rows)[number]>[] = [
@@ -135,6 +159,8 @@ export default function ProduksiRejectPage() {
     { key: "reject", label: "Total Reject", default: true, align: "right", render: (g) => <span className="text-danger-fg">{formatPcs(g.summary.reject)}</span> },
     { key: "rework", label: "Sudah Rework", default: true, align: "right", render: (g) => <span className="text-warning-fg">{formatPcs(g.summary.rework)}</span> },
     { key: "sisa", label: "Sisa Reject", default: true, align: "right", render: (g) => <span className="font-semibold">{formatPcs(g.summary.sisa)}</span> },
+    { key: "material", label: "Reject Material", default: true, align: "right", render: (g) => formatPcs(g.summary.material) },
+    { key: "proses", label: "Reject Produksi / Proses", default: true, align: "right", render: (g) => formatPcs(g.summary.proses) },
     {
       key: "status",
       label: "Status",
