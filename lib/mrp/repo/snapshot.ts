@@ -853,6 +853,8 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     fgConfirmedAt: g.fg_confirmed_at ?? undefined,
     doneAt: g.done_at ?? undefined,
     remarkSisaReject: g.remark_sisa_reject ?? undefined,
+    rejectMaterialQty: g.reject_material_qty ?? undefined,
+    rejectProsesQty: g.reject_proses_qty ?? undefined,
   }));
 
   // ---- Delivery ----

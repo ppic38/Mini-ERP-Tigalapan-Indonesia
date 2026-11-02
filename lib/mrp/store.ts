@@ -555,6 +555,7 @@ type FlowActions = {
   setRejectRemark: (poId: string, remark: string) => Promise<void>;
   /** Remark sisa reject per warna/lengan (konfirmasi: terisi = dianggap sudah ditangani, badge padam). */
   setGroupRejectRemark: (groupKey: string, vendorProduksi: string, remark: string) => Promise<void>;
+  setGroupRejectSplit: (groupKey: string, vendorProduksi: string, rejectMaterial: number, rejectProses: number) => Promise<void>;
   resolveMaterialClaim: (key: string, note: string) => Promise<void>;
   unresolveMaterialClaim: (key: string) => Promise<void>;
   /** Step 1 flow bertahap (2026-09-11) -- Procurement "Terima Klaim". Lihat acceptMaterialClaimAction. */
@@ -2534,6 +2535,17 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     set({ productionGroupMeta: previous.map((m) => (m.groupKey === groupKey && m.vendorProduksi === vendorProduksi ? { ...m, remarkSisaReject: text || undefined } : m)) });
     try {
       await actions.setGroupRejectRemarkAction(groupKey, text);
+    } catch (err) {
+      set({ productionGroupMeta: previous });
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  setGroupRejectSplit: async (groupKey, vendorProduksi, rejectMaterial, rejectProses) => {
+    const previous = get().productionGroupMeta;
+    set({ productionGroupMeta: previous.map((m) => (m.groupKey === groupKey && m.vendorProduksi === vendorProduksi ? { ...m, rejectMaterialQty: rejectMaterial, rejectProsesQty: rejectProses } : m)) });
+    try {
+      unwrapAction(await actions.setGroupRejectSplitAction(groupKey, rejectMaterial, rejectProses));
     } catch (err) {
       set({ productionGroupMeta: previous });
       throw err;

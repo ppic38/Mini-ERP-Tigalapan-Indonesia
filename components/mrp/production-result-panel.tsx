@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { confirmDialog } from "@/components/ui/confirm-dialog";
-import { GroupRemarkBox, knownSizesForMrp, ReworkHistoryCard, ReworkInlineForm } from "@/components/mrp/rework-parts";
+import { GroupRejectSplitBox, GroupRemarkBox, knownSizesForMrp, ReworkHistoryCard, ReworkInlineForm } from "@/components/mrp/rework-parts";
 import { NumberInput } from "@/components/mrp/number-input";
 import { StatusPill } from "@/components/ui/status-pill";
 import { PicText } from "@/components/mrp/actor-tag";
@@ -692,6 +692,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                             });
                           })()}
                         </div>
+                        {grossReject > 0 && <GroupRejectSplitBox groupKey={groupKey} vendorProduksi={vendorId} total={grossReject} locked={isFinalDone || sysadmin} />}
                         <GroupRemarkBox
                           groupKey={groupKey}
                           vendorProduksi={vendorId}

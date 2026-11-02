@@ -212,6 +212,115 @@ export function ReworkInlineForm({
   );
 }
 
+/** Klasifikasi reject per warna·lengan (migration 0087, owner 2026-11-02): total reject = selisih target dan Finish Good (reject otomatis); vendor membaginya
+ *  jadi reject MATERIAL (cacat bahan) dan reject PRODUKSI / PROSES. Material + proses wajib sama dengan total reject; mengisi salah satu otomatis mengisi sisanya.
+ *  Kalau total reject berubah sesudah disimpan (mis. Finish Good dikoreksi), klasifikasi lama ditandai dan perlu diisi ulang. */
+export function GroupRejectSplitBox({ groupKey, vendorProduksi, total, locked }: { groupKey: string; vendorProduksi: string; total: number; locked: boolean }) {
+  const meta = useMrpStore((s) => s.productionGroupMeta.find((m) => m.groupKey === groupKey && m.vendorProduksi === vendorProduksi));
+  const setGroupRejectSplit = useMrpStore((s) => s.setGroupRejectSplit);
+  const savedMat = meta?.rejectMaterialQty;
+  const savedPro = meta?.rejectProsesQty;
+  const hasSaved = savedMat != null && savedPro != null;
+  const mismatch = hasSaved && savedMat + savedPro !== total;
+  const [draft, setDraft] = useState<{ mat: string; pro: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const editing = !locked && (draft !== null || !hasSaved || mismatch);
+  const mat = draft?.mat ?? (hasSaved ? String(savedMat) : "");
+  const pro = draft?.pro ?? (hasSaved ? String(savedPro) : "");
+  const digits = (v: string) => v.replace(/[^0-9]/g, "");
+  const matN = mat === "" ? NaN : Number(mat);
+  const proN = pro === "" ? NaN : Number(pro);
+  const valid = Number.isInteger(matN) && Number.isInteger(proN) && matN >= 0 && proN >= 0 && matN + proN === total;
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      await setGroupRejectSplit(groupKey, vendorProduksi, matN, proN);
+      setDraft(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Gagal menyimpan klasifikasi reject.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-md border border-[#CFE0EF] bg-white px-4 py-3">
+      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+        <span className="font-sans text-[10.5px] font-semibold uppercase tracking-wider text-text-muted">Klasifikasi reject</span>
+        <span className="font-sans text-[11px] text-text-muted">
+          Total reject (target − finish good): <b className="font-mono text-danger-fg">{total} pcs</b>
+        </span>
+      </div>
+      {editing ? (
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1 font-sans text-[10.5px] font-medium text-text-muted">
+            Reject material (pcs)
+            <input
+              inputMode="numeric"
+              value={mat}
+              onChange={(e) => {
+                const v = digits(e.target.value);
+                setDraft({ mat: v, pro: v === "" ? "" : String(Math.max(0, total - Number(v))) });
+              }}
+              disabled={saving}
+              placeholder="0"
+              className="input w-[130px] text-right font-mono text-[12px]"
+            />
+          </label>
+          <label className="flex flex-col gap-1 font-sans text-[10.5px] font-medium text-text-muted">
+            Reject produksi / proses (pcs)
+            <input
+              inputMode="numeric"
+              value={pro}
+              onChange={(e) => {
+                const v = digits(e.target.value);
+                setDraft({ pro: v, mat: v === "" ? "" : String(Math.max(0, total - Number(v))) });
+              }}
+              disabled={saving}
+              placeholder="0"
+              className="input w-[130px] text-right font-mono text-[12px]"
+            />
+          </label>
+          <Button onClick={() => void save()} disabled={!valid || saving} variant="primary" size="md">
+            {saving ? "Menyimpan…" : "Simpan"}
+          </Button>
+          {hasSaved && !mismatch && draft !== null && (
+            <Button onClick={() => setDraft(null)} disabled={saving} variant="ghost" size="md">
+              Batal
+            </Button>
+          )}
+        </div>
+      ) : hasSaved ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="rounded-full bg-warning-bg px-2.5 py-1 font-mono text-[11px] font-semibold text-warning-fg">Material {savedMat} pcs</span>
+          <span className="rounded-full bg-info-bg px-2.5 py-1 font-mono text-[11px] font-semibold text-info-fg">Produksi / proses {savedPro} pcs</span>
+          {!locked && (
+            <Button onClick={() => setDraft({ mat: String(savedMat), pro: String(savedPro) })} variant="muted" size="xs">
+              Ubah
+            </Button>
+          )}
+          {locked && <span className="font-sans text-[10.5px] text-text-muted">Final — buka kunci dulu untuk mengubah.</span>}
+        </div>
+      ) : (
+        <div className="font-sans text-[11px] text-text-muted">Belum diklasifikasi. Final Produksi mengunci klasifikasi ini.</div>
+      )}
+      {mismatch && !locked && (
+        <div className="mt-1.5 font-sans text-[11px] text-warning-fg">
+          Total reject berubah menjadi {total} pcs (sebelumnya material {savedMat} + produksi {savedPro} = {(savedMat ?? 0) + (savedPro ?? 0)}). Isi ulang klasifikasinya.
+        </div>
+      )}
+      {!editing && !hasSaved && locked && <div className="font-sans text-[11px] text-text-muted">Belum diklasifikasi.</div>}
+      <div className="mt-1.5 font-sans text-[10.5px] leading-[1.5] text-text-muted">
+        Material = reject karena cacat bahan (kain). Produksi / proses = reject karena pengerjaan (potong, jahit, finishing). Material + produksi harus sama dengan total reject; isi salah satu, sisanya terisi otomatis.
+      </div>
+      {error && <div className="mt-1.5 font-sans text-[11px] text-danger-fg">{error}</div>}
+    </div>
+  );
+}
+
 /** Remark sisa reject per warna/lengan dengan tombol KONFIRMASI. Remark terkonfirmasi = sisa reject warna ini dianggap sudah ditangani
  *  vendor (badge "Reject & Rework" tidak lagi menghitungnya). "Batalkan" mengosongkan remark -> kembali dihitung. */
 export function GroupRemarkBox({ groupKey, vendorProduksi, fallback }: { groupKey: string; vendorProduksi: string; fallback?: string }) {
