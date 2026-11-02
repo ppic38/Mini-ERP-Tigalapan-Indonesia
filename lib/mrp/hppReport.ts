@@ -43,6 +43,11 @@ export type HppRollLine = {
   biayaBahanRoll: number;
   diskonRoll: number;
   ribRoll: number;
+  /** Dasar porsi diskon/rib (kosong untuk baris tanpa roll). */
+  invDiskon: number | null;
+  invKg: number | null;
+  warnaRib: number | null;
+  warnaKg: number | null;
   pembagi: number | null;
   fg: number;
   resi: string;
@@ -134,6 +139,10 @@ function buildGroup(rows: HppReportRow[]): HppReportGroup {
       biayaBahanRoll: first.rollBody ?? 0,
       diskonRoll: first.rollDiskon ?? 0,
       ribRoll: first.rollRib ?? 0,
+      invDiskon: first.rollInvDiskon ?? null,
+      invKg: first.rollInvKg ?? null,
+      warnaRib: first.rollWarnaRib ?? null,
+      warnaKg: first.rollWarnaKg ?? null,
       pembagi: first.divisorQty ?? null,
       fg,
       resi: uniq(rs.map((r) => r.noResi).filter(Boolean)).join(", "),
@@ -151,6 +160,15 @@ function buildGroup(rows: HppReportRow[]): HppReportGroup {
     };
   });
   rolls.sort((a, b) => a.vendor.localeCompare(b.vendor) || a.warna.localeCompare(b.warna) || a.roll.localeCompare(b.roll) || a.size.localeCompare(b.size, "id-ID", { numeric: true }));
+  // HPP terendah/tertinggi per item = antar baris Detail Roll item itu (bukan antar koli/resi mentah), supaya angkanya bisa ditelusuri dan dihitung ulang
+  // di Excel dari sheet Detail Roll.
+  for (const it of items) {
+    const mine = rolls.filter((r) => r.warna === it.warna && r.lengan === it.lengan && r.size === it.size).map((r) => r.hppPcs);
+    if (mine.length > 0) {
+      it.hppMin = Math.min(...mine);
+      it.hppMax = Math.max(...mine);
+    }
+  }
   return { items, rolls };
 }
 
