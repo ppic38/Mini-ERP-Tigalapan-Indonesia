@@ -887,7 +887,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
 
   return (
     <>
-      <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
+      <div className="vp-sticky-pick rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
         <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted"><span className="max-md:hidden">Mulai Produksi — </span>pilih MRP</div>
         <select
           value={selectedMrpId}

@@ -128,7 +128,7 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
 
   return (
     <>
-      <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
+      <div className="vp-sticky-pick rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
         <div className="flex items-center gap-3 max-md:flex-col max-md:items-stretch">
           <div className="flex-1">
             <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Pilih MRP<span className="max-md:hidden"> (sudah tercutting)</span></div>

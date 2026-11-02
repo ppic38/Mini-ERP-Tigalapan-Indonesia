@@ -3,6 +3,7 @@
 ## Tampilan HP Vendor Produksi, tahap 2: bagian atas menempel, popup detail PO material, header Invoice (2026-11-03, tanpa migration)
 Owner: hanya tampilan HP/tablet tegak (< 1024px), tidak mengubah data atau alur input.
 - **Navbar + judul + filter menempel bertumpuk** saat di-scroll: `AppShell` membungkus Topbar, judul, dan pilihan PO Produksi/Material dalam `.vp-sticky-head` (sticky, z-25; untuk modul lain/desktop class `contents` = tidak mengubah tata letak). Tinggi blok itu diukur `ResizeObserver` dan dibagikan sebagai `--vp-head-h`; `.dt-filters` (filter DataTable kartu) menempel tepat di bawahnya. Filter kustom non-DataTable (mis. Riwayat pengiriman) tidak ikut menempel.
+- **Produksi:** tab Cutting/Finish Good/Reject/Final (`.vp-sticky-tabs`, 52px) menempel di bawah blok atas, dan kartu "Pilih MRP" (`.vp-sticky-pick`, top = `--vp-head-h` + 60px) tepat di bawah tab; strip latar 8px lewat box-shadow menutup kartu yang lewat.
 - **Receive:** "Lihat Detail" di HP membuka daftar warna sebagai popup (z-45); "Lihat" di satu warna membuka popup Terima Material di atasnya, ditutup -> kembali ke daftar warna. Desktop tetap menampilkan daftar warna di bawah baris PO.
 - **Invoice:** header tabel Validasi qty di HP lebih singkat ("Sudah diajukan", "Belum diajukan"); di popup invoice tidak ada singkatan lagi: Reject/Rework (bukan RJ/RW), Cutting, Finish Good, Panjang/Pendek (bukan PJG/PDK), `/pcs`. Tampilan desktop tidak berubah.
 
