@@ -4,6 +4,14 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Batas tampilan HP/tablet vs desktop: < 1024px (HP + tablet tegak) memakai tampilan HP, >= 1024px (tablet mendatar,
+   laptop, PC) tampilan desktop. Bawaan Tailwind 48rem (768px) -- dinaikkan supaya tablet tegak ikut tampilan HP.
+   Ikut dipakai semua utilitas `md:` / `max-md:` di semua modul; blok @media di bawah dan pengecekan matchMedia di
+   kode memakai batas yang sama (width < 64rem), termasuk lebar pecahan seperti 1023,5px. */
+@theme {
+  --breakpoint-md: 64rem;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -256,7 +264,22 @@
   }
 }
 
-/* Layar HP (< 768px) -- portal Vendor Produksi dipakai dari lapangan.
+/* Tablet tegak (768-1023px): tampilan HP portal Vendor Produksi dipusatkan dengan lebar maksimal 720px supaya kartu dan
+   baris tidak melebar sampai tepi layar; popup juga dibatasi lebarnya. */
+@media (width >= 48rem) and (width < 64rem) {
+  :root .vp-mobile .vp-wrap { width: 100%; max-width: 720px; margin-inline: auto; }
+  :root .vp-mobile .vp-wrap-pill { width: calc(100% - 32px); max-width: 688px; margin-inline: auto; }
+  /* Popup di tengah: lebar maks 560px. (:root = menang atas aturan HP di blok bawah yang urutannya lebih akhir.) */
+  :root .vp-mobile .m-cards tr.vp-pop + tr:has(> td[colspan]),
+  :root .vp-mobile .vp-modal-row + .vp-modal-body,
+  :root .vp-mobile .vp-sess + .vp-sheet,
+  :root .vp-mobile .vp-inv-sheet { left: calc(50% - 280px); right: calc(50% - 280px); }
+  /* Popup layar penuh (mis. Input Finish Good): jadi panel 720px di tengah dengan latar gelap di kiri-kanan. */
+  :root .vp-mobile .vp-full-row + .vp-full-body { left: calc(50% - 360px); right: calc(50% - 360px); box-shadow: 0 0 0 100vmax rgba(28, 25, 23, 0.45); }
+  :root .vp-mobile .vp-full-row:has(+ .vp-full-body) .vp-full-x { right: calc(50% - 346px); }
+}
+
+/* Layar HP & tablet tegak (< 1024px) -- portal Vendor Produksi dipakai dari lapangan.
    Sengaja TIDAK di dalam @layer: CSS tanpa layer menang atas utilitas Tailwind (yang ada di layer), jadi
    `display: grid` + `grid-template-columns` inline pada tabel-tabel grid di bawah bisa ditimpa tanpa mengubah
    tampilan desktop sama sekali.
@@ -264,7 +287,7 @@
    - .m-hide  : sembunyikan (mis. baris judul kolom -- sudah diganti label per sel).
    - .m-fluid : cabut min-width tetap (pembungkus tabel lebar) supaya tidak harus digeser ke samping.
    - input/select/textarea 16px: di iOS, font < 16px membuat layar zoom sendiri saat kolom diketuk. */
-@media (max-width: 767px) {
+@media (width < 64rem) {
   .m-hide { display: none !important; }
   .m-fluid { min-width: 0 !important; }
   .m-stack {
@@ -345,6 +368,205 @@
   .m-cards td[data-chevron] { position: absolute; top: 13px; right: 12px; }
   .m-cards td[colspan] { padding: 0 !important; }
   .m-cards tr:has(> td[colspan]) { background: #FAFBFC; padding: 12px; }
+  /* .m-cards + baris ber-class m-grid2 (dipasang lewat rowClassName halaman): isi kartu 2 kolom, label di atas
+     nilai, supaya kartu pendek dan cepat dibaca. Judul kartu, sel bertombol, dan teks panjang tetap selebar kartu. */
+  .m-cards tr.m-grid2 {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 14px;
+    padding: 14px 16px;
+  }
+  .m-cards tr.m-grid2 > td:not([data-label]):not([data-chevron]) {
+    grid-column: 1 / -1;
+    margin-bottom: 0;
+    padding: 0 28px 10px 0 !important;
+    font-size: 15px;
+  }
+  .m-cards tr.m-grid2 > td[data-label] {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 3px;
+    min-width: 0;
+    padding: 0 !important;
+    font-size: 14px;
+    text-align: left !important;
+  }
+  .m-cards tr.m-grid2 > td[data-label]::before { max-width: none; font-size: 10.5px; }
+  .m-cards tr.m-grid2 > td[data-label="Aksi"],
+  .m-cards tr.m-grid2 > td[data-label^="Catatan"] { grid-column: 1 / -1; }
+  .m-cards tr.m-grid2 > td[data-label]:has(button, a) {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 0;
+    padding: 12px 0 0 !important;
+    border-top: 1px solid #F1F4F7;
+  }
+  .m-cards tr.m-grid2 > td[data-chevron] { top: 15px; right: 14px; }
+
+  /* .vp-mobile : portal Vendor Produksi di HP (dipasang AppShell, bukan mode Sysadmin). Tema oranye, minimalis:
+     tabel tanpa bingkai (kartu melayang di atas latar), filter berbentuk pil. Tablet/desktop & modul lain tidak kena. */
+  /* body:has(...) -- pop-up konfirmasi (confirmDialog) dirender di luar akar AppShell, jadi tema oranye dipasang juga
+     di <body> selama halaman portal vendor terbuka (tetap hanya di HP, di dalam media query ini). */
+  .vp-mobile,
+  body:has(.vp-mobile) {
+    --surface-page: #F7F5F2;
+    --action-primary: #D97757;
+    --accent-blue: #D97757;
+    --accent-blue-2: #C15F3C;
+    --info: #D97757;
+    --info-bg: #FBEFEA;
+    --info-fg: #B4532F;
+  }
+  .vp-mobile .m-cards { border: 0; border-radius: 0; background: transparent; overflow: visible; }
+  .vp-mobile .m-cards .dt-head { padding: 0 2px 10px; border-bottom: 0; }
+  .vp-mobile .m-cards .dt-head button { border-radius: 9999px; border-color: #E7E2DC; background: #fff; }
+  .vp-mobile .m-cards .dt-filters {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 8px;
+    margin: 0 -16px;
+    padding: 0 16px 14px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    border-bottom: 0;
+    background: transparent;
+  }
+  .vp-mobile .m-cards .dt-filters::-webkit-scrollbar { display: none; }
+  /* Filter dibungkus ke baris berikut kalau tidak muat (HP kecil 320-360px), jadi tidak ada filter yang tersembunyi di luar layar. */
+  .vp-mobile .m-cards .dt-filters { flex-wrap: wrap; }
+  .vp-mobile .m-cards .dt-filters > input { flex: 0 0 100%; border-radius: 9999px; padding: 9px 16px; border-color: #E7E2DC; }
+  .vp-mobile .m-cards .dt-filters > select {
+    width: auto;
+    flex: none;
+    border-radius: 9999px;
+    border-color: #E7E2DC;
+    background-color: #fff;
+    padding: 7px 12px;
+  }
+  .vp-mobile .m-cards tbody { padding: 0; gap: 12px; background: transparent; }
+  .vp-mobile .m-cards tr {
+    border: 0;
+    border-radius: 16px;
+    box-shadow: 0 1px 2px rgba(41, 37, 36, 0.04), 0 6px 18px rgba(41, 37, 36, 0.06);
+  }
+  .vp-mobile .m-cards tr.m-grid2 { padding: 16px; }
+  .vp-mobile .m-cards tr.m-grid2 > td:not([data-label]):not([data-chevron]) { border-bottom: 0; font-size: 16px; font-weight: 700; }
+  .vp-mobile .m-cards tr:has(> td[colspan]) { background: #fff; padding: 14px; }
+
+  /* .vp-card (dipasang bersama m-grid2 lewat rowClassName halaman): judul + status sebaris (status tanpa label, di kolom
+     terakhir), lalu angka-angka penting. */
+  .vp-mobile .m-cards tr.vp-card > td[data-label] { order: 5; }
+  .vp-mobile .m-cards tr.vp-card > td:not([data-label]):not([data-chevron]) { order: 1; grid-column: 1 / -2; align-self: center; padding: 0 !important; }
+  .vp-mobile .m-cards tr.vp-card > td[data-label="Status"] { order: 2; grid-column: -2 / -1; align-self: center; align-items: flex-end; margin-right: 24px; }
+  .vp-mobile .m-cards tr.vp-card > td[data-label="Status"]::before { display: none; }
+  .vp-mobile .m-cards tr.vp-card > td[data-label="Status"] > span { padding: 4px 9px; font-size: 9.5px; letter-spacing: 0.02em; white-space: nowrap; }
+  .vp-mobile .m-cards tr.vp-card > td[data-label]:has(button, a) { order: 6; }
+  .vp-mobile .m-cards tr.vp-card > td[data-chevron] { top: 19px; }
+
+  /* .vp-pop : baris rincian bawaan DataTable (saat kartu diketuk) tampil sebagai pop-up di tengah layar. Latar gelap =
+     bagian dari baris kartu yang terbuka, jadi mengetuknya menutup pop-up lewat klik baris yang sama. */
+  .vp-mobile .m-cards tr.vp-pop:has(+ tr > td[colspan])::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: rgba(28, 25, 23, 0.45);
+  }
+  .vp-mobile .m-cards tr.vp-pop + tr:has(> td[colspan]) {
+    position: fixed;
+    top: 50%;
+    left: 16px;
+    right: 16px;
+    z-index: 45;
+    max-height: 80vh;
+    overflow-y: auto;
+    padding: 22px 20px 16px;
+    border-radius: 20px;
+    background: #fff;
+    box-shadow: 0 20px 50px rgba(28, 25, 23, 0.25);
+    transform: translateY(-50%);
+    animation: vp-pop-in 0.18s ease-out;
+  }
+  .vp-mobile .m-cards tr.vp-pop + tr > td[colspan] { background: transparent; }
+  /* .vp-pop-tap : pop-up yang isinya hanya info (tanpa tombol) -- ketukan di pop-up tembus ke latar gelap, jadi ketuk di
+     mana saja menutup pop-up. */
+  .vp-mobile .m-cards tr.vp-pop-tap + tr:has(> td[colspan]) { pointer-events: none; }
+  @keyframes vp-pop-in {
+    from { opacity: 0; transform: translateY(-50%) scale(0.96); }
+    to { opacity: 1; transform: translateY(-50%) scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .vp-mobile .m-cards tr.vp-pop + tr:has(> td[colspan]) { animation: none; }
+  }
+
+  /* PO Produksi Saya (.vp-po-page / .vp-po-card): judul + status, lalu Qty dan Target Deadline. Tanpa menu Kolom & Form
+     Rasio; Nilai, Tanggal PO, dan Qty vs Kapasitas ada di pop-up. */
+  .vp-mobile .vp-po-page .dt-head { display: none; }
+  .vp-mobile .m-cards tr.vp-po-card > td[data-label="Qty vs Kapasitas"],
+  .vp-mobile .m-cards tr.vp-po-card > td[data-label="Nilai"],
+  .vp-mobile .m-cards tr.vp-po-card > td[data-label="Tanggal PO"],
+  .vp-mobile .m-cards tr.vp-po-card > td[data-label="Form Rasio"] { display: none; }
+  .vp-mobile .m-cards tr.vp-po-card > td[data-label="Qty"] { order: 3; }
+  .vp-mobile .m-cards tr.vp-po-card > td[data-label="Target Deadline"] { order: 4; }
+  .vp-mobile .m-cards tr.vp-po-card > td[data-label="Qty"],
+  .vp-mobile .m-cards tr.vp-po-card > td[data-label="Target Deadline"] { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+
+  /* PO Material Saya (.vp-mat-page / .vp-mat-card): judul + status, lalu Total roll | Stock | Produksi sebaris. Tanpa
+     menu Kolom; rincian invoice ada di pop-up. */
+  .vp-mobile .vp-mat-page .dt-head { display: none; }
+  .vp-mobile .m-cards tr.vp-mat-card { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 10px; }
+  .vp-mobile .m-cards tr.vp-mat-card > td[data-label]:not([data-label="Status"]) { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+  .vp-mobile .m-cards tr.vp-mat-card > td[data-label="Total roll PO"]::before { content: "Total roll"; }
+  .vp-mobile .m-cards tr.vp-mat-card > td[data-label="Qty roll stock"]::before { content: "Stock"; }
+  .vp-mobile .m-cards tr.vp-mat-card > td[data-label="Qty roll produksi"]::before { content: "Produksi"; }
+
+  /* .vp-chips : deretan tombol filter jadi chip satu baris yang bisa digeser ke samping. */
+  .vp-mobile .vp-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .vp-mobile .vp-chips::-webkit-scrollbar { display: none; }
+  .vp-mobile .vp-chips > * { flex: none; }
+
+  /* Good Receive (app/vendor-maklon/receiving). Baris PO material: No. invoice + status sebaris, lalu Roll diterima dan
+     Tgl kirim, lalu tombol detail. No PO, supplier, tgl terima, dan target selesai tidak tampil di HP. */
+  .vp-mobile .m-stack.m-grid2.vp-po-row { gap: 10px 14px; padding-top: 16px; padding-bottom: 16px; }
+  .vp-mobile .vp-po-row > [data-label="Supplier"],
+  .vp-mobile .vp-po-row > [data-label="Tgl terima"],
+  .vp-mobile .vp-po-row > [data-label="Target selesai"] { display: none; }
+  .vp-mobile .vp-po-row > [data-label] { order: 5; }
+  .vp-mobile .vp-po-row > [data-label="No. invoice"] { order: 1; grid-column: 1 !important; align-self: center; font-size: 15px; font-weight: 600; color: var(--text-primary); }
+  .vp-mobile .m-stack.m-grid2.vp-po-row > [data-label="No. invoice"]::before,
+  .vp-mobile .m-stack.m-grid2.vp-po-row > [data-label="Status"]::before { display: none; }
+  .vp-mobile .vp-po-row > [data-label="Status"] { order: 2; grid-column: 2; align-self: center; justify-content: flex-end; text-align: right !important; }
+  .vp-mobile .vp-po-row > [data-label="Roll diterima"] { order: 3; font-size: 15px; font-weight: 600; }
+  .vp-mobile .vp-po-row > [data-label="Tgl kirim"] { order: 4; font-size: 14px; color: var(--text-primary); }
+  .vp-mobile .vp-po-row > :last-child { order: 6; }
+
+  /* Baris warna di rincian PO: satu baris -- nama warna, roll diterima, tombol Terima/Lihat. Qty pendek/panjang tidak tampil. */
+  .vp-mobile .m-stack.m-grid2.vp-color-row {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto auto !important;
+    align-items: center !important;
+    gap: 4px 14px;
+    padding: 12px 14px;
+  }
+  .vp-mobile .m-stack.m-grid2.vp-color-row > :first-child { grid-column: auto; font-size: 14px; font-weight: 600; }
+  .vp-mobile .m-stack.m-grid2.vp-color-row > :last-child { grid-column: auto; margin-top: 0; }
+  .vp-mobile .vp-color-row > [data-label="Roll diterima"]::before { content: "Roll"; }
+
+  /* Baris roll di pop-up Terima Material: nomor roll + berat sebaris, lalu isian code roll & code lot, lalu tombol. PIC tidak tampil. */
+  .vp-mobile .m-stack.m-grid2.vp-roll > :first-child:not([data-label]) { grid-column: 1 / 2; grid-row: 1; align-self: center; }
+  .vp-mobile .vp-roll > [data-label="Berat kotor (kg)"] { grid-column: 2 / 3; grid-row: 1; align-items: flex-end; text-align: right !important; }
+  .vp-mobile .vp-roll > [data-label="Berat kotor (kg)"]::before { content: "Berat (kg)"; }
+  .vp-mobile .vp-roll > [data-label="PIC"] { display: none; }
+  .vp-mobile .m-stack.m-grid2.vp-roll > [data-label="Code roll"],
+  .vp-mobile .m-stack.m-grid2.vp-roll > [data-label="Code lot"] { grid-column: auto !important; min-width: 0; }
+  .vp-mobile .vp-roll > [data-label="Code roll"] input,
+  .vp-mobile .vp-roll > [data-label="Code lot"] input { min-width: 0; padding-left: 10px !important; padding-right: 10px !important; }
+  /* HP: roll yang sudah diterima tidak ditampilkan di popup Terima Material (hanya yang belum). */
+  .m-stack.m-grid2.vp-roll.vp-roll-done { display: none !important; }
   /* .m-wrap : baris tabel jadi barisan yang membungkus (tanpa label) -- untuk baris pendek seperti daftar koli. */
   .m-wrap {
     display: flex !important;
@@ -385,6 +607,491 @@
   }
   .m-stack > [data-label] input:not([type="checkbox"]):not([type="radio"]) { width: 100%; max-width: none; }
   .m-stack.m-grid2 > [data-label]::before { display: block; min-width: 0; margin: 0 0 1px; }
+
+  /* Produksi > Cutting (components/mrp/production-cutting-tab.tsx). Selektor sengaja lebih spesifik dari aturan
+     .m-stack.m-grid2 umum di atas. */
+  /* Baris aduan pola / warna: SATU baris ringkas -- kode, 4 angka berlabel kecil, tombol Pilih. Daftarnya maksimal
+     5 baris setinggi layar, sisanya digulir di dalam kotak. */
+  .vp-mobile .vp-aduan-list { max-height: 245px; overflow-y: auto; overscroll-behavior: contain; }
+  .vp-mobile .m-stack.m-grid2.vp-aduan {
+    grid-template-columns: minmax(0, 1.5fr) repeat(4, minmax(0, 1fr)) auto !important;
+    align-items: center !important; gap: 0 6px; padding: 9px 14px;
+  }
+  .vp-mobile .m-stack.m-grid2.vp-aduan > :first-child { grid-column: 1 / 2; grid-row: 1; font-size: 13px; font-weight: 600; line-height: 1.25; color: var(--text-primary); overflow-wrap: anywhere; }
+  .vp-mobile .m-stack.m-grid2.vp-aduan > :last-child { grid-column: 6 / 7; grid-row: 1; margin-top: 0; display: flex; justify-content: flex-end; }
+  .vp-mobile .m-stack.m-grid2.vp-aduan > :last-child > button { min-height: 30px; padding: 0 11px; font-size: 12px; }
+  .vp-mobile .m-stack.m-grid2.vp-aduan > [data-label] { grid-row: 1; font-size: 13.5px; line-height: 1.2; }
+  .vp-mobile .m-stack.m-grid2.vp-aduan > [data-label]::before { font-size: 8.5px; letter-spacing: 0.02em; margin-bottom: 2px; }
+  .vp-mobile .vp-aduan > [data-label="Roll aduan MRP"]::before,
+  .vp-mobile .vp-aduan > [data-label="Roll aduan"]::before { content: "Total"; }
+  .vp-mobile .vp-aduan > [data-label="Roll diterima"]::before { content: "Terima"; }
+  .vp-mobile .vp-aduan > [data-label="Belum diterima"]::before { content: "Belum"; }
+  .vp-mobile .vp-aduan > [data-label="Sudah diresting"]::before { content: "Resting"; }
+
+  /* Sesi resting: warna + jumlah roll sebaris, kode aduan di bawahnya, lalu tanggal resting & hasil, lalu dua tombol.
+     PIC dan durasi resting tidak tampil di HP. */
+  .vp-mobile .m-stack.m-grid2.vp-sess { gap: 10px 12px; padding: 16px; }
+  .vp-mobile .vp-sess > [data-label="PIC"],
+  .vp-mobile .vp-sess > [data-label="Durasi resting"] { display: none; }
+  .vp-mobile .m-stack.m-grid2.vp-sess > :first-child { order: 1; grid-column: 1 / 2; align-self: center; font-size: 15px; font-weight: 600; color: var(--text-primary); }
+  .vp-mobile .m-stack.m-grid2.vp-sess > [data-label="Roll"] { order: 2; grid-column: 2 / 3; align-self: center; text-align: right !important; font-size: 13px; color: var(--text-muted); }
+  .vp-mobile .m-stack.m-grid2.vp-sess > [data-label="Warna"] { order: 3; grid-column: 1 / -1; margin-top: -6px; font-size: 12px; color: var(--text-muted); }
+  .vp-mobile .m-stack.m-grid2.vp-sess > [data-label="Roll"]::after { content: " roll"; }
+  .vp-mobile .m-stack.m-grid2.vp-sess > [data-label="Warna"]::before,
+  .vp-mobile .m-stack.m-grid2.vp-sess > [data-label="Roll"]::before,
+  .vp-mobile .m-stack.m-grid2.vp-sess > [data-label="Cutting"]:has(> button)::before { display: none; }
+  .vp-mobile .m-stack.m-grid2.vp-sess > [data-label="Resting"] { order: 4; grid-column: 1 / 2; }
+  .vp-mobile .m-stack.m-grid2.vp-sess > [data-label="Hasil / Yield"] { order: 5; grid-column: 2 / 3; }
+  .vp-mobile .m-stack.m-grid2.vp-sess > [data-label="Cutting"] { order: 6; grid-column: 1 / 2; align-self: end; }
+  .vp-mobile .m-stack.m-grid2.vp-sess > :last-child { order: 7; grid-column: 2 / 3; align-self: end; margin-top: 0; }
+
+  /* List roll sebelum Resting: warna + code roll sebaris, berat kotor & selisih, berat bersih & gramasi berdampingan,
+     setting selebar kartu, lalu tombol Claim/Hapus. */
+  .vp-mobile .m-stack.vp-line { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 12px; padding: 14px 16px; }
+  .vp-mobile .m-stack.vp-line > [data-label="Warna"] { grid-column: 1 / 2; align-self: center; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+  .vp-mobile .m-stack.vp-line > [data-label="Code roll"] { grid-column: 2 / 3; align-self: center; text-align: right !important; font-size: 12px; color: var(--text-muted); }
+  .vp-mobile .m-stack.vp-line > [data-label="Code roll"]:has(input) { grid-column: 1 / -1; }
+  .vp-mobile .m-stack.vp-line > [data-label="Warna"]::before,
+  .vp-mobile .m-stack.vp-line > [data-label="Code roll"]:not(:has(input))::before { display: none; }
+  .vp-mobile .m-stack.vp-line > * { order: 9; }
+  .vp-mobile .m-stack.vp-line > [data-label="Warna"] { order: 1; }
+  .vp-mobile .m-stack.vp-line > [data-label="Code roll"] { order: 2; }
+  .vp-mobile .m-stack.vp-line > [data-label="Berat kotor (kg)"] { order: 3; }
+  .vp-mobile .m-stack.vp-line > [data-label="Selisih"] { order: 4; }
+  .vp-mobile .m-stack.vp-line > [data-label="Berat bersih (kg)"] { order: 5; }
+  .vp-mobile .m-stack.vp-line > [data-label="Gramasi (gsm)"] { order: 6; }
+  .vp-mobile .m-stack.vp-line > [data-label="Setting"] { order: 7; }
+  .vp-mobile .m-stack.vp-line > [data-label="Setting"],
+  .vp-mobile .m-stack.vp-line > :last-child { grid-column: 1 / -1; }
+  .vp-mobile .m-stack.vp-line > :last-child > button { min-height: 36px; border-radius: 9999px; padding: 0 14px; }
+
+  /* Produksi > Finish Good (components/mrp/production-result-panel.tsx), kartu progres per roll: code roll + status
+     sebaris, chip size, Total FG & Reject berdampingan, lalu tombol. PIC tidak tampil di HP. */
+  .vp-mobile .m-stack.vp-fgroll { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 10px 12px; padding: 14px 16px; }
+  .vp-mobile .m-stack.vp-fgroll > [data-label="PIC"] { display: none; }
+  .vp-mobile .m-stack.vp-fgroll > :first-child { order: 1; grid-column: 1 / 2; align-self: center; }
+  .vp-mobile .m-stack.vp-fgroll > :first-child > :first-child { font-size: 14px; font-weight: 600; }
+  .vp-mobile .m-stack.vp-fgroll > [data-label="Status"] { order: 2; grid-column: 2 / 3; align-self: center; text-align: right !important; }
+  .vp-mobile .m-stack.vp-fgroll > [data-label="Size & qty"] { order: 3; grid-column: 1 / -1; }
+  .vp-mobile .m-stack.vp-fgroll > [data-label="Total FG"] { order: 4; grid-column: 1 / 2; }
+  .vp-mobile .m-stack.vp-fgroll > [data-label="Reject"] { order: 5; grid-column: 2 / 3; }
+  .vp-mobile .m-stack.vp-fgroll > :last-child { order: 6; grid-column: 1 / -1; justify-content: flex-start; }
+  .vp-mobile .m-stack.vp-fgroll > :last-child > button { min-height: 36px; border-radius: 9999px; padding: 0 14px; font-size: 12.5px; }
+  .vp-mobile .m-stack.vp-fgroll > [data-label="Status"]::before,
+  .vp-mobile .m-stack.vp-fgroll > [data-label="Size & qty"]::before { display: none; }
+  .vp-mobile .m-stack.vp-fgroll > [data-label="Total FG"]::before { margin-bottom: 4px; }
+  /* Produksi > Reject & Rework. Kartu per warna: judul, lalu Reject | Rework | Sisa sebaris, lalu tombol. */
+  .vp-mobile .m-stack.vp-rjrow { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 10px 8px; padding: 14px 16px; }
+  .vp-mobile .m-stack.vp-rjrow > :first-child,
+  .vp-mobile .m-stack.vp-rjrow > :last-child { grid-column: 1 / -1; }
+  .vp-mobile .m-stack.vp-rjrow > :first-child { font-size: 14px; }
+  .vp-mobile .m-stack.vp-rjrow > [data-label] { font-size: 16px; font-weight: 600; }
+  .vp-mobile .m-stack.vp-rjrow > [data-label]::before { font-size: 9.5px; font-weight: 500; }
+  .vp-mobile .vp-rjrow > [data-label="Qty reject"]::before { content: "Reject"; }
+  .vp-mobile .vp-rjrow > [data-label="Qty rework"]::before { content: "Rework"; }
+  .vp-mobile .vp-rjrow > [data-label="Qty sisa reject"]::before { content: "Sisa"; }
+  /* Baris per size di pop-up: Size | Reject | Rework | Sisa sebaris, tombol rework di bawahnya. */
+  .vp-mobile .m-stack.vp-rjsize { display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 8px; padding: 12px 14px; }
+  .vp-mobile .m-stack.vp-rjsize > [data-label] { font-size: 15px; }
+  .vp-mobile .m-stack.vp-rjsize > [data-label="Size"] { font-weight: 700; }
+  .vp-mobile .m-stack.vp-rjsize > [data-label]::before { font-size: 9.5px; }
+  .vp-mobile .m-stack.vp-rjsize > :last-child { grid-column: 1 / -1; }
+  .vp-mobile .m-stack.vp-rjsize > :last-child:empty { display: none; }
+  .vp-mobile .vp-rjsize > [data-label="Reject (otomatis)"]::before { content: "Reject"; }
+  .vp-mobile .vp-rjsize > [data-label="Sisa reject"]::before { content: "Sisa"; }
+  /* Riwayat rework: warna·lengan + tanggal sebaris, MRP kecil, lalu size asal -> hasil, qty, usia. Kategori tidak tampil. */
+  .vp-mobile .m-stack.vp-rwhist { display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 8px 10px; padding: 14px 16px; }
+  .vp-mobile .vp-rwhist > [data-label="Kategori"],
+  .vp-mobile .vp-rwhist > [data-label="Catatan"].text-text-muted { display: none; }
+  .vp-mobile .m-stack.vp-rwhist > [data-label="Warna / lengan"] { order: 1; grid-column: 1 / 3; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+  .vp-mobile .m-stack.vp-rwhist > [data-label="Tanggal"] { order: 2; grid-column: 3 / 5; text-align: right !important; }
+  .vp-mobile .m-stack.vp-rwhist > [data-label="MRP"] { order: 3; grid-column: 1 / -1; margin-top: -6px; font-size: 11.5px; color: var(--text-muted); }
+  .vp-mobile .m-stack.vp-rwhist > [data-label="Size (Reject)"] { order: 4; }
+  .vp-mobile .m-stack.vp-rwhist > [data-label="Size (Hasil)"] { order: 5; }
+  .vp-mobile .m-stack.vp-rwhist > [data-label="Qty"] { order: 6; }
+  .vp-mobile .m-stack.vp-rwhist > [data-label="Usia"] { order: 7; }
+  .vp-mobile .m-stack.vp-rwhist > [data-label="Catatan"] { order: 8; grid-column: 1 / -1; }
+  .vp-mobile .m-stack.vp-rwhist > [data-label="Warna / lengan"]::before,
+  .vp-mobile .m-stack.vp-rwhist > [data-label="Tanggal"]::before,
+  .vp-mobile .m-stack.vp-rwhist > [data-label="MRP"]::before { display: none; }
+  .vp-mobile .vp-rwhist > [data-label="Size (Reject)"]::before { content: "Dari size"; }
+  .vp-mobile .vp-rwhist > [data-label="Size (Hasil)"]::before { content: "Jadi size"; }
+
+  /* Produksi > Final (components/mrp/production-final-tab.tsx). Kartu: warna + status sebaris, lalu FG/Cutting | Progres,
+     Rework | Reject, lalu aksi selebar kartu. Rencana MRP & Selisih tidak tampil; menu Kolom disembunyikan. */
+  .vp-mobile .vp-final-page .dt-head { display: none; }
+  /* Filter Lengan & Status sebaris (masing-masing setengah lebar), lebih pendek. */
+  .vp-mobile .vp-final-page .dt-filters > select { flex: 1 1 0; min-width: 0; padding: 5px 10px; }
+  .vp-mobile .vp-final-page .dt-filters > input { padding: 7px 16px; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Rencana MRP (pcs)"],
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Selisih"] { display: none; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Finish Good / Hasil cutting"] { order: 3; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Progres"] { order: 4; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Rework"] { order: 5; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Reject"] { order: 6; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Aksi"] { order: 7; grid-column: 1 / -1; }
+  /* Kartu ringkas (owner 2026-11-01: font lebih kecil supaya lebih banyak warna terlihat): judul 3 kolom + status, lalu
+     FG/Cutting | Progres | Rework | Reject sebaris. */
+  .vp-mobile .m-cards tr.m-grid2.vp-final-card {
+    grid-template-columns: minmax(0, 1.3fr) repeat(3, minmax(0, 1fr));
+    gap: 6px 6px; padding: 12px 14px;
+  }
+  /* Lebar kolom tetap (sama di semua kartu, jadi lurus antar warna); status di pojok kanan atas sejajar judul. */
+  .vp-mobile .m-cards tr.m-grid2.vp-final-card > td:not([data-label]):not([data-chevron]) { grid-column: 1 / -1; padding-right: 124px !important; font-size: 13.5px; }
+  .vp-mobile .m-cards tr.m-grid2.vp-final-card > td[data-label="Status"] { position: absolute; top: 12px; right: 34px; margin: 0; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Status"] > span { font-size: 9px; padding: 3px 7px; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label] { font-size: 13px; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label]::before { font-size: 8.5px; letter-spacing: 0.02em; white-space: nowrap; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Progres"] > span { min-width: 0; gap: 4px; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Progres"] > span > span:last-child { width: auto; font-size: 11px; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Finish Good / Hasil cutting"] { white-space: nowrap; font-size: 12.5px; }
+  /* Angka rata tengah di bawah labelnya (sama dengan baris per size di pop-up). */
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Finish Good / Hasil cutting"],
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Progres"],
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Rework"],
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Reject"] { align-items: center; text-align: center !important; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Progres"] > span { justify-content: center; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Finish Good / Hasil cutting"]::before { content: "FG / Cutting"; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Aksi"]::before { display: none; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Aksi"] > span { align-items: stretch; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Aksi"] > span > span { max-width: none; text-align: left; font-size: 11.5px; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Aksi"] button { min-height: 36px; }
+  .vp-mobile .m-cards tr.vp-final-card > td[data-label="Aksi"] button { min-height: 40px; border-radius: 9999px; font-size: 12.5px; }
+  /* Rincian per size di pop-up: SATU baris per size (owner 2026-11-01) -- Size | Target | FG | Rework (hasil) | Selisih |
+     Reject, angka di tengah tepat di bawah labelnya. */
+  .vp-mobile .m-stack.m-grid2.vp-final-size {
+    grid-template-columns: minmax(0, 0.7fr) repeat(5, minmax(0, 1fr)) !important;
+    align-items: end !important; gap: 0 4px; padding: 10px 10px;
+  }
+  .vp-mobile .m-stack.m-grid2.vp-final-size > :first-child { grid-column: auto; align-self: end; font-size: 15px; font-weight: 700; padding-bottom: 1px; }
+  .vp-mobile .m-stack.m-grid2.vp-final-size > [data-label] { font-size: 13.5px; text-align: center !important; }
+  .vp-mobile .m-stack.m-grid2.vp-final-size > [data-label]::before { font-size: 8.5px; letter-spacing: 0.02em; white-space: nowrap; text-align: center; }
+  .vp-mobile .vp-final-size > [data-label="FG target"]::before { content: "Target"; }
+  .vp-mobile .vp-final-size > [data-label="FG terinput"]::before { content: "FG"; }
+  .vp-mobile .vp-final-size > [data-label="FG dari rework"]::before { content: "Rework"; }
+  /* Hanya qty hasil rework yang tampil di HP (owner 2026-11-01) -- kolom reject yang dirework disembunyikan. */
+  .vp-mobile .vp-final-size > [data-label="Rework"] { display: none; }
+  .vp-mobile .vp-final-size > [data-label="FG selisih"]::before { content: "Selisih"; }
+
+  /* Pengiriman (app/vendor-maklon/pengiriman): baris koli -- [checkbox] "Koli N" + MRP kecil, tombol di kanan, isi koli di
+     bawah. PIC tidak tampil di HP. */
+  /* Baris 1: [checkbox] Koli N ........ [Edit][Hapus];  baris 2: MRP · isi koli. */
+  .vp-mobile .m-wrap.vp-koli {
+    display: grid !important; grid-template-columns: auto auto minmax(0, 1fr) auto;
+    align-items: center !important; gap: 2px 10px; padding: 9px 12px;
+  }
+  .vp-mobile .m-wrap.vp-koli > [data-label="PIC"] { display: none; }
+  .vp-mobile .m-wrap.vp-koli > input[type="checkbox"] { order: 0; grid-row: 1 / 3; }
+  .vp-mobile .m-wrap.vp-koli > .vp-koli-no { order: 1; grid-row: 1; font-size: 14px; font-weight: 600; color: var(--text-primary); white-space: nowrap; }
+  .vp-mobile .m-wrap.vp-koli > [data-label="Berat (kg)"],
+  .vp-mobile .m-wrap.vp-koli > span:last-child { order: 3; grid-row: 1; grid-column: -2 / -1; justify-self: end; margin-left: 0; }
+  .vp-mobile .m-wrap.vp-koli > span:last-child > button { min-height: 30px; padding: 0 12px; font-size: 12px; }
+  .vp-mobile .m-wrap.vp-koli > .vp-koli-mrp { order: 8; grid-row: 2; grid-column: 2 / 3; min-width: 0; white-space: nowrap; font-size: 11px; color: var(--text-muted); }
+  .vp-mobile .m-wrap.vp-koli > button { order: 9; grid-row: 2; grid-column: 3 / -1; font-size: 12px; color: var(--text-muted); }
+  /* Riwayat: satu baris per koli -- Koli N | isi | berat. MRP tidak tampil (sudah satu resi). */
+  .vp-mobile .m-wrap.vp-koli.vp-koli-hist { grid-template-columns: auto minmax(0, 1fr) auto; padding: 8px 12px; }
+  .vp-mobile .m-wrap.vp-koli-hist > .vp-koli-mrp { display: none; }
+  .vp-mobile .m-wrap.vp-koli-hist > .vp-koli-no { grid-column: 1 / 2; }
+  .vp-mobile .m-wrap.vp-koli-hist > button { grid-row: 1; grid-column: 2 / 3; }
+  .vp-mobile .m-wrap.vp-koli-hist > [data-label="Berat (kg)"] { grid-column: 3 / 4; font-size: 12.5px; }
+  .vp-mobile .m-wrap.vp-koli-hist > [data-label="Berat (kg)"]::before { content: none; }
+  .vp-mobile .m-wrap.vp-koli-hist > [data-label="Berat (kg)"]::after { content: " kg"; color: var(--text-muted); }
+  /* Judul grup resi: No resi + status sebaris, lalu ekspedisi · berat · tanggal kecil. */
+  .vp-mobile .vp-resi-head { gap: 2px 10px; padding: 9px 12px; }
+  .vp-mobile .vp-resi-head > * { order: 3; font-size: 11.5px; color: var(--text-muted); }
+  .vp-mobile .vp-resi-head > * > span { font-size: inherit; }
+  .vp-mobile .vp-resi-head > .vp-resi-no { order: 1; flex: 1 1 auto; font-size: 13.5px; color: var(--text-primary); }
+  .vp-mobile .vp-resi-head > .vp-resi-status { order: 2; margin-left: 0; }
+  .vp-mobile .vp-resi-head > .vp-resi-status > span { font-size: 10px; padding: 3px 8px; }
+  .vp-mobile .vp-resi-head::after { content: ""; order: 2; flex-basis: 100%; height: 0; }
+
+  /* Buat koli: baris per size -- warna·lengan kecil di atas, lalu Size besar | Sisa N pcs | kotak Qty. Sumber roll tidak
+     tampil di HP. Baris Rework/Reject (.vp-kirim-rw): jenis · warna · lengan kecil di atas. */
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row {
+    grid-template-columns: 34px minmax(0, 1fr) auto !important; align-items: center !important; gap: 2px 8px; padding: 6px 12px;
+  }
+  /* Baris FG: warna·lengan sudah dipilih di atas daftar, jadi di baris tidak diulang. */
+  .vp-mobile .m-stack.m-grid2.vp-kirim-fg > :first-child:not([data-label]) { display: none; }
+  /* Kotak qty lebih kecil (teks isian tetap 16px supaya iPhone tidak zoom). */
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row > [data-label="Qty kirim"] button { min-height: 32px; font-size: 11.5px; }
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row > :first-child:not([data-label]),
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row > [data-label="Jenis"],
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row > [data-label="Lengan"] { order: 0; font-size: 11.5px; font-weight: 500; color: var(--text-muted); }
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row > :first-child:not([data-label]) { grid-column: 1 / -1; }
+  .vp-mobile .m-stack.m-grid2.vp-kirim-rw > [data-label="Jenis"] { grid-column: 1 / 2; }
+  .vp-mobile .m-stack.m-grid2.vp-kirim-rw > :not([data-label]) { order: 0; grid-column: 2 / 3; font-size: 11.5px; font-weight: 500; color: var(--text-muted); }
+  .vp-mobile .m-stack.m-grid2.vp-kirim-rw > [data-label="Lengan"] { grid-column: 3 / 4; text-align: right !important; }
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row > [data-label="Size"],
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row > [data-label="Size / usia"] { order: 1; grid-column: 1 / 2; font-size: 15px; font-weight: 700; color: var(--text-primary); }
+  .vp-mobile .m-stack.m-grid2.vp-kirim-rw { grid-template-columns: auto minmax(0, 1fr) auto !important; }
+  .vp-mobile .m-stack.m-grid2.vp-kirim-rw > [data-label="Size / usia"] { font-size: 12px; white-space: nowrap; }
+  .vp-mobile .m-stack.m-grid2.vp-kirim-rw > [data-label="Sisa bisa dikirim"] { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row.vp-kirim-rw > [data-label="Sisa bisa dikirim"]::before { content: none; }
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row > [data-label="Sisa bisa dikirim"] { order: 2; grid-column: 2 / 3; display: block; white-space: nowrap; font-size: 11.5px; }
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row > [data-label="Sisa bisa dikirim"]::before { content: "Sisa "; display: inline; font-size: 11.5px; letter-spacing: 0; text-transform: none; }
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row > [data-label="Qty kirim"] { order: 3; grid-column: 3 / 4; flex-direction: row; align-items: center !important; }
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row > [data-label="Qty kirim"] input { width: 46px !important; padding-top: 4px; padding-bottom: 4px; }
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row > [data-label="Qty kirim"] > div > div > button { width: 30px; }
+  .vp-mobile .vp-kirim-row > [data-label="Sumber roll"] { display: none !important; }
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row > [data-label="Size"]::before,
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row > [data-label="Size / usia"]::before,
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row > [data-label="Qty kirim"]::before,
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row > [data-label="Jenis"]::before,
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row > [data-label="Lengan"]::before { display: none; }
+  /* Warna & lengan sudah dipilih di atas daftar: baris Rework/Reject cukup menulis jenisnya. */
+  .vp-mobile .m-stack.m-grid2.vp-kirim-rw > :not([data-label]),
+  .vp-mobile .m-stack.m-grid2.vp-kirim-rw > [data-label="Lengan"] { display: none !important; }
+  .vp-mobile .m-stack.m-grid2.vp-kirim-rw > [data-label="Jenis"] { grid-column: 1 / -1; }
+
+  /* Pilih warna · lengan (Buat koli): satu pilihan ringkas. Teks tetap 16px supaya iPhone tidak zoom. */
+  .vp-mobile .vp-pick-select {
+    width: 100%; min-width: 0; border-radius: 9999px; border: 1px solid #E7E2DC; background-color: #fff;
+    padding: 6px 12px; font-family: var(--font-sans, inherit); font-weight: 500; color: var(--text-muted);
+  }
+  .vp-mobile .vp-pick-select.vp-pick-todo { border-color: var(--action-primary, #D97757); }
+  .vp-mobile .vp-pick-select.vp-pick-on { color: var(--text-primary); font-weight: 600; }
+
+  /* Ringkasan isi koli per warna·lengan (Buat/Edit koli): ketuk untuk pindah warna. */
+  .vp-mobile .vp-koli-isi { border: 1px solid #F0E2D8; border-radius: 14px; background: #FDF8F5; padding: 8px 10px; }
+  .vp-mobile .vp-koli-isi-head { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-muted); }
+  .vp-mobile .vp-koli-isi-head b { color: var(--text-primary); font-size: 12.5px; }
+  /* Dua tombol warna per baris (nama panjang dipotong "…", qty selalu terlihat). */
+  .vp-mobile .vp-koli-isi-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin-top: 6px; }
+  .vp-mobile .vp-koli-isi-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 4px; min-width: 0; min-height: 30px; padding: 3px 9px;
+    border-radius: 9999px; border: 1px solid #E7E2DC; background: #fff; font-size: 11px; font-weight: 500; color: var(--text-primary);
+  }
+  .vp-mobile .vp-koli-isi-item > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .vp-mobile .vp-koli-isi-item b { flex: none; font-size: 11px; color: var(--action-primary); }
+  .vp-mobile .vp-koli-isi-item.is-on { border-color: var(--action-primary); background: var(--action-primary); color: #fff; }
+  .vp-mobile .vp-koli-isi-item.is-on b { color: #fff; }
+  .vp-mobile .vp-koli-isi-item:disabled { opacity: 0.7; }
+  /* "+ Tambah warna": pill bergaris putus-putus; select asli (16px, tak terlihat) menutupi pill supaya ketukan membuka daftar. */
+  .vp-mobile .vp-koli-isi-add {
+    position: relative; display: flex; align-items: center; justify-content: center; min-height: 30px; padding: 3px 9px; border-radius: 9999px;
+    border: 1px dashed var(--action-primary); color: var(--action-primary); font-size: 11px; font-weight: 600; background: #fff;
+  }
+  .vp-mobile .vp-koli-isi-add > select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+
+  /* Popup Hapus koli (dialog di luar .vp-mobile): pesan singkat + isi per warna·lengan; kotak rincian panjang disembunyikan. */
+  body:has(.vp-mobile) [role="alertdialog"]:has(.vp-del-short) .bg-warning-bg { display: none; }
+  body:has(.vp-mobile) .vp-del-short { display: block; font-size: 13px; color: var(--text-primary); }
+  body:has(.vp-mobile) .vp-del-line {
+    display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; padding: 7px 10px; border-radius: 10px;
+    background: #FBF3EE; font-size: 12px; white-space: normal;
+  }
+  body:has(.vp-mobile) .vp-del-line > :first-child { font-weight: 600; }
+  body:has(.vp-mobile) .vp-del-line > :last-child { text-align: right; color: var(--text-muted); }
+  body:has(.vp-mobile) .vp-del-line + .vp-del-line { margin-top: 4px; }
+
+  /* Popup Set Ekspedisi & Resi: huruf lebih kecil. Teks yang diketik tetap 16px (iPhone tidak zoom), contoh isian dan label lebih kecil. */
+  .vp-mobile .vp-eksp input:not([type="file"]),
+  .vp-mobile .vp-eksp select,
+  .vp-mobile .vp-eksp textarea { padding: 6px 9px; font-family: var(--font-sans); }
+  .vp-mobile .vp-eksp select { padding-right: 4px; }
+  /* Pilihan ekspedisi: teks asli select disembunyikan, label kecil di atasnya yang terlihat (ketukan tetap ke select). */
+  .vp-mobile .vp-eksp .vp-sel-wrap select { color: transparent; }
+  .vp-mobile .vp-eksp .vp-sel-wrap option { color: var(--text-primary); }
+  .vp-mobile .vp-eksp .vp-sel-label {
+    position: absolute; left: 10px; right: 26px; top: calc(50% + 2px); transform: translateY(-50%); pointer-events: none;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-family: var(--font-sans); font-size: 13px; color: var(--text-muted);
+  }
+  .vp-mobile .vp-eksp .vp-sel-label.is-set { color: var(--text-primary); font-weight: 600; }
+  .vp-mobile .vp-eksp .vp-sel-wrap::after {
+    content: ""; position: absolute; right: 12px; top: calc(50% + 2px); width: 7px; height: 7px; margin-top: -5px; pointer-events: none;
+    border-right: 1.5px solid var(--text-muted); border-bottom: 1.5px solid var(--text-muted); transform: rotate(45deg);
+  }
+  .vp-mobile .vp-eksp ::placeholder { font-size: 13px; }
+  .vp-mobile .vp-eksp textarea { height: 40px !important; min-height: 40px; }
+  .vp-mobile .vp-eksp [class*="text-[10.5px]"] { font-size: 10px; }
+  .vp-mobile .vp-eksp input[type="file"] { font-size: 12.5px; padding: 5px 8px; font-family: var(--font-sans); }
+  .vp-mobile .vp-eksp .text-text-muted { font-size: 11px; }
+
+  /* Invoice & Payment (components/vendor-maklon/invoice-vendor-panel.tsx). */
+  /* Siap diajukan invoice: daftar ringkas, satu baris per resi (pola judul Riwayat pengiriman .vp-resi-head) tanpa tombol
+     yang terlihat -- tombol Submit Invoice dibentangkan transparan menutupi seluruh baris, jadi ketuk baris = ajukan invoice.
+     Daftar koli, catatan, dan foto tidak tampil (ada di halaman Pengiriman). */
+  .vp-mobile .vp-ready-list { gap: 0; padding: 0; }
+  .vp-mobile .vp-ready-card { position: relative; border: 0; border-bottom: 1px solid #F1F4F7; border-radius: 0; }
+  .vp-mobile .vp-ready-card:last-child { border-bottom: 0; }
+  .vp-mobile .vp-ready-card > :not(.vp-ready-head),
+  .vp-mobile .vp-ready-card > .m-wrap.vp-koli { display: none !important; }
+  .vp-mobile .vp-ready-head { padding: 11px 16px; border: 0; background: #fff; padding-right: 36px; }
+  .vp-mobile .vp-ready-head > .vp-ready-foto { display: none; }
+  .vp-mobile .vp-ready-head > .vp-ready-chev {
+    position: absolute; right: 14px; top: 50%; transform: translateY(-50%); font-size: 20px; line-height: 1; color: var(--action-primary);
+  }
+  .vp-mobile .vp-ready-head > .vp-ready-submit { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; opacity: 0; }
+  .vp-mobile .vp-ready-card:active { background: #FBF3EE; }
+  /* Kartu invoice: No invoice + status | MRP · qty ... tanggal | Total + status bayar | tombol bukti bayar. PIC tidak tampil. */
+  .vp-mobile .m-stack.m-grid2.vp-inv-card {
+    grid-template-columns: auto minmax(0, 1fr) auto !important;
+    grid-template-areas: "id id st" "mrp qty dt" "tot tot pay" "bk bk bk";
+    align-items: center !important; gap: 4px 8px; padding: 12px 16px;
+  }
+  .vp-mobile .vp-inv-card > [data-label]::before { display: none !important; }
+  .vp-mobile .vp-inv-card > :first-child { grid-area: id !important; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+  .vp-mobile .vp-inv-card > [data-label="Status"] { grid-area: st !important; justify-self: end; }
+  .vp-mobile .vp-inv-card > [data-label="MRP"] { grid-area: mrp !important; font-size: 11.5px; color: var(--text-muted); }
+  .vp-mobile .vp-inv-card > [data-label="MRP"]::after { content: " ·"; }
+  .vp-mobile .vp-inv-card > [data-label="Total qty"] { grid-area: qty !important; font-size: 11.5px; color: var(--text-muted); }
+  .vp-mobile .vp-inv-card > [data-label="Total qty"]::after { content: " pcs"; }
+  .vp-mobile .vp-inv-card > [data-label="Tanggal"] { grid-area: dt !important; justify-self: end; font-size: 11px; }
+  .vp-mobile .vp-inv-card > [data-label="Total"] { grid-area: tot !important; margin-top: 2px; font-size: 15px; }
+  .vp-mobile .vp-inv-card > [data-label="Status payment"] { grid-area: pay !important; justify-self: end; }
+  .vp-mobile .vp-inv-card > [data-label="Bukti bayar"] { grid-area: bk !important; margin-top: 4px; }
+  .vp-mobile .vp-inv-card > [data-label="Bukti bayar"] button { width: 100%; min-height: 36px; justify-content: center; border-radius: 9999px; font-size: 12.5px; }
+  .vp-mobile .vp-inv-card > [data-label="PIC"],
+  .vp-mobile .vp-inv-card.vp-inv-paid > [data-label="Status payment"],
+  .vp-mobile .vp-inv-card.vp-inv-nobukti > [data-label="Bukti bayar"] { display: none !important; }
+  /* Detail invoice: popup di tengah layar; latar gelap atau bagian popup yang bukan tombol = tutup (onClick di page). */
+  .vp-mobile .vp-inv-backdrop { position: fixed; inset: 0; z-index: 70; background: rgba(11, 19, 27, 0.45); }
+  .vp-mobile .vp-inv-sheet {
+    position: fixed; left: 12px; right: 12px; top: 50%; z-index: 71; max-height: 82vh; overflow-y: auto; transform: translateY(-50%);
+    border: 0; border-radius: 18px; padding: 0 14px 14px !important; box-shadow: 0 12px 32px rgba(11, 19, 27, 0.25);
+  }
+  .vp-mobile .vp-inv-sheet-head {
+    position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; margin: 0 -14px 12px; padding: 12px 14px;
+    background: #fff; border-bottom: 1px solid #F1F4F7; font-size: 14px; color: var(--text-primary);
+  }
+  .vp-mobile .vp-inv-sheet .vp-inv-warna-wrap { display: none; }
+  /* Ringkasan popup: Tagihan akhir sebaris dengan nilainya, denda/reward kecil di bawahnya, lalu jatuh tempo · yield. Kotak 4 angka
+     dan kotak Penyesuaian desktop tidak tampil. */
+  .vp-mobile .vp-inv-sum { margin-bottom: 10px; padding: 10px 12px; border: 1px solid #F0E2D8; border-radius: 12px; background: #FDF8F5; }
+  .vp-mobile .vp-inv-sum-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .vp-mobile .vp-inv-sum-label { font-size: 12px; color: var(--text-muted); }
+  .vp-mobile .vp-inv-sum-total { font-family: var(--font-sans); font-size: 15px; font-weight: 700; color: var(--text-primary); }
+  .vp-mobile .vp-inv-sum-adj { display: flex; justify-content: space-between; gap: 8px; margin-top: 3px; font-size: 11.5px; color: var(--text-muted); }
+  .vp-mobile .vp-inv-sum-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 5px; padding-top: 5px; border-top: 1px dashed #EBDDD3; font-size: 11.5px; color: var(--text-muted); }
+  /* Rincian per warna (satu kotak per warna): warna·lengan ...... nilai  ›
+                                              pcs · Yield · RJ · RW
+     MRP hanya tampil kalau invoice berisi >1 MRP. Ketuk = tabel per size langsung tampil di bawahnya. */
+  .vp-mobile .m-stack.m-grid2.vp-inv-line {
+    grid-template-columns: auto minmax(0, 1fr) auto 12px !important; align-items: center !important; gap: 2px 8px; padding: 10px 0;
+    font-family: var(--font-sans);
+  }
+  .vp-mobile .vp-inv-line > [data-label]::before { display: none !important; }
+  .vp-mobile .vp-inv-line > :first-child {
+    grid-column: 1 / 3 !important; grid-row: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    font-size: 13px; font-weight: 600; color: var(--text-primary);
+  }
+  .vp-mobile .vp-inv-line-wl { color: var(--text-primary); }
+  .vp-mobile .vp-inv-line-mrp { display: none; }
+  .vp-mobile .vp-inv-line.vp-inv-multi .vp-inv-line-mrp { display: inline; font-size: 11px; font-weight: 400; color: var(--text-muted); }
+  .vp-mobile .vp-inv-line > [data-label="Nilai"] { grid-column: 3 !important; grid-row: 1; font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
+  .vp-mobile .vp-inv-line > [data-label="Qty diinvoice"] { grid-column: 1 !important; grid-row: 2; font-size: 11.5px; color: var(--text-muted); }
+  .vp-mobile .vp-inv-line > [data-label="Qty diinvoice"]::after { content: " pcs"; }
+  .vp-mobile .vp-inv-line > .vp-inv-line-yield { grid-column: 2 / 4 !important; grid-row: 2; margin-top: 0; font-size: 11.5px; color: var(--text-muted); }
+  .vp-mobile .vp-inv-line > .vp-inv-line-yield::before { content: "· "; }
+  .vp-mobile .vp-inv-line-yield b { font-weight: 600; color: var(--text-primary); }
+  .vp-mobile .vp-inv-line-yield b.text-danger-fg { color: var(--danger-fg, #B42318); }
+  .vp-mobile .vp-inv-line-yield b.text-rework-fg { color: var(--rework-fg, #6D28D9); }
+  .vp-mobile .vp-inv-line::after {
+    content: "›"; grid-column: 4; grid-row: 1 / 3; font-size: 17px; line-height: 1; color: var(--action-primary); transition: transform 0.15s;
+  }
+  .vp-mobile .vp-inv-line.is-open::after { transform: rotate(90deg); }
+  .vp-mobile .vp-inv-sizes { margin-bottom: 6px; padding: 4px 10px 6px; border-radius: 10px; background: #fff; }
+  /* Per size: satu baris per size, judul kolom singkat. */
+  .vp-mobile .vp-inv-size-head,
+  .vp-mobile .m-stack.m-grid2.vp-inv-size { display: grid !important; grid-template-columns: 30px repeat(5, minmax(0, 1fr)) 44px !important; gap: 4px; }
+  .vp-mobile .vp-inv-size-head { padding: 4px 0; font-size: 9.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+  .vp-mobile .m-stack.m-grid2.vp-inv-size { align-items: center !important; padding: 6px 0 !important; font-size: 11.5px; }
+  .vp-mobile .vp-inv-size > [data-label]::before { display: none !important; }
+  .vp-mobile .vp-inv-size > :first-child { grid-column: auto !important; }
+  .vp-mobile .vp-inv-size-head > :not(:first-child),
+  .vp-mobile .m-stack.vp-inv-size > :not(:first-child) { text-align: right !important; }
+  /* Popup Submit Invoice: per baris warna · lengan ....... nilai, lalu MRP · qty × rate kecil. */
+  .vp-mobile .m-stack.m-grid2.vp-sub-line { display: flex !important; flex-direction: row; flex-wrap: wrap; align-items: baseline !important; gap: 2px 6px; padding: 10px 12px; }
+  .vp-mobile .vp-sub-line > [data-label]::before { display: none !important; }
+  .vp-mobile .vp-sub-line > [data-label="Warna"],
+  .vp-mobile .vp-sub-line > [data-label="Lengan"] { order: 1; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+  .vp-mobile .vp-sub-line > [data-label="Lengan"] { order: 2; }
+  .vp-mobile .vp-sub-line > [data-label="Warna"]::after { content: " ·"; }
+  .vp-mobile .vp-sub-line > [data-label="Nilai"] { order: 3; margin-left: auto; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+  .vp-mobile .vp-sub-line::after { content: ""; order: 4; flex-basis: 100%; height: 0; }
+  .vp-mobile .vp-sub-line > :first-child,
+  .vp-mobile .vp-sub-line > [data-label="Qty"],
+  .vp-mobile .vp-sub-line > [data-label="Rate/pc"] { order: 5; font-size: 11.5px; color: var(--text-muted); }
+  .vp-mobile .vp-sub-line > [data-label="Qty"] { order: 6; }
+  .vp-mobile .vp-sub-line > [data-label="Rate/pc"] { order: 7; }
+  .vp-mobile .vp-sub-line > :first-child::after { content: " ·"; }
+  .vp-mobile .vp-sub-line > [data-label="Qty"]::after { content: " ×"; }
+  .vp-mobile .vp-eksp [class*="font-sans"][class*="text-[11px]"] { font-size: 11px; }
+  /* Riwayat rework: di portal vendor HP tampil ringkasan per size, daftar per catatan disembunyikan (Sysadmin tetap daftar lengkap). */
+  .vp-mobile .vp-rw-summary { display: block; }
+  .vp-mobile .vp-rw-detail { display: none; }
+
+  /* Baris yang tidak lolos filter khusus HP (mis. filter status roll di Finish Good). */
+  .m-stack.vp-hide-m,
+  .vp-mobile .m-stack.vp-fgroll.vp-hide-m,
+  .vp-mobile .m-stack.m-grid2.vp-kirim-row.vp-hide-m { display: none !important; }
+  /* Label lebih singkat di HP. */
+  .vp-mobile .vp-label-target[data-label]::before { content: "Target selesai"; }
+  .vp-mobile .vp-label-po[data-label]::before { content: "No PO"; }
+
+  /* Pop-up layar penuh: baris .vp-full-row + isi .vp-full-body tepat sesudahnya (mis. Input Finish Good). Isi digulir di
+     dalam pop-up; tombol buka/tutup baris itu (.vp-full-x) dipindah ke pojok kanan atas -- handler yang sama. */
+  .vp-mobile .vp-full-row + .vp-full-body {
+    position: fixed; inset: 0; z-index: 45; overflow-y: auto; overscroll-behavior: contain;
+    padding: 0 12px calc(16px + env(safe-area-inset-bottom)); border: 0; background: var(--surface-page);
+    animation: vp-sheet-up 0.2s ease-out;
+  }
+  .vp-mobile .vp-full-body > .vp-full-head {
+    position: sticky; top: 0; z-index: 5; margin: 0 -12px 12px; padding: 16px 96px 12px 16px;
+    background: #fff; border-bottom: 1px solid #EDE8E2;
+  }
+  .vp-mobile .vp-full-row .vp-full-x { min-height: 40px; border-radius: 9999px; font-size: 12.5px; }
+  .vp-mobile .vp-full-row:has(+ .vp-full-body) .vp-full-x {
+    position: fixed; top: 14px; right: 14px; z-index: 47; width: auto; min-height: 38px; padding: 0 16px;
+    border-radius: 9999px; font-size: 13px;
+  }
+  /* Selama ada pop-up lain terbuka di dalam pop-up layar penuh (mis. Cek Koli), tombol Tutup-nya disembunyikan
+     supaya tidak muncul di atas pop-up itu. */
+  .vp-mobile .vp-full-row:has(+ .vp-full-body .fixed) .vp-full-x { visibility: hidden; }
+  @keyframes vp-sheet-up {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  /* Pop-up di tengah: baris .vp-modal-row + isi .vp-modal-body. Tombol buka/tutup baris (.vp-modal-x) dibentangkan
+     menutupi layar sebagai latar gelap, jadi ketuk di luar pop-up = tutup. */
+  .vp-mobile .vp-modal-row:has(+ .vp-modal-body) .vp-modal-x {
+    position: fixed; inset: 0; z-index: 44; width: 100%; height: 100%; min-height: 0;
+    border: 0; border-radius: 0; background: rgba(28, 25, 23, 0.45); color: transparent; font-size: 0;
+  }
+  .vp-mobile .vp-modal-row + .vp-modal-body {
+    position: fixed; top: 50%; left: 16px; right: 16px; z-index: 45; max-height: 80vh; overflow-y: auto;
+    padding: 16px; border: 0; border-radius: 20px; background: #fff; box-shadow: 0 20px 50px rgba(28, 25, 23, 0.25);
+    transform: translateY(-50%); animation: vp-pop-in 0.18s ease-out; overscroll-behavior: contain;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .vp-mobile .vp-full-row + .vp-full-body, .vp-mobile .vp-modal-row + .vp-modal-body { animation: none; }
+  }
+
+  /* Daftar roll sesi (tombol "Lihat roll") jadi pop-up di tengah layar. Tombol Tutup milik baris sesi dibentangkan
+     menutupi layar sebagai latar gelap, jadi ketuk di luar pop-up = Tutup (handler yang sama, tanpa logika baru). */
+  .vp-mobile .vp-sess:has(+ .vp-sheet) > :last-child > button {
+    position: fixed; inset: 0; z-index: 44; width: 100%; height: 100%; min-height: 0;
+    border: 0; border-radius: 0; background: rgba(28, 25, 23, 0.45); color: transparent; font-size: 0;
+  }
+  .vp-mobile .vp-sess + .vp-sheet {
+    position: fixed; top: 50%; left: 16px; right: 16px; z-index: 45; max-height: 80vh; overflow-y: auto;
+    border-radius: 20px; background: #fff; box-shadow: 0 20px 50px rgba(28, 25, 23, 0.25);
+    transform: translateY(-50%); animation: vp-pop-in 0.18s ease-out; overscroll-behavior: contain;
+  }
+
+  /* Roll di dalam sesi: code roll + hasil sebaris, lalu rincian size. Warna, gramasi, setting, tanggal cutting tidak tampil. */
+  .vp-mobile .vp-batch > [data-label="Warna"],
+  .vp-mobile .vp-batch > [data-label="Gramasi"],
+  .vp-mobile .vp-batch > [data-label="Setting"],
+  .vp-mobile .vp-batch > [data-label="Cutting"] { display: none; }
+  .vp-mobile .m-stack.m-grid2.vp-batch { gap: 8px 12px; padding: 12px 16px; }
+  .vp-mobile .m-stack.m-grid2.vp-batch > [data-label="Code roll"] { grid-column: 1 / 2; grid-row: 1; align-self: center; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+  .vp-mobile .m-stack.m-grid2.vp-batch > [data-label="Hasil / Yield"] { grid-column: 2 / 3; grid-row: 1; align-items: flex-end; text-align: right !important; }
+  .vp-mobile .m-stack.m-grid2.vp-batch > [data-label="Detail size"] { grid-column: 1 / -1; }
+  .vp-mobile .m-stack.m-grid2.vp-batch > [data-label="Code roll"]::before,
+  .vp-mobile .m-stack.m-grid2.vp-batch > [data-label="Hasil / Yield"]::before,
+  .vp-mobile .m-stack.m-grid2.vp-batch > [data-label="Detail size"]::before { display: none; }
+
   input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
   select,
   textarea {

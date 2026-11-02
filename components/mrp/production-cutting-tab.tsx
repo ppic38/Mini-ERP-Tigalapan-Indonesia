@@ -34,6 +34,7 @@ import {
   targetSizesForBatch,
   weightVariance,
   getWeightTolerancePct,
+  localDateString,
   YIELD_ALERT_THRESHOLD_PCT,
   type MaterialClaimStage,
   type RestingCandidateRoll,
@@ -181,6 +182,10 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   // Tab lengan untuk tabel "Input Resting dan Cutting" (terpisah dari tab tabel Aduan pola).
   // null = otomatis (Pendek kalau ada sesinya, kalau tidak Panjang); terisi begitu user mengklik tab.
   const [sessionLengan, setSessionLengan] = useState<"PENDEK" | "PANJANG" | null>(null);
+  // HP (owner 2026-10-30): filter status cutting & tanggal resting di daftar sesi. Hanya penyaring tampilan; kontrolnya
+  // disembunyikan di tablet/desktop, jadi di sana nilainya tetap bawaan (semua).
+  const [sessionStatusFilter, setSessionStatusFilter] = useState<"ALL" | "BELUM" | "SUDAH">("ALL");
+  const [sessionDateFilter, setSessionDateFilter] = useState("");
   // Daftar roll dalam proses klaim dibuka lewat popup (bukan container yang selalu terbuka).
   const [claimListOpen, setClaimListOpen] = useState(false);
   // Revisi 2026-09-19 (owner, alur Cutting baru): tahap "Timbang roll" yang berdiri sendiri DIHAPUS.
@@ -667,6 +672,13 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   const lenganWithSessions = (["PENDEK", "PANJANG"] as const).filter((l) => scopedSessions.some((g) => g.lengan === l));
   const activeSessionLengan: "PENDEK" | "PANJANG" = sessionLengan ?? lenganWithSessions[0] ?? "PENDEK";
   const visibleSessions = scopedSessions.filter((g) => g.lengan === activeSessionLengan);
+  const sessionCuttingDone = (g: (typeof visibleSessions)[number]) => g.batches.every((b) => !!b.cuttingAt && !batchNeedsCuttingInput(b));
+  const sessionRestingDates = Array.from(new Set(visibleSessions.map((g) => localDateString(new Date(g.restingAt))))).sort().reverse();
+  const filteredSessions = visibleSessions.filter(
+    (g) =>
+      (sessionStatusFilter === "ALL" || (sessionStatusFilter === "SUDAH") === sessionCuttingDone(g)) &&
+      (!sessionDateFilter || localDateString(new Date(g.restingAt)) === sessionDateFilter)
+  );
   const sessionLenganTabs = (["PENDEK", "PANJANG"] as const).map((l) => ({
     key: l,
     label: l === "PENDEK" ? "Lengan Pendek" : "Lengan Panjang",
@@ -702,15 +714,15 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               </div>
 
               <div className="mt-2.5 flex flex-wrap items-end justify-between gap-2">
-                <div className="flex items-center gap-3">
-                  <div className="font-sans text-xs font-semibold text-info-fg">List roll ({visibleLines.length})</div>
-                  <Button onClick={openPick} disabled={warnaOptions.length === 0} variant="primary" size="sm">
+                <div className="flex items-center gap-3 max-md:w-full max-md:flex-wrap max-md:justify-between">
+                  <div className="font-sans text-xs font-semibold text-info-fg max-md:whitespace-nowrap max-md:text-[14px]">List roll ({visibleLines.length})</div>
+                  <Button onClick={openPick} disabled={warnaOptions.length === 0} variant="primary" size="sm" className="max-md:min-h-9 max-md:whitespace-nowrap max-md:rounded-full max-md:text-[12.5px]">
                     + Tambah roll
                   </Button>
-                  {warnaOptions.length === 0 && <span className="font-sans text-[11px] text-text-muted">Tidak ada roll yang tersedia untuk aduan pola ini.</span>}
+                  {warnaOptions.length === 0 && <span className="font-sans text-[11px] text-text-muted max-md:w-full">Tidak ada roll yang tersedia untuk aduan pola ini.</span>}
                 </div>
                 {visibleLines.length > 0 && (
-                  <div className="flex flex-wrap items-end gap-2 max-md:w-full max-md:flex-col max-md:items-stretch">
+                  <div className="flex flex-wrap items-end gap-2 max-md:grid max-md:w-full max-md:grid-cols-2">
                     <div>
                       <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Gramasi semua</div>
                       <NumberInput value={fillGramasi} onChange={setFillGramasi} decimals={2} commaOnly emptyWhenZero placeholder="mis. 180" className="input mt-0.5 w-[90px] text-right max-md:w-full" />
@@ -719,14 +731,14 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                       <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Setting semua</div>
                       <input value={fillSetting} onChange={(e) => setFillSetting(e.target.value)} placeholder="mis. lebar / heat setting" className="input mt-0.5 w-[170px] max-md:w-full" />
                     </div>
-                    <Button onClick={applyFillToAll} variant="accent" size="sm">
+                    <Button onClick={applyFillToAll} variant="accent" size="sm" className="max-md:col-span-2 max-md:min-h-10 max-md:rounded-full max-md:text-[12.5px]">
                       Terapkan ke semua
                     </Button>
                   </div>
                 )}
               </div>
 
-              <div className="mt-2 overflow-x-auto rounded-md border border-[#CFE0EF] bg-white">
+              <div className="mt-2 overflow-x-auto rounded-md border border-[#CFE0EF] bg-white max-md:mt-3 max-md:rounded-2xl max-md:border-[#EDE8E2]">
                 <div
                   className="m-hide grid min-w-[1080px] gap-x-3 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted"
                   style={{ gridTemplateColumns: LIST_GRID }}
@@ -746,7 +758,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 {visibleLines.map((l) => {
                   const variance = rollVariance(l.roll, l.netKg);
                   return (
-                    <div key={l.id} className="m-stack grid min-w-[1080px] items-center gap-x-3 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] max-md:gap-y-2 max-md:py-3" style={{ gridTemplateColumns: LIST_GRID }}>
+                    <div key={l.id} className="vp-line m-stack grid min-w-[1080px] items-center gap-x-3 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] max-md:gap-y-2 max-md:py-3" style={{ gridTemplateColumns: LIST_GRID }}>
                       <span data-label="Warna" className="font-medium">
                         {l.roll.warna}
                         {l.roll.isReplacement && <span className="ml-1.5 font-mono text-[10px] text-success-fg">(roll pengganti)</span>}
@@ -819,7 +831,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   disabled={!canRest || submitting}
                   aria-busy={submitting}
                   className={
-                    "inline-flex items-center gap-2 rounded-md bg-action-primary px-3.5 py-2 font-sans text-xs font-semibold text-white " +
+                    "inline-flex items-center gap-2 rounded-md bg-action-primary px-3.5 py-2 font-sans text-xs font-semibold text-white max-md:min-h-11 max-md:flex-1 max-md:justify-center max-md:rounded-full max-md:text-[13px] " +
                     (submitting ? "cursor-wait" : "disabled:cursor-not-allowed disabled:opacity-50")
                   }
                 >
@@ -832,11 +844,11 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                     setLines([]);
                   }}
                   disabled={submitting}
-                  className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-2 font-sans text-xs font-semibold text-action-primary disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-2 font-sans text-xs font-semibold text-action-primary disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11 max-md:rounded-full max-md:px-5 max-md:text-[13px]"
                 >
                   Batal
                 </button>
-                <span className="font-sans text-[11px] text-text-muted">
+                <span className={"font-sans text-[11px] text-text-muted " + (submitting ? "" : "max-md:hidden")}>
                   {submitting ? "Menyimpan berat bersih dan memulai resting, mohon tunggu sebentar…" : "Waktu mulai resting dicatat otomatis saat tombol Resting diklik."}
                 </span>
               </div>
@@ -867,7 +879,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   return (
     <>
       <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
-        <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Mulai Produksi — pilih MRP</div>
+        <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted"><span className="max-md:hidden">Mulai Produksi — </span>pilih MRP</div>
         <select
           value={selectedMrpId}
           onChange={(e) => pickMrp(e.target.value)}
@@ -974,8 +986,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
       {selectedDetail && (
         <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
           <div className="flex items-center justify-between gap-3 border-b border-border-subtle px-4 py-3">
-            <span className="font-sans text-[13px] font-semibold text-text-primary">Aduan pola — {selectedDetail.mrp.id}</span>
-            <span className="ml-auto flex items-center gap-1 rounded-md border border-[#CBD5DF] bg-white p-0.5">
+            <span className="font-sans text-[13px] font-semibold text-text-primary max-md:text-[15px]">Aduan pola<span className="max-md:hidden"> — {selectedDetail.mrp.id}</span></span>
+            <span className="ml-auto flex items-center gap-1 rounded-md border border-[#CBD5DF] bg-white p-0.5 max-md:rounded-full max-md:border-0 max-md:bg-[#EFEBE6]">
               {(
                 [
                   { key: "ADUAN", label: "Per Aduan Pola" },
@@ -994,8 +1006,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                     setWarnaOpen("");
                   }}
                   className={
-                    "rounded-[5px] px-2.5 py-[4px] font-sans text-[11px] font-semibold " +
-                    (aduanView === opt.key ? "bg-action-primary text-white" : "text-text-muted hover:text-text-primary")
+                    "rounded-[5px] px-2.5 py-[4px] font-sans text-[11px] font-semibold max-md:min-h-8 max-md:whitespace-nowrap max-md:rounded-full max-md:px-3 max-md:text-[12px] " +
+                    (aduanView === opt.key ? "bg-action-primary text-white max-md:bg-white max-md:text-action-primary max-md:shadow-sm" : "text-text-muted hover:text-text-primary")
                   }
                 >
                   {opt.label}
@@ -1003,8 +1015,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               ))}
             </span>
             {/* Revisi 2026-09-20 (owner): catatan cara pakai dipindah jadi ikon info di kanan judul (muncul saat
-                di-hover / difokuskan / diklik) supaya tidak memakan satu baris penuh. */}
-            <span className="group relative">
+                di-hover / difokuskan / diklik) supaya tidak memakan satu baris penuh. HP: tidak ditampilkan. */}
+            <span className="group relative max-md:hidden">
               <button
                 type="button"
                 aria-label="Petunjuk aduan pola"
@@ -1053,11 +1065,13 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                           <span />
                         </div>
                         {wt.length === 0 && <div className="px-4 py-4 text-center font-sans text-xs text-text-muted">Tidak ada warna lengan {len} di MRP ini.</div>}
+                        {/* HP: daftar maksimal 5 baris, sisanya digulir di dalam kotak (lihat .vp-aduan-list). */}
+                        <div className="vp-aduan-list">
                         {wt.map((w) => {
                           const open = warnaOpen === len + "|" + w.warna;
                           return (
                             <div key={w.warna} className="border-b border-[#F1F4F7] last:border-b-0">
-                              <div className={"m-stack m-grid2 grid grid-cols-6 items-center gap-2 px-4 py-[11px] font-sans text-xs text-[#31414F] " + (open ? "bg-[#F3F8FE]" : "")}>
+                              <div className={"vp-aduan m-stack m-grid2 grid grid-cols-6 items-center gap-2 px-4 py-[11px] font-sans text-xs text-[#31414F] " + (open ? "bg-[#F3F8FE]" : "")}>
                                 <span className="font-medium">{w.warna}</span>
                                 <span data-label="Roll aduan MRP" className="text-right font-mono font-semibold text-info-fg">{w.total}</span>
                                 <span data-label="Roll diterima" className={"text-right font-mono font-semibold " + (w.available > 0 ? "text-info-fg" : "text-danger-fg")}>{w.available}</span>
@@ -1067,7 +1081,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                                   <button
                                     onClick={() => setWarnaOpen(open ? "" : len + "|" + w.warna)}
                                     disabled={w.available <= 0 && !open}
-                                    className="font-sans text-[11px] font-semibold text-action-primary disabled:cursor-not-allowed disabled:opacity-40"
+                                    className="font-sans text-[11px] font-semibold text-action-primary disabled:cursor-not-allowed disabled:opacity-40 max-md:min-h-9 max-md:whitespace-nowrap max-md:rounded-full max-md:border max-md:border-[#E4DDD5] max-md:px-3.5 max-md:text-[12.5px]"
                                   >
                                     {open ? "Tutup ✕" : "Pilih"}
                                   </button>
@@ -1086,7 +1100,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                                       <span />
                                     </div>
                                     {w.needs.map((n) => (
-                                      <div key={n.key} className="m-stack m-grid2 grid grid-cols-6 items-center gap-2 border-t border-[#F1F4F7] px-3 py-2 font-sans text-xs text-[#31414F]">
+                                      <div key={n.key} className="vp-aduan m-stack m-grid2 grid grid-cols-6 items-center gap-2 border-t border-[#F1F4F7] px-3 py-2 font-sans text-xs text-[#31414F]">
                                         <span className="font-mono font-medium">{n.kode}</span>
                                         <span data-label="Roll aduan" className="text-right font-mono">{n.total}</span>
                                         <span data-label="Tersedia" className={"text-right font-mono font-semibold " + (n.available > 0 ? "text-info-fg" : "text-danger-fg")}>{n.available}</span>
@@ -1105,6 +1119,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                             </div>
                           );
                         })}
+                        </div>
                       </>
                     );
                   })()
@@ -1119,12 +1134,13 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                   <span />
                 </div>
                 {gl.length === 0 && <div className="px-4 py-4 text-center font-sans text-xs text-text-muted">Tidak ada aduan pola lengan {len} di MRP ini.</div>}
+                <div className="vp-aduan-list">
                 {gl.map((g) => {
                   const key = g.kode + "|" + g.lengan;
                   const isSel = selectedGroupKey === key;
                   const mismatchHint = g.totalMissing > 0 ? (g.rows.map((r) => lenganMismatchHint(r.warna, g.lengan) ?? notStartedHint(r.warna, g.lengan)).find((h) => !!h) ?? null) : null;
                   return (
-                    <div key={key} className={"m-stack m-grid2 grid grid-cols-6 items-center gap-2 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0 " + (isSel ? "bg-[#F3F8FE]" : "")}>
+                    <div key={key} className={"vp-aduan m-stack m-grid2 grid grid-cols-6 items-center gap-2 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0 " + (isSel ? "bg-[#F3F8FE]" : "")}>
                       <span className="font-mono font-medium">{g.kode}</span>
                       <span data-label="Roll aduan MRP" className="text-right font-mono font-semibold text-info-fg">{g.totalQty}</span>
                       <span data-label="Roll diterima" className={"text-right font-mono font-semibold " + (g.totalAvailable > 0 ? "text-info-fg" : "text-danger-fg")}>{g.totalAvailable}</span>
@@ -1140,7 +1156,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         <button
                           onClick={() => pickGroup(key)}
                           disabled={g.totalAvailable <= 0 && !isSel}
-                          className="font-sans text-[11px] font-semibold text-action-primary disabled:cursor-not-allowed disabled:opacity-40"
+                          className="font-sans text-[11px] font-semibold text-action-primary disabled:cursor-not-allowed disabled:opacity-40 max-md:min-h-9 max-md:whitespace-nowrap max-md:rounded-full max-md:border max-md:border-[#E4DDD5] max-md:px-3.5 max-md:text-[12.5px]"
                         >
                           {isSel ? "Tutup ✕" : "Pilih"}
                         </button>
@@ -1148,6 +1164,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                     </div>
                   );
                 })}
+                </div>
                   </>
                 )}
                 {selectedGroup?.lengan === len && builderPanel}
@@ -1164,6 +1181,43 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
         {selectedMrpId && (
           <div className="border-b border-border-subtle px-4">
             <Tabs items={sessionLenganTabs} active={activeSessionLengan} onChange={(key) => setSessionLengan(key as "PENDEK" | "PANJANG")} />
+          </div>
+        )}
+        {/* HP saja: filter status cutting (ketuk lagi chip aktif = semua) dan tanggal resting. */}
+        {selectedMrpId && visibleSessions.length > 0 && (
+          <div className="flex flex-col gap-2 border-b border-border-subtle px-4 py-3 md:hidden">
+            <div className="vp-chips flex gap-2">
+              {(
+                [
+                  { key: "BELUM" as const, label: `Belum cutting (${visibleSessions.filter((g) => !sessionCuttingDone(g)).length})` },
+                  { key: "SUDAH" as const, label: `Sudah cutting (${visibleSessions.filter((g) => sessionCuttingDone(g)).length})` },
+                ]
+              ).map((opt) => (
+                <button
+                  key={opt.key}
+                  onClick={() => setSessionStatusFilter(sessionStatusFilter === opt.key ? "ALL" : opt.key)}
+                  className={
+                    "min-h-9 rounded-full border px-3.5 font-sans text-[12.5px] font-semibold " +
+                    (sessionStatusFilter === opt.key ? "border-action-primary bg-action-primary text-white" : "border-[#E4DDD5] bg-white text-text-primary")
+                  }
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <select
+              value={sessionDateFilter}
+              onChange={(e) => setSessionDateFilter(e.target.value)}
+              aria-label="Tanggal resting"
+              className="min-h-10 w-full rounded-full border border-[#E4DDD5] bg-white px-4 font-sans text-text-primary"
+            >
+              <option value="">Semua tanggal resting</option>
+              {sessionRestingDates.map((d) => (
+                <option key={d} value={d}>
+                  Resting {formatDateTime(d).split(",")[0]}
+                </option>
+              ))}
+            </select>
           </div>
         )}
         <div className="overflow-x-auto">
@@ -1197,7 +1251,10 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         Belum ada batch resting lengan {activeSessionLengan === "PENDEK" ? "Pendek" : "Panjang"} untuk MRP ini.
                       </div>
                     )}
-                    {visibleSessions.map((g) => {
+                    {visibleSessions.length > 0 && filteredSessions.length === 0 && (
+                      <div className="px-4 py-5 text-center font-sans text-[13px] text-text-muted">Tidak ada sesi resting yang cocok dengan filter.</div>
+                    )}
+                    {filteredSessions.map((g) => {
               const isExpanded = expandedSessions.has(g.key);
               const detail = mrpDetails.find((d) => d.mrp.id === g.mrpId);
               const distinctWarna = Array.from(new Set(g.batches.map((b) => b.warna))).join(", ");
@@ -1216,10 +1273,11 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               const groupYieldAlert = groupYieldPct !== null && groupYieldPct < YIELD_ALERT_THRESHOLD_PCT;
               return (
                 <div key={g.key} className="border-b border-[#F1F4F7] last:border-b-0">
-                  <div className="m-stack m-grid2 grid min-w-[1480px] items-center gap-x-5 px-4 py-[11px] font-sans text-xs text-[#31414F]" style={{ gridTemplateColumns: CUTTING_SESSION_COLUMNS }}>
+                  <div className="vp-sess m-stack m-grid2 grid min-w-[1480px] items-center gap-x-5 px-4 py-[11px] font-sans text-xs text-[#31414F]" style={{ gridTemplateColumns: CUTTING_SESSION_COLUMNS }}>
                     <span className="flex flex-col gap-0.5">
                       <span className="font-mono font-medium">
-                        {g.kode} · {g.lengan}
+                        {g.kode}
+                        <span className="max-md:hidden"> · {g.lengan}</span>
                       </span>
                       {g.partTotal > 1 && (
                         <span className="w-fit rounded bg-[#F1F5F9] px-1.5 py-[1px] font-sans text-[10px] font-medium text-[#475569]">
@@ -1265,7 +1323,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                           })()}
                         </span>
                       ) : (
-                        <Button onClick={() => openCuttingGroupModal(g.key)} variant="primary" size="xs">
+                        <Button onClick={() => openCuttingGroupModal(g.key)} variant="primary" size="xs" className="max-md:min-h-10 max-md:w-full max-md:rounded-full max-md:text-[12.5px]">
                           {anyMissingCuttingAt ? "Input Hasil Cutting →" : "Perbaiki Hasil Cutting →"}
                         </Button>
                       )}
@@ -1293,13 +1351,20 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                       )}
                     </span>
                     <span className="text-center max-md:[&>button]:w-full">
-                      <Button onClick={() => toggleSessionExpanded(g.key)} variant="accent" size="xs">
+                      <Button onClick={() => toggleSessionExpanded(g.key)} variant="accent" size="xs" className="max-md:min-h-10 max-md:rounded-full max-md:text-[12.5px]">
                         {isExpanded ? "Tutup" : "Lihat roll →"}
                       </Button>
                     </span>
                   </div>
                   {isExpanded && (
-                    <div className="bg-[#FAFBFC]">
+                    // HP: daftar roll jadi pop-up di tengah layar (lihat .vp-sheet di globals.css); ketuk di luar = Tutup.
+                    <div className="vp-sheet bg-[#FAFBFC]">
+                      <div className="sticky top-0 z-10 flex items-baseline justify-between gap-3 border-b border-[#EDE8E2] bg-white px-4 pb-3 pt-4 font-sans md:hidden">
+                        <span className="text-[16px] font-bold text-text-primary">{distinctWarna}</span>
+                        <span className="text-[12px] text-text-muted">
+                          {g.kode} · {g.batches.length} roll
+                        </span>
+                      </div>
                       <div
                         className="m-hide grid min-w-[1480px] gap-x-5 border-y border-[#CFE0EF] bg-info-bg/60 px-8 py-[7px] font-sans text-[10px] font-medium uppercase tracking-wider text-info-fg"
                         style={{ gridTemplateColumns: CUTTING_BATCH_COLUMNS }}
@@ -1322,7 +1387,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         return (
                           <div
                             key={b.id}
-                            className="m-stack m-grid2 grid min-w-[1480px] items-center gap-x-5 border-b border-[#F1F4F7] px-8 py-[9px] font-sans text-xs text-[#31414F] last:border-b-0 max-md:px-4 max-md:py-3"
+                            className="vp-batch m-stack m-grid2 grid min-w-[1480px] items-center gap-x-5 border-b border-[#F1F4F7] px-8 py-[9px] font-sans text-xs text-[#31414F] last:border-b-0 max-md:px-4 max-md:py-3"
                             style={{ gridTemplateColumns: CUTTING_BATCH_COLUMNS }}
                           >
                             <span data-label="Warna" className="max-md:col-span-full">{b.warna}</span>
@@ -1691,19 +1756,26 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
             }
           }
           return (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4">
-              <div className="flex max-h-[90vh] w-full max-w-[760px] flex-col rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]">
-                <div className="border-b border-border-subtle px-5 py-3.5">
-                  <div className="font-sans text-[13px] font-semibold text-text-primary">
-                    {cuttingGroupEditAll ? "Edit" : "Input"} Hasil Cutting — {kode} · {lengan}
-                    {partTotal > 1 ? ` · Resting ke-${partNo}` : ""}
+            // HP: layar penuh -- judul di atas, daftar roll digulir, total + tombol tetap di bawah.
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4 max-md:p-0">
+              <div className="flex max-h-[90vh] w-full max-w-[760px] flex-col rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)] max-md:h-full max-md:max-h-none max-md:rounded-none">
+                <div className="border-b border-border-subtle px-5 py-3.5 max-md:px-4">
+                  <div className="font-sans text-[13px] font-semibold text-text-primary max-md:text-[16px]">
+                    {cuttingGroupEditAll ? "Edit" : "Input"} Hasil Cutting<span className="max-md:hidden"> — </span>
+                    <span className="max-md:block max-md:font-mono max-md:text-[12.5px] max-md:font-medium max-md:text-text-muted">
+                      {kode}
+                      <span className="max-md:hidden"> · {lengan}</span>
+                      {partTotal > 1 ? ` · Resting ke-${partNo}` : ""}
+                    </span>
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 font-sans text-[11px] text-text-muted">
                     <span>
-                      Mulai resting: <span className="font-mono font-semibold text-[#31414F]">{formatDateTime(session.restingAt)}</span>
+                      <span className="max-md:hidden">Mulai resting: </span>
+                      <span className="md:hidden">Resting </span>
+                      <span className="font-mono font-semibold text-[#31414F]">{formatDateTime(session.restingAt)}</span>
                     </span>
                     <span>{groupBatches.length} roll</span>
-                    <span>Waktu cutting dicatat otomatis saat Simpan</span>
+                    <span className="max-md:hidden">Waktu cutting dicatat otomatis saat Simpan</span>
                     {lockedInSession > 0 && (
                       <span className="text-warning-fg">
                         {lockedInSession} roll tidak ditampilkan: Finish Good sudah diisi atau roll sudah ditutup
@@ -1711,10 +1783,10 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                     )}
                   </div>
                 </div>
-                <div className="flex-1 overflow-y-auto px-5 py-3">
+                <div className="flex-1 overflow-y-auto px-5 py-3 max-md:bg-[#F7F5F2] max-md:px-3">
                   {Array.from(byWarna.entries()).map(([warna, batches]) => (
                     <div key={warna} className="mb-4 last:mb-0">
-                      <div className="mb-2 border-b border-[#CFE0EF] pb-1 font-sans text-[12px] font-semibold text-info-fg">{warna}</div>
+                      <div className="mb-2 border-b border-[#CFE0EF] pb-1 font-sans text-[12px] font-semibold text-info-fg max-md:border-0 max-md:px-1 max-md:text-[13px]">{warna}</div>
                       <div className="flex flex-col gap-2.5">
                         {batches.map((b) => {
                           const targetSizes = targetSizesForBatch(b, modalDetail?.aduanRows ?? []);
@@ -1725,20 +1797,20 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                           const actualTotal = Object.values(sizeDraft).reduce((a, c) => a + c, 0) + shiftsNow.reduce((a, c) => a + c.qty, 0);
                           const isIncomplete = incompleteIds.some((x) => x.id === b.id);
                           return (
-                            <div key={b.id} className="rounded-md border border-[#E4E8EE] bg-[#FAFBFC] px-3 py-2.5">
-                              <div className="mb-2 flex items-center justify-between gap-2">
+                            <div key={b.id} className="rounded-md border border-[#E4E8EE] bg-[#FAFBFC] px-3 py-2.5 max-md:rounded-2xl max-md:border-[#EDE8E2] max-md:bg-white max-md:px-3.5 max-md:py-3">
+                              <div className="mb-2 flex items-center justify-between gap-2 max-md:mb-2.5">
                                 <span className="flex items-baseline gap-1.5">
-                                  <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Code roll</span>
-                                  <span className="font-mono text-[11.5px] font-semibold text-[#31414F]">{b.codeRoll || "—"}</span>
+                                  <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted max-md:hidden">Code roll</span>
+                                  <span className="font-mono text-[11.5px] font-semibold text-[#31414F] max-md:text-[14px]">{b.codeRoll || "—"}</span>
                                 </span>
-                                <span className="font-mono text-[11px] text-text-muted">
+                                <span className="font-mono text-[11px] text-text-muted max-md:text-[12.5px]">
                                   {actualTotal} / {targetTotal} pcs
                                 </span>
                               </div>
                               {sizes.length === 0 ? (
                                 <span className="font-sans text-[11px] text-text-muted">Aduan pola untuk roll ini tidak punya rincian size.</span>
                               ) : (
-                                <div className="grid grid-cols-[repeat(auto-fill,minmax(178px,1fr))] gap-2.5">
+                                <div className="grid grid-cols-[repeat(auto-fill,minmax(178px,1fr))] gap-2.5 max-md:grid-cols-2 max-md:gap-x-2.5 max-md:gap-y-3">
                                   {sizes.map((size) => (
                                     <SizeQtyControl
                                       key={size}
@@ -1806,15 +1878,15 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 {cuttingGroupError && (
                   <div className="border-t border-[#F0DFC2] bg-danger-bg px-5 py-2.5 font-sans text-[11px] leading-[1.5] text-danger-fg">{cuttingGroupError}</div>
                 )}
-                <div className="flex items-center justify-between gap-2 border-t border-border-subtle px-5 py-3.5">
-                  <span className="font-mono text-[11.5px] text-text-muted">
+                <div className="flex items-center justify-between gap-2 border-t border-border-subtle px-5 py-3.5 max-md:px-4 max-md:pb-[max(14px,env(safe-area-inset-bottom))]">
+                  <span className="font-mono text-[11.5px] text-text-muted max-md:text-[12.5px]">
                     Total {grandActual} / {grandTarget} pcs
                   </span>
                   <div className="flex gap-2">
-                    <button onClick={closeCuttingGroupModal} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary">
+                    <button onClick={closeCuttingGroupModal} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary max-md:min-h-11 max-md:rounded-full max-md:px-4 max-md:text-[13px]">
                       Batal
                     </button>
-                    <Button onClick={saveGroup} disabled={!canSaveGroup} variant="success" size="sm">
+                    <Button onClick={saveGroup} disabled={!canSaveGroup} variant="success" size="sm" className="max-md:min-h-11 max-md:rounded-full max-md:px-6 max-md:text-[13px]">
                       Simpan
                     </Button>
                   </div>

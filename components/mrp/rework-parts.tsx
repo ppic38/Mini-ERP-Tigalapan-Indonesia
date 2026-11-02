@@ -54,6 +54,7 @@ export function ReworkInlineForm({
   max,
   knownSizes,
   onDone,
+  compact = false,
 }: {
   mrpId: string;
   vendorId: string;
@@ -63,6 +64,9 @@ export function ReworkInlineForm({
   max: number;
   knownSizes: string[];
   onDone: () => void;
+  /** Tampilan HP satu form (owner 2026-11-01): judul & bingkai kartu form tidak ditampilkan, dan "Size baru" ditaruh di
+   *  samping kotak qty (size asal dipilih di luar form). Hanya mengubah susunan di HP. */
+  compact?: boolean;
 }) {
   const reworkRejectSize = useMrpStore((s) => s.reworkRejectSize);
   const [qty, setQty] = useState(Math.min(1, max));
@@ -92,26 +96,36 @@ export function ReworkInlineForm({
     }
   }
 
-  const fieldCard = "flex flex-col gap-2 rounded-lg border-2 border-[#BCD3E8] bg-white px-3.5 py-3 shadow-[0_1px_3px_rgba(11,19,27,.08)]";
+  // HP: field dibuat ringan (tanpa kartu tebal) dan disusun 2 kolom; qty & size baru selebar form.
+  const fieldCard = "flex flex-col gap-2 rounded-lg border-2 border-[#BCD3E8] bg-white px-3.5 py-3 shadow-[0_1px_3px_rgba(11,19,27,.08)] max-md:gap-1.5 max-md:border-0 max-md:p-0 max-md:shadow-none";
   const fieldLabel = "font-sans text-[10.5px] font-semibold uppercase tracking-wider text-text-muted";
   return (
-    <div className="border-t border-[#CFE0EF] bg-info-bg px-4 py-4">
-      <div className="overflow-hidden rounded-md border border-[#A8C5DF] bg-white">
-        <div className="border-b border-[#CFE0EF] bg-info-bg px-4 py-2.5">
-          <span className="font-sans text-[11.5px] font-semibold text-info-fg">
-            Input rework — {warna} · {lengan} · size {size}
+    <div
+      className={
+        "border-t border-[#CFE0EF] bg-info-bg px-4 py-4 max-md:bg-[#FBF7F3] max-md:px-3 max-md:py-3" +
+        (compact ? " max-md:border-0 max-md:bg-transparent max-md:p-0" : "")
+      }
+    >
+      <div className={"overflow-hidden rounded-md border border-[#A8C5DF] bg-white max-md:rounded-2xl max-md:border-[#EDE8E2]" + (compact ? " max-md:rounded-none max-md:border-0" : "")}>
+        <div className={"border-b border-[#CFE0EF] bg-info-bg px-4 py-2.5" + (compact ? " max-md:hidden" : "")}>
+          <span className="font-sans text-[11.5px] font-semibold text-info-fg max-md:text-[13px]">
+            <span className="max-md:hidden">Input rework — {warna} · {lengan} · size {size}</span>
+            <span className="md:hidden">Rework size {size}</span>
           </span>
         </div>
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3 px-4 py-3">
-          <div className={fieldCard}>
+        {/* compact (HP): grid 6 kolom -- Qty 4/6 + Size baru 2/6 sebaris, lalu Lengan 3/6 + Kids/Dewasa 3/6. */}
+        <div className={"grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3 px-4 py-3 max-md:gap-x-3 max-md:gap-y-3.5 " + (compact ? "max-md:grid-cols-6" : "max-md:grid-cols-2")}>
+          <div className={fieldCard + (compact ? " max-md:order-1 max-md:col-span-4" : " max-md:col-span-2")}>
             <div className="flex items-baseline justify-between gap-2">
-              <span className={fieldLabel}>Qty dirework</span>
-              <span className="whitespace-nowrap font-mono text-[10px] text-text-muted">
-                sisa reject <span className="font-semibold text-[#31414F]">{max}</span>
+              <span className={fieldLabel}>
+                Qty<span className="max-md:hidden"> dirework</span>
+              </span>
+              <span className="whitespace-nowrap font-mono text-[10px] text-text-muted max-md:text-[11px]">
+                sisa<span className="max-md:hidden"> reject</span> <span className="font-semibold text-[#31414F]">{max}</span>
               </span>
             </div>
             {/* ▼/▲ = -1/+1 dan "Maks" = isi sebesar sisa reject (pola sama Input qty per size di Finish Good). */}
-            <div className="flex h-9 items-stretch overflow-hidden rounded-md border border-[#DDE4EB] bg-white">
+            <div className="flex h-9 items-stretch overflow-hidden rounded-md border border-[#DDE4EB] bg-white max-md:h-11 max-md:rounded-xl">
               <button
                 type="button"
                 onClick={() => setQty((v) => Math.max(0, v - 1))}
@@ -150,9 +164,9 @@ export function ReworkInlineForm({
               </button>
             </div>
           </div>
-          <div className={fieldCard}>
+          <div className={fieldCard + (compact ? " max-md:order-3 max-md:col-span-3" : "")}>
             <span className={fieldLabel}>Lengan hasil</span>
-            <select value={toLengan} onChange={(e) => setToLengan(e.target.value as Lengan)} className="input h-9 w-full text-[12.5px] font-medium">
+            <select value={toLengan} onChange={(e) => setToLengan(e.target.value as Lengan)} className="input h-9 w-full text-[12.5px] font-medium max-md:h-11 max-md:rounded-xl">
               {reworkLenganOptionsFor(lengan).map((l) => (
                 <option key={l} value={l}>
                   {l}
@@ -160,7 +174,7 @@ export function ReworkInlineForm({
               ))}
             </select>
           </div>
-          <div className={fieldCard}>
+          <div className={fieldCard + (compact ? " max-md:order-4 max-md:col-span-3" : "")}>
             <span className={fieldLabel}>Kids / Dewasa</span>
             <select
               value={usia}
@@ -170,7 +184,7 @@ export function ReworkInlineForm({
                 // size yang sudah dipilih tapi tidak sah untuk usia baru -> dikosongkan
                 if (toSize && !sizeOptionsFor(next).includes(toSize)) setToSize("");
               }}
-              className="input h-9 w-full text-[12.5px] font-medium"
+              className="input h-9 w-full text-[12.5px] font-medium max-md:h-11 max-md:rounded-xl"
             >
               {USIA_OPTIONS.map((u) => (
                 <option key={u} value={u}>
@@ -179,10 +193,10 @@ export function ReworkInlineForm({
               ))}
             </select>
           </div>
-          <div className={fieldCard}>
+          <div className={fieldCard + (compact ? " max-md:order-2 max-md:col-span-2" : " max-md:col-span-2")}>
             <span className={fieldLabel}>Size baru</span>
-            <select value={toSize} onChange={(e) => setToSize(e.target.value)} className="input h-9 w-full text-[12.5px] font-medium">
-              <option value="">— pilih size —</option>
+            <select value={toSize} onChange={(e) => setToSize(e.target.value)} className="input h-9 w-full text-[12.5px] font-medium max-md:h-11 max-md:rounded-xl">
+              <option value="">{compact ? "Pilih" : "— pilih size —"}</option>
               {options.map((s) => (
                 <option key={s} value={s}>
                   {s}
@@ -193,16 +207,19 @@ export function ReworkInlineForm({
           </div>
         </div>
         {error && <div className="border-t border-[#EFC9C4] bg-danger-bg px-4 py-2 font-sans text-[11.5px] leading-[1.5] text-danger-fg">{error}</div>}
-        <div className="flex items-center justify-between gap-4 border-t border-[#CFE0EF] bg-[#F3F8FD] px-4 py-3">
+        <div className="flex items-center justify-between gap-4 border-t border-[#CFE0EF] bg-[#F3F8FD] px-4 py-3 max-md:flex-col max-md:items-stretch max-md:gap-2.5">
           <span className="font-sans text-[11px] leading-[1.5] text-text-muted">
-            {usia === "KIDS" ? "Hasil Kids: kain Dewasa dipotong ke ukuran lebih kecil — semua size Kids (XS–2XL) boleh dipilih." : `Size tujuan sama atau lebih kecil dari ${size}, tidak bisa menambah kain.`}
-            {lengan === "PENDEK" && " Lengan PENDEK tidak bisa dipanjangkan."}
+            <span className="max-md:hidden">
+              {usia === "KIDS" ? "Hasil Kids: kain Dewasa dipotong ke ukuran lebih kecil — semua size Kids (XS–2XL) boleh dipilih." : `Size tujuan sama atau lebih kecil dari ${size}, tidak bisa menambah kain.`}
+              {lengan === "PENDEK" && " Lengan PENDEK tidak bisa dipanjangkan."}
+            </span>
+            <span className="md:hidden">{usia === "KIDS" ? "Kids: semua size XS–2XL boleh." : `Size baru maks ${size}.`}</span>
           </span>
           <div className="flex shrink-0 items-center gap-2">
-            <Button onClick={onDone} disabled={submitting} variant="ghost" size="md">
+            <Button onClick={onDone} disabled={submitting} variant="ghost" size="md" className="max-md:min-h-11 max-md:rounded-full">
               Batal
             </Button>
-            <Button onClick={submit} disabled={!toSize.trim() || qty <= 0 || submitting} variant="primary" size="md" className="min-w-[130px]">
+            <Button onClick={submit} disabled={!toSize.trim() || qty <= 0 || submitting} variant="primary" size="md" className="min-w-[130px] max-md:min-h-11 max-md:flex-1 max-md:rounded-full">
               {submitting ? "Menyimpan…" : "Simpan Rework"}
             </Button>
           </div>
@@ -239,18 +256,20 @@ export function GroupRemarkBox({ groupKey, vendorProduksi, fallback }: { groupKe
   }
 
   return (
-    <div className="mt-3 rounded-md border border-[#CFE0EF] bg-white px-4 py-3">
-      <div className="mb-1.5 font-sans text-[10.5px] font-semibold uppercase tracking-wider text-text-muted">Remark sisa reject</div>
+    <div className="mt-3 rounded-md border border-[#CFE0EF] bg-white px-4 py-3 max-md:rounded-2xl max-md:border-[#EDE8E2]">
+      <div className="mb-1.5 font-sans text-[10.5px] font-semibold uppercase tracking-wider text-text-muted">
+        Remark<span className="max-md:hidden"> sisa reject</span>
+      </div>
       {editing ? (
         <div className="flex flex-wrap items-center gap-2">
           <input
             value={shown}
             onChange={(e) => setDraft(e.target.value)}
             placeholder="Catatan sisa reject warna ini (mis. M tidak dirework, L dirework ke S)…"
-            className="input min-w-[260px] flex-1 text-[11.5px]"
+            className="input min-w-[260px] flex-1 text-[11.5px] max-md:h-11 max-md:min-w-0 max-md:basis-full max-md:rounded-xl"
             disabled={saving}
           />
-          <Button onClick={() => void save(shown)} disabled={!shown.trim() || saving} variant="primary" size="md">
+          <Button onClick={() => void save(shown)} disabled={!shown.trim() || saving} variant="primary" size="md" className="max-md:min-h-11 max-md:flex-1 max-md:rounded-full">
             {saving ? "Menyimpan…" : "Konfirmasi"}
           </Button>
           {saved && draft !== null && (
@@ -271,10 +290,13 @@ export function GroupRemarkBox({ groupKey, vendorProduksi, fallback }: { groupKe
           </Button>
         </div>
       )}
-      <div className="mt-1.5 font-sans text-[10.5px] leading-[1.5] text-text-muted">
+      <div className="mt-1.5 font-sans text-[10.5px] leading-[1.5] text-text-muted max-md:hidden">
         {saved
           ? "Warna ini sudah ditandai ditangani — tidak lagi dihitung di badge. Sisa reject-nya sekarang bisa dikirim lewat halaman Pengiriman."
           : "Setelah dikonfirmasi, sisa reject warna ini tidak lagi dihitung sebagai pekerjaan tertunda (badge padam) dan bisa dikirim lewat halaman Pengiriman."}
+      </div>
+      <div className="mt-1.5 font-sans text-[11.5px] leading-[1.5] text-text-muted md:hidden">
+        {saved ? "Sudah dikonfirmasi — sisa reject bisa dikirim di Pengiriman." : "Konfirmasi supaya sisa reject bisa dikirim di Pengiriman."}
       </div>
       {error && <div className="mt-1.5 font-sans text-[11px] text-danger-fg">{error}</div>}
     </div>
@@ -304,10 +326,60 @@ export function ReworkHistoryCard({ vendorId }: { vendorId: string }) {
     .sort((a, b) => (a.recordedAt < b.recordedAt ? 1 : -1));
   // Template tabel sama dengan tabel Reject & Rework di atas: header biru muda + garis biru tebal; semua kolom rata tengah.
   const COLS = "grid-cols-[1.1fr_1fr_1.4fr_0.8fr_0.8fr_0.9fr_0.6fr_1.8fr_1.1fr]";
+  // HP portal vendor (owner 2026-11-01): ringkasan per size -- dijumlah per MRP · warna · lengan asal, lalu per
+  // "size asal -> size hasil (usia)". Tampil lewat .vp-rw-summary; daftar per catatan (.vp-rw-detail) disembunyikan.
+  const summary = new Map<string, { mrpId: string; label: string; rows: Map<string, { from: string; to: string; usia?: string; qty: number }> }>();
+  for (const r of reworkHistory) {
+    const note = r.note ?? "";
+    const fromLengan = parseFromLengan(note) ?? r.lengan;
+    const gk = `${r.mrpId}|${r.warna}|${fromLengan}`;
+    const group = summary.get(gk) ?? { mrpId: r.mrpId, label: `${r.warna} · ${fromLengan}`, rows: new Map() };
+    const from = parseFromSize(note) ?? "—";
+    const to = Object.keys(r.sizeQty)[0] ?? "—";
+    const rk = `${from}|${to}|${r.usia ?? ""}`;
+    const row = group.rows.get(rk) ?? { from, to, usia: r.usia, qty: 0 };
+    row.qty += Object.values(r.sizeQty).reduce((a, b) => a + b, 0);
+    group.rows.set(rk, row);
+    summary.set(gk, group);
+  }
   return (
     <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
       <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Riwayat rework</div>
-      <div className="overflow-x-auto">
+      <div className="vp-rw-summary hidden">
+        {summary.size === 0 && <div className="px-4 py-6 text-center font-sans text-[13px] text-text-muted">Belum ada rework.</div>}
+        {Array.from(summary.values()).map((group) => {
+          const rows = Array.from(group.rows.values());
+          return (
+            <div key={group.mrpId + group.label} className="border-b border-[#F1F4F7] px-4 py-3.5 last:border-b-0">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="font-sans text-[14px] font-semibold text-text-primary">{group.label}</span>
+                <span className="font-mono text-[11.5px] text-text-muted">{group.mrpId}</span>
+              </div>
+              <div className="mt-2 flex flex-col gap-1.5">
+                {rows.map((row) => (
+                  <div key={row.from + row.to + (row.usia ?? "")} className="flex items-center justify-between gap-3 rounded-xl bg-[#F7F5F2] px-3 py-2">
+                    <span className="flex items-center gap-2 font-mono text-[14px] font-semibold text-text-primary">
+                      {row.from} <span className="font-sans text-text-muted">→</span> {row.to}
+                      {row.usia && (
+                        <span className={"rounded-full px-2 py-px font-sans text-[10.5px] font-semibold " + (row.usia === "KIDS" ? "bg-info-bg text-info-fg" : "bg-[#EFEBE6] text-text-muted")}>
+                          {row.usia === "KIDS" ? "Kids" : "Dewasa"}
+                        </span>
+                      )}
+                    </span>
+                    <span className="font-mono text-[14px] font-semibold text-success-fg">{row.qty} pcs</span>
+                  </div>
+                ))}
+              </div>
+              {rows.length > 1 && (
+                <div className="mt-1.5 text-right font-sans text-[12px] text-text-muted">
+                  Total <b className="font-mono text-text-primary">{rows.reduce((a, r) => a + r.qty, 0)} pcs</b>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="vp-rw-detail overflow-x-auto">
         <div className="min-w-[1050px] m-fluid">
           <div className={"m-hide grid items-center gap-x-3 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] text-center font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg " + COLS}>
             <span>MRP</span>
@@ -331,7 +403,7 @@ export function ReworkHistoryCard({ vendorId }: { vendorId: string }) {
             const remark = (sourceKey && productionGroupMeta.find((m) => m.groupKey === sourceKey && m.vendorProduksi === r.vendorProduksi)?.remarkSisaReject?.trim()) || rejectRemarks[r.poId] || "";
             return (
               <div key={r.id} className="border-b border-[#F1F4F7] last:border-b-0">
-                <div className={"m-stack grid items-center gap-x-3 px-4 py-[11px] text-center font-sans text-xs text-[#31414F] " + COLS}>
+                <div className={"vp-rwhist m-stack grid items-center gap-x-3 px-4 py-[11px] text-center font-sans text-xs text-[#31414F] " + COLS}>
                   <span data-label="MRP" className="font-mono">{r.mrpId}</span>
                   <span data-label="Kategori">{mrpDetailFor(r.mrpId, mrpDetails)?.mrp.kategori ?? "—"}</span>
                   <span data-label="Warna / lengan">

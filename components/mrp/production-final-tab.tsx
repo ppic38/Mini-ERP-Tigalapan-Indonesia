@@ -129,9 +129,9 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
   return (
     <>
       <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 max-md:flex-col max-md:items-stretch">
           <div className="flex-1">
-            <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Pilih MRP (sudah tercutting)</div>
+            <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Pilih MRP<span className="max-md:hidden"> (sudah tercutting)</span></div>
             <select
               value={selectedMrpId}
               onChange={(e) => setSelectedMrpId(e.target.value)}
@@ -148,7 +148,7 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
           </div>
           {selectedMaklonPo &&
             (isPoClosed ? (
-              <span className="flex flex-none items-center gap-2">
+              <span className="flex flex-none items-center gap-2 max-md:justify-between">
                 <span title={selectedMaklonPo.closeReason}>
                   <StatusPill tone="locked">PO DITUTUP</StatusPill>
                 </span>
@@ -158,7 +158,7 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
                   // walau state lokal sudah berubah seketika).
                   onClick={() => runAction(selectedMaklonPo.id, reopenProductionPo(selectedMaklonPo.id))}
                   title="Buka kembali gerbang Pengiriman untuk PO ini -- grup warna/lengan yang sudah terlanjur dikunci Close PO tetap terkunci (buka satu-satu lewat 'Buka kunci ↺' kalau perlu diperbaiki)"
-                  className="rounded-md border border-[#CBD5DF] bg-white px-3 py-[9px] font-sans text-[11.5px] font-semibold text-action-primary"
+                  className="rounded-md border border-[#CBD5DF] bg-white px-3 py-[9px] font-sans text-[11.5px] font-semibold text-action-primary max-md:min-h-10 max-md:rounded-full max-md:px-4 max-md:text-[12.5px]"
                 >
                   Buka kembali PO
                 </button>
@@ -167,7 +167,7 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
               <button
                 onClick={() => setClosePoOpen(true)}
                 disabled={isPending(selectedMaklonPo.id)}
-                className="flex-none rounded-md border border-danger px-3 py-[9px] font-sans text-[11.5px] font-semibold text-danger-fg disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex-none rounded-md border border-danger px-3 py-[9px] font-sans text-[11.5px] font-semibold text-danger-fg disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11 max-md:rounded-full max-md:text-[13px]"
               >
                 {isPending(selectedMaklonPo.id) ? "Menutup…" : "Close PO"}
               </button>
@@ -182,7 +182,11 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
             </button>
           </div>
         )}
-        <div className="mt-2.5 rounded-md border border-[#CFE0EF] bg-info-bg px-3 py-2 font-sans text-[11px] leading-[1.5] text-info-fg">
+        {/* HP: penjelasan panjang diganti satu kalimat singkat. */}
+        <div className="mt-2.5 font-sans text-[12px] leading-[1.5] text-text-muted md:hidden">
+          Final = konfirmasi terakhir per warna, setelah semua roll selesai. <b className="text-text-primary">Close PO</b> menutup PO lebih awal.
+        </div>
+        <div className="mt-2.5 rounded-md border border-[#CFE0EF] bg-info-bg px-3 py-2 font-sans text-[11px] leading-[1.5] text-info-fg max-md:hidden">
           Rekap Finish Good + Reject + Rework per warna/lengan. Roll yang sudah diselesaikan di tab <b>Finish Good</b> langsung bisa dikirim &amp; rejectnya
           bisa dirework, sambil roll lain tetap bisa dikerjakan. Halaman ini untuk konfirmasi TERAKHIR vendor ke ERP: semua bahan warna itu sudah
           diterima &amp; diproduksi, Finish Good, rework, dan reject sudah final (mengunci warna, dasar status tepat waktu/telat) — hanya bisa kalau tidak ada
@@ -313,7 +317,23 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
             { key: "selisih", label: "Selisih", default: true, align: "right", render: (r) => num(r.selisih, r.selisih < 0 ? "font-semibold text-danger-fg" : "text-text-muted") },
             { key: "rework", label: "Rework", default: true, align: "right", render: (r) => num(r.rework, r.rework > 0 ? "font-semibold text-success-fg" : "text-text-muted") },
             { key: "reject", label: "Reject", default: true, align: "right", render: (r) => num(r.reject, r.reject > 0 ? "font-semibold text-danger-fg" : "text-text-muted") },
-            { key: "status", label: "Status", default: true, render: (r) => <StatusPill tone={STATUS_TONE[r.status]}>{r.status}</StatusPill> },
+            {
+              key: "status",
+              label: "Status",
+              default: true,
+              render: (r) => (
+                <StatusPill tone={STATUS_TONE[r.status]}>
+                  {r.status === "Belum ada Finish Good" ? (
+                    <>
+                      <span className="max-md:hidden">{r.status}</span>
+                      <span className="md:hidden">Belum ada FG</span>
+                    </>
+                  ) : (
+                    r.status
+                  )}
+                </StatusPill>
+              ),
+            },
             {
               key: "aksi",
               label: "Aksi",
@@ -333,7 +353,10 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
                       </button>
                     )
                   ) : r.isFgConfirmed && r.openRollCount > 0 ? (
-                    <span className="max-w-[210px] text-right font-sans text-[10.5px] leading-[1.4] text-text-muted">Masih {r.openRollCount} roll belum selesai — selesaikan di tab Finish Good</span>
+                    <span className="max-w-[210px] text-right font-sans text-[10.5px] leading-[1.4] text-text-muted">
+                      <span className="max-md:hidden">Masih {r.openRollCount} roll belum selesai — selesaikan di tab Finish Good</span>
+                      <span className="md:hidden">{r.openRollCount} roll belum selesai</span>
+                    </span>
                   ) : r.isFgConfirmed ? (
                     <button
                       onClick={() => finalize(r)}
@@ -343,7 +366,10 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
                       {r.openClaims.length > 0 ? `Selesai Produksi ⚠ ${r.openClaims.length} klaim aktif` : "Selesai Produksi"}
                     </button>
                   ) : (
-                    <span className="max-w-[210px] text-right font-sans text-[10.5px] leading-[1.4] text-text-muted">Selesaikan dulu Finish Good (tab Finish Good)</span>
+                    <span className="max-w-[210px] text-right font-sans text-[10.5px] leading-[1.4] text-text-muted">
+                      <span className="max-md:hidden">Selesaikan dulu Finish Good (tab Finish Good)</span>
+                      <span className="md:hidden">Isi Finish Good dulu</span>
+                    </span>
                   )}
                 </span>
               ),
@@ -351,15 +377,18 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
           ];
 
           return (
+            // HP: kartu ringkas (judul + status sebaris), rincian per size jadi pop-up -- lihat .vp-final-card di globals.css.
+            <div className="vp-final-page">
             <DataTable
               title={`Final Produksi — ${selectedMrpId}`}
               columns={columns}
               rows={rows}
               keyOf={(r) => r.key}
               mobileCards
+              rowClassName={() => "m-grid2 vp-card vp-pop vp-pop-tap vp-final-card"}
               firstColumnLabel="Warna / Lengan"
               firstColumnRender={(r) => (
-                <span className="font-medium">
+                <span className="font-medium max-md:font-semibold">
                   {r.warna} <span className="font-normal text-text-muted">· {r.lengan}</span>
                 </span>
               )}
@@ -371,7 +400,19 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
               emptyText={groups.length === 0 ? "Belum ada warna pada rencana MRP ini." : "Tidak ada warna yang cocok dengan filter."}
               renderExpanded={(r) => (
                 <div className="overflow-x-auto">
-                  <div className="m-fluid min-w-[760px] overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
+                  <div className="mb-3 md:hidden">
+                    <div className="font-sans text-[17px] font-bold text-text-primary">
+                      {r.warna} · {r.lengan}
+                    </div>
+                    <div className="mt-0.5 font-sans text-[12px] text-text-muted">
+                      Rincian per size ·{" "}
+                      <b className="text-text-primary">
+                        {productionBatches.filter((b2) => b2.mrpId === selectedMrpId && b2.vendorProduksi === vendorId && b2.warna === r.warna && b2.lengan === r.lengan && !!b2.cuttingAt).length} roll
+                      </b>{" "}
+                      dicutting ({r.totalTarget} pcs)
+                    </div>
+                  </div>
+                  <div className="m-fluid min-w-[760px] overflow-hidden rounded-md border border-[#CFE0EF] bg-white max-md:rounded-xl max-md:border-[#EDE8E2]">
                     <div className="m-hide grid grid-cols-7 gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                       <span>Size</span>
                       <span className="text-right">FG Target</span>
@@ -387,8 +428,11 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
                       const f = r.fgRecorded[size] ?? 0;
                       const sel = f - t;
                       return (
-                        <div key={size} className="m-stack m-grid2 grid grid-cols-7 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] max-md:py-2.5">
-                          <span className="font-mono font-medium max-md:text-[13px]">Size {size}</span>
+                        <div key={size} className="vp-final-size m-stack m-grid2 grid grid-cols-7 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] max-md:py-2.5">
+                          <span className="font-mono font-medium max-md:text-[13px]">
+                            <span className="max-md:hidden">Size </span>
+                            {size}
+                          </span>
                           <span data-label="FG target" className="text-right font-mono">{t}</span>
                           <span data-label="FG terinput" className="text-right font-mono text-text-muted">{f}</span>
                           <span data-label="FG dari rework" className="text-right font-mono text-success-fg">{r.fgFromReworkPerSize[size] ?? 0}</span>
@@ -405,6 +449,7 @@ export function ProductionFinalTab({ vendorId }: { vendorId: string }) {
                 </div>
               )}
             />
+            </div>
           );
         })()}
     </>

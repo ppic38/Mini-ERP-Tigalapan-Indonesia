@@ -162,38 +162,44 @@ function InvoiceListExpanded({ vendorId, group }: { vendorId: string; group: Row
     <div className="flex flex-col gap-2.5">
       {group.pos.map((po) =>
         po.invoices.length === 0 ? (
-          <div key={po.poId} className="rounded-md border border-[#E4E8EE] bg-white px-3 py-2 font-sans text-[11.5px] text-text-muted">
-            <span className="font-mono font-medium text-text-primary">{po.poId}</span> — {po.waitingRoll} roll masih menunggu diinvoice supplier.
+          <div key={po.poId} className="rounded-md border border-[#E4E8EE] bg-white px-3 py-2 font-sans text-[11.5px] text-text-muted max-md:rounded-xl max-md:py-3 max-md:text-[13px]">
+            <span className="font-mono font-medium text-text-primary max-md:hidden">{po.poId}</span>
+            <span className="max-md:hidden"> — </span>
+            {po.waitingRoll} roll masih menunggu diinvoice supplier.
           </div>
         ) : (
           po.invoices.map((inv) => {
             const isOpen = openInvoiceId === inv.invoiceId;
             return (
-              <div key={inv.invoiceId} className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
+              <div key={inv.invoiceId} className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white max-md:rounded-xl max-md:border-[#EDE8E2]">
                 <button
                   type="button"
                   onClick={() => setOpenInvoiceId(isOpen ? null : inv.invoiceId)}
-                  className="flex w-full flex-wrap items-center gap-2 bg-[#F2F4F7] px-3 py-1.5 text-left font-sans text-[11px] font-medium text-text-primary"
+                  className="flex w-full flex-wrap items-center gap-2 bg-[#F2F4F7] px-3 py-1.5 text-left font-sans text-[11px] font-medium text-text-primary max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-3 max-md:gap-y-1.5 max-md:bg-[#F7F5F2] max-md:py-3 max-md:text-[13px]"
                 >
-                  {isOpen ? <ChevronDown className="h-3.5 w-3.5 flex-none text-text-muted" /> : <ChevronRight className="h-3.5 w-3.5 flex-none text-text-muted" />}
+                  {/* HP: tanpa drill-down (chevron & rincian disembunyikan). Baris atas: No. invoice + roll; baris bawah: status. */}
+                  {isOpen ? <ChevronDown className="h-3.5 w-3.5 flex-none text-text-muted max-md:hidden" /> : <ChevronRight className="h-3.5 w-3.5 flex-none text-text-muted max-md:hidden" />}
                   {/* Nomor internal sistem (INV-K...) sengaja tidak ditampilkan: tidak dipakai Procurement/Finance maupun vendor.
                       Yang dikenali semua pihak: nomor PO dan nomor invoice supplier di bawah. */}
-                  <span className="font-mono">{po.poId}</span>
+                  <span className={"font-mono " + (inv.noInvoiceVendor ? "max-md:hidden" : "max-md:col-start-1 max-md:row-start-1")}>{po.poId}</span>
                   {inv.noInvoiceVendor && (
-                    <span className="text-text-muted">
-                      No. Invoice: <span className="font-mono font-medium text-text-primary">{inv.noInvoiceVendor}</span>
+                    <span className="text-text-muted max-md:col-start-1 max-md:row-start-1">
+                      <span className="max-md:hidden">No. Invoice: </span>
+                      <span className="font-mono font-medium text-text-primary">{inv.noInvoiceVendor}</span>
                     </span>
                   )}
                   {inv.status === "WAITING_INVOICE" ? (
-                    <StatusPill tone="warning">WAITING INVOICE</StatusPill>
+                    <StatusPill tone="warning" className="max-md:col-start-1 max-md:row-start-2 max-md:justify-self-start">WAITING INVOICE</StatusPill>
                   ) : (
-                    <StatusPill tone={materialStatusBadge(inv.status).tone}>{materialStatusBadge(inv.status).label}</StatusPill>
+                    <StatusPill tone={materialStatusBadge(inv.status).tone} className="max-md:col-start-1 max-md:row-start-2 max-md:justify-self-start">{materialStatusBadge(inv.status).label}</StatusPill>
                   )}
-                  <span className="text-text-muted">{REMARK_BY_STATUS[inv.status] ?? "—"}</span>
-                  <span className="ml-auto font-mono text-text-muted">{inv.roll} roll</span>
+                  <span className="text-text-muted max-md:hidden">{REMARK_BY_STATUS[inv.status] ?? "—"}</span>
+                  <span className="ml-auto font-mono text-text-muted max-md:col-start-2 max-md:row-start-1">{inv.roll} roll</span>
+                  {/* HP saja: tanggal delivery (di desktop ada di rincian invoice). */}
+                  <span className="text-right font-sans text-[12px] text-text-muted md:hidden max-md:col-start-2 max-md:row-start-2">Delivery {formatDate(inv.deliveredAt)}</span>
                 </button>
                 {isOpen && (
-                  <div className="border-t border-[#F1F4F7] px-3 py-2">
+                  <div className="border-t border-[#F1F4F7] px-3 py-2 max-md:hidden">
                     <InvoiceCard vendorId={vendorId} inv={inv} />
                   </div>
                 )}
@@ -322,9 +328,11 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
       roleOverride={VENDOR_PRODUKSI[vendorId]?.name ?? vendorId}
       entityOverride="Vendor Produksi"
     >
+      <div className="vp-mat-page">
       <DataTable
         title="PO material tujuan saya"
         mobileCards
+        rowClassName={() => "m-grid2 vp-card vp-pop vp-pop-tap vp-mat-card"}
         columns={columns}
         rows={rows}
         keyOf={(r) => r.mrpId}
@@ -337,8 +345,18 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
           { label: "Status", options: Array.from(new Set(rows.map((r) => materialStatusBadge(r.status).label))), test: (r, v) => materialStatusBadge(r.status).label === v },
         ]}
         emptyText="Belum ada PO material yang disetujui Finance untuk vendor Anda."
-        renderExpanded={(r) => <InvoiceListExpanded vendorId={vendorId} group={r} />}
+        renderExpanded={(r) => (
+          <>
+            {/* HP saja: judul pop-up rincian (lihat .vp-pop di globals.css). */}
+            <div className="mb-3 md:hidden">
+              <div className="font-mono text-[17px] font-bold text-text-primary">{r.mrpId}</div>
+              <div className="mt-0.5 font-sans text-[12px] text-text-muted">Rincian invoice material</div>
+            </div>
+            <InvoiceListExpanded vendorId={vendorId} group={r} />
+          </>
+        )}
       />
+      </div>
     </AppShell>
   );
 }

@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/shell/sidebar";
 import { Topbar } from "@/components/shell/topbar";
+import { VendorBottomNav, VendorPoSwitch } from "@/components/shell/vendor-bottom-nav";
 import { NAV, PROFILE_HREF, SYSADMIN_GROUP_ORDER, sysadminNavGroups } from "@/lib/shell/nav";
 import { SysadminVendorSwitcher } from "@/components/sysadmin/vendor-switcher";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -314,9 +315,11 @@ export function AppShell({
         : (roleOverride ?? nav.role);
   // Logout/profil milik shell internal (bukan shell vendor) -- termasuk Sysadmin yang sedang di halaman vendor.
   const internalShell = isGated || sysadminMode;
+  // Tampilan HP portal Vendor Produksi (tema oranye minimalis + bar menu bawah, lihat .vp-mobile di globals.css).
+  const vendorShell = role === "vendorMaklon" && !sysadminMode;
 
   return (
-    <div className="flex min-h-screen bg-surface-page">
+    <div className={"flex min-h-screen bg-surface-page" + (vendorShell ? " vp-mobile" : "")}>
       {/* < lg: sidebar jadi laci; latar gelap menutupnya saat disentuh. */}
       {navOpen && <div className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={() => setNavOpen(false)} aria-hidden />}
       <Sidebar
@@ -336,6 +339,7 @@ export function AppShell({
             : undefined
         }
       />
+      {vendorShell && <VendorBottomNav items={sidebarItems} activeHref={activeHref} badgeOverrides={badgeOverrides} />}
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar
           onOpenMenu={() => setNavOpen(true)}
@@ -386,7 +390,7 @@ export function AppShell({
             <SysadminVendorSwitcher />
           </div>
         )}
-        <div className="flex flex-wrap items-center gap-x-2 px-4 pt-3.5 font-sans text-xs text-[#94A3B0] sm:px-[22px]">
+        <div className={"flex flex-wrap items-center gap-x-2 px-4 pt-3.5 font-sans text-xs text-[#94A3B0] sm:px-[22px]" + (vendorShell ? " max-md:hidden" : "")}>
           {breadcrumb.map((crumb, i) => (
             <span key={i} className={i === breadcrumb.length - 1 ? "font-medium text-[#31414F]" : undefined}>
               {crumb}
@@ -394,14 +398,15 @@ export function AppShell({
             </span>
           ))}
         </div>
-        <div className="flex flex-wrap items-end gap-x-3 gap-y-2 px-4 pb-0 pt-2 sm:px-[22px]">
+        <div className={"flex flex-wrap items-end gap-x-3 gap-y-2 px-4 pb-0 pt-2 sm:px-[22px]" + (vendorShell ? " vp-wrap max-md:pt-5" : "")}>
           <div className="min-w-0">
-            <div className="font-heading text-[20px] font-bold tracking-tight text-text-primary sm:text-[22px]">{title}</div>
+            <div className={"font-heading text-[20px] font-bold tracking-tight text-text-primary sm:text-[22px]" + (vendorShell ? " max-md:text-[24px]" : "")}>{title}</div>
             {subtitle && <div className="mt-0.5 font-sans text-xs text-text-muted">{subtitle}</div>}
           </div>
           {actions && <div className="flex flex-wrap gap-2 sm:ml-auto">{actions}</div>}
         </div>
-        <div className="flex min-w-0 flex-1 flex-col gap-3.5 px-4 py-4 sm:px-[22px]">
+        {vendorShell && <VendorPoSwitch items={sidebarItems} activeHref={activeHref} />}
+        <div className={"flex min-w-0 flex-1 flex-col gap-3.5 px-4 py-4 sm:px-[22px]" + (vendorShell ? " vp-wrap max-md:pb-28" : "")}>
           {hydrated ? (
             children
           ) : (

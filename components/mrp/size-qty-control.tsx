@@ -34,20 +34,21 @@ export function SizeQtyControl({
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="whitespace-nowrap font-sans text-[11px] font-semibold text-[#31414F]">{size}</span>
+        <span className="whitespace-nowrap font-sans text-[11px] font-semibold text-[#31414F] max-md:text-[13px]">{size}</span>
         <span className="whitespace-nowrap font-mono text-[10px] text-text-muted">
           {allowExceed ? "target" : "maks"} {max}
           {lo > 0 && <span className="ml-1 font-semibold text-info-fg">min {lo}</span>}
           {over > 0 && <span className="ml-1 font-semibold text-warning-fg">+{over}</span>}
         </span>
       </div>
-      <div className="flex items-stretch overflow-hidden rounded-md border border-[#DDE4EB] bg-white">
+      {/* HP: tombol lebih lebar dan tinggi supaya mudah ditekan jari. */}
+      <div className="flex items-stretch overflow-hidden rounded-md border border-[#DDE4EB] bg-white max-md:min-h-11 max-md:rounded-xl">
         <button
           type="button"
           onClick={() => onChange(clamp(value - 1))}
           disabled={value <= lo}
           aria-label={`Kurangi ${size}`}
-          className="w-7 flex-none border-r border-[#DDE4EB] text-[9px] text-text-muted hover:bg-[#F2F4F7] disabled:cursor-not-allowed disabled:opacity-40"
+          className="w-7 flex-none border-r border-[#DDE4EB] text-[9px] text-text-muted hover:bg-[#F2F4F7] disabled:cursor-not-allowed disabled:opacity-40 max-md:w-8 max-md:text-[11px]"
         >
           ▼
         </button>
@@ -66,7 +67,7 @@ export function SizeQtyControl({
           onClick={() => onChange(clamp(value + 1))}
           disabled={!allowExceed && value >= max}
           aria-label={`Tambah ${size}`}
-          className="w-7 flex-none border-l border-[#DDE4EB] text-[9px] text-text-muted hover:bg-[#F2F4F7] disabled:cursor-not-allowed disabled:opacity-40"
+          className="w-7 flex-none border-l border-[#DDE4EB] text-[9px] text-text-muted hover:bg-[#F2F4F7] disabled:cursor-not-allowed disabled:opacity-40 max-md:w-8 max-md:text-[11px]"
         >
           ▲
         </button>
@@ -74,7 +75,7 @@ export function SizeQtyControl({
           type="button"
           onClick={() => onChange(max)}
           disabled={max <= 0 || value === max}
-          className="flex-none border-l border-[#DDE4EB] bg-info-bg px-2 font-sans text-[10.5px] font-semibold text-info-fg hover:bg-[#DCEBF8] disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex-none border-l border-[#DDE4EB] bg-info-bg px-2 font-sans text-[10.5px] font-semibold text-info-fg hover:bg-[#DCEBF8] disabled:cursor-not-allowed disabled:opacity-40 max-md:px-1.5 max-md:text-[11px]"
         >
           Maks
         </button>

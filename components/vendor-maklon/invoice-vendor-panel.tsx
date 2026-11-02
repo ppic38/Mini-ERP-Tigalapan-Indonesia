@@ -131,29 +131,42 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
         <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
           <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">
             Siap diajukan invoice ({readyGroups.length} resi)
+            <div className="mt-0.5 font-sans text-[11.5px] font-normal text-text-muted md:hidden">Ketuk resi untuk mengajukan invoice.</div>
           </div>
-          <div className="flex flex-col gap-3 px-4 py-3">
+          <div className="vp-ready-list flex flex-col gap-3 px-4 py-3">
             {readyGroups.map(([groupKey, kolis]) => {
               const first = kolis[0];
               const totalWeight = kolis.reduce((s, k) => s + (k.beratKoli ?? 0), 0);
               const koliIds = kolis.map((k) => k.id);
               return (
-                <div key={groupKey} className="overflow-hidden rounded-md border border-border-subtle bg-white">
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-2 font-sans text-[11.5px] text-[#31414F]">
-                    <span className="font-mono font-semibold">{first.noResi || "—"}</span>
+                <div key={groupKey} className="vp-ready-card overflow-hidden rounded-md border border-border-subtle bg-white">
+                  {/* HP: satu baris ringkas per resi (No resi + tanggal, lalu ekspedisi · berat · koli · pcs). Seluruh baris
+                      adalah tombol Submit Invoice (tombolnya dibentangkan tak terlihat); daftar koli tidak tampil. */}
+                  <div className="vp-resi-head vp-ready-head flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-2 font-sans text-[11.5px] text-[#31414F]">
+                    <span className="vp-resi-no font-mono font-semibold">{first.noResi || "—"}</span>
                     <span>
-                      Ekspedisi: <span className="font-medium">{first.ekspedisi}</span>
+                      <span className="max-md:hidden">Ekspedisi: </span>
+                      <span className="font-medium">{first.ekspedisi}</span>
                     </span>
                     <span>
-                      Total berat: <span className="font-mono">{formatDecimal(totalWeight)} kg</span>
+                      <span className="max-md:hidden">Total berat: </span>
+                      <span className="font-mono">{formatDecimal(totalWeight)} kg</span>
                     </span>
-                    <span className="font-mono text-[11px] text-text-muted">{formatDate(first.deliveredAt)}</span>
+                    <span className="md:hidden">{kolis.length} koli</span>
+                    <span className="md:hidden">
+                      {formatPcs(kolis.reduce((sum, k) => sum + k.items.filter(isBillableKoliItem).reduce((a, it) => a + it.qty, 0), 0))} pcs
+                    </span>
+                    <span className="vp-ready-chev md:hidden" aria-hidden="true">
+                      ›
+                    </span>
+                    <span className="vp-resi-status font-mono text-[11px] text-text-muted">{formatDate(first.deliveredAt)}</span>
                     {first.ekspedisiNoteAt && (
-                      <button onClick={() => viewEkspedisiPhoto(first.id)} className="font-semibold text-action-primary underline">
-                        Lihat / Download foto
+                      <button onClick={() => viewEkspedisiPhoto(first.id)} className="vp-ready-foto font-semibold text-action-primary underline">
+                        <span className="max-md:hidden">Lihat / Download foto</span>
+                        <span className="md:hidden">Lihat foto</span>
                       </button>
                     )}
-                    <Button onClick={() => openInvoiceDialog(koliIds)} variant="primary" size="xs" className="ml-auto">
+                    <Button onClick={() => openInvoiceDialog(koliIds)} variant="primary" size="xs" className="vp-ready-submit ml-auto">
                       Submit Invoice →
                     </Button>
                   </div>
@@ -168,9 +181,12 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                     const isExpanded = expandedKoli.has(k.id);
                     return (
                       <Fragment key={k.id}>
-                        <div className="m-wrap grid grid-cols-4 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5">
-                          <span className="font-mono">{k.mrpId}</span>
-                          <span className="font-mono font-medium">{k.noKoli}</span>
+                        <div className="vp-koli vp-koli-hist m-wrap grid grid-cols-4 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5">
+                          <span className="vp-koli-mrp font-mono">{k.mrpId}</span>
+                          <span className="vp-koli-no font-mono font-medium">
+                            <span className="md:hidden">Koli </span>
+                            {k.noKoli}
+                          </span>
                           <button
                             onClick={() => toggleKoliExpanded(k.id)}
                             className="flex items-center gap-1 text-left font-sans text-xs text-[#31414F] hover:text-action-primary max-md:order-last max-md:basis-full"
@@ -236,7 +252,11 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                         setExpandedInvoiceId(invExpanded ? "" : inv.id);
                       }
                     }}
-                    className="m-stack m-grid2 grid w-full cursor-pointer items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] text-left font-sans text-xs text-[#31414F] hover:bg-[#F7F9FB] max-md:py-3"
+                    className={
+                      "vp-inv-card m-stack m-grid2 grid w-full cursor-pointer items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] text-left font-sans text-xs text-[#31414F] hover:bg-[#F7F9FB] max-md:py-3" +
+                      (inv.status === "PAID" ? " vp-inv-paid" : "") +
+                      (inv.buktiBayarAt || inv.status === "PAID" ? "" : " vp-inv-nobukti")
+                    }
                     style={{ gridTemplateColumns: "110px 1fr 90px 110px 90px 120px 160px 130px 140px" }}
                   >
                     <span className="font-mono font-medium max-md:text-[13px]">{inv.id}</span>
@@ -264,8 +284,51 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                     </span>
                   </div>
                   {invExpanded && (
-                    <div className="border-b border-[#F1F4F7] bg-[#FAFBFC] px-6 py-3 max-md:px-3">
-                      <div className="mb-3 grid grid-cols-4 gap-3 rounded-md max-md:grid-cols-2 border border-[#E4E9EE] bg-white p-3">
+                    <button type="button" aria-label="Tutup detail invoice" onClick={() => setExpandedInvoiceId("")} className="vp-inv-backdrop md:hidden" />
+                  )}
+                  {invExpanded && (
+                    <div
+                      className="vp-inv-sheet border-b border-[#F1F4F7] bg-[#FAFBFC] px-6 py-3 max-md:px-3"
+                      onClick={(e) => {
+                        // HP: popup tertutup saat diketuk di mana saja kecuali tombol (baris warna ›).
+                        if (window.matchMedia("(width < 64rem)").matches && !(e.target as HTMLElement).closest("button")) setExpandedInvoiceId("");
+                      }}
+                    >
+                      <div className="vp-inv-sheet-head md:hidden">
+                        <span className="font-mono font-semibold">{inv.id}</span>
+                        <StatusPill tone={vendorInvoiceBadge(inv.status).tone}>{vendorInvoiceBadge(inv.status).label}</StatusPill>
+                      </div>
+                      {/* HP: satu kotak ringkas -- Tagihan akhir sebaris dengan nilainya, denda/reward di bawahnya, lalu jatuh tempo · yield. */}
+                      <div className="vp-inv-sum md:hidden">
+                        <div className="vp-inv-sum-row">
+                          <span className="vp-inv-sum-label">Tagihan akhir</span>
+                          <span className="vp-inv-sum-total">{formatRupiah(finalAmount)}</span>
+                        </div>
+                        {inv.adjustments
+                          ?.filter((a) => a.kind !== "TIDAK_ADA")
+                          .map((a) => (
+                            <div key={a.id} className="vp-inv-sum-adj">
+                              <span className="min-w-0 truncate">
+                                <span className={a.kind === "DENDA" ? "text-danger-fg" : "text-success-fg"}>{a.kind === "DENDA" ? "Denda" : "Reward"}</span> · {a.label}
+                              </span>
+                              <span className={a.kind === "DENDA" ? "text-danger-fg" : "text-success-fg"}>
+                                {a.kind === "DENDA" ? "−" : "+"}
+                                {formatRupiah(a.amount)}
+                              </span>
+                            </div>
+                          ))}
+                        <div className="vp-inv-sum-meta">
+                          <span>Jatuh tempo {inv.dueDate ? formatDate(inv.dueDate) : "—"}</span>
+                          <span>Yield {yieldSummary.yieldPct.toFixed(1)}%</span>
+                          {prodStatus && (
+                            <StatusPill tone={prodStatus.label === "DELAY" ? "danger" : prodStatus.label === "ONTIME" ? "success" : "info"}>
+                              {prodStatus.label}
+                              {prodStatus.days > 0 ? ` ${prodStatus.days}H` : ""}
+                            </StatusPill>
+                          )}
+                        </div>
+                      </div>
+                      <div className="mb-3 grid grid-cols-4 gap-3 rounded-md max-md:hidden border border-[#E4E9EE] bg-white p-3">
                         <div>
                           <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Total tagihan</div>
                           <div className="mt-0.5 font-mono text-[12.5px] font-semibold text-[#31414F]">{formatRupiah(inv.totalTagihan)}</div>
@@ -293,8 +356,11 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                         </div>
                       </div>
                       {(inv.adjustments?.length ?? 0) > 0 && (
-                    <div className="mb-3 rounded-md border border-[#E4E9EE] bg-white p-3">
-                      <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Penyesuaian dari Procurement</div>
+                    <div className="vp-inv-adj mb-3 rounded-md border border-[#E4E9EE] bg-white p-3 max-md:hidden">
+                      <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">
+                        <span className="max-md:hidden">Penyesuaian dari Procurement</span>
+                        <span className="md:hidden">Penyesuaian</span>
+                      </div>
                       {inv.adjustments.map((a) => (
                         <div key={a.id} className="mt-1.5 flex items-center justify-between font-sans text-[11.5px] text-[#31414F]">
                           <span>
@@ -309,17 +375,20 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                           </span>
                         </div>
                       ))}
-                      <div className="mt-2 flex items-center justify-between border-t border-[#F1F4F7] pt-2 font-sans text-[11.5px] font-semibold text-[#31414F]">
+                      <div className="mt-2 flex items-center justify-between border-t border-[#F1F4F7] pt-2 font-sans text-[11.5px] font-semibold text-[#31414F] max-md:hidden">
                         <span>Total tagihan akhir</span>
                         <span className="font-mono">{formatRupiah(finalAmount)}</span>
                       </div>
-                      <div className="mt-0.5 font-sans text-[10px] text-text-muted">
+                      <div className="mt-0.5 font-sans text-[10px] text-text-muted max-md:hidden">
                         Net tagihan {formatRupiah(inv.netTagihan)} {denda > 0 && `− denda ${formatRupiah(denda)} `}
                         {reward > 0 && `+ reward ${formatRupiah(reward)}`}
                       </div>
                     </div>
                   )}
-                  <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Lampiran — detail per MRP</div>
+                  <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">
+                    <span className="max-md:hidden">Lampiran — detail per MRP</span>
+                    <span className="md:hidden">Rincian per warna</span>
+                  </div>
                   <div className="m-hide mt-2 grid grid-cols-3 gap-2 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
                     <span>MRP</span>
                     <span className="text-right">Qty diinvoice</span>
@@ -328,6 +397,10 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                   {inv.lines.map((line) => {
                     const mrpKey = inv.id + "|" + line.mrpId + "|" + line.warna + "|" + line.lengan + "|" + (line.usia ?? "");
                     const mrpExpanded = expandedMrpKey === mrpKey;
+                    // HP: ringkasan yield warna·lengan ini ditampilkan langsung di barisnya (fungsi yang sama dengan rincian desktop).
+                    const lineYield = productionYieldByWarna(line.mrpId, vendorId, mrpDetails, productionBatches, productionResults).find(
+                      (r) => r.warna === line.warna && r.lengan === line.lengan,
+                    );
                     return (
                       <div key={mrpKey}>
                         <button
@@ -335,16 +408,56 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                             setExpandedMrpKey(mrpExpanded ? "" : mrpKey);
                             setExpandedWarnaKey("");
                           }}
-                          className="m-stack m-grid2 grid w-full grid-cols-3 items-center gap-2 border-t border-[#F1F4F7] py-1.5 text-left font-mono text-[11.5px] text-action-primary max-md:py-2.5"
+                          className={
+                            "vp-inv-line m-stack m-grid2 grid w-full grid-cols-3 items-center gap-2 border-t border-[#F1F4F7] py-1.5 text-left font-mono text-[11.5px] text-action-primary max-md:py-2.5" +
+                            (mrpExpanded ? " is-open" : "") +
+                            (new Set(inv.lines.map((l) => l.mrpId)).size > 1 ? " vp-inv-multi" : "")
+                          }
                         >
                           <span>
-                            {line.mrpId} <span className="text-[#94A3B0]">({line.warna} · {line.lengan}{line.usia ? " · " + line.usia : ""})</span>
+                            <span className="vp-inv-line-mrp">{line.mrpId}</span>{" "}
+                            <span className="vp-inv-line-wl text-[#94A3B0]">
+                              <span className="max-md:hidden">(</span>
+                              {line.warna} · {line.lengan}
+                              {line.usia ? " · " + line.usia : ""}
+                              <span className="max-md:hidden">)</span>
+                            </span>
                           </span>
                           <span data-label="Qty diinvoice" className="text-right">{formatPcs(line.qty)}</span>
                           <span data-label="Nilai" className="text-right">{formatRupiah(line.amount)}</span>
+                          {lineYield && (
+                            <span className="vp-inv-line-yield md:hidden">
+                              Yield <b>{lineYield.yieldPct.toFixed(1)}%</b> · RJ <b className="text-danger-fg">{lineYield.reject}</b> · RW{" "}
+                              <b className="text-rework-fg">{lineYield.rework}</b>
+                            </span>
+                          )}
                         </button>
+                        {mrpExpanded && lineYield && (
+                          <div className="vp-inv-sizes md:hidden">
+                            <div className="vp-inv-size-head">
+                              <span>Size</span>
+                              <span>PO</span>
+                              <span>Cut</span>
+                              <span>FG</span>
+                              <span>RJ</span>
+                              <span>RW</span>
+                              <span>Yield</span>
+                            </div>
+                            {productionYieldBySize(line.mrpId, line.warna, line.lengan, mrpDetails, productionBatches, productionResults).map((s) => (
+                              <div key={s.size} className="vp-inv-size m-stack m-grid2 grid items-center font-mono text-[11px] text-[#31414F]">
+                                <span className="font-semibold">{s.size}</span>
+                                <span data-label="Qty PO">{s.target}</span>
+                                <span data-label="Hasil cutting">{s.cutting}</span>
+                                <span data-label="Finish good">{s.finishGood}</span>
+                                <span data-label="Reject" className="text-danger-fg">{s.reject}</span>
+                                <span data-label="Rework" className="text-rework-fg">{s.rework}</span>
+                                <span data-label="Yield">{s.yieldPct.toFixed(1)}%</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         {mrpExpanded && (
-                          <div className="ml-3 border-l border-[#DDE4EB] py-1.5 pl-3">
+                          <div className="vp-inv-warna-wrap ml-3 border-l border-[#DDE4EB] py-1.5 pl-3">
                             {/* Item 18.5: "Qty PO/cutting" dipecah jadi 2 kolom terpisah -- "Qty PO"
                                 (rencana MRP, targetSizesForGroup) vs "Hasil Cutting" (aktual,
                                 cuttingSizesForGroup) -- dulu disamakan/di-label seolah 1 angka yang
@@ -433,9 +546,18 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
           kapasitas kumulatif vendor. */}
       {invoiceDialogKoliIds && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0B131B]/45 p-4">
-          <div className="max-h-[92vh] w-full max-w-[720px] overflow-y-auto rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]">
+          <div className="vp-sub-dialog max-h-[92vh] w-full max-w-[720px] overflow-y-auto rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)] max-md:rounded-2xl">
             <div className="border-b border-border-subtle px-5 py-3.5">
-              <span className="font-sans text-[13px] font-semibold text-text-primary">Submit Invoice — {invoiceDialogKoliIds.length} koli</span>
+              <span className="font-sans text-[13px] font-semibold text-text-primary max-md:hidden">Submit Invoice — {invoiceDialogKoliIds.length} koli</span>
+              {/* HP: popup dibuka dari baris resi, jadi No resi ditampilkan supaya jelas resi mana yang diajukan. */}
+              <div className="md:hidden">
+                <div className="font-sans text-[15px] font-semibold text-text-primary">Submit Invoice</div>
+                <div className="mt-0.5 font-sans text-[12px] text-text-muted">
+                  <span className="font-mono font-semibold text-text-primary">{deliveryKolis.find((k) => k.id === invoiceDialogKoliIds[0])?.noResi || "—"}</span>
+                  {" · "}
+                  {invoiceDialogKoliIds.length} koli
+                </div>
+              </div>
             </div>
             <div className="px-5 py-4">
               <div className="overflow-hidden rounded-md border border-[#E4E9EE]">
@@ -448,7 +570,7 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                   <span className="text-right">Nilai</span>
                 </div>
                 {invoiceDialogLines.map((l) => (
-                  <div key={invoiceLineKeyLocal(l.mrpId, l.warna, l.lengan, l.usia)} className="m-stack m-grid2 grid grid-cols-[1fr_1.2fr_0.9fr_70px_100px_120px] items-center gap-x-2 border-t border-[#EEF1F4] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F] max-md:py-2.5">
+                  <div key={invoiceLineKeyLocal(l.mrpId, l.warna, l.lengan, l.usia)} className="vp-sub-line m-stack m-grid2 grid grid-cols-[1fr_1.2fr_0.9fr_70px_100px_120px] items-center gap-x-2 border-t border-[#EEF1F4] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F] max-md:py-2.5">
                     <span className="font-mono">{l.mrpId}</span>
                     <span data-label="Warna">
                       {l.warna}
@@ -469,10 +591,10 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
               {invoiceError && <div className="mt-2 font-sans text-[10.5px] text-danger-fg">{invoiceError}</div>}
             </div>
             <div className="flex justify-end gap-2 border-t border-border-subtle px-5 py-3.5">
-              <button onClick={closeInvoiceDialog} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary">
+              <button onClick={closeInvoiceDialog} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary max-md:min-h-11 max-md:rounded-full max-md:px-5 max-md:text-[13px]">
                 Batal
               </button>
-              <Button onClick={submitInvoiceConfirm} disabled={invoiceSubmitting} variant="primary" size="sm">
+              <Button onClick={submitInvoiceConfirm} disabled={invoiceSubmitting} variant="primary" size="sm" className="max-md:min-h-11 max-md:flex-1 max-md:rounded-full max-md:text-[13px]">
                 Submit Invoice
               </Button>
             </div>
