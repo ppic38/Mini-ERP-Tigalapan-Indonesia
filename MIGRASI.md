@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Kolom % HPP per MRP dan per vendor di Laporan HPP (2026-11-02, tanpa migration)
+Owner: tambahkan persentase HPP per vendor. Tabel Laporan HPP per MRP (Finance dan SCM, `components/mrp/laporan-hpp-view.tsx`) dapat kolom **% HPP** di baris MRP dan baris vendor: Total HPP / Total Harga Jual dengan rumus yang sama seperti kartu HPP (%) (`hppPercentOf`; item tanpa harga jual dikeluarkan dari dua sisi, tampil "—" kalau tidak ada harga jual sama sekali). Hanya tampilan. Temuan terkait: ongkir Rp 0 di HPP terjadi karena nama ekspedisi di koli lama (mis. "WUS CARGO") tidak lagi ada di Master Data Ekspedisi setelah diganti nama 2026-10-27; diperbaiki dengan SQL penyamaan nama di chat (owner menjalankan), bukan perubahan kode.
+
 ## Laporan HPP juga ada di modul SCM (2026-11-02, tanpa migration)
 Owner: halaman HPP di Finance dimasukkan juga ke modul SCM. Isi halaman dipindah ke komponen bersama `components/mrp/laporan-hpp-view.tsx` (`LaporanHppView role activeHref`); `/finance/laporan-hpp` dan halaman baru `/scm/laporan-hpp` (menu SCM "Laporan HPP", setelah Material per Warna) hanya pembungkus tipis. Data, perhitungan, filter, drill-down, dan unduhan 4 sheet sama persis dengan Finance (tampilan lihat saja, tanpa aksi tulis). Akses SCM lewat aturan prefix `/scm` di proxy.ts, tidak ada perubahan server.
 

@@ -258,6 +258,15 @@ function MrpHppDetailTable({ rows }: { rows: HppTableRow[] }) {
   );
 }
 
+/** % HPP = Total HPP / Total Harga Jual (rumus sama dengan kartu HPP (%) di atas): baris tanpa harga jual dikeluarkan dari dua sisi. null kalau tidak ada harga jual. */
+const pctLabel = (p: number | null) => (p == null ? "—" : p.toFixed(1) + "%");
+
+function hppPercentOf(rows: HppRow[]): number | null {
+  const priced = rows.filter((r) => r.sellingPricePerItem != null && r.sellingPricePerItem > 0);
+  const jual = priced.reduce((s, r) => s + (r.sellingPricePerItem as number) * r.fg, 0);
+  return jual > 0 ? (priced.reduce((s, r) => s + r.hppPerItem * r.fg, 0) / jual) * 100 : null;
+}
+
 /** Isi halaman Laporan HPP, dipakai Finance (/finance/laporan-hpp) dan SCM (/scm/laporan-hpp): data dan perhitungan sama, hanya shell/menu yang beda. */
 export function LaporanHppView({ role, activeHref }: { role: "finance" | "scm"; activeHref: string }) {
   const [mounted, setMounted] = useState(false);
@@ -498,6 +507,7 @@ export function LaporanHppView({ role, activeHref }: { role: "finance" | "scm"; 
                   <th className="px-3 py-[9px] text-right">Total Biaya Produksi</th>
                   <th className="px-3 py-[9px] text-right">Total COGS Bahan</th>
                   <th className="px-3 py-[9px] text-right">Total Ongkir</th>
+                  <th className="px-3 py-[9px] text-right">% HPP</th>
                   <th className="px-3 py-[9px] text-left">Laporan</th>
                 </tr>
               </thead>
@@ -525,6 +535,7 @@ export function LaporanHppView({ role, activeHref }: { role: "finance" | "scm"; 
                         <td className="px-3 py-[11px] text-right font-mono tabular-nums">{formatRupiah(m.totalBiayaProduksi)}</td>
                         <td className="px-3 py-[11px] text-right font-mono tabular-nums">{formatRupiah(m.totalCogsBahan)}</td>
                         <td className="px-3 py-[11px] text-right font-mono tabular-nums">{formatRupiah(m.totalOngkir)}</td>
+                        <td className="px-3 py-[11px] text-right font-mono tabular-nums">{pctLabel(hppPercentOf(m.itemRows))}</td>
                         <td className="px-3 py-[11px]">
                           <span onClick={(e) => e.stopPropagation()}>
                             <Button onClick={() => downloadMrpHpp(m)} variant="ghost" size="xs">
@@ -552,11 +563,12 @@ export function LaporanHppView({ role, activeHref }: { role: "finance" | "scm"; 
                                 <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatRupiah(v.totalBiayaProduksi)}</td>
                                 <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatRupiah(v.totalCogsBahan)}</td>
                                 <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatRupiah(v.totalOngkir)}</td>
+                                <td className="px-3 py-[10px] text-right font-mono tabular-nums">{pctLabel(hppPercentOf(v.itemRows))}</td>
                                 <td className="px-3 py-[10px]" />
                               </tr>
                               {vendorActive && (
                                 <tr>
-                                  <td colSpan={7} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-10">
+                                  <td colSpan={8} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-10">
                                     <MrpHppDetailTable rows={v.itemRows} />
                                   </td>
                                 </tr>
@@ -566,7 +578,7 @@ export function LaporanHppView({ role, activeHref }: { role: "finance" | "scm"; 
                         })}
                       {mrpActive && vendorsSorted.length === 0 && (
                         <tr>
-                          <td colSpan={7} className="border-b border-[#F1F4F7] bg-white px-5 py-4 pl-10 font-sans text-[11.5px] text-text-muted">
+                          <td colSpan={8} className="border-b border-[#F1F4F7] bg-white px-5 py-4 pl-10 font-sans text-[11.5px] text-text-muted">
                             Belum ada vendor untuk MRP ini.
                           </td>
                         </tr>
