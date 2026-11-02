@@ -202,6 +202,10 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   // Filter warna untuk tabel "qty per size" (kosong = semua warna). Hanya memfilter tampilan -- qty yang sudah
   // diisi di warna lain tetap ikut tersimpan.
   const [warnaFilter, setWarnaFilter] = useState("");
+  // HP (owner 2026-11-01): satu pilihan warna · lengan. Pilihan HP berlaku untuk MRP tempat ia dipilih saja, jadi
+  // ganti MRP = warna kosong lagi sampai dipilih. Lengan kosong = semua lengan (desktop tidak pernah mengisinya).
+  const [lenganFilter, setLenganFilter] = useState("");
+  const [mobilePickMrp, setMobilePickMrp] = useState("");
   // Filter "Riwayat pengiriman" (hanya tampilan): cari No Resi (mengandung teks) dan pilih Ekspedisi (kosong = semua).
   const [histResiFilter, setHistResiFilter] = useState("");
   const [histEkspedisiFilter, setHistEkspedisiFilter] = useState("");
@@ -287,7 +291,38 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
     .sort((a, b) => a.warna.localeCompare(b.warna) || (a.lengan === b.lengan ? 0 : a.lengan === "PENDEK" ? -1 : 1) || a.size.localeCompare(b.size));
   const warnaOptions = Array.from(new Set(rollSizeRows.map((r) => r.warna)));
   const activeWarnaFilter = warnaOptions.includes(warnaFilter) ? warnaFilter : "";
-  const visibleRollSizeRows = activeWarnaFilter ? rollSizeRows.filter((r) => r.warna === activeWarnaFilter) : rollSizeRows;
+  const lenganOptions = Array.from(new Set(rollSizeRows.filter((r) => r.warna === activeWarnaFilter).map((r) => r.lengan)));
+  // Satu-satunya lengan warna itu otomatis terpilih (hasil saringnya sama dengan saring warna saja).
+  const activeLenganFilter = lenganOptions.includes(lenganFilter as Lengan) ? lenganFilter : lenganOptions.length === 1 ? lenganOptions[0] : "";
+  const visibleRollSizeRows = activeWarnaFilter
+    ? rollSizeRows.filter((r) => r.warna === activeWarnaFilter && (!activeLenganFilter || r.lengan === activeLenganFilter))
+    : rollSizeRows;
+  // HP: satu pilihan gabungan "warna|lengan" (urutan sama dengan daftar size).
+  const warnaLenganOptions = Array.from(new Set(rollSizeRows.map((r) => `${r.warna}|${r.lengan}`)));
+  // HP: daftar qty baru tampil setelah warna · lengan dipilih untuk MRP ini.
+  const mobileWarna = mobilePickMrp === mrpId ? activeWarnaFilter : "";
+  const mobileReady = !!mobileWarna && !!activeLenganFilter;
+  const matchesMobilePick = (r: { warna: string; lengan: string }) => mobileReady && r.warna === mobileWarna && r.lengan === activeLenganFilter;
+  // HP: qty yang sudah diisi di koli ini per warna·lengan (Finish Good + Rework/Reject) -- satu koli bisa berisi beberapa
+  // warna, jadi ringkasan ini jadi pintu pindah antar warna (terutama saat Edit koli).
+  const draftByPick = new Map<string, number>();
+  for (const r of rollSizeRows) {
+    const q = rollQtyDraft[r.key] ?? 0;
+    if (q > 0) draftByPick.set(`${r.warna}|${r.lengan}`, (draftByPick.get(`${r.warna}|${r.lengan}`) ?? 0) + q);
+  }
+  for (const r of rows) {
+    const q = qtyDraft[r.key] ?? 0;
+    if (q > 0) draftByPick.set(`${r.warna}|${r.lengan}`, (draftByPick.get(`${r.warna}|${r.lengan}`) ?? 0) + q);
+  }
+  const draftTotal = Array.from(draftByPick.values()).reduce((a, b) => a + b, 0);
+  const currentPick = `${mobileWarna}|${activeLenganFilter}`;
+  const addablePicks = warnaLenganOptions.filter((o) => !draftByPick.has(o) && !(mobileReady && o === currentPick));
+  function pickMobile(value: string) {
+    const [w = "", l = ""] = value.split("|");
+    setWarnaFilter(w);
+    setLenganFilter(l);
+    setMobilePickMrp(mrpId);
+  }
 
   // Sumber Roll Finish Good: roll mana saja yang masih punya sisa untuk warna·lengan·size ini (code roll + sisa pcs).
   const rollSourcesBySize = new Map<string, { code: string; qty: number; open: boolean }[]>();
@@ -385,12 +420,36 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
     const lines = Array.from(merged.values()).map((m) => `${m.label}: ${m.qty} pieces`);
     const MAX_LINES = 12;
     const shown = lines.length > MAX_LINES ? [...lines.slice(0, MAX_LINES), `Serta ${lines.length - MAX_LINES} rincian lainnya`] : lines;
+    const longMessage =
+      `Koli ${k.noKoli} belum dikirim sehingga dapat dihapus.\n` +
+      `Apabila dihapus, seluruh isi koli ini, dengan total ${total} pieces, akan dikembalikan ke daftar item yang belum dikemas ` +
+      `(Finish Good, Rework, dan Reject) dan dapat dimasukkan kembali ke koli lain. Penghapusan ini tidak dapat dibatalkan.`;
+    // HP: peringatan singkat -- isi per warna·lengan dalam satu baris (size + qty); rincian panjang hanya di desktop.
+    const short = new Map<string, Map<string, number>>();
+    for (const it of k.items) {
+      const key = `${it.kind && it.kind !== "FG" ? kindLabel(it.kind) + " · " : ""}${it.warna} · ${it.lengan}`;
+      const size = `${it.size}${it.usia ? " " + USIA_LABEL[it.usia] : ""}`;
+      const sizes = short.get(key) ?? new Map<string, number>();
+      sizes.set(size, (sizes.get(size) ?? 0) + it.qty);
+      short.set(key, sizes);
+    }
     const ok = await confirmDialog({
       title: `Hapus koli ${k.noKoli}?`,
-      message:
-        `Koli ${k.noKoli} belum dikirim sehingga dapat dihapus.\n` +
-        `Apabila dihapus, seluruh isi koli ini, dengan total ${total} pieces, akan dikembalikan ke daftar item yang belum dikemas ` +
-        `(Finish Good, Rework, dan Reject) dan dapat dimasukkan kembali ke koli lain. Penghapusan ini tidak dapat dibatalkan.`,
+      message: (
+        <>
+          <span className="max-md:hidden">{longMessage}</span>
+          <span className="vp-del-short md:hidden">
+            <b>{total} pcs</b> kembali ke daftar belum dikemas. Tidak bisa dibatalkan.
+            {Array.from(short.entries()).map(([key, sizes]) => (
+              <span key={key} className="vp-del-line">
+                <span>{key}</span>
+                <span>{Array.from(sizes.entries(), ([s, q]) => `${s} ${q}`).join(" · ")}</span>
+              </span>
+            ))}
+          </span>
+        </>
+      ),
+      messageText: longMessage,
       detailsTitle: "Rincian yang akan dikembalikan ke daftar:",
       details: shown,
       confirmLabel: "Ya, hapus koli",
@@ -619,7 +678,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
       roleOverride={VENDOR_PRODUKSI[vendorId]?.name ?? vendorId}
       entityOverride="Vendor Produksi"
     >
-      <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
+      <div id="vp-koli-form" className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5 max-md:scroll-mt-20">
         <div className="flex items-center gap-2">
           <div className="font-sans text-[13px] font-semibold text-text-primary">{editingKoliId ? `Edit koli — ${noKoli}` : "Buat koli baru"}</div>
           {editingKoliId && (
@@ -628,7 +687,8 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
             </Button>
           )}
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-3 max-md:grid-cols-1">
+        {/* HP: Pilih MRP & No koli berdampingan (No koli sempit). */}
+        <div className="mt-3 grid grid-cols-2 gap-3 max-md:grid-cols-[minmax(0,1fr)_92px] max-md:gap-2">
           <div>
             <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Pilih MRP</div>
             <select value={mrpId} onChange={(e) => pickMrp(e.target.value)} disabled={!!editingKoliId} className="input mt-1 disabled:bg-[#F7F9FB] disabled:text-text-muted">
@@ -674,18 +734,29 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
               <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Finish Good — qty per size</div>
               {rollSizeRows.length > 0 && (
                 <div className="flex items-center gap-2">
-                  <Button onClick={fillAllRolls} disabled={!noKoli.trim()} title={noKoli.trim() ? "Isi qty semua baris sesuai sisa bisa dikirim" : "Isi No koli dulu"} variant="muted" size="xs">
+                  <Button
+                    onClick={fillAllRolls}
+                    disabled={!noKoli.trim()}
+                    title={noKoli.trim() ? "Isi qty semua baris sesuai sisa bisa dikirim" : "Isi No koli dulu"}
+                    variant="muted"
+                    size="xs"
+                    // HP: tombol baru muncul setelah warna dipilih (supaya tidak mengisi warna lain yang tidak terlihat).
+                    className={"max-md:min-h-9 max-md:whitespace-nowrap max-md:rounded-full max-md:px-3.5 max-md:text-[12.5px]" + (mobileReady ? "" : " max-md:hidden")}
+                  >
                     Isi semua sisa
                   </Button>
-                  <ColumnMenu
-                    columns={[
-                      { key: "size", label: "Size" },
-                      { key: "sumber", label: "Sumber Roll" },
-                      { key: "sisa", label: "Sisa bisa dikirim" },
-                    ]}
-                    visible={fgCols}
-                    onToggle={toggleFgCol}
-                  />
+                  {/* HP: menu Kolom tidak ditampilkan (kartu HP sudah ringkas). */}
+                  <span className="max-md:hidden">
+                    <ColumnMenu
+                      columns={[
+                        { key: "size", label: "Size" },
+                        { key: "sumber", label: "Sumber Roll" },
+                        { key: "sisa", label: "Sisa bisa dikirim" },
+                      ]}
+                      visible={fgCols}
+                      onToggle={toggleFgCol}
+                    />
+                  </span>
                 </div>
               )}
             </div>
@@ -695,8 +766,66 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
             {rollSizeRows.length === 0 && (
               <div className="mt-2 font-sans text-xs text-text-muted">Belum ada Finish Good yang bisa dikirim untuk MRP ini. Isi Finish Good di tab Finish Good, lalu qty-nya langsung muncul di sini.</div>
             )}
+            {/* HP (owner 2026-11-01): satu warna·lengan sekali tampil -- pilih warna (hanya warna yang punya Finish Good) lalu
+                lengan, kemudian semua size warna·lengan itu + Rework/Reject yang sama. Memakai state filter warna desktop. */}
+            {warnaOptions.length > 0 && (
+              <div className="mt-2 md:hidden">
+                {draftTotal > 0 ? (
+                  // Koli sudah ada isinya (Edit atau koli baru yang sedang diisi): warna yang sudah diisi jadi tombol, warna
+                  // lain ditambah lewat "+ Tambah warna" (warna yang dibuka tapi belum diisi ikut tampil dengan qty 0).
+                  <div className="vp-koli-isi">
+                    <div className="vp-koli-isi-head">
+                      <span>{editingKoliId ? `Isi koli ${noKoli}` : "Isi koli ini"}</span>
+                      <b>{draftTotal} pcs</b>
+                    </div>
+                    <div className="vp-koli-isi-list">
+                      {[...draftByPick.keys(), ...(mobileReady && !draftByPick.has(currentPick) ? [currentPick] : [])].map((key) => {
+                        const canPick = warnaLenganOptions.includes(key);
+                        return (
+                          <button key={key} type="button" title={key.replace("|", " · ")} disabled={!canPick} onClick={() => pickMobile(key)} className={"vp-koli-isi-item" + (mobileReady && key === currentPick ? " is-on" : "")}>
+                            <span>{key.replace("|PENDEK", " · PDK").replace("|PANJANG", " · PJG").replace("|", " · ")}</span>
+                            <b>{draftByPick.get(key) ?? 0}</b>
+                          </button>
+                        );
+                      })}
+                      {addablePicks.length > 0 && (
+                        <span className="vp-koli-isi-add">
+                          + Tambah warna
+                          <select value="" onChange={(e) => e.target.value && pickMobile(e.target.value)} aria-label="Tambah warna dan lengan">
+                            <option value="">Tambah warna · lengan</option>
+                            {addablePicks.map((o) => (
+                              <option key={o} value={o}>
+                                {o.replace("|", " · ")}
+                              </option>
+                            ))}
+                          </select>
+                        </span>
+                      )}
+                    </div>
+                    {!mobileReady && <div className="mt-1.5 font-sans text-[11.5px] text-text-muted">Ketuk warna untuk melihat atau mengubah qty-nya.</div>}
+                  </div>
+                ) : (
+                  <>
+                    <select
+                      value={mobileReady ? currentPick : ""}
+                      onChange={(e) => pickMobile(e.target.value)}
+                      aria-label="Pilih warna dan lengan"
+                      className={"vp-pick-select " + (mobileReady ? "vp-pick-on" : "vp-pick-todo")}
+                    >
+                      <option value="">Pilih warna · lengan</option>
+                      {warnaLenganOptions.map((o) => (
+                        <option key={o} value={o}>
+                          {o.replace("|", " · ")}
+                        </option>
+                      ))}
+                    </select>
+                    {!mobileReady && <div className="mt-2 font-sans text-[12.5px] text-text-muted">Pilih warna · lengan dulu untuk mulai isi qty koli.</div>}
+                  </>
+                )}
+              </div>
+            )}
             {warnaOptions.length > 1 && (
-              <div className="mt-2 flex items-center gap-2">
+              <div className="mt-2 flex items-center gap-2 max-md:hidden">
                 <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Filter warna</span>
                 <select value={activeWarnaFilter} onChange={(e) => setWarnaFilter(e.target.value)} className="input w-[220px] max-md:min-w-0 max-md:flex-1">
                   <option value="">Semua warna</option>
@@ -719,7 +848,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                 ].filter((c) => c.always || fgCols.has(c.key));
                 const template = cols.map((c) => c.w).join(" ");
                 return (
-                  <div className="mt-2 overflow-hidden rounded-md border border-border-subtle bg-white">
+                  <div className={"mt-2 overflow-hidden rounded-md border border-border-subtle bg-white" + (mobileReady ? "" : " max-md:hidden")}>
                     <div className="m-hide grid gap-x-3 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted" style={{ gridTemplateColumns: template }}>
                       {cols.map((c) => (
                         <span key={c.key} className={c.align}>
@@ -730,7 +859,8 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     {visibleRollSizeRows.map((r) => {
                       const sources = rollSourcesBySize.get(r.key) ?? [];
                       return (
-                        <div key={r.key} className="m-stack m-grid2 grid items-center gap-x-3 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5" style={{ gridTemplateColumns: template }}>
+                        // HP: warna · lengan sudah dipilih di atas, jadi tidak ditulis lagi di daftar size.
+                        <div key={r.key} className="vp-kirim-row vp-kirim-fg m-stack m-grid2 grid items-center gap-x-3 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5" style={{ gridTemplateColumns: template }}>
                           {cols.map((c) => {
                             if (c.key === "warna")
                               return (
@@ -770,7 +900,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                 );
               })()}
             {rollRows.some((r) => !r.roll.closedAt) && (
-              <div className="mt-2 font-sans text-[11px] text-text-muted">
+              <div className="mt-2 font-sans text-[11px] text-text-muted max-md:hidden">
                 Roll berlabel <b className="text-warning-fg">terbuka</b>: Finish Good-nya masih bisa bertambah. Qty yang sudah masuk koli tidak bisa dikurangi lagi.
               </div>
             )}
@@ -778,20 +908,23 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
         )}
 
         {mrpId && anyAvailable && (
-          <div className="mt-4">
+          // HP: hanya tampil kalau warna·lengan sudah dipilih dan punya Rework/Reject (barisnya ikut warna·lengan terpilih).
+          <div className={"mt-4" + (rows.some(matchesMobilePick) ? "" : " max-md:hidden")}>
             <div className="flex items-center justify-between gap-2">
               <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Rework, Reject &amp; sisa FG lama</div>
-              <ColumnMenu
-                columns={[
-                  { key: "jenis", label: "Jenis produk" },
-                  { key: "lengan", label: "Lengan" },
-                  { key: "size", label: "Size / Usia" },
-                  { key: "sumber", label: "Sumber Roll" },
-                  { key: "sisa", label: "Sisa bisa dikirim" },
-                ]}
-                visible={rwCols}
-                onToggle={toggleRwCol}
-              />
+              <span className="max-md:hidden">
+                <ColumnMenu
+                  columns={[
+                    { key: "jenis", label: "Jenis produk" },
+                    { key: "lengan", label: "Lengan" },
+                    { key: "size", label: "Size / Usia" },
+                    { key: "sumber", label: "Sumber Roll" },
+                    { key: "sisa", label: "Sisa bisa dikirim" },
+                  ]}
+                  visible={rwCols}
+                  onToggle={toggleRwCol}
+                />
+              </span>
             </div>
             {anyAvailable &&
               (() => {
@@ -818,7 +951,14 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                       const qty = qtyDraft[r.key] ?? 0;
                       const sources = reworkSources(r);
                       return (
-                        <div key={r.key} className="m-stack m-grid2 grid items-center gap-x-3 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5" style={{ gridTemplateColumns: template }}>
+                        <div
+                          key={r.key}
+                          className={
+                            "vp-kirim-row vp-kirim-rw m-stack m-grid2 grid items-center gap-x-3 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5" +
+                            (matchesMobilePick(r) ? "" : " vp-hide-m")
+                          }
+                          style={{ gridTemplateColumns: template }}
+                        >
                           {cols.map((col) => {
                             if (col.key === "jenis") return <span key={col.key} data-label="Jenis">{kindLabel(r.kind)}</span>;
                             if (col.key === "warna") return <span key={col.key} className="max-md:col-span-full max-md:font-medium">{r.warna}</span>;
@@ -903,10 +1043,13 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                   const isExpanded = expandedKoli.has(k.id);
                   return (
                     <Fragment key={k.id}>
-                      <div className="m-wrap grid grid-cols-6 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5" style={sysadminMode ? { gridTemplateColumns: "repeat(6,minmax(0,1fr)) 130px" } : undefined}>
-                        <input type="checkbox" checked={selectedForEkspedisi.has(k.id)} onChange={() => toggleSelectedForEkspedisi(k.id)} disabled={k.id.startsWith("tmp-")} className="h-3.5 w-3.5 disabled:opacity-40" />
-                        <span className="font-mono">{k.mrpId}</span>
-                        <span className="font-mono font-medium">{k.noKoli}</span>
+                      <div className="vp-koli m-wrap grid grid-cols-6 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5" style={sysadminMode ? { gridTemplateColumns: "repeat(6,minmax(0,1fr)) 130px" } : undefined}>
+                        <input type="checkbox" checked={selectedForEkspedisi.has(k.id)} onChange={() => toggleSelectedForEkspedisi(k.id)} disabled={k.id.startsWith("tmp-")} className="h-3.5 w-3.5 disabled:opacity-40 max-md:h-5 max-md:w-5" />
+                        <span className="vp-koli-mrp font-mono">{k.mrpId}</span>
+                        <span className="vp-koli-no font-mono font-medium">
+                          <span className="md:hidden">Koli </span>
+                          {k.noKoli}
+                        </span>
                         <PicText label={k.createdBy} />
                         <button
                           onClick={() => toggleKoliExpanded(k.id)}
@@ -917,11 +1060,17 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                           {summarizeItems(k.items)}
                         </button>
                         <span className="flex items-center justify-end gap-1.5 max-md:ml-auto">
-                          <Button onClick={() => editKoli(k)} disabled={k.id.startsWith("tmp-")} variant="ghost" size="xs">
+                          <Button
+                            onClick={() => {
+                              editKoli(k);
+                              // HP: form Edit ada di atas daftar -- bawa layar ke sana.
+                              if (window.matchMedia("(width < 64rem)").matches) document.getElementById("vp-koli-form")?.scrollIntoView({ behavior: "smooth" });
+                            }}
+                            disabled={k.id.startsWith("tmp-")} variant="ghost" size="xs" className="max-md:min-h-9 max-md:rounded-full max-md:px-3.5 max-md:text-[12.5px]">
                             Edit
                           </Button>
                           {!sysadminMode && (
-                            <Button onClick={() => void removeKoli(k)} disabled={k.id.startsWith("tmp-")} variant="danger" size="xs">
+                            <Button onClick={() => void removeKoli(k)} disabled={k.id.startsWith("tmp-")} variant="danger" size="xs" className="max-md:min-h-9 max-md:rounded-full max-md:px-3.5 max-md:text-[12.5px]">
                               Hapus
                             </Button>
                           )}
@@ -945,7 +1094,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                 <button
                   onClick={() => openEkspedisiDialog(Array.from(selectedForEkspedisi))}
                   disabled={selectedForEkspedisi.size === 0}
-                  className="rounded-md bg-action-primary px-3.5 py-2 font-sans text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-md bg-action-primary px-3.5 py-2 font-sans text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11 max-md:w-full max-md:rounded-full max-md:text-[13px]"
                 >
                   Set Ekspedisi &amp; Resi ({selectedForEkspedisi.size} koli)
                 </button>
@@ -999,9 +1148,12 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                       const myWeight = weightOf(k);
                       return (
                         <Fragment key={k.id}>
-                          <div className="m-wrap grid grid-cols-6 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5">
-                            <span className="font-mono">{k.mrpId}</span>
-                            <span className="font-mono font-medium">{k.noKoli}</span>
+                          <div className="vp-koli m-wrap grid grid-cols-6 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5">
+                            <span className="vp-koli-mrp font-mono">{k.mrpId}</span>
+                            <span className="vp-koli-no font-mono font-medium">
+                              <span className="md:hidden">Koli </span>
+                              {k.noKoli}
+                            </span>
                             <PicText label={k.createdBy} />
                             <button
                               onClick={() => toggleKoliExpanded(k.id)}
@@ -1056,14 +1208,14 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
           <span className="font-sans text-[13px] font-semibold text-text-primary">Riwayat pengiriman</span>
           {deliveredGroups.length > 0 && (
             <div className="ml-auto flex flex-wrap items-center gap-2 max-md:ml-0 max-md:w-full">
-              <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">No resi</span>
+              <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted max-md:hidden">No resi</span>
               <input
                 value={histResiFilter}
                 onChange={(e) => setHistResiFilter(e.target.value)}
                 placeholder="Cari no resi…"
                 className="input w-[170px] max-md:min-w-0 max-md:flex-1"
               />
-              <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Ekspedisi</span>
+              <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted max-md:hidden">Ekspedisi</span>
               <select value={activeHistEkspedisi} onChange={(e) => setHistEkspedisiFilter(e.target.value)} className="input w-[240px] max-md:min-w-0 max-md:flex-1">
                 <option value="">Semua ekspedisi</option>
                 {historyEkspedisiOptions.map((e) => (
@@ -1104,13 +1256,15 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
               const qtyTotals = koliQtyTotals(kolis);
               return (
                 <div key={groupKey} className="overflow-hidden rounded-md border border-border-subtle bg-white">
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-2 font-sans text-[11.5px] text-[#31414F]">
-                    <span className="font-mono font-semibold">{first.noResi || "—"}</span>
+                  <div className="vp-resi-head flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#F1F4F7] bg-[#F7F9FB] px-3 py-2 font-sans text-[11.5px] text-[#31414F]">
+                    <span className="vp-resi-no font-mono font-semibold">{first.noResi || "—"}</span>
                     <span>
-                      Ekspedisi: <span className="font-medium">{first.ekspedisi}</span>
+                      <span className="max-md:hidden">Ekspedisi: </span>
+                      <span className="font-medium">{first.ekspedisi}</span>
                     </span>
                     <span>
-                      Total berat: <span className="font-mono">{formatDecimal(totalWeight)} kg</span>
+                      <span className="max-md:hidden">Total berat: </span>
+                      <span className="font-mono">{formatDecimal(totalWeight)} kg</span>
                     </span>
                     <span>
                       Total qty: <span className="font-mono font-semibold">{qtyTotals.billable.toLocaleString("id-ID")} pcs</span>
@@ -1125,13 +1279,13 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     )}
                     {/* Revisi 2026-09-23 (owner): tombol "Submit Invoice" pindah ke halaman Invoice & Payment
                         (tab Invoice Vendor) -- di sini cukup status ringkas. */}
-                    <span className="ml-auto flex items-center gap-2">
+                    <span className="vp-resi-status ml-auto flex items-center gap-2">
                       <SysadminActionsBar actions={koliShipmentCorrections(kolis, warehouseReceipts)} />
                       {alreadyInvoiced ? (
                         <span className="rounded-full bg-success-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-success-fg">Sudah diinvoice</span>
                       ) : (
                         <span className="rounded-full bg-warning-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-warning-fg">
-                          Belum diinvoice — ajukan di Invoice &amp; Payment
+                          Belum diinvoice<span className="max-md:hidden"> — ajukan di Invoice &amp; Payment</span>
                         </span>
                       )}
                     </span>
@@ -1149,9 +1303,12 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     const isExpanded = expandedKoli.has(k.id);
                     return (
                       <Fragment key={k.id}>
-                        <div className="m-wrap grid grid-cols-6 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5">
-                          <span className="font-mono">{k.mrpId}</span>
-                          <span className="font-mono font-medium">{k.noKoli}</span>
+                        <div className="vp-koli vp-koli-hist m-wrap grid grid-cols-6 items-center gap-x-2 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-xs text-[#31414F] last:border-b-0 max-md:py-2.5">
+                          <span className="vp-koli-mrp font-mono">{k.mrpId}</span>
+                          <span className="vp-koli-no font-mono font-medium">
+                            <span className="md:hidden">Koli </span>
+                            {k.noKoli}
+                          </span>
                           <PicText label={k.createdBy} />
                           <PicText label={k.shippedBy} />
                           <button
@@ -1183,29 +1340,46 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
          pada >=1 koliIds, + field "No Resi" baru (terpisah dari catatan). */}
       {ekspedisiDialogKoliIds && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0B131B]/45 p-4">
-          <div className="w-full max-w-[480px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]">
-            <div className="border-b border-border-subtle px-5 py-3.5">
-              <span className="font-sans text-[13px] font-semibold text-text-primary">Set Ekspedisi &amp; Resi — {ekspedisiDialogKoliIds.length} koli</span>
+          <div className="vp-eksp w-full max-w-[480px] rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)] max-md:rounded-2xl">
+            <div className="border-b border-border-subtle px-5 py-3.5 max-md:px-4 max-md:py-3">
+              <span className="font-sans text-[13px] font-semibold text-text-primary max-md:text-[15px]">Set Ekspedisi &amp; Resi — {ekspedisiDialogKoliIds.length} koli</span>
             </div>
-            <div className="max-h-[75vh] overflow-y-auto px-5 py-4">
-              <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Ekspedisi</div>
-              <select value={ekspedisiDraft} onChange={(e) => setEkspedisiDraft(e.target.value)} className="input mt-1 w-full">
-                <option value="">— pilih ekspedisi —</option>
-                {ekspedisiOptions.map((e) => (
-                  <option key={e} value={e}>
-                    {e}
-                  </option>
-                ))}
-              </select>
-              <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">No Resi (wajib)</div>
-              <input value={noResiDraft} onChange={(e) => setNoResiDraft(e.target.value)} placeholder="Contoh: JX1234567890" className="input mt-1 w-full" />
-              <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Catatan ekspedisi (opsional)</div>
+            <div className="max-h-[75vh] overflow-y-auto px-5 py-4 max-md:px-4 max-md:py-3">
+              {/* HP: Ekspedisi & No resi berdampingan (pembungkus layout saja). */}
+              <div className="max-md:grid max-md:grid-cols-2 max-md:gap-2">
+                <div>
+                  <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Ekspedisi</div>
+                  {/* HP: teks pilihan tampil kecil lewat label di atas select (select tetap 16px supaya iPhone tidak zoom). */}
+                  <div className="vp-sel-wrap relative">
+                    <select value={ekspedisiDraft} onChange={(e) => setEkspedisiDraft(e.target.value)} className="input mt-1 w-full">
+                      <option value="">— pilih ekspedisi —</option>
+                      {ekspedisiOptions.map((e) => (
+                        <option key={e} value={e}>
+                          {e}
+                        </option>
+                      ))}
+                    </select>
+                    <span className={"vp-sel-label md:hidden" + (ekspedisiDraft ? " is-set" : "")} aria-hidden="true">
+                      {ekspedisiDraft || "Pilih ekspedisi"}
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted max-md:mt-0">
+                    No Resi<span className="max-md:hidden"> (wajib)</span>
+                  </div>
+                  <input value={noResiDraft} onChange={(e) => setNoResiDraft(e.target.value)} placeholder="Contoh: JX1234567890" className="input mt-1 w-full" />
+                </div>
+              </div>
+              <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+                Catatan<span className="max-md:hidden"> ekspedisi</span> (opsional)
+              </div>
               <textarea
                 value={ekspedisiNoteDraft}
                 onChange={(e) => setEkspedisiNoteDraft(e.target.value)}
                 placeholder="Contoh: estimasi tiba, kontak ekspedisi..."
                 rows={3}
-                className="input mt-1 w-full"
+                className="input mt-1 w-full max-md:h-[52px]"
               />
               <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Berat per koli (kg) — wajib</div>
               <div className="mt-1 overflow-hidden rounded-md border border-[#CFE0EF]">
@@ -1213,17 +1387,18 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                   const koli = deliveryKolis.find((k) => k.id === id);
                   return (
                     <div key={id} className="flex items-center gap-3 border-b border-[#F1F4F7] px-3 py-1.5 last:border-b-0">
-                      <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-[#31414F]" title={koli?.noKoli}>
+                      <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-[#31414F] max-md:flex-none max-md:font-sans max-md:text-[13.5px] max-md:font-semibold" title={koli?.noKoli}>
+                        <span className="md:hidden">Koli </span>
                         {koli?.noKoli ?? id}
                       </span>
-                      <span className="whitespace-nowrap font-sans text-[10.5px] text-text-muted">{koli ? summarizeItems(koli.items) : ""}</span>
+                      <span className="whitespace-nowrap font-sans text-[10.5px] text-text-muted max-md:min-w-0 max-md:flex-1 max-md:truncate max-md:text-[11.5px]">{koli ? summarizeItems(koli.items) : ""}</span>
                       <NumberInput
                         value={dialogWeights[id] ?? 0}
                         decimals={2}
                         emptyWhenZero
                         placeholder="mis. 2,50"
                         onChange={(v) => setDialogWeights((prev) => ({ ...prev, [id]: v }))}
-                        className="input w-[90px] text-right"
+                        className="input w-[90px] text-right max-md:w-[84px]"
                       />
                     </div>
                   );
@@ -1249,8 +1424,8 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
               </div>
               {ekspedisiError && <div className="mt-2 font-sans text-[10.5px] text-danger-fg">{ekspedisiError}</div>}
             </div>
-            <div className="flex justify-end gap-2 border-t border-border-subtle px-5 py-3.5">
-              <button onClick={closeEkspedisiDialog} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary">
+            <div className="flex justify-end gap-2 border-t border-border-subtle px-5 py-3.5 max-md:px-4 max-md:py-3">
+              <button onClick={closeEkspedisiDialog} className="rounded-md border border-[#CBD5DF] bg-white px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary max-md:min-h-11 max-md:rounded-full max-md:px-5 max-md:text-[13px]">
                 Batal
               </button>
               <Button
@@ -1264,6 +1439,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                 }
                 variant="accent"
                 size="sm"
+                className="max-md:min-h-11 max-md:flex-1 max-md:rounded-full max-md:text-[13px]"
               >
                 {ekspedisiSubmitting ? "Menyimpan…" : "Simpan & kirim"}
               </Button>

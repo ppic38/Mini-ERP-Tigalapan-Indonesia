@@ -62,8 +62,9 @@ function ProductionContent({ vendorId }: { vendorId: string }) {
   // po-maklon-panel.tsx) -- begitu tab yang lagi aktif ternyata tidak lagi diizinkan (mis. actor
   // baru login & TABS berubah), otomatis "jatuh" ke tab pertama yang diizinkan.
   const effectiveTab = TABS.some((t) => t.key === tab) ? tab : (TABS[0]?.key ?? tab);
-  // HP: sub-menu Produksi jadi bar ikon di bawah layar (seperti menu aplikasi) -- tab di atas disembunyikan.
+  // HP: sub-menu Produksi jadi pilihan bersegmen berikon (label pendek) -- tab di atas disembunyikan.
   const TAB_ICON: Record<Tab, LucideIcon> = { CUTTING: Scissors, FG: PackageCheck, REJECT: RotateCcw, FINAL: BadgeCheck };
+  const TAB_SHORT: Record<Tab, string> = { CUTTING: "Cutting", FG: "Finish Good", REJECT: "Reject", FINAL: "Final" };
 
   return (
     <AppShell
@@ -93,6 +94,34 @@ function ProductionContent({ vendorId }: { vendorId: string }) {
         ))}
       </div>
 
+      {/* HP: sub-menu Produksi jadi pilihan bersegmen di atas konten -- bar bawah sudah dipakai menu utama portal vendor. */}
+      {TABS.length > 0 && (
+        <div className="flex gap-1 rounded-full bg-[#EFEBE6] p-1 md:hidden" role="tablist" aria-label="Menu Produksi">
+          {TABS.map((t) => {
+            const Icon = TAB_ICON[t.key];
+            const active = effectiveTab === t.key;
+            return (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                role="tab"
+                aria-selected={active}
+                className={
+                  "relative flex min-h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-full px-1 font-sans text-[11px] font-semibold " +
+                  (active ? "bg-white text-action-primary shadow-sm" : "text-text-muted")
+                }
+              >
+                <Icon size={16} strokeWidth={active ? 2.4 : 2} />
+                <span className="max-w-full truncate">{TAB_SHORT[t.key]}</span>
+                {t.badge > 0 && (
+                  <span className="absolute right-1.5 top-0.5 rounded-full bg-danger px-[5px] py-px font-mono text-[9px] font-semibold leading-none text-white">{t.badge}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {TABS.length === 0 && (
         <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-6 text-center font-sans text-xs text-text-muted">Anda belum diberi akses ke tab Produksi manapun.</div>
       )}
@@ -100,35 +129,6 @@ function ProductionContent({ vendorId }: { vendorId: string }) {
       {TABS.some((t) => t.key === "FG") && <KeepAliveTab active={effectiveTab === "FG"}><ProductionResultPanel vendorId={vendorId} kind="FG" title="Finish Good" /></KeepAliveTab>}
       {TABS.some((t) => t.key === "REJECT") && <KeepAliveTab active={effectiveTab === "REJECT"}><ProductionResultPanel vendorId={vendorId} kind="REJECT" title="Reject & Rework" canRework={canRework} /></KeepAliveTab>}
       {TABS.some((t) => t.key === "FINAL") && <KeepAliveTab active={effectiveTab === "FINAL"}><ProductionFinalTab vendorId={vendorId} /></KeepAliveTab>}
-      {/* Bar menu bawah (HP saja). Ruang kosong di bawah konten supaya isi terakhir tidak tertutup bar. */}
-      {TABS.length > 0 && (
-        <>
-          <div className="h-16 md:hidden" aria-hidden />
-          <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-border-subtle bg-white pb-[env(safe-area-inset-bottom)] shadow-[0_-2px_10px_rgba(11,19,27,.08)] md:hidden" aria-label="Menu Produksi">
-            {TABS.map((t) => {
-              const Icon = TAB_ICON[t.key];
-              const active = effectiveTab === t.key;
-              return (
-                <button
-                  key={t.key}
-                  onClick={() => setTab(t.key)}
-                  aria-current={active ? "page" : undefined}
-                  className={"relative flex flex-1 flex-col items-center gap-0.5 px-1 pb-2 pt-2.5 font-sans text-[10.5px] font-semibold " + (active ? "text-action-primary" : "text-text-muted")}
-                >
-                  {active && <span className="absolute inset-x-5 top-0 h-[3px] rounded-b-full bg-action-primary" />}
-                  <span className="relative">
-                    <Icon size={22} strokeWidth={active ? 2.4 : 2} />
-                    {t.badge > 0 && (
-                      <span className="absolute -right-3 -top-1.5 rounded-full bg-danger px-[5px] py-px font-mono text-[9px] font-semibold leading-none text-white">{t.badge}</span>
-                    )}
-                  </span>
-                  <span className="max-w-full truncate">{t.label}</span>
-                </button>
-              );
-            })}
-          </nav>
-        </>
-      )}
     </AppShell>
   );
 }

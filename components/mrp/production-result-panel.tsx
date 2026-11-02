@@ -114,16 +114,17 @@ function FgProgressHistory({ poId, results }: { poId: string; results: Productio
                 .map(([size, q]) => `${size} ${q > 0 ? "+" : ""}${q}`)
                 .join(", ");
               return (
-                <div key={r.id} className="flex items-center gap-3 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F] last:border-b-0">
-                  <span className="min-w-0 flex-1 text-[11px] text-text-muted">{r.note ?? "—"}</span>
-                  <span className="flex flex-none flex-col items-end">
+                // HP: baris 1 = catatan (roll) + tanggal, baris 2 = qty + rincian size.
+                <div key={r.id} className="flex items-center gap-3 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F] last:border-b-0 max-md:flex-wrap max-md:gap-x-3 max-md:gap-y-1 max-md:py-2.5">
+                  <span className="min-w-0 flex-1 text-[11px] text-text-muted max-md:order-1 max-md:text-[12.5px] max-md:font-medium max-md:text-text-primary">{r.note ?? "—"}</span>
+                  <span className="flex flex-none flex-col items-end max-md:order-3 max-md:w-full max-md:flex-row max-md:items-baseline max-md:justify-between">
                     <span className={"font-mono font-semibold " + (qty < 0 ? "text-danger-fg" : "text-success-fg")}>
                       {qty > 0 ? "+" : ""}
                       {qty} pcs
                     </span>
-                    <span className="font-mono text-[10px] text-text-muted">{sizeBreakdown}</span>
+                    <span className="font-mono text-[10px] text-text-muted max-md:text-[11px]">{sizeBreakdown}</span>
                   </span>
-                  <span className="w-[150px] flex-none whitespace-nowrap text-right font-mono text-[11px] text-text-muted">{formatDateTimeShort(r.recordedAt)}</span>
+                  <span className="w-[150px] flex-none whitespace-nowrap text-right font-mono text-[11px] text-text-muted max-md:order-2 max-md:w-auto">{formatDateTimeShort(r.recordedAt)}</span>
                 </div>
               );
             })}
@@ -300,6 +301,9 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
   const [expandedGroupKey, setExpandedGroupKey] = useState("");
   // Tab gabungan Reject & Rework (2026-10-07): size yang form reworknya sedang terbuka (kosong = tidak ada).
   const [reworkOpen, setReworkOpen] = useState<{ groupKey: string; size: string } | null>(null);
+  // HP (owner 2026-10-31): filter daftar Progres per roll, bawaan = roll yang belum ditutup. Hanya menyembunyikan baris lewat
+  // kelas CSS khusus HP (.vp-hide-m) -- tablet/desktop tetap menampilkan semua roll.
+  const [rollFilter, setRollFilter] = useState<"OPEN" | "CLOSED" | "ALL">("OPEN");
   // Item 15 (feedback batch 2026-09-10): input total per size di level grup -- MURNI client-side
   // (draft angka yang mau diisi), disimpan ke roll otomatis (roll pertama dulu, penuh -> ditutup)
   // begitu "Simpan" diklik. Sejak input per-roll dihapus, ini satu-satunya draft input FG yang
@@ -415,7 +419,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
   return (
     <>
       <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
-        <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Pilih MRP (sudah tercutting)</div>
+        <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Pilih MRP<span className="max-md:hidden"> (sudah tercutting)</span></div>
         <select
           value={selectedMrpId}
           onChange={(e) => {
@@ -461,7 +465,8 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
         <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
           <div className="flex items-center justify-between gap-3 border-b border-border-subtle px-4 py-3">
             <span className="font-sans text-[13px] font-semibold text-text-primary">
-              {title} — {selectedMrpId}
+              {title}
+              <span className="max-md:hidden"> — {selectedMrpId}</span>
             </span>
             {kind === "FG" && (
               <div className="flex gap-1 rounded-md bg-[#EEF0F3] p-0.5">
@@ -555,7 +560,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                 return (
                   <div key={groupKey} className={newWarna ? "border-t border-t-[#C9D3DF]" : undefined}>
                     <div
-                      className="m-stack grid items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F]"
+                      className={"vp-full-row m-stack grid items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F]" + (kind === "REJECT" ? " vp-rjrow" : "")}
                       style={{ gridTemplateColumns: gridColumns }}
                     >
                       <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -601,7 +606,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                               )}
                             </div>
                           </div>
-                          <span data-label="Target done" className="text-center font-mono text-[11px] text-text-muted">{targetDoneAt ? formatDate(targetDoneAt) : "— (belum ada material diterima)"}</span>
+                          <span data-label="Target done" className="vp-label-target text-center font-mono text-[11px] text-text-muted">{targetDoneAt ? formatDate(targetDoneAt) : "— (belum ada material diterima)"}</span>
                         </>
                       )}
                       <span className="flex items-center justify-end gap-2 max-md:[&>button]:w-full">
@@ -612,20 +617,45 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                         {kind === "FG" && isFgConfirmed && sysadmin && (
                           <SysadminActionsBar actions={fgConfirmCorrections({ groupKey, vendorProduksi: vendorId, warna: g.warna, lengan: g.lengan, isFinalDone })} />
                         )}
-                        <Button onClick={() => toggleGroup(g.warna, g.lengan)} variant="accent" size="xs">
-                          {expanded ? "Tutup" : kind === "FG" && fgView === "MURNI" ? "Input Finish Good →" : "Lihat by size →"}
+                        <Button onClick={() => toggleGroup(g.warna, g.lengan)} variant="accent" size="xs" className="vp-full-x">
+                          {expanded ? (
+                            "Tutup"
+                          ) : kind === "FG" && fgView === "MURNI" ? (
+                            "Input Finish Good →"
+                          ) : kind === "REJECT" ? (
+                            <>
+                              <span className="max-md:hidden">Lihat by size →</span>
+                              <span className="md:hidden">Rework →</span>
+                            </>
+                          ) : (
+                            "Lihat by size →"
+                          )}
                         </Button>
                       </span>
                     </div>
                     {expanded && !isFgConfirmed && kind === "REJECT" && (
-                      <div className="border-b border-[#F0DFC2] bg-warning-bg px-4 py-3 font-sans text-[11.5px] leading-[1.5] text-warning-fg">
+                      <div className="vp-full-body border-b border-[#F0DFC2] bg-warning-bg px-4 py-3 font-sans text-[11.5px] leading-[1.5] text-warning-fg">
+                        <div className="vp-full-head md:hidden">
+                          <div className="font-sans text-[16px] font-bold text-text-primary">
+                            {g.warna} · {g.lengan}
+                          </div>
+                        </div>
                         Reject grup ini belum dihitung — tidak ada input manual lagi. Tandai {g.warna} · {g.lengan} &quot;Selesai Produksi&quot; di tab Finish
                         Good supaya reject dihitung otomatis dari hasil cutting dikurangi finish good.
                       </div>
                     )}
                     {expanded && isFgConfirmed && kind === "REJECT" && (
-                      <div className="border-b border-[#CFE0EF] bg-info-bg p-4">
-                        <div className="overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
+                      // HP: pop-up layar penuh, sama seperti Isi FG.
+                      <div className="vp-full-body border-b border-[#CFE0EF] bg-info-bg p-4">
+                        <div className="vp-full-head md:hidden">
+                          <div className="font-sans text-[16px] font-bold text-text-primary">
+                            {g.warna} · {g.lengan}
+                          </div>
+                          <div className="mt-0.5 font-mono text-[12px] text-text-muted">
+                            Reject {grossReject} · sisa {totalRecorded}
+                          </div>
+                        </div>
+                        <div className="overflow-hidden rounded-md border border-[#CFE0EF] bg-white max-md:rounded-2xl max-md:border-[#EDE8E2]">
                           <div className="m-hide grid grid-cols-5 gap-x-2 bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                             <span>Size</span>
                             <span className="text-right">Reject (otomatis)</span>
@@ -640,7 +670,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                             if (rejectSizes.length === 0) {
                               return <div className="px-3 py-3 text-center font-sans text-[11px] text-text-muted">Tidak ada reject — finish good sudah mencapai target.</div>;
                             }
-                            return rejectSizes.map((size) => {
+                            const sizeRows = rejectSizes.map((size) => {
                               const sisaReject = recorded[size] ?? 0;
                               // Reject yang sudah masuk koli pengiriman tidak bisa dirework lagi.
                               const shippedReject = rejectShippedBySize(selectedMrpId, vendorId, deliveryKolis).get(`${g.warna}|${g.lengan}|${size}|`) ?? 0;
@@ -650,7 +680,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                               const canDoRework = canRework && !sysadmin && !isFinalDone && sisa > 0;
                               return (
                                 <div key={size}>
-                                  <div className={"m-stack grid grid-cols-5 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-2 font-sans text-xs text-[#31414F] " + (isOpen ? "bg-info-bg" : "")}>
+                                  <div className={"vp-rjsize m-stack grid grid-cols-5 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-2 font-sans text-xs text-[#31414F] " + (isOpen ? "bg-info-bg" : "")}>
                                     <span data-label="Size" className="font-mono font-medium">{size}</span>
                                     <span data-label="Reject (otomatis)" className="text-right font-mono">{grossPerSize[size] ?? 0}</span>
                                     <span data-label="Rework" className="text-right font-mono text-success-fg">{reworkPerSize[size] ?? 0}</span>
@@ -661,12 +691,18 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                     <span className="text-right max-md:[&>button]:w-full">
                                       {canDoRework ? (
                                         isOpen ? (
-                                          <Button onClick={() => setReworkOpen(null)} variant="accent" size="xs">
+                                          <Button onClick={() => setReworkOpen(null)} variant="accent" size="xs" className="max-md:min-h-10 max-md:rounded-full max-md:text-[12.5px]">
                                             Tutup
                                           </Button>
                                         ) : (
-                                          <Button onClick={() => setReworkOpen({ groupKey, size })} variant="primary" size="xs">
-                                            Rework jadi baju →
+                                          <Button
+                                            onClick={() => setReworkOpen({ groupKey, size })}
+                                            variant="primary"
+                                            size="xs"
+                                            className="max-md:min-h-9 max-md:rounded-full max-md:border max-md:border-action-primary max-md:bg-white max-md:text-[12.5px] max-md:text-action-primary"
+                                          >
+                                            <span className="max-md:hidden">Rework jadi baju →</span>
+                                            <span className="md:hidden">Rework {size} →</span>
                                           </Button>
                                         )
                                       ) : sisa > 0 && isFinalDone ? (
@@ -690,6 +726,64 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                 </div>
                               );
                             });
+                            // HP (owner 2026-11-01): satu tampilan saja -- pilih size lewat chip (dengan sisa reject-nya), form
+                            // rework size itu langsung di bawahnya. Daftar baris per size di atas hanya untuk tablet/desktop.
+                            const shippedMap = rejectShippedBySize(selectedMrpId, vendorId, deliveryKolis);
+                            const sisaOf = (size: string) => Math.max(0, (recorded[size] ?? 0) - (shippedMap.get(`${g.warna}|${g.lengan}|${size}|`) ?? 0));
+                            const canRw = canRework && !sysadmin && !isFinalDone;
+                            const pickable = rejectSizes.filter((size) => sisaOf(size) > 0);
+                            const mobileSize = reworkOpen?.groupKey === groupKey && pickable.includes(reworkOpen.size) ? reworkOpen.size : pickable[0];
+                            return (
+                              <>
+                                <div className="max-md:hidden">{sizeRows}</div>
+                                <div className="px-3.5 pb-1 pt-3.5 md:hidden">
+                                  <div className="font-sans text-[10.5px] font-semibold uppercase tracking-wider text-text-muted">Size reject</div>
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    {rejectSizes.map((size) => {
+                                      const s = sisaOf(size);
+                                      const active = size === mobileSize;
+                                      return (
+                                        <button
+                                          key={size}
+                                          type="button"
+                                          onClick={() => setReworkOpen({ groupKey, size })}
+                                          disabled={s <= 0 || !canRw}
+                                          className={
+                                            "flex min-h-12 min-w-[68px] flex-col items-center justify-center rounded-xl border px-3 py-1 font-sans disabled:opacity-40 " +
+                                            (active ? "border-action-primary bg-action-primary text-white" : "border-[#E4DDD5] bg-white text-text-primary")
+                                          }
+                                        >
+                                          <span className="text-[15px] font-bold leading-tight">{size}</span>
+                                          <span className={"text-[10.5px] " + (active ? "text-white/85" : "text-text-muted")}>sisa {s}</span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                                <div className="md:hidden">
+                                  {!canRw ? (
+                                    <div className="px-3.5 py-3 font-sans text-[12.5px] text-text-muted">
+                                      {isFinalDone ? "Sudah Final — buka kunci Final dulu untuk rework." : "Akun ini tidak punya izin rework."}
+                                    </div>
+                                  ) : mobileSize ? (
+                                    <ReworkInlineForm
+                                      key={"m-" + groupKey + mobileSize}
+                                      mrpId={selectedMrpId}
+                                      vendorId={vendorId}
+                                      warna={g.warna}
+                                      lengan={g.lengan as Lengan}
+                                      size={mobileSize}
+                                      max={sisaOf(mobileSize)}
+                                      knownSizes={knownSizesForMrp(selectedMrpId, mrpDetails)}
+                                      onDone={() => setReworkOpen(null)}
+                                      compact
+                                    />
+                                  ) : (
+                                    <div className="px-3.5 py-3 font-sans text-[12.5px] text-text-muted">Tidak ada sisa reject yang bisa dirework.</div>
+                                  )}
+                                </div>
+                              </>
+                            );
                           })()}
                         </div>
                         {grossReject > 0 && <GroupRejectSplitBox groupKey={groupKey} vendorProduksi={vendorId} total={grossReject} locked={isFinalDone || sysadmin} />}
@@ -748,20 +842,42 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                       </div>
                     )}
                     {expanded && kind === "FG" && fgView === "MURNI" && (
-                      <div className="border-b border-[#CFE0EF] bg-info-bg p-4">
+                      // HP: jadi pop-up layar penuh (lihat .vp-full-body di globals.css); tombol Tutup baris ini pindah ke pojok kanan atas.
+                      <div className="vp-full-body border-b border-[#CFE0EF] bg-info-bg p-4">
+                        <div className="vp-full-head md:hidden">
+                          <div className="font-sans text-[16px] font-bold text-text-primary">
+                            {g.warna} · {g.lengan}
+                          </div>
+                          <div className="mt-0.5 flex items-center justify-between gap-2">
+                            <span className="font-mono text-[12px] text-text-muted">
+                              {totalRecorded} / {totalTarget} pcs · {progressPct}%
+                            </span>
+                            {/* HP: tabel FG per size disembunyikan (isinya ada di kartu Isi FG), jadi Cek Koli pindah ke sini. */}
+                            {sizes.length > 0 && <FgShippingDetailButton mrpId={selectedMrpId} vendorId={vendorId} warna={g.warna} lengan={g.lengan as Lengan} sizes={Array.from(new Set([...sizes, ...Object.keys(recordedAll)]))} recorded={recordedAll} kolis={deliveryKolis} />}
+                          </div>
+                        </div>
                         {/* Revisi 2026-09-20 (owner): rekap Finish Good PER SIZE untuk monitoring -- selalu tampil begitu
-                            baris dibuka (juga saat semua roll sudah tertutup tapi warna belum diklik Selesai). */}
+                            baris dibuka (juga saat semua roll sudah tertutup tapi warna belum diklik Selesai).
+                            HP (owner 2026-10-31): tabel ini disembunyikan -- target, FG, dan kurang tampil di kartu Isi FG. */}
                         {sizes.length > 0 && (
-                          <div className="mb-3 overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
+                          <div className="mb-3 overflow-hidden rounded-md border border-[#CFE0EF] bg-white max-md:hidden">
                             <div className="flex items-center justify-between gap-2 border-b border-[#CFE0EF] bg-white px-4 py-2 font-sans text-[11.5px] font-semibold text-text-primary">
                               <span>Finish Good per size</span>
                               <FgShippingDetailButton mrpId={selectedMrpId} vendorId={vendorId} warna={g.warna} lengan={g.lengan as Lengan} sizes={Array.from(new Set([...sizes, ...Object.keys(recordedAll)]))} recorded={recordedAll} kolis={deliveryKolis} />
                             </div>
                             <div className="grid grid-cols-4 gap-x-2 bg-[#F7F9FB] px-4 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
                               <span>Size</span>
-                              <span className="text-right">Target (hasil cutting)</span>
-                              <span className="text-right">Finish Good</span>
-                              <span className="text-right">Selisih</span>
+                              <span className="text-right">
+                                Target<span className="max-md:hidden"> (hasil cutting)</span>
+                              </span>
+                              <span className="text-right">
+                                <span className="max-md:hidden">Finish Good</span>
+                                <span className="md:hidden">FG</span>
+                              </span>
+                              <span className="text-right">
+                                <span className="max-md:hidden">Selisih</span>
+                                <span className="md:hidden">Kurang</span>
+                              </span>
                             </div>
                             {sizes.map((size) => {
                               const tgt = target[size] ?? 0;
@@ -890,17 +1006,34 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                             );
                             setSizeTotalDraft({});
                           }
+                          // HP saja: ringkasan FG/target per size untuk size yang tidak punya kotak isian (pengganti tabel FG per size).
+                          const mobileSizeSummary = (list: string[]) =>
+                            list.length > 0 ? (
+                              <div className="flex flex-wrap gap-1.5 border-t border-[#EDE8E2] px-3 py-2.5 md:hidden">
+                                {list.map((size) => {
+                                  const rec = recorded[size] ?? 0;
+                                  const tgt = target[size] ?? 0;
+                                  return (
+                                    <span key={size} className={"rounded-md border px-2 py-[3px] font-mono text-[11px] " + (rec >= tgt ? "border-[#BFE3CF] bg-success-bg text-success-fg" : "border-[#EFC9C4] bg-danger-bg text-danger-fg")}>
+                                      <b>{size}</b> {rec}/{tgt}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            ) : null;
                           if (sizesOpen.length === 0 && extraRows.length === 0) {
                             return groupBatches.length > 0 ? (
                               <div className="overflow-hidden rounded-md border border-[#CFE0EF] bg-white">
                                 <div className="px-3 py-3 text-center font-sans text-[11.5px] text-text-muted">Semua roll grup ini sudah tertutup.</div>
+                                {mobileSizeSummary(sizes)}
                               </div>
                             ) : null;
                           }
                           return (
                             <div className="overflow-hidden rounded-md border border-[#A8C5DF] bg-white">
                               <div className="border-b border-[#CFE0EF] bg-info-bg px-4 py-2.5 font-sans text-[11.5px] font-semibold leading-[1.5] text-info-fg">
-                                Input qty per size
+                                <span className="max-md:hidden">Input qty per size</span>
+                                <span className="md:hidden">Isi FG</span>
                               </div>
                               {sizesToShow.length === 0 && extraRows.length === 0 ? (
                                 <div className="px-3 py-3 text-center font-sans text-[11.5px] text-text-muted">
@@ -912,17 +1045,22 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                 // baris. Sekarang tiap size = 1 kartu (grid auto-fill): pill label size
                                 // selebar teksnya (nowrap) + "sisa maks" di baris atas, input di tengah
                                 // (lebar penuh kartu), progres kecil di bawah.
-                                <div className="grid grid-cols-[repeat(auto-fit,minmax(210px,1fr))] gap-3 px-4 py-3">
+                                // HP: 2 kolom, kartu lebih ringkas.
+                                <div className="grid grid-cols-[repeat(auto-fit,minmax(210px,1fr))] gap-3 px-4 py-3 max-md:grid-cols-2 max-md:gap-2.5 max-md:px-3">
                                   {sizesToShow.map((size) => {
                                     const rec = recorded[size] ?? 0;
                                     const tgt = target[size] ?? 0;
                                     const pct = tgt > 0 ? Math.min(100, Math.round((rec / tgt) * 100)) : 0;
                                     return (
-                                      <div key={size} className="flex flex-col gap-2.5 rounded-lg border-2 border-[#BCD3E8] bg-white px-3.5 py-3 shadow-[0_1px_3px_rgba(11,19,27,.08)]">
+                                      <div key={size} className="flex flex-col gap-2.5 rounded-lg border-2 border-[#BCD3E8] bg-white px-3.5 py-3 shadow-[0_1px_3px_rgba(11,19,27,.08)] max-md:gap-2 max-md:rounded-xl max-md:border max-md:border-[#EDE8E2] max-md:px-2.5 max-md:py-2.5 max-md:shadow-none">
                                         <div className="flex items-center justify-between gap-2">
                                           <span className="whitespace-nowrap rounded-md border-[1.5px] border-[#8FB3D3] bg-info-bg px-2.5 py-1 font-sans text-[12.5px] font-bold text-info-fg">{size}</span>
-                                          <span className="whitespace-nowrap font-mono text-[10px] text-text-muted">
+                                          <span className="whitespace-nowrap font-mono text-[10px] text-text-muted max-md:hidden">
                                             sisa maks <span className="font-semibold text-[#31414F]">{totalCapacity[size]}</span>
+                                          </span>
+                                          {/* HP: pojok kanan = kekurangan FG size ini (pengganti kolom Selisih di tabel). */}
+                                          <span className={"whitespace-nowrap font-mono text-[11.5px] font-semibold md:hidden " + (tgt - rec > 0 ? "text-danger-fg" : "text-success-fg")}>
+                                            {tgt - rec > 0 ? `kurang ${tgt - rec}` : "penuh"}
                                           </span>
                                         </div>
                                         <NumberInput
@@ -931,15 +1069,20 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                           emptyWhenZero
                                           placeholder="Contoh: 24"
                                           onChange={(v) => setSizeTotalDraft((prev) => ({ ...prev, [size]: v }))}
-                                          className="input h-9 w-full text-right text-[13px] font-semibold"
+                                          className="input h-9 w-full text-right text-[13px] font-semibold max-md:h-11 max-md:rounded-xl"
                                         />
                                         <div className="flex items-center gap-2">
                                           <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#EEF0F3]">
                                             <span className="block h-full rounded-full bg-success" style={{ width: `${pct}%` }} />
                                           </span>
-                                          <span className="whitespace-nowrap font-mono text-[10px] text-text-muted">
-                                            {rec}/{tgt} pcs
+                                          <span className="whitespace-nowrap font-mono text-[10px] text-text-muted max-md:text-[11px]">
+                                            <span className="md:hidden">FG </span>
+                                            {rec}/{tgt}
+                                            <span className="max-md:hidden"> pcs</span>
                                           </span>
+                                        </div>
+                                        <div className="font-sans text-[11px] text-text-muted md:hidden">
+                                          bisa isi maks <b className="font-mono text-[#31414F]">{totalCapacity[size]}</b>
                                         </div>
                                       </div>
                                     );
@@ -993,14 +1136,15 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                   })}
                                 </div>
                               )}
+                              {mobileSizeSummary(sizes.filter((size) => !sizesToShow.includes(size)))}
                               <div className="flex items-center justify-between gap-4 border-t border-[#CFE0EF] bg-[#F3F8FD] px-4 py-3 max-md:flex-col max-md:items-stretch max-md:gap-2.5">
                                 {/* saveFgProgress & closeProductionBatch (dipanggil saveSizeTotals)
                                    sudah optimistic penuh di store.ts -- isPending/teks "Menyimpan…"
                                    dilepas, disabled cukup dari sizesToShow saja. Revisi 2026-09-23
                                    (owner): tombol "Selesai Produksi" dipindah ke kartu roll per batch
                                    di bawah (lihat "Progres per batch") -- di sini cuma "Simpan". */}
-                                <span className="font-sans text-[11px] text-text-muted">Simpan progres Finish Good tanpa menutup roll — masih bisa diisi lagi nanti.</span>
-                                <Button onClick={() => runAction(quickSaveKey, (async () => { await saveSizeTotals(); await saveExtras(); })())} disabled={sizesToShow.length === 0 && extraChanged.length === 0} variant="primary" size="md" className="min-w-[120px]">
+                                <span className="font-sans text-[11px] text-text-muted max-md:hidden">Simpan progres Finish Good tanpa menutup roll — masih bisa diisi lagi nanti.</span>
+                                <Button onClick={() => runAction(quickSaveKey, (async () => { await saveSizeTotals(); await saveExtras(); })())} disabled={sizesToShow.length === 0 && extraChanged.length === 0} variant="primary" size="md" className="min-w-[120px] max-md:min-h-11 max-md:rounded-full">
                                   Simpan →
                                 </Button>
                               </div>
@@ -1035,10 +1179,36 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                         {groupBatches.length > 0 && (
                           <div className="mt-4 overflow-hidden rounded-lg border border-[#CFE0EF] bg-white shadow-[0_1px_3px_rgba(11,19,27,.06)]">
                             <div className="flex items-center gap-2.5 border-b border-[#CFE0EF] bg-info-bg px-4 py-2.5">
-                              <span className="font-sans text-[12px] font-semibold text-info-fg">Progres per batch</span>
-                              <span className="rounded-full bg-white px-2 py-[1px] font-mono text-[10.5px] font-semibold text-info-fg">{groupBatches.length} roll</span>
-                              <span className="font-sans text-[11px] text-text-muted">Resting → Finish Good</span>
+                              <span className="font-sans text-[12px] font-semibold text-info-fg max-md:text-[13px]">Progres per <span className="max-md:hidden">batch</span><span className="md:hidden">roll</span></span>
+                              <span className="whitespace-nowrap rounded-full bg-white px-2 py-[1px] font-mono text-[10.5px] font-semibold text-info-fg">{groupBatches.length} roll</span>
+                              <span className="font-sans text-[11px] text-text-muted max-md:hidden">Resting → Finish Good</span>
                             </div>
+                            {/* HP saja: filter status roll. */}
+                            <div className="vp-chips flex gap-2 border-b border-[#EDE8E2] px-3 py-2.5 md:hidden">
+                              {(
+                                [
+                                  { key: "OPEN" as const, label: `Terbuka (${groupBatches.filter((x) => !x.closedAt).length})` },
+                                  { key: "CLOSED" as const, label: `Ditutup (${groupBatches.filter((x) => !!x.closedAt).length})` },
+                                  { key: "ALL" as const, label: `Semua (${groupBatches.length})` },
+                                ]
+                              ).map((opt) => (
+                                <button
+                                  key={opt.key}
+                                  onClick={() => setRollFilter(opt.key)}
+                                  className={
+                                    "min-h-9 rounded-full border px-3.5 font-sans text-[12.5px] font-semibold " +
+                                    (rollFilter === opt.key ? "border-action-primary bg-action-primary text-white" : "border-[#E4DDD5] bg-white text-text-primary")
+                                  }
+                                >
+                                  {opt.label}
+                                </button>
+                              ))}
+                            </div>
+                            {!groupBatches.some((x) => rollFilter === "ALL" || (rollFilter === "OPEN") === !x.closedAt) && (
+                              <div className="px-4 py-5 text-center font-sans text-[13px] text-text-muted md:hidden">
+                                {rollFilter === "OPEN" ? "Semua roll sudah ditutup." : "Belum ada roll yang ditutup."}
+                              </div>
+                            )}
                             {(() => {
                               const nOpenShipped = groupBatches.filter((x) => !x.closedAt && Object.values(rollShippedBySize(x, deliveryKolis)).some((q) => q > 0)).length;
                               return nOpenShipped > 0 ? (
@@ -1070,7 +1240,13 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                     .filter(([, v]) => v > 0)
                                 : [];
                               return (
-                                <div key={b.id} className="m-stack grid grid-cols-[1.1fr_2.2fr_0.9fr_1.1fr_0.8fr_1fr_1.3fr] items-center gap-x-3 border-b border-[#EEF1F4] px-4 py-3 font-sans text-[11.5px] text-[#31414F] last:border-b-0 hover:bg-[#F8FBFE]">
+                                <div
+                                  key={b.id}
+                                  className={
+                                    "vp-fgroll m-stack grid grid-cols-[1.1fr_2.2fr_0.9fr_1.1fr_0.8fr_1fr_1.3fr] items-center gap-x-3 border-b border-[#EEF1F4] px-4 py-3 font-sans text-[11.5px] text-[#31414F] last:border-b-0 hover:bg-[#F8FBFE]" +
+                                    (rollFilter === "ALL" || (rollFilter === "OPEN") === !b.closedAt ? "" : " vp-hide-m")
+                                  }
+                                >
                                   <span className="flex flex-col">
                                     <span className="font-mono text-[12px] font-medium text-text-primary">{b.codeRoll || b.id}</span>
                                     {sizeShiftLabel(b) && <span className="font-sans text-[9.5px] font-semibold text-info-fg">Alih size (sisa kain): {sizeShiftLabel(b)}</span>}
@@ -1161,14 +1337,33 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                       <Button
                                         onClick={async () => {
                                           if (totalFg < totalTarget) {
-                                            const sisa = Object.entries(rollTarget)
+                                            const sisaEntries = Object.entries(rollTarget)
                                               .map(([sz, t]) => [sz, Math.max(0, t - ((b.fgSizeQty ?? {})[sz] ?? 0))] as const)
-                                              .filter(([, v]) => v > 0)
-                                              .map(([sz, v]) => `${sz} ${v}`)
-                                              .join(", ");
+                                              .filter(([, v]) => v > 0);
+                                            const sisa = sisaEntries.map(([sz, v]) => `${sz} ${v}`).join(", ");
+                                            const messageText = `Finish Good roll ini dikunci. Sisa ${sisa} (${totalTarget - totalFg} pcs) akan dicatat sebagai reject saat Selesai Produksi. Finish Good yang sudah diinput tetap bisa dikirim.`;
                                             const ok = await confirmDialog({
                                               title: `Tutup roll ${b.codeRoll || b.id}?`,
-                                              message: `Finish Good roll ini dikunci. Sisa ${sisa} (${totalTarget - totalFg} pcs) akan dicatat sebagai reject saat Selesai Produksi. Finish Good yang sudah diinput tetap bisa dikirim.`,
+                                              // HP (owner 2026-11-01): fokus ke sisa yang masuk reject, angka & kata reject ditebalkan. Desktop: teks lama.
+                                              message: (
+                                                <>
+                                                  <span className="max-md:hidden">{messageText}</span>
+                                                  <span className="block md:hidden">
+                                                    Sisa yang masuk <b className="font-bold text-danger-fg">reject</b>:
+                                                    <span className="mt-2 flex flex-wrap gap-1.5">
+                                                      {sisaEntries.map(([sz, v]) => (
+                                                        <span key={sz} className="rounded-md border border-[#EFC9C4] bg-danger-bg px-2.5 py-1 font-mono text-[14px] font-bold text-danger-fg">
+                                                          {sz} {v}
+                                                        </span>
+                                                      ))}
+                                                    </span>
+                                                    <span className="mt-2 block text-[14px]">
+                                                      Total <b className="font-bold text-danger-fg">{totalTarget - totalFg} pcs</b> jadi <b className="font-bold text-danger-fg">reject</b>
+                                                    </span>
+                                                  </span>
+                                                </>
+                                              ),
+                                              messageText,
                                               confirmLabel: "Tutup Roll",
                                             });
                                             if (!ok) return;
@@ -1193,7 +1388,10 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                             {!isFinalDone && groupNeedsFinish(g) && (
                               <div className="flex items-center justify-between gap-4 border-t border-[#CFE0EF] bg-[#F3F8FD] px-4 py-3 max-md:flex-col max-md:items-stretch max-md:gap-2.5">
                                 <span className="font-sans text-[11px] leading-[1.5] text-text-muted">
-                                  Roll yang sudah punya Finish Good ditutup; kekurangan qty dihitung reject. Finish Good yang sudah diinput sudah bisa dikirim tanpa menunggu ini.
+                                  <span className="max-md:hidden">
+                                    Roll yang sudah punya Finish Good ditutup; kekurangan qty dihitung reject. Finish Good yang sudah diinput sudah bisa dikirim tanpa menunggu ini.
+                                  </span>
+                                  <span className="md:hidden">Sisa qty yang kurang jadi reject.</span>
                                 </span>
                                 <Button
                                   onClick={async () => {
@@ -1203,7 +1401,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                   title="Selesaikan Finish Good grup ini -- roll yang masih terbuka otomatis ditutup, selisih target vs FG jadi reject"
                                   variant="primary"
                                   size="md"
-                                  className="min-w-[160px] border-transparent bg-success hover:opacity-90"
+                                  className="min-w-[160px] border-transparent bg-success hover:opacity-90 max-md:min-h-11 max-md:rounded-full"
                                 >
                                   {isPending(groupKey) ? "Menyimpan…" : "Selesai Produksi ✓"}
                                 </Button>
@@ -1228,7 +1426,14 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
       {(kind as string) === "FG" && (
       <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
         <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">
-          {kind === "REJECT" ? "Detail Reject — by PO" : "Riwayat & Hasil Finish Good — by PO"}
+          {kind === "REJECT" ? (
+            "Detail Reject — by PO"
+          ) : (
+            <>
+              <span className="max-md:hidden">Riwayat &amp; Hasil Finish Good — by PO</span>
+              <span className="md:hidden">Riwayat FG</span>
+            </>
+          )}
         </div>
         <div className="overflow-x-auto">
           <div className={(kind === "REJECT" ? "min-w-[900px]" : "min-w-[600px]") + " m-fluid"}>
@@ -1290,7 +1495,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
               return (
                 <div key={poId}>
                   <div
-                    className="m-stack grid items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F]"
+                    className="vp-modal-row m-stack m-grid2 grid items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F]"
                     style={{
                       gridTemplateColumns:
                         kind === "REJECT"
@@ -1299,7 +1504,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                     }}
                   >
                     <span data-label="No MRP" className="font-mono">{mrpId}</span>
-                    <span data-label="No PO Produksi" className="font-mono font-medium">{poId}</span>
+                    <span data-label="No PO Produksi" className="vp-label-po font-mono font-medium">{poId}</span>
                     {kind === "REJECT" ? (
                       <>
                         <span data-label="Qty reject" className="text-right font-mono">{qtyRejectGross}</span>
@@ -1313,7 +1518,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                         />
                       </>
                     ) : (
-                      <span data-label="Progres FG" className="flex items-center gap-2">
+                      <span data-label="Progres FG" className="flex items-center gap-2 max-md:col-span-2">
                         <span className="font-mono">
                           {total} / {fgTargetPo} pcs
                         </span>
@@ -1322,7 +1527,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                       </span>
                     )}
                     <span className="text-right">
-                      <button onClick={() => setExpandedPoId(expanded ? "" : poId)} className="font-sans text-[11px] font-semibold text-action-primary">
+                      <button onClick={() => setExpandedPoId(expanded ? "" : poId)} className="vp-modal-x font-sans text-[11px] font-semibold text-action-primary max-md:min-h-10 max-md:w-full max-md:rounded-full max-md:border max-md:border-[#E4DDD5] max-md:text-[12.5px]">
                         {expanded ? "Sembunyikan" : "Detail →"}
                       </button>
                     </span>
@@ -1338,8 +1543,15 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                     </div>
                   )}
                   {expanded && kind === "FG" && (
-                    <div className="border-b border-[#F1F4F7] bg-[#FAFBFC] px-6 py-2.5">
-                      <div className="mb-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                    // HP: jadi pop-up di tengah layar (lihat .vp-modal-body); ketuk di luar = Sembunyikan.
+                    <div className="vp-modal-body border-b border-[#F1F4F7] bg-[#FAFBFC] px-6 py-2.5">
+                      <div className="sticky top-0 z-10 -mx-4 -mt-4 mb-3 border-b border-[#EDE8E2] bg-white px-4 pb-3 pt-4 md:hidden">
+                        <div className="font-sans text-[16px] font-bold text-text-primary">Riwayat FG</div>
+                        <div className="mt-0.5 font-mono text-[12px] text-text-muted">
+                          {poId} · {total} pcs
+                        </div>
+                      </div>
+                      <div className="mb-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted max-md:hidden">
                         Tanggal &amp; jam tercatat otomatis oleh sistem, tidak bisa diubah/backdate
                       </div>
                       <FgProgressHistory poId={poId} results={productionResults} />

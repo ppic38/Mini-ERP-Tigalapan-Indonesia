@@ -58,7 +58,7 @@ export function DataTable<T>({
   collapseSignal,
   mobileCards,
 }: {
-  /** Opsional -- di layar HP (< 768px) tiap baris jadi KARTU bertumpuk (label kolom di depan nilainya) alih-alih
+  /** Opsional -- di layar HP/tablet tegak (< 1024px) tiap baris jadi KARTU bertumpuk (label kolom di depan nilainya) alih-alih
    *  tabel yang digeser ke samping. Hanya dipakai halaman portal vendor; yang lain tidak berubah sama sekali. */
   mobileCards?: boolean;
   title: string;
@@ -154,7 +154,7 @@ export function DataTable<T>({
 
   return (
     <div className={"overflow-hidden rounded-lg border border-border-subtle bg-surface-card" + (mobileCards ? " m-cards" : "")}>
-      <div className="flex items-center gap-2 border-b border-border-subtle px-5 py-3">
+      <div className="dt-head flex items-center gap-2 border-b border-border-subtle px-5 py-3">
         <div>
           <span className="font-sans text-[13px] font-semibold text-text-primary">{title}</span>
           {subtitle && <div className="mt-0.5 font-sans text-[10.5px] font-medium text-text-muted">{subtitle}</div>}
@@ -180,7 +180,7 @@ export function DataTable<T>({
       </div>
 
       {((filterDefs && filterDefs.length > 0) || search) && (
-        <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle bg-[#FAFBFC] px-5 py-2.5 max-md:flex-col max-md:items-stretch max-md:px-4">
+        <div className="dt-filters flex flex-wrap items-center gap-2 border-b border-border-subtle bg-[#FAFBFC] px-5 py-2.5 max-md:flex-col max-md:items-stretch max-md:px-4">
           {search && (
             <input
               value={searchQuery}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 /**
  * Pengganti window.confirm / window.alert dengan dialog buatan sendiri (tampilan sama di semua browser,
@@ -16,7 +16,7 @@ import { useEffect, useRef, useState } from "react";
 type DialogRequest = {
   kind: "confirm" | "alert";
   title: string;
-  message?: string;
+  message?: ReactNode;
   /** Daftar poin peringatan (1 per baris) -- tampil di kotak kuning di bawah pesan. */
   details?: string[];
   detailsTitle?: string;
@@ -28,7 +28,10 @@ type DialogRequest = {
 
 export type ConfirmOptions = {
   title: string;
-  message?: string;
+  /** Teks biasa, atau isi berformat (mis. angka ditebalkan). */
+  message?: ReactNode;
+  /** Teks biasa pengganti `message` berformat untuk dialog bawaan browser (fallback sebelum DialogHost siap). */
+  messageText?: string;
   details?: string[];
   detailsTitle?: string;
   confirmLabel?: string;
@@ -38,8 +41,9 @@ export type ConfirmOptions = {
 
 let enqueue: ((req: DialogRequest) => void) | null = null;
 
-function plainText(o: { title: string; message?: string; details?: string[]; detailsTitle?: string }) {
-  return [o.title, o.message, o.details?.length ? (o.detailsTitle ? o.detailsTitle + "\n" : "") + o.details.join("\n") : ""].filter(Boolean).join("\n\n");
+function plainText(o: { title: string; message?: ReactNode; messageText?: string; details?: string[]; detailsTitle?: string }) {
+  const message = o.messageText ?? (typeof o.message === "string" ? o.message : "");
+  return [o.title, message, o.details?.length ? (o.detailsTitle ? o.detailsTitle + "\n" : "") + o.details.join("\n") : ""].filter(Boolean).join("\n\n");
 }
 
 export function confirmDialog(opts: ConfirmOptions): Promise<boolean> {

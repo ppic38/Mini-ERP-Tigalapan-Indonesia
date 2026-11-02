@@ -600,9 +600,11 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
       roleOverride={VENDOR_PRODUKSI[vendorId]?.name ?? vendorId}
       entityOverride="Vendor Produksi"
     >
+      <div className="vp-po-page">
       <DataTable
         title="PO produksi saya"
         mobileCards
+        rowClassName={() => "m-grid2 vp-card vp-pop vp-pop-tap vp-po-card"}
         columns={columns}
         rows={myPOs}
         keyOf={(p) => p.id}
@@ -621,18 +623,42 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
         renderExpanded={(p) => {
           const detail = mrpDetailFor(p.mrpId, mrpDetails);
           const rows = detail?.aduanRows.filter((a) => a.vendor === p.vendorProduksi) ?? [];
+          // HP saja: isi pop-up (lihat .vp-po-page di globals.css) -- info yang tidak tampil di kartu, memakai render kolom yang sama.
+          const mobileInfo = (
+            <div className="md:hidden">
+              <div className="font-mono text-[17px] font-bold text-text-primary">{p.mrpId}</div>
+              <div className="mb-3 mt-0.5 font-sans text-[12px] text-text-muted">Info PO</div>
+              {columns
+                .filter((c) => c.key === "qtyVsKapasitas" || c.key === "nilai" || c.key === "tglPO")
+                .map((c) => (
+                  <div key={c.key} className="flex items-baseline justify-between gap-4 border-t border-[#F1EEEA] py-3 font-sans text-[14px] text-text-primary">
+                    <span className="flex-none text-[12.5px] text-text-muted">{c.label}</span>
+                    <span className="min-w-0 text-right font-medium">{c.render(p)}</span>
+                  </div>
+                ))}
+            </div>
+          );
           if (rows.length === 0) {
-            return <div className="font-sans text-[11.5px] text-text-muted">Belum ada rincian aduan pola untuk PO ini.</div>;
+            return (
+              <>
+                {mobileInfo}
+                <div className="font-sans text-[11.5px] text-text-muted max-md:hidden">Belum ada rincian aduan pola untuk PO ini.</div>
+              </>
+            );
           }
           return (
             <>
-              <LenganQtyCards rows={rows} detail={detail} />
-              <KategoriTargetPanel rows={rows} detail={detail} vendorId={p.vendorProduksi} mrpId={p.mrpId} />
-              <AduanDetailTree rows={rows} />
+              {mobileInfo}
+              <div className="max-md:hidden">
+                <LenganQtyCards rows={rows} detail={detail} />
+                <KategoriTargetPanel rows={rows} detail={detail} vendorId={p.vendorProduksi} mrpId={p.mrpId} />
+                <AduanDetailTree rows={rows} />
+              </div>
             </>
           );
         }}
       />
+      </div>
     </AppShell>
   );
 }
