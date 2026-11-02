@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { buildHppReport } from "@/lib/mrp/hppReport";
 import { exportHppExcel } from "@/lib/mrp/exportHppExcel";
 import { AppShell } from "@/components/shell/app-shell";
@@ -282,6 +282,8 @@ export function LaporanHppView({ role, activeHref }: { role: "finance" | "scm"; 
   const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
   const ekspedisiRates = useMrpStore((s) => s.ekspedisiRates);
   const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
+  // Hanya dipakai sebagai penanda perubahan: Mapping Warna dibaca `sellingPriceFor` lewat variabel modul yang diisi store sebelum state di-set.
+  const warnaAliases = useMrpStore((s) => s.warnaAliases);
 
   // Revisi 2026-09-17 (owner: "grouping per level MRP dulu, baru pilih vendor produksi, baru
   // tampil detailnya") -- dulu pakai DataTable + drill-down 2 langkah terpisah (MrpVendorDrilldown,
@@ -296,8 +298,8 @@ export function LaporanHppView({ role, activeHref }: { role: "finance" | "scm"; 
   // menampilkan semua MRP (sudah punya drill-down sendiri, tidak diubah).
   const [hppMrpFilter, setHppMrpFilter] = useState("");
 
-  if (!mounted) return null;
-
+  // Seluruh hitungan HPP (per roll, per invoice) berat: di-memo supaya tidak diulang tiap render (ganti filter, buka baris, dst.), hanya saat data berubah.
+  const { rows, mrpRowsSorted } = useMemo(() => {
   // Invoice REVISION belum final (masih diperbaiki vendor) jadi tidak diikutkan hitung HPP.
   const relevantInvoices = vendorInvoices.filter((i) => i.status !== "REVISION");
 
@@ -315,28 +317,6 @@ export function LaporanHppView({ role, activeHref }: { role: "finance" | "scm"; 
     })
   );
 
-  // Item revisi 2026-09-18: KPI cards sekarang di-scope ke `cardRows` (bukan `rows` mentah lagi)
-  // -- `cardRows` = seluruh baris kalau `hppMrpFilter` kosong (perilaku lama, semua MRP), atau
-  // cuma baris MRP yang difilter.
-  const cardRows = hppMrpFilter ? rows.filter((r) => r.mrpId === hppMrpFilter) : rows;
-  const totalBiayaProduksi = cardRows.reduce((s, r) => s + r.biayaProduksiTotal, 0);
-  const totalCogsBahan = cardRows.reduce((s, r) => s + r.cogsBahan, 0);
-  const totalOngkir = cardRows.reduce((s, r) => s + r.totalOngkirRow, 0);
-  const nSementara = cardRows.filter((r) => r.sementara).length;
-  // Item revisi 2026-09-18 (owner, lampiran "HPP MRP.xlsx"): tiru rumus di file itu persis --
-  // per item, "Total Hpp" = Qty * Hpp(/pc) dan "Total Harga" = Qty * Harga Jual(/pc), lalu utk
-  // seluruh MRP (baris ringkasan xlsx): Total Hpp = SUM(Total Hpp semua item), Total Harga =
-  // SUM(Total Harga semua item), %HPP = Total Hpp / Total Harga -- BUKAN rata-rata dari
-  // persentase per item (beda dari kolom "Hpp" per-baris di xlsx yang cuma informatif per item).
-  // Item TANPA harga jual (itemSellingPrices tidak punya datanya) dikeluarkan dari DUA sisi
-  // (Total Hpp scoped & Total Harga) supaya %HPP tidak bias oleh item yang harganya tidak
-  // diketahui -- sama seperti kolom "Hpp%" per-baris di tabel bawah yang tampil "—" utk kasus itu.
-  // `> 0` (bukan cuma `!= null`) -- sama seperti guard di hppPercentage per-baris
-  // (lib/mrp/derive.ts), supaya konsisten dengan baris yang tampil "—" di tabel bawah.
-  const rowsWithSellingPrice = cardRows.filter((r) => r.sellingPricePerItem != null && r.sellingPricePerItem > 0);
-  const totalHargaJual = rowsWithSellingPrice.reduce((s, r) => s + (r.sellingPricePerItem as number) * r.fg, 0);
-  const totalHppForPercent = rowsWithSellingPrice.reduce((s, r) => s + r.hppPerItem * r.fg, 0);
-  const hppPercentAgg = totalHargaJual > 0 ? (totalHppForPercent / totalHargaJual) * 100 : null;
 
   // Restrukturisasi (requirement D): sebelumnya 1 baris = 1 pasangan MRP+vendor. Sekarang grouping
   // per MRP+vendor DIPERTAHANKAN dulu (logika di bawah ini identik dengan sebelumnya, angka per
@@ -446,6 +426,34 @@ export function LaporanHppView({ role, activeHref }: { role: "finance" | "scm"; 
   });
 
   const mrpRowsSorted = [...mrpRows].sort((a, b) => (a.mrpId < b.mrpId ? 1 : a.mrpId > b.mrpId ? -1 : 0));
+  return { rows, mrpRowsSorted };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vendorInvoices, mrpDetails, staticMrps, productionBatches, productionResults, productionGroupMeta, rawInvoices, deliveryKolis, ekspedisiRates, itemSellingPrices, warnaAliases]);
+
+  if (!mounted) return null;
+
+  // Item revisi 2026-09-18: KPI cards sekarang di-scope ke `cardRows` (bukan `rows` mentah lagi)
+  // -- `cardRows` = seluruh baris kalau `hppMrpFilter` kosong (perilaku lama, semua MRP), atau
+  // cuma baris MRP yang difilter.
+  const cardRows = hppMrpFilter ? rows.filter((r) => r.mrpId === hppMrpFilter) : rows;
+  const totalBiayaProduksi = cardRows.reduce((s, r) => s + r.biayaProduksiTotal, 0);
+  const totalCogsBahan = cardRows.reduce((s, r) => s + r.cogsBahan, 0);
+  const totalOngkir = cardRows.reduce((s, r) => s + r.totalOngkirRow, 0);
+  const nSementara = cardRows.filter((r) => r.sementara).length;
+  // Item revisi 2026-09-18 (owner, lampiran "HPP MRP.xlsx"): tiru rumus di file itu persis --
+  // per item, "Total Hpp" = Qty * Hpp(/pc) dan "Total Harga" = Qty * Harga Jual(/pc), lalu utk
+  // seluruh MRP (baris ringkasan xlsx): Total Hpp = SUM(Total Hpp semua item), Total Harga =
+  // SUM(Total Harga semua item), %HPP = Total Hpp / Total Harga -- BUKAN rata-rata dari
+  // persentase per item (beda dari kolom "Hpp" per-baris di xlsx yang cuma informatif per item).
+  // Item TANPA harga jual (itemSellingPrices tidak punya datanya) dikeluarkan dari DUA sisi
+  // (Total Hpp scoped & Total Harga) supaya %HPP tidak bias oleh item yang harganya tidak
+  // diketahui -- sama seperti kolom "Hpp%" per-baris di tabel bawah yang tampil "—" utk kasus itu.
+  // `> 0` (bukan cuma `!= null`) -- sama seperti guard di hppPercentage per-baris
+  // (lib/mrp/derive.ts), supaya konsisten dengan baris yang tampil "—" di tabel bawah.
+  const rowsWithSellingPrice = cardRows.filter((r) => r.sellingPricePerItem != null && r.sellingPricePerItem > 0);
+  const totalHargaJual = rowsWithSellingPrice.reduce((s, r) => s + (r.sellingPricePerItem as number) * r.fg, 0);
+  const totalHppForPercent = rowsWithSellingPrice.reduce((s, r) => s + r.hppPerItem * r.fg, 0);
+  const hppPercentAgg = totalHargaJual > 0 ? (totalHppForPercent / totalHargaJual) * 100 : null;
 
   return (
     <AppShell

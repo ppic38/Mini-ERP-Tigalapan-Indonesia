@@ -4130,13 +4130,29 @@ export function autoOngkirForInvoice(inv: VendorInvoice, deliveryKolis: Delivery
  *  matching sama persis seperti `ekspedisiPrice` di atas. `null` kalau tidak ketemu (BUKAN 0,
  *  supaya kolom "% HPP" di UI tampil "—" alih-alih 0% yang menyesatkan). */
 export function sellingPriceFor(warna: string, lengan: Lengan, size: string, rates: ItemSellingPriceRow[]): number | null {
-  const row = rates.find((r) => r.warna === warna && r.lengan === lengan && r.size === size);
-  if (row) return row.price;
+  const index = sellingPriceIndex(rates);
+  const direct = index.get(warna + "|" + lengan + "|" + size);
+  if (direct !== undefined) return direct;
   // Nama warna di MRP beda dari Master Data SKU (mis. ELECTRIC LIME 24S vs ELECTRIC LM 24S): pakai Master Data Mapping Warna (owner 2026-11-02).
   const skuWarna = pricingWarnaAliases.get(warna);
   if (!skuWarna) return null;
-  const aliased = rates.find((r) => r.warna === skuWarna && r.lengan === lengan && r.size === size);
-  return aliased ? aliased.price : null;
+  return index.get(skuWarna + "|" + lengan + "|" + size) ?? null;
+}
+
+/** Indeks harga jual per warna|lengan|size (baris pertama menang, sama seperti pencarian linear sebelumnya), dibuat sekali per larik `rates` -- Master Data
+ *  SKU berisi ribuan baris dan `sellingPriceFor` dipanggil per baris HPP. */
+const sellingPriceIndexCache = new WeakMap<ItemSellingPriceRow[], Map<string, number>>();
+function sellingPriceIndex(rates: ItemSellingPriceRow[]): Map<string, number> {
+  let index = sellingPriceIndexCache.get(rates);
+  if (!index) {
+    index = new Map();
+    for (const r of rates) {
+      const key = r.warna + "|" + r.lengan + "|" + r.size;
+      if (!index.has(key)) index.set(key, r.price);
+    }
+    sellingPriceIndexCache.set(rates, index);
+  }
+  return index;
 }
 
 /** Master Data Mapping Warna (nama warna MRP -> nama warna di Master Data SKU) yang dipakai `sellingPriceFor` sebagai cadangan kedua saat nama persis tidak
