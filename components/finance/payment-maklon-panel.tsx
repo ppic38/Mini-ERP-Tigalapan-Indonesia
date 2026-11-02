@@ -404,7 +404,6 @@ export function PaymentMaklonPanel() {
     { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (inv) => <SysadminActionsBar compact actions={vendorInvoicePaymentCorrections(inv)} /> },
     { key: "vendor", label: "Vendor", default: true, render: (inv) => VENDOR_PRODUKSI[inv.vendorProduksi]?.name ?? inv.vendorProduksi },
     { key: "noPo", label: "No PO", default: true, render: (inv) => <span className="font-mono">{Array.from(new Set(inv.lines.map((l) => l.mrpId))).join(", ")}</span> },
-    { key: "proposal", label: "Proposal", default: true, render: (inv) => <ProposalCell inv={inv} vendorInvoices={vendorInvoices} /> },
     {
       key: "total",
       label: "Total tagihan",
@@ -474,13 +473,13 @@ export function PaymentMaklonPanel() {
         />
       ),
     },
+    { key: "proposal", label: "Proposal/Invoice", default: true, render: (inv) => <ProposalCell inv={inv} vendorInvoices={vendorInvoices} /> },
   ];
 
   const paidColumns: ColumnDef<VendorInvoice>[] = [
     { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (inv) => <SysadminActionsBar compact actions={vendorInvoicePaymentCorrections(inv)} /> },
     { key: "vendor", label: "Vendor", default: true, render: (inv) => VENDOR_PRODUKSI[inv.vendorProduksi]?.name ?? inv.vendorProduksi },
     { key: "mrp", label: "MRP", default: true, render: (inv) => Array.from(new Set(inv.lines.map((l) => l.mrpId))).join(", ") },
-    { key: "proposal", label: "Proposal", default: true, render: (inv) => <ProposalCell inv={inv} vendorInvoices={vendorInvoices} /> },
     { key: "totalQty", label: "Total qty", default: true, align: "right", render: (inv) => formatPcs(inv.lines.reduce((s, l) => s + l.qty, 0)) },
     { key: "totalPaid", label: "Total dibayar", default: true, align: "right", render: (inv) => formatRupiah(vendorInvoiceTotalPaid(inv)) },
     { key: "tglLunas", label: "Tanggal Lunas", default: true, render: (inv) => formatDate(inv.paidAt) },
@@ -553,6 +552,7 @@ export function PaymentMaklonPanel() {
         return <StatusPill tone={payment.tone}>{payment.label}</StatusPill>;
       },
     },
+    { key: "proposal", label: "Proposal/Invoice", default: true, render: (inv) => <ProposalCell inv={inv} vendorInvoices={vendorInvoices} /> },
   ];
 
   function renderInvoiceLinesDetail(inv: VendorInvoice) {

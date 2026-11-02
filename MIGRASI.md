@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Kolom Proposal/Invoice dipindah ke paling kanan di Payment Maklon (2026-11-02, tanpa migration)
+Owner: di Finance > Payment Maklon kolom proposal dipindah ke paling kanan (tabel siap bayar dan riwayat), diberi nama kolom **Proposal/Invoice**, dan tautannya cukup berbunyi **Download** (`components/finance/proposal-cell.tsx`, urutan kolom di `payment-maklon-panel.tsx`). Isi PDF tidak berubah. Hanya tampilan.
+
 ## Kolom % HPP per MRP dan per vendor di Laporan HPP (2026-11-02, tanpa migration)
 Owner: tambahkan persentase HPP per vendor. Tabel Laporan HPP per MRP (Finance dan SCM, `components/mrp/laporan-hpp-view.tsx`) dapat kolom **% HPP** di baris MRP dan baris vendor: Total HPP / Total Harga Jual dengan rumus yang sama seperti kartu HPP (%) (`hppPercentOf`; item tanpa harga jual dikeluarkan dari dua sisi, tampil "—" kalau tidak ada harga jual sama sekali). Hanya tampilan. Temuan terkait: ongkir Rp 0 di HPP terjadi karena nama ekspedisi di koli lama (mis. "WUS CARGO") tidak lagi ada di Master Data Ekspedisi setelah diganti nama 2026-10-27; diperbaiki dengan SQL penyamaan nama di chat (owner menjalankan), bukan perubahan kode.
 

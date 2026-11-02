@@ -27,7 +27,7 @@ export function ProposalCell({ inv, vendorInvoices }: { inv: VendorInvoice; vend
   return (
     <span onClick={(e) => e.stopPropagation()} className="flex flex-col gap-0.5 font-sans text-[11px]">
       <button onClick={() => void download()} className="w-fit font-semibold text-action-primary underline">
-        Download proposal
+        Download
       </button>
     </span>
   );
