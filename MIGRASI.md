@@ -1,5 +1,11 @@
 # Migrasi Project — Status & Riwayat
 
+## Tampilan HP Vendor Produksi, tahap 2: bagian atas menempel, popup detail PO material, header Invoice (2026-11-03, tanpa migration)
+Owner: hanya tampilan HP/tablet tegak (< 1024px), tidak mengubah data atau alur input.
+- **Navbar + judul + filter menempel bertumpuk** saat di-scroll: `AppShell` membungkus Topbar, judul, dan pilihan PO Produksi/Material dalam `.vp-sticky-head` (sticky, z-25; untuk modul lain/desktop class `contents` = tidak mengubah tata letak). Tinggi blok itu diukur `ResizeObserver` dan dibagikan sebagai `--vp-head-h`; `.dt-filters` (filter DataTable kartu) menempel tepat di bawahnya. Filter kustom non-DataTable (mis. Riwayat pengiriman) tidak ikut menempel.
+- **Receive:** "Lihat Detail" di HP membuka daftar warna sebagai popup (z-45); "Lihat" di satu warna membuka popup Terima Material di atasnya, ditutup -> kembali ke daftar warna. Desktop tetap menampilkan daftar warna di bawah baris PO.
+- **Invoice:** header tabel Validasi qty di HP lebih singkat ("Sudah diajukan", "Belum diajukan"); di popup invoice tidak ada singkatan lagi: Reject/Rework (bukan RJ/RW), Cutting, Finish Good, Panjang/Pendek (bukan PJG/PDK), `/pcs`. Tampilan desktop tidak berubah.
+
 ## Tampilan HP Vendor Produksi: tema biru-putih + rapikan PO, Receive, Pengiriman (2026-11-03, tanpa migration)
 Owner: tema HP jangan oranye, samakan dengan ERP (biru, putih). Hanya tampilan, tidak mengubah data atau alur input.
 - **Tema:** token `.vp-mobile` di `app/globals.css` (`--action-primary`/`--accent-blue` #2563EB, `--accent-blue-2` #1D4ED8, `--info-bg` #EFF6FF, `--surface-page` #F3F4F7) = nilai ERP desktop; semua warna hangat (oranye, krem, abu kecokelatan) di CSS HP, `vendor-bottom-nav.tsx`, dan halaman vendor/Produksi diganti padanan biru-abu dingin; bayangan memakai abu-biru.

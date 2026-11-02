@@ -440,6 +440,10 @@
   .vp-mobile .m-cards .dt-filters { flex-wrap: wrap; }
   /* Filter satu kolom selebar layar dengan tinggi sama (lurus kiri-kanan, tidak bergerigi); kolom cari tetap di baris pertama. */
   .vp-mobile .m-cards .dt-filters { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; overflow: visible; }
+  /* Menempel bertumpuk di atas saat halaman di-scroll: navbar + judul (.vp-sticky-head, dibungkus AppShell) di paling atas,
+     filter tepat di bawahnya (--vp-head-h = tinggi blok atas, diukur AppShell). Latar buram supaya kartu yang lewat tidak tembus. */
+  .vp-mobile .vp-sticky-head { position: sticky; top: 0; z-index: 25; padding-bottom: 10px; background: var(--surface-page); }
+  .vp-mobile .m-cards .dt-filters { position: sticky; top: var(--vp-head-h, 0px); z-index: 20; background: var(--surface-page); }
   .vp-mobile .m-cards .dt-filters > input { width: 100%; border-radius: 9999px; padding: 9px 16px; border-color: #D9E0E8; }
   .vp-mobile .m-cards .dt-filters > select {
     width: 100%;
@@ -1030,7 +1034,8 @@
   /* Per size: satu baris per size, judul kolom singkat. */
   .vp-mobile .vp-inv-size-head,
   .vp-mobile .m-stack.m-grid2.vp-inv-size { display: grid !important; grid-template-columns: 30px repeat(5, minmax(0, 1fr)) 44px !important; gap: 4px; }
-  .vp-mobile .vp-inv-size-head { padding: 4px 0; font-size: 9.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+  .vp-mobile .vp-inv-size-head { align-items: end; padding: 4px 0; font-size: 9.5px; font-weight: 600; line-height: 1.2; letter-spacing: 0.02em; text-transform: uppercase; color: var(--text-muted); }
+  .vp-mobile .vp-inv-size-head > * { min-width: 0; }
   .vp-mobile .m-stack.m-grid2.vp-inv-size { align-items: center !important; padding: 6px 0 !important; font-size: 11.5px; }
   .vp-mobile .vp-inv-size > [data-label]::before { display: none !important; }
   .vp-mobile .vp-inv-size > :first-child { grid-column: auto !important; }

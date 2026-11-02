@@ -689,7 +689,25 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                   </Button>
                 </span>
               </div>
-              {selectedInvoiceId === i.id && colorDetailInner && <div className="border-b border-[#F1F4F7] bg-[#F7F9FB] px-4 py-3.5">{colorDetailInner}</div>}
+              {selectedInvoiceId === i.id && colorDetailInner && <div className="border-b border-[#F1F4F7] bg-[#F7F9FB] px-4 py-3.5 max-md:hidden">{colorDetailInner}</div>}
+              {/* HP (owner 2026-11-03): "Lihat Detail" membuka daftar warna sebagai popup; "Lihat" di salah satu warna membuka popup
+                  Terima Material di atasnya (z-50 > z-[45]), ditutup -> kembali ke daftar warna. */}
+              {selectedInvoiceId === i.id && colorDetailInner && (
+                <div className="fixed inset-0 z-[45] flex items-center justify-center bg-[#0B131B]/45 p-4 md:hidden" onClick={() => pickInvoice(i.id)}>
+                  <div className="flex max-h-[85vh] w-full max-w-[480px] flex-col rounded-2xl bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center justify-between gap-3 border-b border-border-subtle px-4 py-3">
+                      <span className="min-w-0">
+                        <span className="block font-sans text-[11px] text-text-muted">Detail PO material</span>
+                        <span className="block truncate font-mono text-[14px] font-semibold text-text-primary">{i.noInvoiceVendor || i.poId}</span>
+                      </span>
+                      <button onClick={() => pickInvoice(i.id)} className="min-h-9 flex-none rounded-full border border-[#D9E0E8] bg-white px-4 font-sans text-[12.5px] font-semibold text-action-primary">
+                        Tutup
+                      </button>
+                    </div>
+                    <div className="overflow-y-auto px-4 py-3">{colorDetailInner}</div>
+                  </div>
+                </div>
+              )}
               </Fragment>
             );
           })}

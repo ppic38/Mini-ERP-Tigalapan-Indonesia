@@ -228,10 +228,10 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
           <div className="px-4 py-2">
             <div className="grid grid-cols-5 gap-2 py-1.5 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
               <span>MRP</span>
-              <span className="text-right">Dikirim (sudah diajukan invoice)</span>
+              <span className="text-right"><span className="max-md:hidden">Dikirim (sudah diajukan invoice)</span><span className="md:hidden">Sudah diajukan</span></span>
               <span className="text-right">Diinvoice</span>
               <span className="text-right">Selisih</span>
-              <span className="text-right">Dikirim, belum diajukan</span>
+              <span className="text-right"><span className="max-md:hidden">Dikirim, belum diajukan</span><span className="md:hidden">Belum diajukan</span></span>
             </div>
             {recon.map((r) => {
               const diff = r.invoiced - r.shippedInvoiced;
@@ -474,13 +474,13 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                           </span>
                           <span data-label="Qty diinvoice" className="text-right">{formatPcs(line.qty)}</span>
                           <span data-label="Harga maklon" className="text-right">
-                            <span className="mr-1.5 rounded bg-info-bg px-1.5 py-0.5 text-[10px] font-semibold text-info-fg">{maklonTipeForWarna(line.mrpId, line.warna, line.lengan, mrpDetails, line.usia)}</span>
-                            {formatRupiah(line.ratePerPc)}/pc
+                            <span className="mr-1.5 rounded bg-info-bg px-1.5 py-0.5 text-[10px] font-semibold text-info-fg">{(() => { const tipe = maklonTipeForWarna(line.mrpId, line.warna, line.lengan, mrpDetails, line.usia); return (<><span className="max-md:hidden">{tipe}</span><span className="md:hidden">{tipe === "PJG" ? "Panjang" : tipe === "PDK" ? "Pendek" : tipe}</span></>); })()}</span>
+                            {formatRupiah(line.ratePerPc)}/pcs
                           </span>
                           <span data-label="Nilai" className="text-right">{formatRupiah(line.amount)}</span>
                           {lineYield && (
                             <span className="vp-inv-line-yield md:hidden">
-                              Yield <b>{lineYield.yieldPct.toFixed(1)}%</b> · RJ <b className="text-danger-fg">{lineYield.reject}</b> · RW{" "}
+                              Yield <b>{lineYield.yieldPct.toFixed(1)}%</b> · Reject <b className="text-danger-fg">{lineYield.reject}</b> · Rework{" "}
                               <b className="text-rework-fg">{lineYield.rework}</b>
                             </span>
                           )}
@@ -490,10 +490,10 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                             <div className="vp-inv-size-head">
                               <span>Size</span>
                               <span>PO</span>
-                              <span>Cut</span>
-                              <span>FG</span>
-                              <span>RJ</span>
-                              <span>RW</span>
+                              <span>Cutting</span>
+                              <span>Finish Good</span>
+                              <span>Reject</span>
+                              <span>Rework</span>
                               <span>Yield</span>
                             </div>
                             {productionYieldBySize(line.mrpId, line.warna, line.lengan, mrpDetails, productionBatches, productionResults).map((s) => (

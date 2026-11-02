@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/shell/sidebar";
 import { Topbar } from "@/components/shell/topbar";
@@ -69,6 +69,19 @@ export function AppShell({
 }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  // HP portal Vendor Produksi: tinggi blok atas yang menempel (navbar + judul) dibagikan lewat --vp-head-h, supaya filter
+  // di bawahnya bisa menempel tepat di bawah blok itu (lihat .vp-sticky-head / .dt-filters di globals.css).
+  const trackHeadHeight = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return;
+    const apply = () => document.documentElement.style.setProperty("--vp-head-h", el.offsetHeight + "px");
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      document.documentElement.style.removeProperty("--vp-head-h");
+    };
+  }, []);
   // Laci sidebar di layar kecil (< lg). Tidak berpengaruh di desktop.
   const [navOpen, setNavOpen] = useState(false);
   // Revisi 2026-09-07: `hydrated` sudah lama ada di store (di-set true begitu getFlowSnapshot()
@@ -339,6 +352,9 @@ export function AppShell({
       />
       {vendorShell && <VendorBottomNav items={sidebarItems} activeHref={activeHref} badgeOverrides={badgeOverrides} />}
       <div className="flex min-w-0 flex-1 flex-col">
+        {/* Blok atas (navbar + judul + pilihan PO): di HP portal vendor menempel di atas saat halaman di-scroll (.vp-sticky-head);
+            selain itu `contents` = tidak mengubah tata letak sama sekali. */}
+        <div ref={vendorShell ? trackHeadHeight : undefined} className={vendorShell ? "vp-sticky-head" : "contents"}>
         <Topbar
           onOpenMenu={() => setNavOpen(true)}
           role={topbarRole}
@@ -404,6 +420,7 @@ export function AppShell({
           {actions && <div className="flex flex-wrap gap-2 sm:ml-auto">{actions}</div>}
         </div>
         {vendorShell && <VendorPoSwitch items={sidebarItems} activeHref={activeHref} />}
+        </div>
         <div className={"flex min-w-0 flex-1 flex-col gap-3.5 px-4 py-4 sm:px-[22px]" + (vendorShell ? " vp-wrap max-md:gap-5 max-md:pb-28" : "")}>
           {hydrated ? (
             children
