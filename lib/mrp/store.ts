@@ -29,7 +29,7 @@ import type {
 } from "./types";
 import type { ParsedMrpImport } from "./parseImport";
 import type { EkspedisiRateRow, EntitasRow, HargaFobRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, MaterialSupplierRow, SupplierRow, VendorProduksiMasterRow, WarnaAliasRow } from "./masterData";
-import { DEFAULT_WEIGHT_TOLERANCE_PCT, localDateString, setWeightTolerancePct } from "./derive";
+import { DEFAULT_WEIGHT_TOLERANCE_PCT, localDateString, setWarnaAliasesForPricing, setWeightTolerancePct } from "./derive";
 
 /** Pesan gagal aksi (dulu window.alert) -- dialog buatan sendiri, tidak memblokir alur kode. */
 function notifyError(message: string): void {
@@ -897,6 +897,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       // Toleransi selisih berat (Master Data SCM) dipasang ke derive.ts SEBELUM state di-set, supaya semua
       // turunan (klaim, kunci roll, dst.) yang dihitung ulang akibat snapshot ini langsung memakai angka terbaru.
       setWeightTolerancePct(weightTolerancePct);
+      setWarnaAliasesForPricing(snapshot.warnaAliases ?? get().warnaAliases);
       set({ ...snapshot, weightTolerancePct, hydrated: true });
       lastDataVersion = dataVersion;
       lastMasterVersion = masterVersion;

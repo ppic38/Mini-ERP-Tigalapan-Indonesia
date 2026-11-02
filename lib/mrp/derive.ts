@@ -4131,7 +4131,19 @@ export function autoOngkirForInvoice(inv: VendorInvoice, deliveryKolis: Delivery
  *  supaya kolom "% HPP" di UI tampil "—" alih-alih 0% yang menyesatkan). */
 export function sellingPriceFor(warna: string, lengan: Lengan, size: string, rates: ItemSellingPriceRow[]): number | null {
   const row = rates.find((r) => r.warna === warna && r.lengan === lengan && r.size === size);
-  return row ? row.price : null;
+  if (row) return row.price;
+  // Nama warna di MRP beda dari Master Data SKU (mis. ELECTRIC LIME 24S vs ELECTRIC LM 24S): pakai Master Data Mapping Warna (owner 2026-11-02).
+  const skuWarna = pricingWarnaAliases.get(warna);
+  if (!skuWarna) return null;
+  const aliased = rates.find((r) => r.warna === skuWarna && r.lengan === lengan && r.size === size);
+  return aliased ? aliased.price : null;
+}
+
+/** Master Data Mapping Warna (nama warna MRP -> nama warna di Master Data SKU) yang dipakai `sellingPriceFor` sebagai cadangan kedua saat nama persis tidak
+ *  ketemu. Disimpan di modul (pola sama toleransi berat) supaya puluhan pemanggil HPP tidak perlu diubah; diisi store setiap snapshot dimuat. */
+let pricingWarnaAliases = new Map<string, string>();
+export function setWarnaAliasesForPricing(rows: { mrpWarna: string; skuWarna: string }[]): void {
+  pricingWarnaAliases = new Map(rows.map((r) => [r.mrpWarna, r.skuWarna]));
 }
 
 export function hppRowsForInvoice(
