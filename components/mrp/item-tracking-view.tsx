@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { MultiSelectFilter } from "@/components/mrp/multi-select-filter";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatPcs } from "@/lib/mrp/derive";
+import { formatDate, formatPcs } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
-import { buildItemTracking, itemWithBreakdown, lenganShort, type ItemTrackRow } from "@/lib/mrp/itemTracking";
+import { buildItemTracking, itemWithBreakdown, koliRowsForItem, lenganShort, type ItemTrackRow } from "@/lib/mrp/itemTracking";
 
 const vendorLabel = (id: string) => (id ? VENDOR_PRODUKSI[id]?.name ?? id : "Belum dialokasikan");
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
@@ -131,6 +131,9 @@ function ItemSearch({ items, query, onQuery, picked, onPick }: { items: ItemTrac
 }
 
 function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () => void }) {
+  const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
+  const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
+  const koliRows = useMemo(() => koliRowsForItem(item, deliveryKolis, warehouseReceipts), [item, deliveryKolis, warehouseReceipts]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -199,6 +202,58 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
                   <td className={num}>{formatPcs(item.diterima)}</td>
                 </tr>
               </tfoot>
+            </table>
+          </div>
+
+          <div className="mt-5 font-sans text-[12px] font-semibold text-text-primary">Koli dan pengiriman item ini</div>
+          <div className="mt-2 overflow-x-auto rounded-md border border-[#E4E9EE]">
+            <table className="w-full border-collapse font-sans text-[11.5px]">
+              <thead className="bg-info-bg text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
+                <tr>
+                  <th className="px-3 py-2 text-left">No. MRP</th>
+                  <th className="px-3 py-2 text-left">Vendor</th>
+                  <th className="px-3 py-2 text-left">No. Koli</th>
+                  <th className="px-3 py-2 text-right">Qty item</th>
+                  <th className="px-3 py-2 text-right">Berat (kg)</th>
+                  <th className="px-3 py-2 text-left">Status</th>
+                  <th className="px-3 py-2 text-left">Ekspedisi</th>
+                  <th className="px-3 py-2 text-left">No. Resi</th>
+                  <th className="px-3 py-2 text-left">Tgl kirim</th>
+                  <th className="px-3 py-2 text-left">Diterima gudang</th>
+                </tr>
+              </thead>
+              <tbody>
+                {koliRows.length === 0 && (
+                  <tr>
+                    <td colSpan={10} className="px-3 py-4 text-center text-text-muted">Belum ada koli yang memuat item ini.</td>
+                  </tr>
+                )}
+                {koliRows.map((k) => (
+                  <tr key={k.koliId} className="border-t border-[#EEF1F4]">
+                    <td className="px-3 py-2 font-mono">{k.mrpId}</td>
+                    <td className="px-3 py-2">{vendorLabel(k.vendorProduksi)}</td>
+                    <td className="px-3 py-2 font-mono">{k.noKoli}</td>
+                    <td className={num}>{formatPcs(k.qty)}</td>
+                    <td className={num}>{k.beratKoli ? k.beratKoli : "-"}</td>
+                    <td className="px-3 py-2 font-semibold">
+                      {k.receivedAt ? <span className="text-[#047857]">Diterima gudang</span> : k.deliveredAt ? <span className="text-[#1D4ED8]">Dalam perjalanan</span> : <span className="text-[#B45309]">Belum dikirim</span>}
+                    </td>
+                    <td className="px-3 py-2">{k.ekspedisi ?? "-"}</td>
+                    <td className="px-3 py-2 font-mono">{k.noResi ?? "-"}</td>
+                    <td className="px-3 py-2">{k.deliveredAt ? formatDate(k.deliveredAt) : "-"}</td>
+                    <td className="px-3 py-2">{k.receivedAt ? formatDate(k.receivedAt) : "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+              {koliRows.length > 0 && (
+                <tfoot className="border-t-2 border-border-subtle bg-[#F2F5F8] font-semibold">
+                  <tr>
+                    <td className="px-3 py-2" colSpan={3}>Total di koli ({koliRows.length} koli)</td>
+                    <td className={num}>{formatPcs(sum(koliRows.map((k) => k.qty)))}</td>
+                    <td colSpan={6} />
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </div>

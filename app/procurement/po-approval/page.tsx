@@ -35,7 +35,7 @@ import {
   summarizeRateSources,
   vendorProduksiRows,
 } from "@/lib/mrp/derive";
-import { countMaterialRowsWithoutSupplierForMrp, countPoPendingForRole, countPoRejected, pendingMarker } from "@/lib/shell/badges";
+import { countMaterialRowsWithoutSupplierForMrp, countPoInProgress, pendingMarker } from "@/lib/shell/badges";
 import { PoApprovalQueue } from "@/components/mrp/po-approval-queue";
 import { SysadminActionsBar, SysadminTd, SysadminTh } from "@/components/sysadmin/correction-dialog";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
@@ -526,9 +526,10 @@ export default function PoApprovalPage() {
 
       <Tabs
         items={[
-          { key: "material", label: "PO Material" },
-          { key: "produksi", label: "PO Produksi" },
-          { key: "approval", label: "Status Approval PO", badge: countPoPendingForRole("procurement", materialPOs, maklonPOs) + countPoRejected(materialPOs, maklonPOs) },
+          // Badge = PO yang approval-nya masih berjalan (belum tuntas di semua level), tetap ada selama belum selesai (owner 2026-11-02).
+          { key: "material", label: "PO Material", badge: countPoInProgress(materialPOs, maklonPOs, "MATERIAL") },
+          { key: "produksi", label: "PO Produksi", badge: countPoInProgress(materialPOs, maklonPOs, "MAKLON") },
+          { key: "approval", label: "Status Approval PO", badge: countPoInProgress(materialPOs, maklonPOs) },
         ]}
         active={tab}
         onChange={(k) => setTab(k as PoApprovalTab)}

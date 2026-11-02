@@ -12,6 +12,7 @@ import { reassignAduanRowsVendor, resiGroupInvoiceLines, weightVariance } from "
 import { getFlowSnapshot } from "./repo/snapshot";
 import { loadWeightTolerancePct } from "./weightToleranceServer";
 import { assertRollCodesUnique } from "./rollCodeServer";
+import { removeBatchExtras } from "./cuttingExtras";
 
 /** Bungkus aksi supaya alasan gagalnya sampai ke user di production (sama pola dengan lib/mrp/actions.ts). */
 async function toActionResult<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
@@ -560,6 +561,7 @@ export async function sysadminRevertVendorInvoicePaidAction(invoiceId: string, r
     if (inv.status !== "PAID") throw new Error(`Invoice ini berstatus ${inv.status}, bukan PAID -- tidak ada pembayaran yang bisa dibatalkan.`);
     const { error: updErr } = await db.from("vendor_invoices").update({ status: "APPROVED", paid_at: null, bukti_bayar_at: null, bukti_bayar_file_name: null }).eq("id", invoiceId);
     if (updErr) throw new Error(updErr.message);
+    await db.from("vendor_invoices").update({ paid_by: null }).eq("id", invoiceId); // PIC pembayaran (migration 0082), best-effort
     // Bukti pembayaran lama ikut dihapus (best-effort): pembayaran ulang wajib melampirkan bukti baru (migration 0075).
     await db.from("vendor_invoice_payment_proofs").delete().eq("invoice_id", invoiceId);
     // File tambahan bukti bayar (migration 0080) ikut dihapus; tabelnya mungkin belum ada, jadi kegagalannya diabaikan.
@@ -912,6 +914,8 @@ export async function sysadminUndoCuttingAction(batchId: string, reason: string)
     const db = supabaseServer();
     const batch = await loadBatchUntouchedByFg(db, batchId);
     if (!batch.cutting_at) throw new Error("Roll ini belum punya hasil cutting.");
+    // Hasil tambahan sisa kain (migration 0084) ikut dibatalkan; ditolak kalau grup tujuannya sudah dikonfirmasi Finish Good.
+    await removeBatchExtras(db, [batch]);
     const { data: sizes, error: sizesErr } = await db.from("production_batch_sizes").select("size,qty").eq("production_batch_id", batchId);
     if (sizesErr) throw new Error(sizesErr.message);
     const { error: sizeErr } = await db.from("production_batch_sizes").delete().eq("production_batch_id", batchId);

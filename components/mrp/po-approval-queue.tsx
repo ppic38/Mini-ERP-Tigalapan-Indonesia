@@ -5,6 +5,7 @@ import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Tabs } from "@/components/ui/tabs";
+import { countPoInProgress } from "@/lib/shell/badges";
 import { SysadminPanel } from "@/components/sysadmin/correction-dialog";
 import { maklonPoCorrections, materialPoCorrections } from "@/components/sysadmin/procurement-corrections";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -377,7 +378,6 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
   const scmPosition = scmPositionOf(scmUsername);
   const isMine = (i: Item) =>
     !i.po.approved && !i.state.legacy && !i.state.rejected && i.state.pendingRoles.includes(role) && (role !== "scm" || scmMayActAtStep(scmUsername, i.state.currentStep));
-  const mineCount = (type: Item["type"]) => items.filter((i) => i.type === type && isMine(i)).length;
 
   // Label jabatan penyetuju di judul/konfirmasi: portal SCM memakai jabatan akun yang login (Asisten Manager / SCM Manager).
   const roleLabel = role === "scm" ? (scmPosition ? SCM_POSITION_LABEL[scmPosition] : "SCM") : APPROVAL_ROLE_LABEL[role];
@@ -603,8 +603,9 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
       )}
       <Tabs
         items={[
-          { key: "MATERIAL", label: "PO Material", badge: mineCount("MATERIAL") },
-          { key: "MAKLON", label: "PO Produksi", badge: mineCount("MAKLON") },
+          // Badge tab = PO yang approval-nya masih berjalan di semua level (bukan hanya giliran role ini), tetap ada selama belum tuntas (owner 2026-11-02).
+          { key: "MATERIAL", label: "PO Material", badge: countPoInProgress(materialPOs, maklonPOs, "MATERIAL") },
+          { key: "MAKLON", label: "PO Produksi", badge: countPoInProgress(materialPOs, maklonPOs, "MAKLON") },
         ]}
         active={tab}
         onChange={(key) => setTab(key as "MATERIAL" | "MAKLON")}

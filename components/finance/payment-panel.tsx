@@ -514,6 +514,8 @@ export function PaymentPanel() {
         return <span className="font-sans text-[11px] text-text-muted">—</span>;
       },
     },
+    // PIC Finance yang memproses pembayaran (migration 0082); kosong untuk invoice yang belum dibayar.
+    { key: "paidBy", label: "PIC Pembayaran", default: true, render: (i) => <span className="font-sans text-[11px]">{i.status === "PAID" || i.paidAt ? i.paidBy ?? "-" : "—"}</span> },
   ];
 
   // Item revisi 2026-09-06: klik baris untuk lihat detail material (rincian per warna + add buy)

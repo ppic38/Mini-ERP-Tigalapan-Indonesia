@@ -1,5 +1,5 @@
 import type { MrpDetail } from "./store";
-import { SIZE_ORDER } from "./derive";
+import { SIZE_ORDER, compareNoKoli } from "./derive";
 import type { DeliveryKoli, Lengan, ProductionBatch, ProductionResult, WarehouseReceipt } from "./types";
 
 /** Tracking Item (PPIC dan SCM, owner 2026-10-26): memantau SATU ITEM (warna + lengan + size, mis. "HITAM 24S PDK L"), bukan satu warna, dari rencana
@@ -177,4 +177,40 @@ export function buildItemTracking(
     it.breakdown.sort((a, b) => b.mrpId.localeCompare(a.mrpId, undefined, { numeric: true }) || a.vendorProduksi.localeCompare(b.vendorProduksi));
   }
   return out.sort((a, b) => a.warna.localeCompare(b.warna) || a.lengan.localeCompare(b.lengan) || sizeRank(a.size) - sizeRank(b.size) || a.size.localeCompare(b.size));
+}
+
+/** Satu koli yang memuat item ini (Tracking Item, klik item): isi koli, status kirim (ekspedisi, resi, tanggal), dan tanggal diterima gudang. */
+export type ItemKoliRow = {
+  koliId: string;
+  mrpId: string;
+  vendorProduksi: string;
+  noKoli: string;
+  /** Qty item ini di koli itu (beberapa roll/usia untuk size yang sama dijumlah; reject tidak dihitung). */
+  qty: number;
+  beratKoli?: number;
+  ekspedisi?: string;
+  noResi?: string;
+  deliveredAt?: string;
+  /** Tanggal penerimaan Warehouse (koli dibongkar); kosong = belum diterima. */
+  receivedAt?: string;
+};
+
+/** Koli yang memuat item (warna·lengan·size) pada pasangan MRP+vendor yang tampil di rincian item (mengikuti filter aktif). */
+export function koliRowsForItem(item: ItemTrackRow, kolis: DeliveryKoli[], receipts: WarehouseReceipt[]): ItemKoliRow[] {
+  const scope = new Set(item.breakdown.map((b) => b.mrpId + "|" + b.vendorProduksi));
+  const receivedAt = new Map<string, string>();
+  for (const rc of receipts) for (const id of rc.koliIds) receivedAt.set(id, rc.receivedAt);
+  const out: ItemKoliRow[] = [];
+  for (const k of kolis) {
+    if (!scope.has(k.mrpId + "|" + k.vendorProduksi)) continue;
+    const qty = k.items.reduce((s, it) => s + (it.kind !== "REJECT" && it.warna === item.warna && it.lengan === item.lengan && it.size === item.size ? it.qty : 0), 0);
+    if (qty <= 0) continue;
+    out.push({
+      koliId: k.id, mrpId: k.mrpId, vendorProduksi: k.vendorProduksi, noKoli: k.noKoli, qty, beratKoli: k.beratKoli,
+      ekspedisi: k.ekspedisi || undefined, noResi: k.noResi, deliveredAt: k.deliveredAt, receivedAt: receivedAt.get(k.id),
+    });
+  }
+  return out.sort(
+    (a, b) => b.mrpId.localeCompare(a.mrpId, undefined, { numeric: true }) || a.vendorProduksi.localeCompare(b.vendorProduksi) || (a.noResi ?? "").localeCompare(b.noResi ?? "") || compareNoKoli(a.noKoli, b.noKoli)
+  );
 }

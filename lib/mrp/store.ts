@@ -25,10 +25,11 @@ import type {
   VendorInvoice,
   VendorInvoiceAdjustmentKind,
   WarehouseReceipt,
+  CuttingExtra,
 } from "./types";
 import type { ParsedMrpImport } from "./parseImport";
 import type { EkspedisiRateRow, EntitasRow, HargaFobRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, MaterialSupplierRow, SupplierRow, VendorProduksiMasterRow, WarnaAliasRow } from "./masterData";
-import { DEFAULT_WEIGHT_TOLERANCE_PCT, localDateString, setWeightTolerancePct } from "./derive";
+import { DEFAULT_WEIGHT_TOLERANCE_PCT, localDateString, setWarnaAliasesForPricing, setWeightTolerancePct } from "./derive";
 
 /** Pesan gagal aksi (dulu window.alert) -- dialog buatan sendiri, tidak memblokir alur kode. */
 function notifyError(message: string): void {
@@ -36,7 +37,7 @@ function notifyError(message: string): void {
 }
 import * as rawActions from "./actions";
 import { poApprovalState, type ApprovalRole, type PoApprovalEntry } from "./poApproval";
-import type { SkuImportInputRow, SkuImportSummary, WarnaAliasImportInputRow, HargaKainImportInputRow } from "./actions";
+import type { SkuImportInputRow, SkuImportSummary, WarnaAliasImportInputRow, HargaKainImportInputRow, SavePaymentProposalInput } from "./actions";
 import { unwrapAction } from "./action-result";
 
 // Setiap Server Action di lib/mrp/actions.ts lempar Error("Unauthorized: ...") / Error("Forbidden:
@@ -427,8 +428,13 @@ type FlowActions = {
   submitResiGroupInvoice: (koliIds: string[]) => Promise<void>;
   createVendorInvoice: (input: { vendorProduksi: string; lines: { mrpId: string; warna: string; lengan: Lengan; usia?: Usia; qty: number; ratePerPc: number }[]; note?: string }) => Promise<void>;
   setVendorInvoiceStatus: (invoiceId: string, status: VendorInvoice["status"]) => Promise<void>;
+  /** Hitung ulang invoice vendor yang belum dibayar dari Master Data Harga Maklon terbaru; mengembalikan jumlah invoice yang berubah. */
+  repriceVendorInvoices: () => Promise<number>;
   addVendorInvoiceAdjustment: (invoiceId: string, input: { kind: VendorInvoiceAdjustmentKind; label: string; amount: number; note?: string }) => Promise<void>;
   payVendorInvoices: (invoiceIds: string[], proof: { dataUrl: string; fileName?: string }) => Promise<void>;
+  /** Proposal Pembayaran invoice vendor produksi (migration 0082): simpan/ubah dan hapus. */
+  savePaymentProposal: (input: SavePaymentProposalInput) => Promise<void>;
+  deletePaymentProposal: (no: string) => Promise<void>;
   setVendorInvoicePaymentProof: (invoiceIds: string[], proof: { dataUrl: string; fileName?: string }) => Promise<void>;
   /** Spec Portal Warehouse — "Bongkar Koli", SELALU per resi group & SELALU utuh (Q5). Lihat
    *  receiveWarehouseResiGroupAction di actions.ts — qty TIDAK dipercaya dari client. */
@@ -515,7 +521,9 @@ type FlowActions = {
     sizeQtyByBatchId: Record<string, Record<string, number>>,
     sizeShiftsByBatchId?: Record<string, { from: string; to: string; qty: number }[]>,
     /** Keadaan roll saat modal dibuka -- server menolak simpanan kalau roll sudah diubah orang lain (anti-timpa). */
-    expectedByBatchId?: Record<string, { cuttingAt?: string | null; sizeQty?: Record<string, number> }>
+    expectedByBatchId?: Record<string, { cuttingAt?: string | null; sizeQty?: Record<string, number> }>,
+    /** Hasil tambahan dari sisa kain per roll (migration 0084): baju lain dari kain yang bersisa setelah target tercapai. */
+    extrasByBatchId?: Record<string, CuttingExtra[]>
   ) => Promise<void>;
   /** Item 14 (feedback batch 2026-09-10): edit resting_at untuk 1 sesi resting (beberapa batch
    *  sekaligus, semuanya berbagi resting_at yang sama). */
@@ -523,6 +531,8 @@ type FlowActions = {
   /** Migration 0068 (opsional per vendor): akun UTAMA vendor menyetujui / menolak hasil cutting anggota tim yang kurang
    *  dari target. Tolak mengosongkan lagi hasil cutting roll itu (alasan wajib). Melempar kalau ditolak server. */
   decideCuttingApproval: (batchIds: string[], decision: "APPROVE" | "REJECT", note?: string) => Promise<void>;
+  /** Input Finish Good hasil tambahan dari sisa kain sebuah roll (migration 0084): fgQty per baris (0..hasil cutting). */
+  saveBatchExtraFg: (batchId: string, entries: { lengan: Lengan; usia: Usia; size: string; fgQty: number }[]) => Promise<void>;
   resolveProductionYield: (batchId: string, note: string) => Promise<void>;
   unresolveProductionYield: (batchId: string) => Promise<void>;
   reworkRejectSize: (input: { mrpId: string; vendorProduksi: string; warna: string; lengan: Lengan; fromSize: string; qty: number; toLengan: Lengan; toSize: string; usia: Usia }) => Promise<void>;
@@ -887,6 +897,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       // Toleransi selisih berat (Master Data SCM) dipasang ke derive.ts SEBELUM state di-set, supaya semua
       // turunan (klaim, kunci roll, dst.) yang dihitung ulang akibat snapshot ini langsung memakai angka terbaru.
       setWeightTolerancePct(weightTolerancePct);
+      setWarnaAliasesForPricing(snapshot.warnaAliases ?? get().warnaAliases);
       set({ ...snapshot, weightTolerancePct, hydrated: true });
       lastDataVersion = dataVersion;
       lastMasterVersion = masterVersion;
@@ -1604,10 +1615,35 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     }
     backgroundRefresh();
   },
+  repriceVendorInvoices: async () => {
+    const res = await actions.repriceVendorInvoicesAction();
+    if (!res.ok) throw new Error(res.error);
+    backgroundRefresh();
+    return res.data;
+  },
   // TIDAK dibuat optimistic -- adjustment baru butuh id baru dari server (nextReadableId), tidak
   // bisa dipastikan dari argumen saja tanpa risiko id sementara yang harus direkonsiliasi.
   addVendorInvoiceAdjustment: async (invoiceId, input) => {
     await actions.addVendorInvoiceAdjustmentAction(invoiceId, input);
+    backgroundRefresh();
+  },
+  // TIDAK optimistic -- nomor unik dan DP/sisa dihitung/dicek di server; hasilnya dimuat ulang sesudah sukses.
+  savePaymentProposal: async (input) => {
+    try {
+      unwrapAction(await actions.savePaymentProposalAction(input));
+    } catch (err) {
+      notifyError("Gagal menyimpan proposal pembayaran. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  deletePaymentProposal: async (no) => {
+    try {
+      unwrapAction(await actions.deletePaymentProposalAction(no));
+    } catch (err) {
+      notifyError("Gagal menghapus proposal pembayaran. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
     backgroundRefresh();
   },
   payVendorInvoices: async (invoiceIds, proof) => {
@@ -2262,14 +2298,14 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // Fix-nya: 1 round-trip untuk SEMUA batchIds sekaligus (updateBatchesToCuttingAction), patch
   // optimistic PENUH SEBELUM await (pola sama seperti markRollArrived di atas), 1 kali
   // backgroundRefresh() di akhir saja (bukan N kali).
-  updateBatchesToCutting: async (batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId = {}, expectedByBatchId) => {
+  updateBatchesToCutting: async (batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId = {}, expectedByBatchId, extrasByBatchId = {}) => {
     const idSet = new Set(batchIds);
     const previous = get().productionBatches;
     set({
-      productionBatches: previous.map((b) => (idSet.has(b.id) ? { ...b, cuttingAt, sizeQty: sizeQtyByBatchId[b.id] ?? b.sizeQty, sizeShifts: (sizeShiftsByBatchId[b.id] ?? []).length > 0 ? sizeShiftsByBatchId[b.id] : undefined } : b)),
+      productionBatches: previous.map((b) => (idSet.has(b.id) ? { ...b, cuttingAt, sizeQty: sizeQtyByBatchId[b.id] ?? b.sizeQty, sizeShifts: (sizeShiftsByBatchId[b.id] ?? []).length > 0 ? sizeShiftsByBatchId[b.id] : undefined, extraResults: (extrasByBatchId[b.id] ?? []).length > 0 ? extrasByBatchId[b.id] : undefined } : b)),
     });
     try {
-      unwrapAction(await actions.updateBatchesToCuttingAction(batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId, expectedByBatchId));
+      unwrapAction(await actions.updateBatchesToCuttingAction(batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId, expectedByBatchId, extrasByBatchId));
     } catch (err) {
       set({ productionBatches: previous });
       notifyError("Gagal menyimpan hasil cutting -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
@@ -2281,6 +2317,25 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       // itu baru kebetulan ke-sync lagi kalau ada aksi LAIN yang memicu backgroundRefresh. Sekarang
       // dipanggil eksplisit di sini juga supaya client selalu balik konsisten dengan DB, apa pun
       // hasil aslinya di server (bukan cuma percaya revert optimistic lokal).
+      backgroundRefresh();
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  saveBatchExtraFg: async (batchId, entries) => {
+    const previous = get().productionBatches;
+    set({
+      productionBatches: previous.map((b) =>
+        b.id === batchId
+          ? { ...b, extraResults: (b.extraResults ?? []).map((x) => entries.find((e) => e.lengan === x.lengan && e.usia === x.usia && e.size === x.size) ? { ...x, fgQty: entries.find((e) => e.lengan === x.lengan && e.usia === x.usia && e.size === x.size)!.fgQty } : x) }
+          : b
+      ),
+    });
+    try {
+      unwrapAction(await actions.saveBatchExtraFgAction(batchId, entries));
+    } catch (err) {
+      set({ productionBatches: previous });
+      notifyError("Gagal menyimpan Finish Good hasil tambahan -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       backgroundRefresh();
       throw err;
     }

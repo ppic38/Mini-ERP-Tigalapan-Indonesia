@@ -345,6 +345,8 @@ export type RawMaterialInvoice = {
    */
   sourceClaimId?: string;
   paidAt?: string;
+  /** Migration 0082: PIC Finance yang memproses pembayaran. */
+  paidBy?: string;
   /** Penanda Finance "transaksi sudah dibuat" (migration 0071) -- status invoice tidak berubah. */
   txnCreatedAt?: string;
   txnCreatedBy?: string;
@@ -390,6 +392,12 @@ export type MaklonInvoice = {
   paidAt?: string;
 };
 
+/** Hasil tambahan dari sisa kain saat Input Hasil Cutting (migration 0084): baju lain (lengan/usia/size apa pun) dari kain roll yang
+ *  masih bersisa setelah target tercapai. `resultId` terisi begitu SAH dan tercatat sebagai Finish Good (tanpa target). */
+export type CuttingExtra = { lengan: Lengan; usia: Usia; size: string; qty: number };
+/** `qty` = hasil cutting size tambahan itu; `fgQty` = Finish Good yang sudah diinput (kosong = 0); `resultId` = catatan Finish Good-nya. */
+export type CuttingExtraStored = CuttingExtra & { fgQty?: number; resultId?: string };
+
 export type ProductionBatch = {
   id: string;
   mrpId: string;
@@ -411,6 +419,8 @@ export type ProductionBatch = {
    *  Input Hasil Cutting (mis. target L 100 -> 99 L + 1 M => [{from:"L",to:"M",qty:1}]). HANYA penanda --
    *  qty resminya tetap di `sizeQty`. Kosong = tidak ada alih size. */
   sizeShifts?: { from: string; to: string; qty: number }[];
+  /** Migration 0084: hasil tambahan dari sisa kain roll ini (kosong = tidak ada). Tanpa `resultId` = masih menunggu persetujuan akun utama. */
+  extraResults?: CuttingExtraStored[];
   /** Hasil aduan AKTUAL (qty per size) dari roll ini, dicatat vendor saat "Update ke Cutting" —
    *  kosong kalau belum diisi (batch lama sebelum fitur ini ada, atau memang belum diinput).
    *  Dipakai untuk target/yield per roll (lihat productionYieldAlertsList di derive.ts), BUKAN
@@ -584,6 +594,27 @@ export type VendorInvoiceAdjustmentKind = "DENDA" | "REWARD" | "TIDAK_ADA";
 
 export type VendorInvoiceAdjustment = { id: string; kind: VendorInvoiceAdjustmentKind; label: string; amount: number; note?: string; addedAt: string };
 
+/** Proposal Pembayaran (migration 0082) yang dibuat Procurement untuk invoice vendor produksi. Disimpan sebagai jsonb di
+ *  vendor_invoices.proposal; satu proposal boleh menaungi beberapa invoice vendor yang sama (isi disalin, dibedakan `no`). */
+export type PaymentProposal = {
+  no: string;
+  /** YYYY-MM-DD */
+  date: string;
+  location: string;
+  /** Nama kegiatan, mis. "Pembayaran Tagihan Produksi Vendor ARTHA PO ARTMM ...". */
+  activity: string;
+  /** Rekening tujuan apa adanya, mis. "Bank Central Asia (BCA) : 3791573970 Bayu Pamungkas". */
+  rekTujuan: string;
+  tagihan: number;
+  dpPercent: number;
+  dpAmount: number;
+  sisa: number;
+  /** YYYY-MM-DD */
+  startDate: string;
+  createdBy?: string;
+  createdAt?: string;
+};
+
 export type VendorInvoice = {
   id: string;
   vendorProduksi: string;
@@ -610,6 +641,12 @@ export type VendorInvoice = {
    *  lewat getVendorInvoicePaymentProofAction supaya tidak ikut snapshot. */
   buktiBayarAt?: string;
   buktiBayarFileName?: string;
+  /** Migration 0082: Proposal Pembayaran yang menaungi invoice ini (kosong = belum ada proposal). */
+  proposal?: PaymentProposal;
+  /** Migration 0082: PIC Finance yang memproses pembayaran (akun sub-user atau akun utama). */
+  paidBy?: string;
+  /** Migration 0083: PIC Procurement yang menyetujui invoice (akun sub-user atau akun utama). */
+  approvedBy?: string;
 };
 
 export type ProductionGroupMeta = {

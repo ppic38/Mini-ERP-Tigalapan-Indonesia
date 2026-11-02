@@ -8,6 +8,7 @@ import { KoliEkspedisiCard, viewEkspedisiPhoto } from "@/components/mrp/koli-eks
 import { useMrpStore } from "@/lib/mrp/store";
 import { readProofAsDataUrl } from "@/lib/mrp/clientFiles";
 import { MultiFileInput } from "@/components/mrp/multi-file-input";
+import { ProposalCell } from "@/components/finance/proposal-cell";
 import { saveExtraAttachments, type AttachFile } from "@/lib/mrp/attachments";
 import { viewVendorInvoicePaymentProof } from "@/lib/mrp/viewVendorInvoiceProof";
 import {
@@ -454,7 +455,8 @@ export function PaymentMaklonPanel() {
     {
       key: "lampiranEkspedisi",
       label: "Lampiran Ekspedisi",
-      default: true,
+      // Disembunyikan secara default (owner 2026-10-30): resi dan lampirannya sudah ada di rincian saat baris invoice dibuka.
+      default: false,
       render: (inv) => (
         <LampiranEkspedisiCell
           inv={inv}
@@ -471,6 +473,7 @@ export function PaymentMaklonPanel() {
         />
       ),
     },
+    { key: "proposal", label: "Proposal/Invoice", default: true, render: (inv) => <ProposalCell inv={inv} vendorInvoices={vendorInvoices} /> },
   ];
 
   const paidColumns: ColumnDef<VendorInvoice>[] = [
@@ -480,6 +483,7 @@ export function PaymentMaklonPanel() {
     { key: "totalQty", label: "Total qty", default: true, align: "right", render: (inv) => formatPcs(inv.lines.reduce((s, l) => s + l.qty, 0)) },
     { key: "totalPaid", label: "Total dibayar", default: true, align: "right", render: (inv) => formatRupiah(vendorInvoiceTotalPaid(inv)) },
     { key: "tglLunas", label: "Tanggal Lunas", default: true, render: (inv) => formatDate(inv.paidAt) },
+    { key: "pic", label: "PIC Pembayaran", default: true, render: (inv) => <span className="font-sans text-[11px]">{inv.paidBy ?? "-"}</span> },
     {
       key: "buktiBayar",
       label: "Bukti Bayar",
@@ -521,7 +525,8 @@ export function PaymentMaklonPanel() {
     {
       key: "lampiranEkspedisi",
       label: "Lampiran Ekspedisi",
-      default: true,
+      // Disembunyikan secara default (owner 2026-10-30): resi dan lampirannya sudah ada di rincian saat baris invoice dibuka.
+      default: false,
       render: (inv) => (
         <LampiranEkspedisiCell
           inv={inv}
@@ -547,6 +552,7 @@ export function PaymentMaklonPanel() {
         return <StatusPill tone={payment.tone}>{payment.label}</StatusPill>;
       },
     },
+    { key: "proposal", label: "Proposal/Invoice", default: true, render: (inv) => <ProposalCell inv={inv} vendorInvoices={vendorInvoices} /> },
   ];
 
   function renderInvoiceLinesDetail(inv: VendorInvoice) {
@@ -642,6 +648,27 @@ export function PaymentMaklonPanel() {
           columns={readyColumns}
           rows={readyRows}
           keyOf={(inv) => inv.id}
+          search={{
+            placeholder: "Cari no invoice, vendor, no PO…",
+            getText: (inv) => inv.id + " " + (VENDOR_PRODUKSI[inv.vendorProduksi]?.name ?? inv.vendorProduksi) + " " + Array.from(new Set(inv.lines.map((l) => l.mrpId))).join(" "),
+          }}
+          filterDefs={[
+            {
+              label: "Vendor",
+              options: Array.from(new Set(readyRows.map((inv) => VENDOR_PRODUKSI[inv.vendorProduksi]?.name ?? inv.vendorProduksi))).sort(),
+              test: (inv, v) => (VENDOR_PRODUKSI[inv.vendorProduksi]?.name ?? inv.vendorProduksi) === v,
+            },
+            {
+              label: "Status",
+              options: Array.from(new Set(readyRows.map((inv) => vendorInvoiceBadge(inv.status).label))),
+              test: (inv, v) => vendorInvoiceBadge(inv.status).label === v,
+            },
+            {
+              label: "Status Payment",
+              options: Array.from(new Set(readyRows.map((inv) => vendorInvoicePaymentStatus(inv).label))),
+              test: (inv, v) => vendorInvoicePaymentStatus(inv).label === v,
+            },
+          ]}
           firstColumnLabel="No Invoice"
           firstColumnRender={(inv) => (
             <span className="flex items-center gap-2.5">

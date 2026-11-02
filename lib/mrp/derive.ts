@@ -266,10 +266,26 @@ export function hargaMaklonRateInfoByTipe(hargaMaklon: HargaMaklonRow[], vendorK
   return standar ? { rate: standar.harga, source: "Standar", cumulativeQty, band: standar } : null;
 }
 
+export type MaklonProgressStatus = "SELESAI" | "BERJALAN" | "BELUM";
+
+export type MaklonWarnaRow = {
+  warna: string;
+  qty: number;
+  jadi: number;
+  status: MaklonProgressStatus;
+};
+
 export type MaklonKategoriRow = {
   kategori: string;
   lengan: Lengan;
+  /** Target hasil jadi (dari Aduan Pola vendor ini di MRP itu). */
   qty: number;
+  /** Finish Good yang sudah tercatat (Input Hasil Cutting) untuk kategori+lengan ini. */
+  jadi: number;
+  /** SELESAI = semua warna di baris ini sudah "Selesai Produksi" (FG terkunci) atau jadi >= target. */
+  status: MaklonProgressStatus;
+  /** Rincian per warna (untuk popup detail kategori). */
+  warna: MaklonWarnaRow[];
   /** Tipe di Master Data yang dicocokkan (hargaMaklonTipeFor). */
   tipe: string;
   /** Harga Master Data untuk kategori+lengan ini; null = tidak ada barisnya di Master Data vendor ini. */
@@ -279,37 +295,127 @@ export type MaklonKategoriRow = {
   billedRate: number;
 };
 
-/** Rincian target hasil jadi sebuah PO per kategori (kolom KATEGORI Excel MRP) x lengan, lengkap
- *  dengan harga maklon Master Data per kategori vs harga yang saat ini dipakai tagihan. Qty tier
- *  PKS dihitung per PO (sama seperti estimasi di PO Approval). */
-export function maklonKategoriBreakdown(hargaMaklon: HargaMaklonRow[], vendorKey: string, aduanRows: AduanPolaRow[], lenganGroups: LenganGroup[]): MaklonKategoriRow[] {
+function progressStatus(qty: number, jadi: number, confirmed: boolean): MaklonProgressStatus {
+  if (confirmed || (qty > 0 && jadi >= qty)) return "SELESAI";
+  return jadi > 0 ? "BERJALAN" : "BELUM";
+}
+
+/** Rincian target & hasil jadi sebuah PO per kategori (kolom KATEGORI Excel MRP) x lengan x warna, lengkap
+ *  dengan status selesai dan harga maklon Master Data per kategori vs harga yang saat ini dipakai tagihan.
+ *  Qty tier PKS dihitung per PO (sama seperti estimasi di PO Approval). Kategori tanpa target tidak muncul. */
+export function maklonKategoriBreakdown(
+  hargaMaklon: HargaMaklonRow[],
+  vendorKey: string,
+  mrpId: string,
+  aduanRows: AduanPolaRow[],
+  lenganGroups: LenganGroup[],
+  results: ProductionResult[],
+  metas: ProductionGroupMeta[]
+): MaklonKategoriRow[] {
   const groupKategori = new Map(lenganGroups.map((g) => [g.id, g.kategori]));
+  const kategoriByWarnaLengan = new Map(lenganGroups.map((g) => [g.warna + "|" + g.lengan, g.kategori]));
   const byLengan = new Map<Lengan, number>();
-  const cells = new Map<string, { kategori: string; lengan: Lengan; qty: number }>();
+  type Cell = { kategori: string; lengan: Lengan; warna: Map<string, { qty: number; jadi: number }> };
+  const cells = new Map<string, Cell>();
+  const cellFor = (kategori: string, lengan: Lengan) => {
+    const key = kategori + "|" + lengan;
+    let cell = cells.get(key);
+    if (!cell) {
+      cell = { kategori, lengan, warna: new Map() };
+      cells.set(key, cell);
+    }
+    return cell;
+  };
+  const warnaFor = (cell: Cell, warna: string) => {
+    let w = cell.warna.get(warna);
+    if (!w) {
+      w = { qty: 0, jadi: 0 };
+      cell.warna.set(warna, w);
+    }
+    return w;
+  };
   for (const a of aduanRows) {
     if (a.qty <= 0) continue;
-    const kategori = groupKategori.get(a.lenganGroupId) || "(tanpa kategori)";
     byLengan.set(a.lengan, (byLengan.get(a.lengan) ?? 0) + a.qty);
-    const key = `${kategori}|${a.lengan}`;
-    const cell = cells.get(key) ?? { kategori, lengan: a.lengan, qty: 0 };
-    cell.qty += a.qty;
-    cells.set(key, cell);
+    warnaFor(cellFor(groupKategori.get(a.lenganGroupId) || "(tanpa kategori)", a.lengan), a.warna).qty += a.qty;
+  }
+  for (const r of results) {
+    if (r.mrpId !== mrpId || r.vendorProduksi !== vendorKey || r.kind !== "FG") continue;
+    const kategori = kategoriByWarnaLengan.get(r.warna + "|" + r.lengan) || "(tanpa kategori)";
+    // Finish Good tanpa target di warna+lengan itu (mis. hasil rework dari reject lengan lain) TETAP dihitung,
+    // sebagai baris target 0 -- sama seperti tab Produksi > Finish Good yang menampilkannya sebagai "n dari rework".
+    const w = warnaFor(cellFor(kategori, r.lengan), r.warna);
+    for (const q of Object.values(r.sizeQty)) w.jadi += q;
   }
   const out: MaklonKategoriRow[] = [];
   for (const c of cells.values()) {
+    const warna: MaklonWarnaRow[] = Array.from(c.warna.entries())
+      .map(([name, w]) => {
+        const meta = productionGroupMetaFor(mrpId + "|" + name + "|" + c.lengan, metas, vendorKey);
+        return { warna: name, qty: w.qty, jadi: w.jadi, status: progressStatus(w.qty, w.jadi, !!(meta?.fgConfirmedAt || meta?.doneAt)) };
+      })
+      .sort((x, y) => x.warna.localeCompare(y.warna));
+    const qty = warna.reduce((n, w) => n + w.qty, 0);
+    const jadi = warna.reduce((n, w) => n + w.jadi, 0);
+    const status: MaklonProgressStatus = warna.every((w) => w.status === "SELESAI") ? "SELESAI" : warna.some((w) => w.status !== "BELUM") ? "BERJALAN" : "BELUM";
     const tipe = hargaMaklonTipeFor(c.kategori, c.lengan);
-    const master = hargaMaklonRateInfoByTipe(hargaMaklon, vendorKey, tipe, c.qty);
+    const master = hargaMaklonRateInfoByTipe(hargaMaklon, vendorKey, tipe, qty);
     out.push({
       kategori: c.kategori,
       lengan: c.lengan,
-      qty: c.qty,
+      qty,
+      jadi,
+      status,
+      warna,
       tipe,
       masterRate: master?.rate ?? null,
       masterSource: master?.source ?? null,
       billedRate: hargaMaklonRate(hargaMaklon, vendorKey, c.lengan, byLengan.get(c.lengan) ?? 0),
     });
   }
-  return out.sort((a, b) => a.kategori.localeCompare(b.kategori) || (a.lengan === b.lengan ? 0 : a.lengan === "PENDEK" ? -1 : 1));
+  return out.sort((x, y) => x.kategori.localeCompare(y.kategori) || (x.lengan === y.lengan ? 0 : x.lengan === "PENDEK" ? -1 : 1));
+}
+
+/** Tipe harga Master Data untuk satu baris invoice/PO (warna + lengan di MRP itu): diambil dari kategori grup MRP-nya
+ *  (KIDS 24S -> PDK/PJG KIDS, PANJANG + RIB -> PJG RIB, TUNIK 24S -> TUNIK, COMBED -> PDK/PJG), dengan fallback dari akhiran
+ *  nama warna (" KID", " RIB", " TUNIK") kalau grupnya tidak ditemukan. */
+export function maklonTipeForWarna(mrpId: string, warna: string, lengan: Lengan, mrpDetails: MrpDetail[], usia?: Usia): string {
+  const group = mrpDetailFor(mrpId, mrpDetails)?.lenganGroups.find((g) => g.warna === warna && g.lengan === lengan);
+  const suffix = /\sKIDS?$/i.test(warna) ? "KIDS" : /\sRIB$/i.test(warna) ? "RIB" : /\sTUNIK$/i.test(warna) ? "TUNIK" : "";
+  // Baju Kids (mis. dari sisa kain atau rework) ditagih dengan tipe Kids walau warnanya bukan warna Kids.
+  return hargaMaklonTipeFor(usia === "KIDS" ? "KIDS" : group?.kategori || suffix, lengan);
+}
+
+/** Kapasitas kumulatif TRUE vendor per TIPE harga (kategori + lengan) dari Aduan Pola semua MRP historisnya. Baris Master Data
+ *  Harga Maklon per tipe, jadi tier PKS tiap tipe dihitung dari volume tipe itu sendiri. */
+export function vendorCumulativeQtyByTipe(vendorKey: string, mrpDetails: MrpDetail[]): Record<string, number> {
+  const totals: Record<string, number> = {};
+  for (const detail of mrpDetails) {
+    const kategoriByGroup = new Map(detail.lenganGroups.map((g) => [g.id, g.kategori]));
+    for (const a of detail.aduanRows) {
+      if (a.vendor !== vendorKey) continue;
+      const tipe = normKey(hargaMaklonTipeFor(kategoriByGroup.get(a.lenganGroupId) ?? "", a.lengan));
+      totals[tipe] = (totals[tipe] ?? 0) + a.qty;
+    }
+  }
+  return totals;
+}
+
+export type MaklonLineRate = MaklonRateInfo & {
+  tipe: string;
+  /** true = vendor tidak punya baris untuk tipe ini di Master Data, dipakai harga PDK/PJG biasa. */
+  fallbackBase: boolean;
+};
+
+/** Harga maklon satu baris invoice per TIPE (revisi 2026-10-30): baris Master Data tipe itu dulu (PKS kalau kapasitas tipe
+ *  terpenuhi, kalau tidak Standar -- baris Standar boleh berkapasitas kosong, dipakai walau produksi belum mencapai kapasitas),
+ *  kalau tipe itu tidak ada di Master Data vendor ini jatuh ke harga PDK/PJG biasa. */
+export function hargaMaklonLineRate(hargaMaklon: HargaMaklonRow[], vendorKey: string, tipe: string, lengan: Lengan, cumulativeByTipe: Record<string, number>): MaklonLineRate {
+  const own = hargaMaklonRateInfoByTipe(hargaMaklon, vendorKey, tipe, cumulativeByTipe[normKey(tipe)] ?? 0);
+  if (own) return { ...own, tipe, fallbackBase: false };
+  const baseTipe = lenganAbbr(lengan);
+  const base = hargaMaklonRateInfo(hargaMaklon, vendorKey, lengan, cumulativeByTipe[normKey(baseTipe)] ?? 0);
+  return { ...base, tipe, fallbackBase: normKey(tipe) !== normKey(baseTipe) };
 }
 
 export function hargaMaklonRate(hargaMaklon: HargaMaklonRow[], vendorKey: string, lengan: Lengan, cumulativeQty: number): number {
@@ -2402,6 +2508,14 @@ export function warnaLenganGroupsWithFg(mrpId: string, vendorProduksi: string, b
     const key = r.warna + "|" + r.lengan;
     if (!seen.has(key)) seen.set(key, { warna: r.warna, lengan: r.lengan });
   }
+  // Grup tujuan hasil tambahan sisa kain (migration 0084) tetap terlihat walau Finish Good-nya belum diinput, supaya rejectnya bisa diselesaikan.
+  for (const b of batches) {
+    if (b.mrpId !== mrpId || b.vendorProduksi !== vendorProduksi) continue;
+    for (const x of b.extraResults ?? []) {
+      const key = b.warna + "|" + x.lengan;
+      if (!seen.has(key)) seen.set(key, { warna: b.warna, lengan: x.lengan });
+    }
+  }
   return sortWarnaLengan(Array.from(seen.values()));
 }
 
@@ -3222,6 +3336,62 @@ export function resiGroupInvoiceLines(koliIds: string[], allKolis: DeliveryKoli[
   return Array.from(map.values());
 }
 
+/** Total qty satu kumpulan koli: yang ditagihkan (FG/Rework, bukan reject) dan reject (tidak ditagihkan). */
+export function koliQtyTotals(kolis: DeliveryKoli[]): { billable: number; reject: number } {
+  let billable = 0;
+  let reject = 0;
+  for (const k of kolis) for (const it of k.items) (isBillableKoliItem(it) ? (billable += it.qty) : (reject += it.qty));
+  return { billable, reject };
+}
+
+export type ShipmentInvoiceReconRow = {
+  mrpId: string;
+  /** Qty ditagihkan di koli yang sudah Delivery DAN sudah diajukan invoicenya. */
+  shippedInvoiced: number;
+  /** Total qty di semua baris invoice vendor ini untuk MRP itu. */
+  invoiced: number;
+  /** Qty ditagihkan di koli yang sudah Delivery tapi invoicenya belum diajukan. */
+  shippedNotInvoiced: number;
+  /** Selisih per warna/lengan/usia antara yang dikirim (sudah diajukan invoice) dan yang diinvoice. */
+  mismatches: { label: string; shipped: number; invoiced: number }[];
+};
+
+/** Validasi qty: yang DIKIRIM (koli Delivery, sudah diajukan invoice) vs yang DIINVOICEKAN, per MRP, plus daftar warna/lengan yang
+ *  tidak cocok. Reject tidak ditagihkan sehingga tidak ikut dihitung. Seharusnya selalu cocok (invoice dibuat dari koli yang sama);
+ *  selisih berarti ada koli yang diedit atau invoice yang diubah sesudah diajukan. */
+export function shipmentInvoiceReconciliation(vendorProduksi: string, kolis: DeliveryKoli[], vendorInvoices: VendorInvoice[]): ShipmentInvoiceReconRow[] {
+  const shipped = new Map<string, number>();
+  const pending = new Map<string, number>();
+  const invoiced = new Map<string, number>();
+  const mrpIds = new Set<string>();
+  const add = (m: Map<string, number>, key: string, qty: number) => m.set(key, (m.get(key) ?? 0) + qty);
+  for (const k of kolis) {
+    if (k.vendorProduksi !== vendorProduksi || !k.deliveredAt) continue;
+    for (const it of k.items.filter(isBillableKoliItem)) {
+      mrpIds.add(k.mrpId);
+      add(k.resiInvoicedAt ? shipped : pending, invoiceLineKey(k.mrpId, it.warna, it.lengan, it.usia), it.qty);
+    }
+  }
+  for (const inv of vendorInvoices) {
+    if (inv.vendorProduksi !== vendorProduksi) continue;
+    for (const l of inv.lines) {
+      mrpIds.add(l.mrpId);
+      add(invoiced, invoiceLineKey(l.mrpId, l.warna, l.lengan, l.usia), l.qty);
+    }
+  }
+  const rows: ShipmentInvoiceReconRow[] = [];
+  for (const mrpId of Array.from(mrpIds).sort()) {
+    const prefix = mrpId + "|";
+    const sumOf = (m: Map<string, number>) => Array.from(m.entries()).filter(([k]) => k.startsWith(prefix)).reduce((n, [, q]) => n + q, 0);
+    const keys = new Set([...shipped.keys(), ...invoiced.keys()].filter((k) => k.startsWith(prefix)));
+    const mismatches = Array.from(keys)
+      .map((k) => ({ label: k.slice(prefix.length).split("|").filter(Boolean).join(" · "), shipped: shipped.get(k) ?? 0, invoiced: invoiced.get(k) ?? 0 }))
+      .filter((m) => m.shipped !== m.invoiced);
+    rows.push({ mrpId, shippedInvoiced: sumOf(shipped), invoiced: sumOf(invoiced), shippedNotInvoiced: sumOf(pending), mismatches });
+  }
+  return rows;
+}
+
 export type KoliBreakdownRow = { koliId: string; noKoli: string; deliveredAt?: string; qty: number };
 
 /** Rincian qty per NOMOR KOLI untuk 1 baris "sudah dikirim, belum diinvoice" (mrpId+warna+lengan
@@ -3529,6 +3699,16 @@ export function expectedRejectGrossForGroup(
     for (const [size, qty] of Object.entries(b.sizeQty ?? {})) target[size] = (target[size] ?? 0) + qty;
     for (const [size, qty] of Object.entries(b.fgSizeQty ?? {})) fg[size] = (fg[size] ?? 0) + qty;
   }
+  // Hasil tambahan dari sisa kain (migration 0084) roll yang SUDAH ditutup: hasil cutting-nya jadi target, Finish Good-nya (fgQty) jadi FG,
+  // jadi selisihnya ikut menjadi reject grup warna·lengan tujuannya -- sama seperti size biasa.
+  for (const b of batches) {
+    if (b.mrpId !== mrpId || b.warna !== warna || !b.cuttingAt || !b.closedAt) continue;
+    for (const x of b.extraResults ?? []) {
+      if (x.lengan !== lengan) continue;
+      target[x.size] = (target[x.size] ?? 0) + x.qty;
+      fg[x.size] = (fg[x.size] ?? 0) + (x.fgQty ?? 0);
+    }
+  }
   const rework = reworkBySizeForGroup(groupKey, results);
   const out: Record<string, number> = {};
   for (const size of Object.keys(target)) {
@@ -3707,6 +3887,17 @@ export function reworkBySizeForGroup(groupKey: string, results: ProductionResult
  *  yang dipotong ulang jadi baju) -- murni + rework = totalFg dari cumulativeSizeQtyForGroup.
  *  Contoh kasus yang diminta: Finish Good murni 100, lalu 3 reject di-rework jadi baju -> total
  *  Finish Good tampil 103, dengan rincian "100 murni + 3 dari rework". */
+/** Finish Good per size untuk satu grup, dipisah asalnya: rework=true -> hanya hasil rework (reject dipotong ulang jadi
+ *  baju), rework=false -> Finish Good murni (hasil cutting langsung). Dipakai sub-tab Finish Good vs Finish Good (Rework). */
+export function fgSizesByOrigin(groupKey: string, results: ProductionResult[], rework: boolean): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const r of results) {
+    if (r.groupKey !== groupKey || r.kind !== "FG" || isReworkResult(r) !== rework) continue;
+    for (const [size, qty] of Object.entries(r.sizeQty)) out[size] = (out[size] ?? 0) + qty;
+  }
+  return out;
+}
+
 export function fgMurniAndReworkForGroup(groupKey: string, results: ProductionResult[]): { murni: number; rework: number } {
   let murni = 0;
   let rework = 0;
@@ -3814,6 +4005,38 @@ export function findRawMaterialRollForBatch(batch: ProductionBatch, rawInvoices:
   return null;
 }
 
+/** Porsi biaya SATU roll dari invoice materialnya (template CAL HPP ERP, revisi 2026-11-02):
+ *  - body     = harga/kg x berat kotor roll
+ *  - diskon   = diskon invoice dibagi per KG kain seluruh invoice (semua warna), dikali berat roll -- hanya mengurangi biaya bahan
+ *  - rib      = biaya item tambahan (rib/kerah/manset) warna itu di invoice, dibagi per kg kain warna itu (semua lengan), dikali berat roll
+ *  Dihitung dari berat KOTOR (sama dasar dengan nilai yang ditagih supplier). null kalau roll tidak bisa ditelusuri ke invoice material. */
+export function rawRollCostShares(batch: ProductionBatch, rawInvoices: RawMaterialInvoice[]): { invoiceNo: string; hargaPerKg: number; grossKg: number; body: number; diskonShare: number; ribShare: number } | null {
+  if (!batch.codeRoll) return null;
+  for (const rawInv of rawInvoices) {
+    if (rawInv.destinationVendor !== batch.vendorProduksi) continue;
+    for (const c of rawInv.colorEntries) {
+      if (c.warna !== batch.warna || c.lengan !== batch.lengan) continue;
+      const receipts = rawInv.rollReceipts[c.warna + "|" + c.lengan] ?? [];
+      const idx = receipts.findIndex((r) => r?.codeRoll === batch.codeRoll);
+      if (idx === -1) continue;
+      const grossKg = c.rolls[idx] ?? 0;
+      const sumKg = (rows: typeof rawInv.colorEntries) => rows.reduce((t, e) => t + e.rolls.reduce((a, w) => a + w, 0), 0);
+      const fabricKg = sumKg(rawInv.colorEntries);
+      const colorKg = sumKg(rawInv.colorEntries.filter((e) => e.warna === batch.warna));
+      const ribCost = rawInv.addBuys.filter((a) => a.warna === batch.warna).reduce((t, a) => t + a.totalHarga, 0);
+      return {
+        invoiceNo: rawInv.noInvoiceVendor?.trim() || rawInv.id,
+        hargaPerKg: c.hargaPerRoll,
+        grossKg,
+        body: c.hargaPerRoll * grossKg,
+        diskonShare: fabricKg > 0 ? (rawInv.diskon * grossKg) / fabricKg : 0,
+        ribShare: colorKg > 0 ? (ribCost * grossKg) / colorKg : 0,
+      };
+    }
+  }
+  return null;
+}
+
 export type HppRow = {
   invoiceId: string;
   vendorProduksi: string;
@@ -3858,6 +4081,21 @@ export type HppRow = {
    *  dulu), jadi angkanya bisa turun sampai roll ditutup. Setelah roll ditutup baris ini final. */
   sementara?: boolean;
   hppPerItem: number;
+  /** Rincian biaya bahan per pcs (template CAL HPP ERP, 2026-11-02): bahan setelah diskon + rib = cogsBahanPerItem. Hanya baris roll. */
+  bahanPerItem?: number;
+  diskonPerItem?: number;
+  ribPerItem?: number;
+  /** Roll asal baris ini (kosong untuk baris rework / pool lama) beserta rinciannya, untuk sheet Detail Roll. */
+  rollId?: string;
+  rollCode?: string;
+  rawInvoiceNo?: string;
+  rollGrossKg?: number;
+  rollHargaPerKg?: number;
+  rollBody?: number;
+  rollDiskon?: number;
+  rollRib?: number;
+  /** Pembagi biaya roll: roll ditutup = Finish Good aktual; roll terbuka (estimasi) = hasil cutting. */
+  divisorQty?: number;
   /** Size ASLI baris ini (variabel yang sudah ada di scope tempat `item`/`jenis` dikonstruksi,
    *  BUKAN hasil parse ulang dari `jenis`) -- dipakai lookup `sellingPriceFor` di bawah. */
   size: string;
@@ -3892,8 +4130,36 @@ export function autoOngkirForInvoice(inv: VendorInvoice, deliveryKolis: Delivery
  *  matching sama persis seperti `ekspedisiPrice` di atas. `null` kalau tidak ketemu (BUKAN 0,
  *  supaya kolom "% HPP" di UI tampil "—" alih-alih 0% yang menyesatkan). */
 export function sellingPriceFor(warna: string, lengan: Lengan, size: string, rates: ItemSellingPriceRow[]): number | null {
-  const row = rates.find((r) => r.warna === warna && r.lengan === lengan && r.size === size);
-  return row ? row.price : null;
+  const index = sellingPriceIndex(rates);
+  const direct = index.get(warna + "|" + lengan + "|" + size);
+  if (direct !== undefined) return direct;
+  // Nama warna di MRP beda dari Master Data SKU (mis. ELECTRIC LIME 24S vs ELECTRIC LM 24S): pakai Master Data Mapping Warna (owner 2026-11-02).
+  const skuWarna = pricingWarnaAliases.get(warna);
+  if (!skuWarna) return null;
+  return index.get(skuWarna + "|" + lengan + "|" + size) ?? null;
+}
+
+/** Indeks harga jual per warna|lengan|size (baris pertama menang, sama seperti pencarian linear sebelumnya), dibuat sekali per larik `rates` -- Master Data
+ *  SKU berisi ribuan baris dan `sellingPriceFor` dipanggil per baris HPP. */
+const sellingPriceIndexCache = new WeakMap<ItemSellingPriceRow[], Map<string, number>>();
+function sellingPriceIndex(rates: ItemSellingPriceRow[]): Map<string, number> {
+  let index = sellingPriceIndexCache.get(rates);
+  if (!index) {
+    index = new Map();
+    for (const r of rates) {
+      const key = r.warna + "|" + r.lengan + "|" + r.size;
+      if (!index.has(key)) index.set(key, r.price);
+    }
+    sellingPriceIndexCache.set(rates, index);
+  }
+  return index;
+}
+
+/** Master Data Mapping Warna (nama warna MRP -> nama warna di Master Data SKU) yang dipakai `sellingPriceFor` sebagai cadangan kedua saat nama persis tidak
+ *  ketemu. Disimpan di modul (pola sama toleransi berat) supaya puluhan pemanggil HPP tidak perlu diubah; diisi store setiap snapshot dimuat. */
+let pricingWarnaAliases = new Map<string, string>();
+export function setWarnaAliasesForPricing(rows: { mrpWarna: string; skuWarna: string }[]): void {
+  pricingWarnaAliases = new Map(rows.map((r) => [r.mrpWarna, r.skuWarna]));
 }
 
 export function hppRowsForInvoice(
@@ -4218,6 +4484,10 @@ export function hppRowsForInvoicePerRoll(
         const netRejectQty = rejectRaw - reworkQty;
         const claims = koliClaimsForRollSize(roll, size, deliveryKolis);
         for (const claim of claims) {
+          // Hanya koli yang SUDAH terkirim yang jadi sumber alokasi invoice (2026-10-30): invoice hanya mencakup barang terkirim, jadi koli yang
+          // baru dikemas (belum diberi resi/ekspedisi) tidak boleh ikut dialokasikan -- dulu koli belum dikirim bisa "dimakan" alokasi FIFO
+          // dan muncul di lampiran invoice tanpa resi/ekspedisi ("019 · — · —").
+          if (!claim.koli.deliveredAt) continue;
           const portion = claim.qty / fgQtyRaw;
           chunks.push({
             roll,
@@ -4307,7 +4577,17 @@ export function hppRowsForInvoicePerRoll(
       const rollTotalCost = rawRoll ? rawRoll.hargaPerKg * rawRoll.grossKg : pool && pool.rollCount > 0 ? pool.hargaBahanTotal / pool.rollCount : 0;
       const netKg = rawRoll ? rawRoll.netKg : pool && pool.rollCount > 0 ? pool.totalNetWeight / pool.rollCount : 0;
       const totalFgRoll = Object.values(roll.fgSizeQty ?? {}).reduce((a, b) => a + b, 0);
-      const materialCostPerPcRoll = totalFgRoll > 0 ? rollTotalCost / totalFgRoll : 0;
+      // Template CAL HPP ERP (revisi 2026-11-02): biaya per pcs = (bahan - porsi diskon + porsi rib) / pembagi. Pembagi roll TERTUTUP = Finish Good
+      // aktual (final); roll TERBUKA = hasil cutting (estimasi, supaya tidak turun-naik selama Finish Good masih diinput).
+      const shares = rawRoll ? rawRollCostShares(roll, rawInvoices) : null;
+      const totalCuttingRoll = Object.values(roll.sizeQty ?? {}).reduce((a, b) => a + b, 0);
+      const divisorQty = roll.closedAt ? totalFgRoll : totalCuttingRoll > 0 ? totalCuttingRoll : totalFgRoll;
+      const diskonShare = shares?.diskonShare ?? 0;
+      const ribShare = shares?.ribShare ?? 0;
+      const bahanPerPc = divisorQty > 0 ? (rollTotalCost - diskonShare) / divisorQty : 0;
+      const ribPerPc = divisorQty > 0 ? ribShare / divisorQty : 0;
+      const diskonPerPc = divisorQty > 0 ? diskonShare / divisorQty : 0;
+      const materialCostPerPcRoll = bahanPerPc + ribPerPc;
 
       // Item 2026-09-10 (migration 0024): `koli` sekarang dibaca LANGSUNG dari chunk (`c.koli`,
       // sudah ditetapkan saat fragmentasi per-koli di atas) -- bukan `.find()` lagi, yang salah
@@ -4368,6 +4648,18 @@ export function hppRowsForInvoicePerRoll(
         totalOngkirRow: ongkirPerPc * fgQty,
         sementara: !roll.closedAt,
         hppPerItem,
+        bahanPerItem: bahanPerPc,
+        diskonPerItem: diskonPerPc,
+        ribPerItem: ribPerPc,
+        rollId: roll.id,
+        rollCode: roll.codeRoll ?? roll.id,
+        rawInvoiceNo: shares?.invoiceNo,
+        rollGrossKg: rawRoll?.grossKg,
+        rollHargaPerKg: rawRoll?.hargaPerKg,
+        rollBody: rollTotalCost,
+        rollDiskon: diskonShare,
+        rollRib: ribShare,
+        divisorQty,
         size: c.size,
         sellingPricePerItem,
         hppPercentage,

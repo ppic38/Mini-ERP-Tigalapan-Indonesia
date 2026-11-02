@@ -77,6 +77,18 @@ export function StoreHydrator() {
     // [hemat-egress] `checkOnly`: pemicu pasif (fokus tab) cukup tanya angka versi dulu, snapshot penuh
     // hanya diambil kalau ada yang berubah. Mount & poll berkala TETAP snapshot penuh (jaring pengaman).
     let authFailed = false;
+    let stopped = false;
+    // Muat data PERTAMA gagal (mis. database sibuk): coba lagi cepat (2, 5, 10 detik) alih-alih menunggu pengecekan versi 20 detik berikutnya --
+    // selama belum hydrated layar hanya menampilkan "Memuat data…".
+    let firstLoadRetries = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    function retryFirstLoad() {
+      if (stopped || firstLoadRetries >= 3) return;
+      const delay = [2_000, 5_000, 10_000][firstLoadRetries++];
+      retryTimer = setTimeout(() => {
+        if (!stopped && !useMrpStore.getState().hydrated) fetchNow(true);
+      }, delay);
+    }
     // Mengembalikan durasi (ms) pemanggilan -- dipakai pengaman polling di bawah.
     function fetchNow(force = false, checkOnly = false): Promise<number> {
       const now = Date.now();
@@ -91,6 +103,7 @@ export function StoreHydrator() {
           // Belum login / sesi kedaluwarsa di halaman ini -- biarkan store tetap kosong, dan jangan terus bertanya
           // tiap 20 detik di halaman publik (login dll.) -- polling jalan lagi begitu ada fetch yang berhasil.
           if (err instanceof Error && /^(Unauthorized|Forbidden)/.test(err.message)) authFailed = true;
+          else if (!useMrpStore.getState().hydrated) retryFirstLoad();
         })
         .then(() => performance.now() - startedAt);
     }
@@ -105,7 +118,6 @@ export function StoreHydrator() {
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") fetchNow();
     }, POLL_INTERVAL_MS);
-    let stopped = false;
     let versionTimer: ReturnType<typeof setTimeout> | undefined;
     function scheduleVersionCheck(delay: number) {
       versionTimer = setTimeout(async () => {
@@ -126,6 +138,7 @@ export function StoreHydrator() {
       document.removeEventListener("visibilitychange", onVisibility);
       clearInterval(interval);
       if (versionTimer) clearTimeout(versionTimer);
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, []);
 

@@ -29,6 +29,7 @@ import {
   restingMinutes,
   restingSessionGroups,
   SIZE_ORDER,
+  KIDS_SIZES,
   sizeIndex,
   sizeShiftLabel,
   targetSizesForBatch,
@@ -42,7 +43,8 @@ import {
 import { countCuttingAwaitingUpdateForMrp, pendingMarker } from "@/lib/shell/badges";
 import { RESTING_TARGET_MINUTES } from "@/lib/mrp/seed";
 import { SysadminBatchActions } from "@/components/sysadmin/batch-corrections";
-import type { AduanPolaRow, Lengan, ProductionBatch } from "@/lib/mrp/types";
+import type { AduanPolaRow, Lengan, ProductionBatch, Usia } from "@/lib/mrp/types";
+import { knownSizesForMrp } from "@/components/mrp/rework-parts";
 
 /** Item 3.2 (feedback batch 2026-09-04): kompres foto bukti di BROWSER sebelum dikirim ke Server
  *  Action (limit body 1 MB default Next.js, lihat next.config.ts) -- resize ke sisi terpanjang maks
@@ -228,6 +230,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   // `cuttingSizeDraft` hanya berisi hasil di size-nya sendiri (TANPA pcs hasil alih); pcs alih ditambahkan
   // ke size tujuan saat Simpan (mergedSizeQty), dan dikurangkan lagi saat modal dibuka untuk edit.
   const [cuttingShiftDraft, setCuttingShiftDraft] = useState<Record<string, Record<string, { to: string; qty: number }>>>({});
+  // Hasil tambahan dari sisa kain per roll (migration 0084): lengan, usia, size, qty -- baju lain dari kain yang bersisa setelah target tercapai.
+  const [cuttingExtraDraft, setCuttingExtraDraft] = useState<Record<string, { lengan: Lengan; usia: Usia; size: string; qty: number }[]>>({});
   // BUG FIX (2026-09-09): error server (mis. grup sudah dikunci "Final Produksi") ditangkap &
   // ditampilkan di modal supaya user tahu PERSIS kenapa gagal.
   const [cuttingGroupError, setCuttingGroupError] = useState<string | null>(null);
@@ -642,6 +646,11 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
       for (const b of groupBatches) next[b.id] = Object.fromEntries((b.sizeShifts ?? []).map((sh) => [sh.from, { to: sh.to, qty: sh.qty }]));
       return next;
     });
+    setCuttingExtraDraft((prev) => {
+      const next = { ...prev };
+      for (const b of groupBatches) next[b.id] = (b.extraResults ?? []).map((x) => ({ lengan: x.lengan, usia: x.usia, size: x.size, qty: x.qty }));
+      return next;
+    });
     setCuttingGroupEditAll(editAll);
     setCuttingGroupError(null);
     setActiveCuttingGroupKey(sessionKey);
@@ -902,7 +911,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
             {isMainAccount ? "Menunggu persetujuan Anda" : "Menunggu persetujuan akun utama"} — {pendingApprovalGroups.reduce((s, [, bs]) => s + bs.length, 0)} roll
           </div>
           <div className="mt-0.5 font-sans text-[11px] text-warning-fg">
-            Hasil cutting di bawah ini kurang dari target. Finish Good roll-nya baru bisa diisi setelah disetujui akun utama.
+            Hasil cutting di bawah ini kurang dari target atau berisi hasil tambahan dari sisa kain. Finish Good roll-nya (dan hasil tambahan) baru sah setelah disetujui akun utama.
           </div>
           <div className="mt-2.5 flex flex-col gap-2">
             {pendingApprovalGroups.map(([key, bs]) => {
@@ -1426,6 +1435,13 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                               ) : (
                                 <span className="font-mono text-[11px] text-text-muted">—</span>
                               )}
+                              {b.extraResults && b.extraResults.length > 0 && (
+                                <div className="mt-0.5 font-sans text-[10.5px] text-text-muted">
+                                  Hasil tambahan sisa kain (cutting):{" "}
+                                  {b.extraResults.map((x) => `${x.size} ${x.usia === "KIDS" ? "Kids" : "Dewasa"} ${x.lengan === "PENDEK" ? "Pendek" : "Panjang"} ${x.qty} pcs (FG ${x.fgQty ?? 0})`).join(", ")}
+                                  {b.extraResults.some((x) => !x.resultId) ? " — menunggu persetujuan akun utama" : ""}
+                                </div>
+                              )}
                               {b.cuttingAt && b.sizeQty && sizeShiftLabel(b) && (
                                 <span className="font-sans text-[10px] font-semibold text-info-fg" title="Sisa kain roll ini dialihkan ke size lain saat Input Hasil Cutting">
                                   Alih size (sisa kain): {sizeShiftLabel(b)}
@@ -1740,6 +1756,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 existing.length === groupBatches.length ? existing.reduce((min, c) => (Date.parse(c) < Date.parse(min) ? c : min)) : new Date().toISOString();
               const sizeQtyByBatchId = Object.fromEntries(groupBatches.map((b) => [b.id, mergedSizeQty(b)]));
               const sizeShiftsByBatchId = Object.fromEntries(groupBatches.map((b) => [b.id, effectiveShifts(b)]));
+              const extrasByBatchId = Object.fromEntries(groupBatches.map((b) => [b.id, (cuttingExtraDraft[b.id] ?? []).filter((x) => x.size && x.qty > 0)]));
               // Opsi A ("tidak ada loading, kerja di belakang layar"): updateBatchesToCutting SENGAJA
               // TIDAK di-`await` -- sudah optimistic penuh & meng-alert/revert sendiri kalau server
               // menolak (lihat store.ts), jadi `.catch()` di sini cuma bikin alert dobel.
@@ -1748,7 +1765,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                 effectiveCuttingAt,
                 sizeQtyByBatchId,
                 sizeShiftsByBatchId,
-                Object.fromEntries(groupBatches.map((b) => [b.id, cuttingBase[b.id] ?? { cuttingAt: b.cuttingAt ?? null, sizeQty: { ...(b.sizeQty ?? {}) } }]))
+                Object.fromEntries(groupBatches.map((b) => [b.id, cuttingBase[b.id] ?? { cuttingAt: b.cuttingAt ?? null, sizeQty: { ...(b.sizeQty ?? {}) } }])),
+                extrasByBatchId
               ).catch(() => {}); // pesan gagal sudah ditampilkan store (notifyError) + data dimuat ulang
               closeCuttingGroupModal();
             } catch (err) {
@@ -1862,6 +1880,73 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                                     </div>
                                   );
                                 })}
+                              {(() => {
+                                const extras = cuttingExtraDraft[b.id] ?? [];
+                                const setExtras = (next: typeof extras) => setCuttingExtraDraft((prev) => ({ ...prev, [b.id]: next }));
+                                const knownSizes = knownSizesForMrp(session.mrpId, mrpDetails);
+                                return (
+                                  <div className="mt-2 rounded-md border border-dashed border-[#CFE0EF] bg-white px-2.5 py-2">
+                                    <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                                      <span className="font-sans text-[10.5px] text-text-muted">
+                                        Kain masih bersisa setelah target tercapai? Opsional: catat HASIL CUTTING baju lain dari sisa kain (lengan, usia, dan size apa pun). Finish Good-nya diinput nanti di tab Finish Good (bisa lebih kecil; selisihnya jadi reject).
+                                        {isMainAccount ? "" : " Hasil tambahan menunggu persetujuan akun utama."}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => setExtras([...extras, { lengan: b.lengan, usia: "DEWASA", size: "", qty: 0 }])}
+                                        className="rounded-md border border-[#CBD5DF] bg-white px-2 py-1 font-sans text-[10.5px] font-semibold text-action-primary"
+                                      >
+                                        + Hasil tambahan
+                                      </button>
+                                    </div>
+                                    {extras.length > 0 && (
+                                      <div className="mt-2 grid grid-cols-[1fr_1fr_1fr_1.1fr_64px] gap-2 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                                        <span>Lengan</span>
+                                        <span>Usia</span>
+                                        <span>Size</span>
+                                        <span className="text-right">Qty (pcs)</span>
+                                        <span />
+                                      </div>
+                                    )}
+                                    {extras.map((x, i) => {
+                                      const sizeOptions = x.usia === "KIDS" ? KIDS_SIZES : Array.from(new Set(["XS", ...SIZE_ORDER, ...knownSizes]));
+                                      const patch = (p: Partial<typeof x>) => setExtras(extras.map((y, j) => (j === i ? { ...y, ...p } : y)));
+                                      return (
+                                        <div key={i} className="mt-1 grid grid-cols-[1fr_1fr_1fr_1.1fr_64px] items-center gap-2">
+                                          <select value={x.lengan} onChange={(e) => patch({ lengan: e.target.value as Lengan })} className="h-9 w-full rounded-md border border-[#DDE4EB] bg-white px-2.5 font-sans text-[12px] text-text-primary" aria-label="Lengan hasil tambahan">
+                                            <option value="PENDEK">Pendek</option>
+                                            <option value="PANJANG">Panjang</option>
+                                          </select>
+                                          <select
+                                            value={x.usia}
+                                            onChange={(e) => {
+                                              const usia = e.target.value as Usia;
+                                              patch({ usia, size: usia === "KIDS" && !KIDS_SIZES.includes(x.size) ? "" : x.size });
+                                            }}
+                                            className="h-9 w-full rounded-md border border-[#DDE4EB] bg-white px-2.5 font-sans text-[12px] text-text-primary"
+                                            aria-label="Usia hasil tambahan"
+                                          >
+                                            <option value="DEWASA">Dewasa</option>
+                                            <option value="KIDS">Kids</option>
+                                          </select>
+                                          <select value={x.size} onChange={(e) => patch({ size: e.target.value })} className="h-9 w-full rounded-md border border-[#DDE4EB] bg-white px-2.5 font-sans text-[12px] text-text-primary" aria-label="Size hasil tambahan">
+                                            <option value="">Pilih size</option>
+                                            {sizeOptions.map((sz) => (
+                                              <option key={sz} value={sz}>
+                                                {sz}
+                                              </option>
+                                            ))}
+                                          </select>
+                                          <NumberInput value={x.qty} onChange={(v) => patch({ qty: v })} emptyWhenZero placeholder="0" className="h-9 w-full rounded-md border border-[#DDE4EB] bg-white px-2.5 text-right font-mono text-[12px] font-medium text-text-primary" />
+                                          <button type="button" onClick={() => setExtras(extras.filter((_, j) => j !== i))} className="h-9 rounded-md border border-[#E7C9C9] bg-white font-sans text-[11px] font-semibold text-danger-fg">
+                                            Hapus
+                                          </button>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                );
+                              })()}
                               {isIncomplete && <div className="mt-1.5 font-sans text-[10.5px] text-danger-fg">Isi minimal satu size</div>}
                               {!isIncomplete && targetTotal > 0 && actualTotal / targetTotal < YIELD_ALERT_THRESHOLD_PCT / 100 && (
                                 <div className="mt-1.5 font-sans text-[10.5px] text-danger-fg">

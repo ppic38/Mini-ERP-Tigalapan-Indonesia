@@ -7,7 +7,7 @@ import { KeepAliveTab } from "@/components/ui/keep-alive-tab";
 import { PoMaterialPanel } from "@/components/finance/po-material-panel";
 import { PoMaklonPanel } from "@/components/finance/po-maklon-panel";
 import { useMrpStore } from "@/lib/mrp/store";
-import { countPendingMaklonPO, countPendingMaterialPO } from "@/lib/shell/badges";
+import { countPendingMaklonPO, countPendingMaterialPO, countPoInProgress } from "@/lib/shell/badges";
 import { poApprovalState } from "@/lib/mrp/poApproval";
 
 export default function FinancePoApprovalPage() {
@@ -20,8 +20,11 @@ export default function FinancePoApprovalPage() {
 
   if (!mounted) return null;
 
-  const materialBadge = countPendingMaterialPO(materialPOs);
-  const maklonBadge = countPendingMaklonPO(maklonPOs);
+  // Badge tab = PO yang approval-nya masih berjalan (belum tuntas di semua level), bukan hanya yang giliran Finance (owner 2026-11-02).
+  const materialBadge = countPoInProgress(materialPOs, maklonPOs, "MATERIAL");
+  const maklonBadge = countPoInProgress(materialPOs, maklonPOs, "MAKLON");
+  const materialMine = countPendingMaterialPO(materialPOs);
+  const maklonMine = countPendingMaklonPO(maklonPOs);
   // PO yang belum selesai tapi BUKAN giliran Finance (masih menunggu Procurement / SCM / GM) -- info saja.
   const waitingElsewhere =
     materialPOs.filter((p) => p.status !== "CANCELLED" && !p.approved && !poApprovalState(p).rejected && !poApprovalState(p).pendingRoles.includes("finance")).length +
@@ -37,6 +40,11 @@ export default function FinancePoApprovalPage() {
         active={tab}
         onChange={(k) => setTab(k as "material" | "maklon")}
       />
+      {materialBadge + maklonBadge > 0 && (
+        <div className="rounded-md border border-border-subtle bg-white px-3 py-2 font-sans text-[11.5px] text-text-secondary">
+          Badge menunjukkan PO yang approval-nya masih berjalan di semua level. Giliran Finance saat ini: <b>{materialMine} PO Material</b> dan <b>{maklonMine} PO Maklon</b>.
+        </div>
+      )}
       {waitingElsewhere > 0 && (
         <div className="rounded-md border border-border-subtle bg-info-bg px-3 py-2 font-sans text-[11.5px] text-info-fg">
           {waitingElsewhere} PO lain masih menunggu approval level lain (Procurement / SCM / GM) — tetap terlihat di Riwayat dengan status menunggu, dan masuk daftar approval begitu giliran Finance (FAT Manager, Level 3).

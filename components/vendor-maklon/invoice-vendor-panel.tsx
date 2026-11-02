@@ -14,14 +14,17 @@ import {
   formatDecimal,
   formatPcs,
   formatRupiah,
-  hargaMaklonRateInfo,
+  hargaMaklonLineRate,
+  maklonTipeForWarna,
   invoiceProductionStatus,
   invoiceYieldSummary,
   isBillableKoliItem,
+  koliQtyTotals,
+  shipmentInvoiceReconciliation,
   productionYieldByWarna,
   productionYieldBySize,
   resiGroupInvoiceLines,
-  vendorCumulativeQtyByLengan,
+  vendorCumulativeQtyByTipe,
   vendorInvoiceAdjustmentTotal,
   vendorInvoiceBadge,
   vendorInvoiceFinalAmount,
@@ -90,11 +93,13 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
   // Grup resi yang sudah delivered TAPI belum diinvoice -- siap diajukan. Rate per baris read-only,
   // dihitung dari kapasitas kumulatif TRUE vendor ini (semua PO Produksi historisnya) + tier
   // Standar/PKS Master Data Harga Maklon -- murni pratinjau, server menghitung ulang persis sama.
-  const cumulativeByLengan = vendorCumulativeQtyByLengan(vendorId, mrpDetails);
-  function rateForLine(l: { lengan: Lengan }): number {
-    return hargaMaklonRateInfo(hargaMaklon, vendorId, l.lengan, cumulativeByLengan[l.lengan] ?? 0).rate;
+  const cumulativeByTipe = vendorCumulativeQtyByTipe(vendorId, mrpDetails);
+  function rateForLine(l: { mrpId: string; warna: string; lengan: Lengan; usia?: Usia }): number {
+    return hargaMaklonLineRate(hargaMaklon, vendorId, maklonTipeForWarna(l.mrpId, l.warna, l.lengan, mrpDetails, l.usia), l.lengan, cumulativeByTipe).rate;
   }
   const deliveredMine = deliveryKolis.filter((k) => k.vendorProduksi === vendorId && k.deliveredAt);
+  const recon = shipmentInvoiceReconciliation(vendorId, deliveryKolis, vendorInvoices);
+  const reconMismatch = recon.some((r) => r.mismatches.length > 0);
   // Resi yang HANYA berisi reject tidak ditagihkan (owner 2026-10-23) -- tidak muncul sebagai "siap diajukan invoice".
   const readyGroups = groupByResi(deliveredMine).filter(([, kolis]) => kolis.every((k) => !k.resiInvoicedAt) && kolis.some((k) => k.items.some(isBillableKoliItem)));
 
@@ -138,6 +143,7 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
               const first = kolis[0];
               const totalWeight = kolis.reduce((s, k) => s + (k.beratKoli ?? 0), 0);
               const koliIds = kolis.map((k) => k.id);
+              const qtyTotals = koliQtyTotals(kolis);
               return (
                 <div key={groupKey} className="vp-ready-card overflow-hidden rounded-md border border-border-subtle bg-white">
                   {/* HP: satu baris ringkas per resi (No resi + tanggal, lalu ekspedisi · berat · koli · pcs). Seluruh baris
@@ -152,9 +158,10 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                       <span className="max-md:hidden">Total berat: </span>
                       <span className="font-mono">{formatDecimal(totalWeight)} kg</span>
                     </span>
-                    <span className="md:hidden">{kolis.length} koli</span>
-                    <span className="md:hidden">
-                      {formatPcs(kolis.reduce((sum, k) => sum + k.items.filter(isBillableKoliItem).reduce((a, it) => a + it.qty, 0), 0))} pcs
+                    <span>
+                      <span className="max-md:hidden">Total qty: </span>
+                      <span className="font-mono font-semibold max-md:font-normal">{formatPcs(qtyTotals.billable)} pcs</span>
+                      <span className="text-text-muted"> · {kolis.length} koli</span>
                     </span>
                     <span className="vp-ready-chev md:hidden" aria-hidden="true">
                       ›
@@ -205,6 +212,47 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                       </Fragment>
                     );
                   })}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {recon.length > 0 && (
+        <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
+          <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
+            <span className="font-sans text-[13px] font-semibold text-text-primary">Validasi qty: dikirim vs diinvoice</span>
+            {reconMismatch ? <StatusPill tone="warning">ADA SELISIH</StatusPill> : <StatusPill tone="success">SEMUA COCOK</StatusPill>}
+          </div>
+          <div className="px-4 py-2">
+            <div className="grid grid-cols-5 gap-2 py-1.5 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+              <span>MRP</span>
+              <span className="text-right">Dikirim (sudah diajukan invoice)</span>
+              <span className="text-right">Diinvoice</span>
+              <span className="text-right">Selisih</span>
+              <span className="text-right">Dikirim, belum diajukan</span>
+            </div>
+            {recon.map((r) => {
+              const diff = r.invoiced - r.shippedInvoiced;
+              return (
+                <div key={r.mrpId} className="border-t border-[#F1F4F7]">
+                  <div className="grid grid-cols-5 items-center gap-2 py-1.5 font-mono text-[11.5px] text-[#31414F]">
+                    <span className="font-semibold">{r.mrpId}</span>
+                    <span className="text-right">{formatPcs(r.shippedInvoiced)}</span>
+                    <span className="text-right">{formatPcs(r.invoiced)}</span>
+                    <span className={"text-right font-semibold " + (diff === 0 ? "text-success-fg" : "text-danger-fg")}>{diff === 0 ? "cocok" : (diff > 0 ? "+" : "") + formatPcs(diff)}</span>
+                    <span className="text-right text-text-muted">{formatPcs(r.shippedNotInvoiced)}</span>
+                  </div>
+                  {r.mismatches.map((m) => (
+                    <div key={m.label} className="grid grid-cols-5 gap-2 pb-1 pl-3 font-mono text-[10.5px] text-danger-fg">
+                      <span className="col-span-1 truncate" title={m.label}>{m.label}</span>
+                      <span className="text-right">{formatPcs(m.shipped)}</span>
+                      <span className="text-right">{formatPcs(m.invoiced)}</span>
+                      <span className="text-right">{formatPcs(m.invoiced - m.shipped)}</span>
+                      <span />
+                    </div>
+                  ))}
                 </div>
               );
             })}
@@ -389,9 +437,10 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                     <span className="max-md:hidden">Lampiran — detail per MRP</span>
                     <span className="md:hidden">Rincian per warna</span>
                   </div>
-                  <div className="m-hide mt-2 grid grid-cols-3 gap-2 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+                  <div className="m-hide mt-2 grid grid-cols-4 gap-2 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
                     <span>MRP</span>
                     <span className="text-right">Qty diinvoice</span>
+                    <span className="text-right">Harga maklon</span>
                     <span className="text-right">Nilai</span>
                   </div>
                   {inv.lines.map((line) => {
@@ -409,7 +458,7 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                             setExpandedWarnaKey("");
                           }}
                           className={
-                            "vp-inv-line m-stack m-grid2 grid w-full grid-cols-3 items-center gap-2 border-t border-[#F1F4F7] py-1.5 text-left font-mono text-[11.5px] text-action-primary max-md:py-2.5" +
+                            "vp-inv-line m-stack m-grid2 grid w-full grid-cols-4 items-center gap-2 border-t border-[#F1F4F7] py-1.5 text-left font-mono text-[11.5px] text-action-primary max-md:py-2.5" +
                             (mrpExpanded ? " is-open" : "") +
                             (new Set(inv.lines.map((l) => l.mrpId)).size > 1 ? " vp-inv-multi" : "")
                           }
@@ -424,6 +473,10 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                             </span>
                           </span>
                           <span data-label="Qty diinvoice" className="text-right">{formatPcs(line.qty)}</span>
+                          <span data-label="Harga maklon" className="text-right">
+                            <span className="mr-1.5 rounded bg-info-bg px-1.5 py-0.5 text-[10px] font-semibold text-info-fg">{maklonTipeForWarna(line.mrpId, line.warna, line.lengan, mrpDetails, line.usia)}</span>
+                            {formatRupiah(line.ratePerPc)}/pc
+                          </span>
                           <span data-label="Nilai" className="text-right">{formatRupiah(line.amount)}</span>
                           {lineYield && (
                             <span className="vp-inv-line-yield md:hidden">

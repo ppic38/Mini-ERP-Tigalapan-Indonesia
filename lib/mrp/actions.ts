@@ -37,6 +37,9 @@ import { getFlowSnapshot, getFlowSnapshotWithMeta } from "./repo/snapshot";
 import { scopeStateToVendor, stripVendorActorNames } from "./vendorScope";
 import { loadWeightTolerancePct, WEIGHT_TOLERANCE_KEY } from "./weightToleranceServer";
 import { assertRollCodesUnique } from "./rollCodeServer";
+import { normalizeProposal, validateProposal } from "./proposal";
+import { detachBatchExtras, normalizeExtras, persistBatchExtras, removeBatchExtras, saveBatchExtraFg } from "./cuttingExtras";
+import type { CuttingExtra, CuttingExtraStored } from "./types";
 import {
   localDateString,
   maklonAmountForLenganBuckets,
@@ -65,8 +68,9 @@ import {
   rollRemainingBySizeForMrp,
   resiGroupInvoiceLines,
   warehouseReceivableGroups,
-  hargaMaklonRateInfo,
-  vendorCumulativeQtyByLengan,
+  hargaMaklonLineRate,
+  maklonTipeForWarna,
+  vendorCumulativeQtyByTipe,
   isSyntheticSupplier,
   DEFAULT_WEIGHT_TOLERANCE_PCT,
 } from "./derive";
@@ -1739,6 +1743,8 @@ export async function setInvoicesPaidAction(
   for (const inv of invoices ?? []) {
     if (paid && inv.status === "INVOICED") {
       await db.from("raw_material_invoices").update({ status: "PAID", paid_at: today() }).eq("id", inv.id);
+      // PIC pembayaran (migration 0082): best-effort, terpisah dari status PAID.
+      await stampActor(db, "raw_material_invoices", [inv.id], { paid_by: actor.actorName });
       if (proof) {
         const { error: proofErr } = await db
           .from("invoice_payment_proofs")
@@ -1750,7 +1756,10 @@ export async function setInvoicesPaidAction(
     // Item 2: "Batalkan Bayar" SENGAJA tidak menghapus invoice_payment_proofs -- file itu bukti
     // audit yang sudah pernah diserahkan, dan Status pill sudah cukup menunjukkan status aslinya
     // sekarang (INVOICED lagi). Menghapusnya cuma menghilangkan jejak tanpa manfaat.
-    if (!paid && inv.status === "PAID") await db.from("raw_material_invoices").update({ status: "INVOICED", paid_at: null }).eq("id", inv.id);
+    if (!paid && inv.status === "PAID") {
+      await db.from("raw_material_invoices").update({ status: "INVOICED", paid_at: null }).eq("id", inv.id);
+      await db.from("raw_material_invoices").update({ paid_by: null }).eq("id", inv.id); // migration 0082, best-effort
+    }
   }
   if (overpay > 0 && payable.length > 0) {
     const refs = payable.map((i) => i.kode_transaksi || i.id).join(", ");
@@ -2608,10 +2617,13 @@ async function applyCuttingApproval(
   actor: { vendorId: string; vendorUserId: string | null; actorName: string },
   batchIds: string[],
   sizeQtyByBatchId: Record<string, Record<string, number>>,
-  shiftsByBatchId: Record<string, SizeShift[]>
+  shiftsByBatchId: Record<string, SizeShift[]>,
+  extraBatchIds: Set<string> = new Set()
 ): Promise<void> {
   const required = actor.vendorUserId != null && (await loadCuttingApprovalRequired(db, actor.vendorId));
   const pending: { id: string; short: string[] }[] = [];
+  // Hasil tambahan dari sisa kain yang disimpan anggota tim SELALU menunggu persetujuan akun utama (tidak tergantung pengaturan vendor).
+  for (const id of extraBatchIds) pending.push({ id, short: ["hasil tambahan dari sisa kain"] });
   if (required) {
     for (const id of batchIds) {
       const target = await loadBatchTargetSizes(db, id);
@@ -2621,7 +2633,11 @@ async function applyCuttingApproval(
       const short = Object.entries(target)
         .filter(([size, t]) => t - (actual[size] ?? 0) - (shiftedFrom[size] ?? 0) > 0)
         .map(([size, t]) => `${size} ${actual[size] ?? 0}/${t}`);
-      if (short.length > 0) pending.push({ id, short });
+      if (short.length > 0) {
+        const already = pending.find((p) => p.id === id);
+        if (already) already.short.push(...short);
+        else pending.push({ id, short });
+      }
     }
   }
   const pendingIds = new Set(pending.map((p) => p.id));
@@ -2643,9 +2659,25 @@ async function applyCuttingApproval(
     if (error) throw new Error("Gagal mengajukan persetujuan hasil cutting -- jalankan migration 0068 di Supabase dulu. " + error.message);
     const { data: labels } = await db.from("production_batches").select("id,code_roll,warna,lengan").in("id", pending.map((p) => p.id));
     const names = (labels ?? []).map((b) => `${b.code_roll ?? b.id} (${b.warna} · ${b.lengan})`).join(", ");
-    await insertNotification(notif(`Hasil cutting dari ${actor.actorName} kurang dari target dan menunggu persetujuan akun utama: ${names}`, ["vendorMaklon"], actor.vendorId));
-    await logVendorAction(actor, `Ajukan persetujuan hasil cutting ${pending.length} roll (kurang dari target)`, "production_batches", pending.map((p) => p.id).join(","));
+    await insertNotification(notif(`Hasil cutting dari ${actor.actorName} kurang dari target atau berisi hasil tambahan sisa kain, dan menunggu persetujuan akun utama: ${names}`, ["vendorMaklon"], actor.vendorId));
+    await logVendorAction(actor, `Ajukan persetujuan hasil cutting ${pending.length} roll (kurang dari target / hasil tambahan sisa kain)`, "production_batches", pending.map((p) => p.id).join(","));
   }
+}
+
+/** Input Finish Good hasil tambahan dari sisa kain sebuah roll (tab Finish Good). fgQty per baris, 0..hasil cutting; selisihnya jadi reject saat
+ *  roll ditutup dan grup tujuan diselesaikan. Ditolak selama hasil cutting roll masih menunggu persetujuan akun utama. */
+export async function saveBatchExtraFgAction(batchId: string, entries: { lengan: string; usia: string; size: string; fgQty: number }[]): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    const actor = await requireVendorSessionWithActor();
+    const db = supabaseServer();
+    const { data: batch, error } = await db.from("production_batches").select("id,mrp_id,vendor_produksi,warna,lengan,code_roll").eq("id", batchId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!batch) throw new Error("Roll tidak ditemukan.");
+    assertSameVendor(actor.vendorId, batch.vendor_produksi, "Roll ini");
+    await assertCuttingNotPending(db, batchId);
+    await saveBatchExtraFg(db, batch, entries);
+    await logVendorAction(actor, `Input Finish Good hasil tambahan sisa kain roll ${batch.code_roll ?? batch.id}`, "production_batches", batchId);
+  });
 }
 
 /** Finish Good roll yang hasil cuttingnya masih menunggu persetujuan akun utama ditolak. */
@@ -2685,6 +2717,7 @@ export async function decideCuttingApprovalAction(batchIds: string[], decision: 
         .in("id", batchIds);
       if (upErr) throw new Error(upErr.message);
     } else {
+      await removeBatchExtras(db, rows);
       const { error: delErr } = await db.from("production_batch_sizes").delete().in("production_batch_id", batchIds);
       if (delErr) throw new Error(delErr.message);
       const { error: upErr } = await db
@@ -2798,14 +2831,15 @@ export async function updateBatchesToCuttingAction(
   cuttingAt: string,
   sizeQtyByBatchId: Record<string, Record<string, number>>,
   sizeShiftsByBatchId: Record<string, SizeShift[]> = {},
-  expectedByBatchId?: Record<string, { cuttingAt?: string | null; sizeQty?: Record<string, number> }>
+  expectedByBatchId?: Record<string, { cuttingAt?: string | null; sizeQty?: Record<string, number> }>,
+  extrasByBatchId: Record<string, CuttingExtra[]> = {}
 ): Promise<ActionResult<{ batchId: string; cuttingAt: string; sizeQty?: Record<string, number> }[]>> {
   // Revisi 2026-09-19: di production Next.js MENYEMBUNYIKAN pesan Error yang di-throw Server Action
   // (klien hanya menerima "Minified React error #441" -- alasan sebenarnya, mis. 'grup sudah Selesai
   // Produksi', tidak pernah sampai ke user). Makanya alasan penolakan dikembalikan sebagai nilai
   // ({ ok: false, error }) dan store yang melempar ulang di sisi klien.
   try {
-    return { ok: true, data: await updateBatchesToCuttingImpl(batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId, expectedByBatchId) };
+    return { ok: true, data: await updateBatchesToCuttingImpl(batchIds, cuttingAt, sizeQtyByBatchId, sizeShiftsByBatchId, expectedByBatchId, extrasByBatchId) };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -2816,7 +2850,8 @@ async function updateBatchesToCuttingImpl(
   cuttingAt: string,
   sizeQtyByBatchId: Record<string, Record<string, number>>,
   sizeShiftsByBatchId: Record<string, SizeShift[]> = {},
-  expectedByBatchId?: Record<string, { cuttingAt?: string | null; sizeQty?: Record<string, number> }>
+  expectedByBatchId?: Record<string, { cuttingAt?: string | null; sizeQty?: Record<string, number> }>,
+  extrasByBatchId: Record<string, CuttingExtra[]> = {}
 ): Promise<{ batchId: string; cuttingAt: string; sizeQty?: Record<string, number> }[]> {
   const actor = await requireVendorSessionWithActor();
   if (batchIds.length === 0) return [];
@@ -2832,6 +2867,18 @@ async function updateBatchesToCuttingImpl(
     .in("id", batchIds);
   if (batchErr) throw new Error(batchErr.message);
   if (!batchRows || batchRows.length !== batchIds.length) throw new Error("Sebagian roll tidak ditemukan.");
+  // Hasil tambahan dari sisa kain (migration 0084): validasi SEBELUM ada yang ditulis; grup tujuan tidak boleh sudah "Selesai Produksi".
+  const cleanExtras: Record<string, CuttingExtra[]> = {};
+  for (const b of batchRows) {
+    const list = normalizeExtras(extrasByBatchId[b.id], b.code_roll ?? b.id);
+    if (list.length > 0) cleanExtras[b.id] = list;
+  }
+  for (const b of batchRows) {
+    for (const x of cleanExtras[b.id] ?? []) {
+      const { data: meta } = await db.from("production_group_meta").select("done_at").eq("group_key", `${b.mrp_id}|${b.warna}|${x.lengan}`).eq("vendor_produksi", b.vendor_produksi).maybeSingle();
+      if (meta?.done_at) throw new Error(`Grup ${b.warna} · ${x.lengan} sudah "Selesai Produksi" -- hasil tambahan sisa kain untuk grup itu tidak bisa disimpan. Buka kunci dulu di tab Final Produksi.`);
+    }
+  }
   if (batchRows.some((b) => b.vendor_produksi !== actor.vendorId)) throw new Error("Sebagian roll bukan milik vendor Anda.");
   // Aturan owner 2026-10-23: hasil cutting roll yang SUDAH punya Finish Good (>0) atau sudah ditutup tidak bisa diubah lagi,
   // supaya angka cutting tidak bertentangan dengan Finish Good yang tercatat (mis. cutting diedit lebih kecil dari FG).
@@ -2872,6 +2919,10 @@ async function updateBatchesToCuttingImpl(
     if (shifts.length > 0) await validateSizeShifts(db, batchId, sizeQtyByBatchId[batchId] ?? {}, shifts);
   }
 
+  // Hasil tambahan sisa kain lama roll-roll ini dihapus SEBELUM hasil cutting ditulis (ditolak kalau grup tujuannya sudah dikonfirmasi
+  // Selesai Produksi), supaya penolakan tidak meninggalkan data setengah jadi; yang baru dicatat setelah hasil cutting tersimpan.
+  const oldExtras = await detachBatchExtras(db, batchRows);
+
   // 1 UPDATE untuk SEMUA batchId sekaligus (cuttingAt seragam untuk 1 grup, lihat komentar
   // saveGroup di production-cutting-tab.tsx) -- bukan N update terpisah seperti versi single.
   const { error } = await db.from("production_batches").update({ cutting_at: cuttingAt }).in("id", batchIds);
@@ -2907,9 +2958,23 @@ async function updateBatchesToCuttingImpl(
     }
   }
 
+  // Hasil tambahan sisa kain (migration 0084): hasil lama roll ini diganti. Akun utama = langsung sah (tercatat sebagai Finish Good);
+  // anggota tim = disimpan menunggu persetujuan akun utama (lihat applyCuttingApproval di bawah).
+  const pendingExtraBatchIds = new Set<string>();
+  {
+    const recordedAt = new Date().toISOString();
+    for (const b of batchRows) {
+      const list = cleanExtras[b.id] ?? [];
+      if (list.length === 0) continue;
+      // qty = hasil cutting hasil tambahan; Finish Good-nya diinput belakangan di tab Finish Good (fgQty yang lama dipertahankan).
+      await persistBatchExtras(db, b, list, oldExtras.get(b.id) ?? [], recordedAt);
+      if (actor.vendorUserId != null) pendingExtraBatchIds.add(b.id);
+    }
+  }
+
   // Persetujuan akun utama (migration 0068, opsional per vendor): hasil cutting anggota tim yang ada size di bawah target
-  // menunggu persetujuan; Finish Good roll itu terkunci sampai diputuskan.
-  await applyCuttingApproval(db, actor, batchIds, sizeQtyByBatchId, sizeShiftsByBatchId);
+  // menunggu persetujuan; Finish Good roll itu terkunci sampai diputuskan. Hasil tambahan sisa kain dari anggota tim selalu menunggu.
+  await applyCuttingApproval(db, actor, batchIds, sizeQtyByBatchId, sizeShiftsByBatchId, pendingExtraBatchIds);
 
   // recomputeAutoRejectForGroup 1x untuk groupKey ini (bukan N kali seperti kalau ini dipanggil
   // lewat loop versi single) -- fungsi ini SUDAH ada & dipakai versi single, reuse apa adanya.
@@ -4849,6 +4914,8 @@ async function fetchProductionScopeForMrp(
       // guard itu ditambahkan (item 9, PR #38) -- lubang ini sudah ada dari situ, bukan regresi
       // dari perubahan sesi ini.
       closedAt: b.closed_at ?? undefined,
+      // Hasil tambahan sisa kain (migration 0084): dipakai expectedRejectGrossForGroup untuk reject grup tujuan.
+      extraResults: Array.isArray(b.extra_results) && b.extra_results.length > 0 ? (b.extra_results as CuttingExtraStored[]) : undefined,
       // Pola sama persis dengan lib/mrp/repo/snapshot.ts -- undefined (bukan {}) kalau belum ada
       // hasil aduan sama sekali, supaya `!b.sizeQty` di actualCutSizesForGroup (derive.ts) tetap
       // konsisten membedakan "belum diisi" vs "diisi tapi semua size kebetulan 0".
@@ -5571,14 +5638,14 @@ export async function submitResiGroupInvoiceAction(koliIds: string[]): Promise<v
   // (hargaMaklonRateInfo), PERSIS logika yang sama dipakai untuk badge estimasi di PO Approval
   // Procurement -- sekarang dijadikan otoritatif untuk invoice sungguhan (sama prinsipnya dengan
   // qty yang sudah lebih dulu tidak dipercaya dari client di action ini).
-  const cumulativeByLengan = vendorCumulativeQtyByLengan(vendorId, snapshot.mrpDetails);
+  const cumulativeByTipe = vendorCumulativeQtyByTipe(vendorId, snapshot.mrpDetails);
   const invoiceLines = lines.map((l) => ({
     mrpId: l.mrpId,
     warna: l.warna,
     lengan: l.lengan,
     usia: l.usia,
     qty: l.qty,
-    ratePerPc: hargaMaklonRateInfo(snapshot.hargaMaklon, vendorId, l.lengan, cumulativeByLengan[l.lengan] ?? 0).rate,
+    ratePerPc: hargaMaklonLineRate(snapshot.hargaMaklon, vendorId, maklonTipeForWarna(l.mrpId, l.warna, l.lengan, snapshot.mrpDetails, l.usia), l.lengan, cumulativeByTipe).rate,
   }));
 
   await createVendorInvoiceAction({ vendorProduksi: vendorId, lines: invoiceLines });
@@ -5587,16 +5654,162 @@ export async function submitResiGroupInvoiceAction(koliIds: string[]): Promise<v
   if (error) throw new Error(error.message);
 }
 
+/** SEMENTARA (owner 2026-10-30): Master Data Harga Maklon belum final, jadi invoice vendor yang BELUM DIBAYAR Finance (SUBMITTED, REVISION,
+ *  APPROVED) selalu dihitung ulang dari Master Data TERBARU -- walau vendor sudah mengajukannya sebelum master diubah. Setelah PAID, harga
+ *  terkunci permanen. Ubah ke false kalau master sudah final, supaya harga invoice dikunci saat diajukan lagi. */
+const MAKLON_RATE_LIVE_UNTIL_PAID = true;
+
+/** Hitung ulang rate per pc + total semua invoice vendor yang belum PAID dari Master Data Harga Maklon sekarang (per tipe kategori+lengan).
+ *  Mengembalikan jumlah invoice yang berubah. */
+async function repriceUnpaidVendorInvoices(): Promise<number> {
+  if (!MAKLON_RATE_LIVE_UNTIL_PAID) return 0;
+  const db = supabaseServer();
+  const { data: invs, error: invErr } = await db.from("vendor_invoices").select("id,vendor_produksi").neq("status", "PAID");
+  if (invErr) throw new Error(invErr.message);
+  if (!invs || invs.length === 0) return 0;
+  const vendorByInvoice = new Map(invs.map((i) => [i.id, i.vendor_produksi as string]));
+  const { data: lines, error: lineErr } = await db
+    .from("vendor_invoice_lines")
+    .select("id,vendor_invoice_id,mrp_id,warna,lengan,usia,qty,rate_per_pc")
+    .in("vendor_invoice_id", Array.from(vendorByInvoice.keys()));
+  if (lineErr) throw new Error(lineErr.message);
+  const snapshot = await getFlowSnapshot();
+  if (snapshot.hargaMaklon.length === 0) return 0; // master belum termuat -- jangan menimpa dengan harga fallback
+  const cumByVendor = new Map<string, Record<string, number>>();
+  const totals = new Map<string, number>();
+  const changed = new Set<string>();
+  const updates: PromiseLike<unknown>[] = [];
+  for (const l of lines ?? []) {
+    const vendor = vendorByInvoice.get(l.vendor_invoice_id);
+    if (!vendor) continue;
+    let cum = cumByVendor.get(vendor);
+    if (!cum) {
+      cum = vendorCumulativeQtyByTipe(vendor, snapshot.mrpDetails);
+      cumByVendor.set(vendor, cum);
+    }
+    const tipe = maklonTipeForWarna(l.mrp_id, l.warna, l.lengan, snapshot.mrpDetails, (l.usia ?? undefined) as Usia | undefined);
+    const rate = hargaMaklonLineRate(snapshot.hargaMaklon, vendor, tipe, l.lengan, cum).rate;
+    totals.set(l.vendor_invoice_id, (totals.get(l.vendor_invoice_id) ?? 0) + l.qty * rate);
+    if (rate !== Number(l.rate_per_pc)) {
+      changed.add(l.vendor_invoice_id);
+      updates.push(db.from("vendor_invoice_lines").update({ rate_per_pc: rate, amount: l.qty * rate }).eq("id", l.id).then((r) => { if (r.error) throw new Error(r.error.message); }));
+    }
+  }
+  await Promise.all(updates);
+  for (const id of changed) {
+    const total = totals.get(id) ?? 0;
+    const { error } = await db.from("vendor_invoices").update({ total_tagihan: total, net_tagihan: total }).eq("id", id);
+    if (error) throw new Error(error.message);
+  }
+  return changed.size;
+}
+
+/** Tombol "Terapkan harga master terbaru" di Procurement/Finance -- menjalankan repriceUnpaidVendorInvoices secara manual. */
+export async function repriceVendorInvoicesAction(): Promise<ActionResult<number>> {
+  try {
+    requireAnyInternalRole(await requireSession(), ["procurement", "finance"]);
+    return { ok: true, data: await repriceUnpaidVendorInvoices() };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Setelah Master Data Harga Maklon berubah: invoice yang belum dibayar ikut dihitung ulang. Gagal di sini TIDAK menggagalkan edit master
+ *  (tombol manual masih bisa dipakai), cuma dicatat. */
+async function repriceAfterMasterChange(): Promise<void> {
+  try {
+    await repriceUnpaidVendorInvoices();
+  } catch (e) {
+    console.error("[repriceAfterMasterChange]", e);
+  }
+}
+
 export async function setVendorInvoiceStatusAction(invoiceId: string, status: "SUBMITTED" | "REVISION" | "APPROVED" | "PAID"): Promise<void> {
-  await requireInternalRole(await requireSession(), "procurement");
+  const actor = await requireInternalRoleWithActor("procurement");
   const db = supabaseServer();
   const { data: invoice } = await db.from("vendor_invoices").select("id,vendor_produksi").eq("id", invoiceId).single();
   await db
     .from("vendor_invoices")
     .update({ status, approved_at: status === "APPROVED" ? today() : undefined, paid_at: status === "PAID" ? today() : undefined })
     .eq("id", invoiceId);
+  // PIC Procurement yang menyetujui (migration 0083): best-effort, terpisah dari status. Kembali ke SUBMITTED/REVISION = PIC dikosongkan.
+  if (status === "APPROVED") await stampActor(db, "vendor_invoices", [invoiceId], { approved_by: actor.actorName });
+  else if (status === "SUBMITTED" || status === "REVISION") await db.from("vendor_invoices").update({ approved_by: null }).eq("id", invoiceId);
   if (invoice && status === "APPROVED") await insertNotification(notif(`Invoice vendor ${invoice.id} disetujui Procurement — menunggu payment Finance`, ["finance", "vendorMaklon"], invoice.vendor_produksi));
   if (invoice && status === "PAID") await insertNotification(notif(`Invoice vendor ${invoice.id} telah dibayar Finance`, ["vendorMaklon"], invoice.vendor_produksi));
+}
+
+const PROPOSAL_COLUMN_MISSING = "Jalankan migration 0082 (kolom proposal dan paid_by di vendor_invoices) di Supabase dulu.";
+
+export type SavePaymentProposalInput = {
+  /** Invoice vendor yang dinaungi proposal ini (satu vendor produksi, belum lunas). */
+  invoiceIds: string[];
+  /** Nomor proposal yang sedang diedit; kosong untuk proposal baru. Invoice lama bernomor ini yang tidak ada di `invoiceIds` dilepas. */
+  previousNo?: string;
+  proposal: { no: string; date: string; location: string; activity: string; rekTujuan: string; tagihan: number; dpPercent: number; startDate: string };
+};
+
+/** Procurement membuat/mengubah Proposal Pembayaran untuk invoice vendor produksi (migration 0082). DP dan sisa selalu dihitung ulang di
+ *  server. Nomor proposal harus unik (nomor yang sama hanya boleh dipakai invoice milik proposal itu sendiri). Invoice yang sudah lunas
+ *  tidak bisa dimasukkan/dilepas. Alasan penolakan dikembalikan sebagai nilai (Next menyembunyikan pesan Error di production). */
+export async function savePaymentProposalAction(input: SavePaymentProposalInput): Promise<ActionResult<void>> {
+  try {
+    const actor = await requireInternalRoleWithActor("procurement");
+    const ids = Array.from(new Set(input.invoiceIds));
+    if (ids.length === 0) throw new Error("Pilih minimal satu invoice vendor untuk proposal ini.");
+    const proposal = normalizeProposal(input.proposal);
+    const invalid = validateProposal(proposal);
+    if (invalid) throw new Error(invalid);
+    const db = supabaseServer();
+    const { data: invs, error } = await db.from("vendor_invoices").select("id,vendor_produksi,status").in("id", ids);
+    if (error) throw new Error(error.message);
+    if ((invs ?? []).length !== ids.length) throw new Error("Sebagian invoice vendor tidak ditemukan.");
+    if (new Set((invs ?? []).map((i) => i.vendor_produksi)).size > 1) throw new Error("Satu proposal hanya boleh menaungi invoice dari satu vendor produksi.");
+    const paid = (invs ?? []).filter((i) => i.status === "PAID");
+    if (paid.length > 0) throw new Error(`Invoice ${paid.map((i) => i.id).join(", ")} sudah lunas, jadi tidak bisa dimasukkan ke proposal.`);
+    // Nomor unik: baris lain (di luar invoice terpilih) yang sudah memakai nomor ini hanya boleh yang milik proposal yang sedang diedit.
+    const { data: sameNo, error: noErr } = await db.from("vendor_invoices").select("id").eq("proposal->>no", proposal.no);
+    if (noErr) throw new Error(noErr.message.includes("proposal") ? PROPOSAL_COLUMN_MISSING : noErr.message);
+    const idSet = new Set(ids);
+    const foreign = (sameNo ?? []).filter((r) => !idSet.has(r.id));
+    if (foreign.length > 0 && proposal.no !== input.previousNo) throw new Error(`Nomor proposal ${proposal.no} sudah dipakai invoice lain (${foreign.map((r) => r.id).join(", ")}). Gunakan nomor lain.`);
+    // Invoice lama milik proposal yang diedit tetapi sekarang tidak dipilih lagi: dilepas.
+    if (input.previousNo) {
+      const { data: prevRows, error: prevErr } = await db.from("vendor_invoices").select("id,status").eq("proposal->>no", input.previousNo);
+      if (prevErr) throw new Error(prevErr.message);
+      const drop = (prevRows ?? []).filter((r) => !idSet.has(r.id) && r.status !== "PAID").map((r) => r.id);
+      if (drop.length > 0) {
+        const { error: dropErr } = await db.from("vendor_invoices").update({ proposal: null }).in("id", drop);
+        if (dropErr) throw new Error(dropErr.message);
+      }
+    }
+    const createdAt = nowIso();
+    const { error: updErr } = await db.from("vendor_invoices").update({ proposal: { ...proposal, createdBy: actor.actorName, createdAt } }).in("id", ids);
+    if (updErr) throw new Error(updErr.message.includes("proposal") ? PROPOSAL_COLUMN_MISSING : updErr.message);
+    await logInternalAction(actor, `Simpan proposal pembayaran ${proposal.no} untuk invoice vendor ${ids.join(", ")}`, "vendor_invoices", ids[0]);
+    await insertNotification(notif(`Proposal pembayaran ${proposal.no} (${proposal.activity}) dibuat ${actor.actorName} untuk invoice vendor ${ids.join(", ")}`, ["finance"]));
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Hapus proposal dari semua invoice yang belum lunas bernomor itu. Invoice yang sudah lunas tetap menyimpan proposalnya sebagai arsip. */
+export async function deletePaymentProposalAction(no: string): Promise<ActionResult<void>> {
+  try {
+    const actor = await requireInternalRoleWithActor("procurement");
+    const db = supabaseServer();
+    const { data: rows, error } = await db.from("vendor_invoices").select("id,status").eq("proposal->>no", no);
+    if (error) throw new Error(error.message.includes("proposal") ? PROPOSAL_COLUMN_MISSING : error.message);
+    const ids = (rows ?? []).filter((r) => r.status !== "PAID").map((r) => r.id);
+    if (ids.length === 0) throw new Error((rows ?? []).length > 0 ? "Semua invoice proposal ini sudah lunas, proposal disimpan sebagai arsip." : "Proposal tidak ditemukan.");
+    const { error: updErr } = await db.from("vendor_invoices").update({ proposal: null }).in("id", ids);
+    if (updErr) throw new Error(updErr.message);
+    await logInternalAction(actor, `Hapus proposal pembayaran ${no} dari invoice vendor ${ids.join(", ")}`, "vendor_invoices", ids[0]);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /** Bukti pembayaran invoice vendor produksi (migration 0075). Format dicek di server juga (klien sudah membatasi tipe dan ukuran). */
@@ -5612,7 +5825,7 @@ const VENDOR_PROOF_TABLE_MISSING = "Jalankan migration 0075 (tabel vendor_invoic
  *  beberapa invoice yang dibayar bersamaan. Alasan penolakan dikembalikan sebagai nilai (Next menyembunyikan pesan Error di production). */
 export async function payVendorInvoicesAction(invoiceIds: string[], proof: { dataUrl: string; fileName?: string }): Promise<ActionResult<void>> {
   try {
-    await requireInternalRole(await requireSession(), "finance");
+    const actor = await requireInternalRoleWithActor("finance");
     assertVendorInvoiceProof(proof);
     const ids = Array.from(new Set(invoiceIds));
     if (ids.length === 0) return { ok: true, data: undefined };
@@ -5624,6 +5837,8 @@ export async function payVendorInvoicesAction(invoiceIds: string[], proof: { dat
     if (notApproved.length > 0) throw new Error(`Invoice ${notApproved.map((i) => i.id).join(", ")} belum disetujui Procurement, jadi belum bisa dibayar.`);
     const toPay = (invs ?? []).filter((i) => i.status === "APPROVED");
     if (toPay.length === 0) return { ok: true, data: undefined };
+    // Harga terkunci permanen begitu PAID -- pastikan yang dikunci adalah harga Master Data terbaru.
+    await repriceUnpaidVendorInvoices();
     const uploadedAt = nowIso();
     for (const inv of toPay) {
       const { error: proofErr } = await db.from("vendor_invoice_payment_proofs").upsert({ invoice_id: inv.id, data_url: proof.dataUrl, file_name: proof.fileName ?? null, uploaded_at: uploadedAt });
@@ -5634,6 +5849,8 @@ export async function payVendorInvoicesAction(invoiceIds: string[], proof: { dat
       .update({ status: "PAID", paid_at: today(), bukti_bayar_at: uploadedAt, bukti_bayar_file_name: proof.fileName ?? null })
       .in("id", toPay.map((i) => i.id));
     if (updErr) throw new Error(updErr.message);
+    // PIC pembayaran (migration 0082): best-effort, terpisah supaya pembayaran tidak gagal kalau migration belum jalan.
+    await stampActor(db, "vendor_invoices", toPay.map((i) => i.id), { paid_by: actor.actorName });
     for (const inv of toPay) {
       await insertNotification(notif(`Invoice vendor ${inv.id} telah dibayar lunas oleh Finance — bukti pembayaran tersedia di Invoice & Payment`, ["vendorMaklon"], inv.vendor_produksi));
     }
@@ -6375,6 +6592,7 @@ export async function addHargaMaklonRowAction(data: Omit<HargaMaklonRow, "id">):
       harga: data.harga,
     });
   if (error) throw new Error(error.message);
+  await repriceAfterMasterChange();
 }
 export async function updateHargaMaklonRowAction(id: string, patch: Partial<HargaMaklonRow>): Promise<void> {
   await requireMasterDataRole();
@@ -6388,11 +6606,13 @@ export async function updateHargaMaklonRowAction(id: string, patch: Partial<Harg
   if (patch.harga !== undefined) p.harga = patch.harga;
   const { error } = await supabaseServer().from("harga_maklon").update(p).eq("id", id);
   if (error) throw new Error(error.message);
+  await repriceAfterMasterChange();
 }
 export async function deleteHargaMaklonRowAction(id: string): Promise<void> {
   await requireMasterDataRole();
   const { error } = await supabaseServer().from("harga_maklon").delete().eq("id", id);
   if (error) throw new Error(error.message);
+  await repriceAfterMasterChange();
 }
 export async function replaceHargaMaklonAction(rows: HargaMaklonRow[]): Promise<void> {
   await requireMasterDataRole();
@@ -6405,6 +6625,7 @@ export async function replaceHargaMaklonAction(rows: HargaMaklonRow[]): Promise<
     rows.map((r, i) => ({ id: ids[i], kode_vendor: r.kodeVendor, nama_vendor: r.namaVendor, tipe_lengan: r.tipeLengan, jenis_harga: r.jenisHarga, kapasitas_min: r.kapasitasMin ?? null, kapasitas_max: r.kapasitasMax ?? null, harga: r.harga }))
   );
   if (error) throw new Error(error.message);
+  await repriceAfterMasterChange();
 }
 
 export async function addHargaKainRowAction(data: Omit<HargaKainRow, "id">): Promise<void> {
@@ -6597,6 +6818,34 @@ export async function updateVendorProduksiMasterAction(id: string, patch: { name
   const { error } = await supabaseServer().from("vendors_produksi").update(p).eq("id", id);
   if (error) throw new Error(error.message);
 }
+/** Rekening tujuan pembayaran vendor produksi (migration 0085) untuk Proposal Pembayaran. */
+export type VendorBankAccount = { bankName: string; accountNo: string; accountName: string };
+const BANK_COLUMN_MISSING = "Jalankan migration 0085 (kolom rekening di vendors_produksi) di Supabase dulu.";
+
+/** Daftar rekening semua vendor produksi (id vendor -> rekening). Hanya Procurement/Finance/Sysadmin; tidak ikut snapshot. */
+export async function listVendorBankAccountsAction(): Promise<ActionResult<Record<string, VendorBankAccount>>> {
+  return toActionResult(async () => {
+    const session = await requireSession();
+    if (!session.internalRoles.some((r) => r === "procurement" || r === "finance" || r === "sysadmin")) throw new Error("Forbidden: rekening vendor hanya untuk Procurement/Finance.");
+    const { data, error } = await supabaseServer().from("vendors_produksi").select("id,bank_name,bank_account_no,bank_account_name");
+    if (error) throw new Error(error.message.includes("bank_") ? BANK_COLUMN_MISSING : error.message);
+    const out: Record<string, VendorBankAccount> = {};
+    for (const r of data ?? []) out[r.id] = { bankName: r.bank_name ?? "", accountNo: r.bank_account_no ?? "", accountName: r.bank_account_name ?? "" };
+    return out;
+  });
+}
+
+export async function updateVendorBankAccountAction(id: string, acct: VendorBankAccount): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireMasterDataRole();
+    const { error } = await supabaseServer()
+      .from("vendors_produksi")
+      .update({ bank_name: acct.bankName.trim() || null, bank_account_no: acct.accountNo.trim() || null, bank_account_name: acct.accountName.trim() || null })
+      .eq("id", id);
+    if (error) throw new Error(error.message.includes("bank_") ? BANK_COLUMN_MISSING : error.message);
+  });
+}
+
 export async function deleteVendorProduksiMasterAction(id: string): Promise<void> {
   await requireMasterDataRole();
   const { error } = await supabaseServer().from("vendors_produksi").delete().eq("id", id);

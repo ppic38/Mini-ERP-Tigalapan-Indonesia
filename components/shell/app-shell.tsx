@@ -28,10 +28,8 @@ import {
   countMaterialPOsAwaitingInvoice,
   countMrpAwaitingScmApproval,
   countMrpWithoutPO,
-  countPoPendingForRole,
-  countPoRejected,
+  countPoInProgress,
   countPaymentTotal,
-  countPoApprovalTotal,
   countProductionYieldUnresolved,
   countVendorGoodReceiveEligible,
   countVendorInvoicePaymentUpdates,
@@ -219,14 +217,14 @@ export function AppShell({
   let badgeOverrides: Record<string, number> | undefined;
   if (role === "finance") {
     badgeOverrides = {
-      "/finance/po-approval": countPoApprovalTotal(materialPOs, maklonPOs),
+      "/finance/po-approval": countPoInProgress(materialPOs, maklonPOs),
       "/finance/payment": countPaymentTotal(invoices, vendorInvoices),
     };
   } else if (role === "procurement") {
     badgeOverrides = {
       // Revisi 2026-09-28: tab "Approval PO Saya" (Level 2) + PO ditolak sekarang di DALAM halaman
       // ini juga (bukan menu terpisah lagi) -- badge sidebar digabung jadi 1 angka.
-      "/procurement/po-approval": countMrpWithoutPO(mrpDetails) + countPoPendingForRole("procurement", materialPOs, maklonPOs) + countPoRejected(materialPOs, maklonPOs),
+      "/procurement/po-approval": countMrpWithoutPO(mrpDetails) + countPoInProgress(materialPOs, maklonPOs),
       // "Invoice Vendor" sekarang tab kedua di halaman ini (bukan halaman terpisah lagi) —
       // badge-nya digabung ke sini juga.
       "/raw-material": countMaterialPOsAwaitingInvoice(materialPOs) + countVendorInvoicesAwaitingReview(vendorInvoices),
@@ -236,11 +234,11 @@ export function AppShell({
   } else if (role === "scm") {
     badgeOverrides = {
       "/scm/approval-mrp": countMrpAwaitingScmApproval(mrpDetails),
-      "/scm/approval-po": countPoPendingForRole("scm", materialPOs, maklonPOs, internalActors.scm?.username),
+      "/scm/approval-po": countPoInProgress(materialPOs, maklonPOs),
     };
   } else if (role === "gm") {
     badgeOverrides = {
-      "/gm/approval-po": countPoPendingForRole("gm", materialPOs, maklonPOs),
+      "/gm/approval-po": countPoInProgress(materialPOs, maklonPOs),
     };
   } else if (role === "produksi") {
     badgeOverrides = {
