@@ -87,7 +87,8 @@ function sheet(wb: Workbook, name: string, bg: string, title: string, note: stri
 // ---- Sheet Detail Roll: satu baris per roll x size ----
 const RC = {
   vendor: 1, warna: 2, lengan: 3, size: 4, roll: 5, invoice: 6, berat: 7, hargaKg: 8, biaya: 9, invDiskon: 10, invKg: 11, diskon: 12, warnaRib: 13, warnaKg: 14,
-  rib: 15, pembagi: 16, fg: 17, resi: 18, koli: 19, bahan: 20, diskonPcs: 21, ribPcs: 22, cogs: 23, maklon: 24, ongkir: 25, hpp: 26, jual: 27, ratio: 28, total: 29,
+  rib: 15, pembagi: 16, fg: 17, resi: 18, koli: 19, ongkirResi: 20, beratResi: 21, beratKoli: 22, ongkirKoli: 23, pcsKoli: 24,
+  bahan: 25, diskonPcs: 26, ribPcs: 27, cogs: 28, maklon: 29, ongkir: 30, hpp: 31, jual: 32, ratio: 33, total: 34,
 } as const;
 const ROLL_COLS: Col[] = [
   { head: "Vendor", width: 18, kind: "text" },
@@ -109,12 +110,17 @@ const ROLL_COLS: Col[] = [
   { head: "Qty FG (pcs)", width: 10, kind: "int" },
   { head: "No Resi", width: 18, kind: "text" },
   { head: "No Koli", width: 14, kind: "text" },
+  { head: "Ongkir Resi (Rp)\n= tarif x Berat Resi", width: 15, kind: "rp" },
+  { head: "Berat Resi (kg)\n= semua koli resi", width: 13, kind: "dec" },
+  { head: "Berat Koli (kg)", width: 11, kind: "dec" },
+  { head: "Ongkir Koli (Rp)\n= Ongkir Resi x Berat Koli / Berat Resi", width: 19, kind: "rp" },
+  { head: "Pcs di Koli", width: 10, kind: "int" },
   { head: "Bahan/pcs\n= (Biaya - Diskon) / Pembagi", width: 18, kind: "rp" },
   { head: "Diskon/pcs\n= Diskon / Pembagi", width: 13, kind: "rp" },
   { head: "Rib/pcs\n= Rib / Pembagi", width: 12, kind: "rp" },
   { head: "COGS Bahan/pcs\n= Bahan + Rib", width: 14, kind: "rp" },
   { head: "Maklon/pcs", width: 11, kind: "rp" },
-  { head: "Ongkir/pcs", width: 11, kind: "rp" },
+  { head: "Ongkir/pcs\n= Ongkir Koli / Pcs di Koli", width: 18, kind: "rp" },
   { head: "HPP/pcs\n= COGS + Maklon + Ongkir", width: 17, kind: "rp" },
   { head: "Harga Jual", width: 11, kind: "rp" },
   { head: "Ratio HPP\n= HPP / Harga Jual", width: 14, kind: "pct" },
@@ -146,8 +152,18 @@ function rollRow(r: HppRollLine, rowNo: number): CellValue[] {
   set("resi", r.resi);
   set("koli", r.koli);
   set("maklon", r.maklonPcs);
-  set("ongkir", r.ongkirPcs);
   set("jual", r.hargaJual);
+  // Ongkir/pcs rumus kalau baris ini bisa ditelusuri ke satu koli; baris pool lama tanpa koli tetap angka akhir.
+  if (r.ongkirResi != null && r.beratResi != null && r.beratKoli != null && r.pcsKoli != null) {
+    set("ongkirResi", r.ongkirResi);
+    set("beratResi", r.beratResi);
+    set("beratKoli", r.beratKoli);
+    set("pcsKoli", r.pcsKoli);
+    set("ongkirKoli", f(`IF(${c("beratResi")}=0,0,${c("ongkirResi")}*${c("beratKoli")}/${c("beratResi")})`, r.ongkirPcs * r.pcsKoli));
+    set("ongkir", f(`IF(${c("pcsKoli")}=0,0,${c("ongkirKoli")}/${c("pcsKoli")})`, r.ongkirPcs));
+  } else {
+    set("ongkir", r.ongkirPcs);
+  }
   if (traced) {
     set("biaya", f(`${c("berat")}*${c("hargaKg")}`, r.biayaBahanRoll));
     set("diskon", f(`IF(${c("invKg")}=0,0,${c("invDiskon")}*${c("berat")}/${c("invKg")})`, r.diskonRoll));
@@ -235,7 +251,7 @@ export async function exportHppExcel(mrpId: string, report: HppReport, fileName:
   const stamp = new Date().toLocaleString("id-ID");
   const rumus =
     "Rumus per pcs: Bahan = (biaya bahan roll - porsi diskon) / pembagi; Diskon roll = diskon invoice / total kg kain invoice x berat roll; Rib = biaya rib warna / total kg kain warna x berat roll / pembagi; " +
-    "COGS Bahan = Bahan + Rib; HPP = COGS Bahan + Maklon + Ongkir; Ratio HPP = HPP / Harga Jual. Maklon/pcs = harga maklon master; Ongkir/pcs = tarif ekspedisi x berat koli / pcs resi (angka masukan). " +
+    "COGS Bahan = Bahan + Rib; HPP = COGS Bahan + Maklon + Ongkir; Ratio HPP = HPP / Harga Jual. Maklon/pcs = harga maklon master; Ongkir Resi = tarif ekspedisi master x berat seluruh koli resi, Ongkir Koli = Ongkir Resi x Berat Koli / Berat Resi, Ongkir/pcs = Ongkir Koli / Pcs di Koli (satu baris Detail Roll = satu koli). " +
     "Sheet HPP menghitung rata-rata tertimbang (bobot Qty FG) dari sheet Detail Roll pasangannya.";
   const estimasiNote = `MRP ${mrpId} · diunduh ${stamp} · ESTIMASI: roll yang belum ditutup, pembagi = hasil cutting roll (berubah sampai roll ditutup). ${rumus}`;
   const finalNote = `MRP ${mrpId} · diunduh ${stamp} · FINAL: roll yang sudah ditutup (pembagi = Finish Good aktual), plus baris rework dan data lama tanpa roll. ${rumus}`;

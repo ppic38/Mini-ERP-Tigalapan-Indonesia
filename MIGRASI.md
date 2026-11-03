@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Unduhan HPP: ongkir per resi dan ongkir/pcs berupa rumus (2026-11-03, tanpa migration)
+Owner: di sheet Detail Roll harus kelihatan ongkir total per resi, dan ongkir/pcs berupa rumus (sebelumnya angka masukan). Detail Roll On Going/Final kini satu baris per roll x size x KOLI (`hppReport.ts`, dulu koli/resi digabung dalam satu sel). Kolom baru (`exportHppExcel.ts`): Ongkir Resi (tarif master x berat seluruh koli resi, masukan), Berat Resi, Berat Koli, **Ongkir Koli = Ongkir Resi x Berat Koli / Berat Resi** (rumus), Pcs di Koli, dan **Ongkir/pcs = Ongkir Koli / Pcs di Koli** (rumus; HPP/pcs dan seterusnya tetap rumus dari sini). Angka sama dengan `koliOngkirShare` (`koliOngkirBreakdown` di derive.ts, field baru `HppRow.ongkirResi/beratResi/beratKoli/pcsKoli`, terisi untuk baris roll dan rework). Baris pool lama tanpa koli tetap angka ongkir/pcs akhir. Sheet HPP per item tidak berubah (rata-rata tertimbang dari Detail Roll). Hanya export; layar Laporan HPP dan perhitungan tidak berubah.
+
 ## Warehouse Penerimaan: filter, terbaru di atas, HPP per item tanpa menunggu pembayaran (2026-11-03, tanpa migration)
 Owner: halaman Penerimaan Warehouse perlu filter, urutan terbaru di atas, dan HPP per item meski Finance belum membayar invoice (harga maklon sudah dari master data, pakai data HPP Finance). Hanya tampilan; gate "Bongkar" (invoice harus PAID) TIDAK berubah.
 - `app/warehouse/penerimaan/page.tsx`: urutan tanggal kirim menurun (kunci resi menurun sebagai pemecah seri); kotak cari (no resi, no koli, no MRP, no invoice); filter Status, Ekspedisi, Vendor Produksi, No MRP, Tanggal Kirim, Status WMS; kolom baru "Total HPP" (Σ qty x HPP/item, tanda "estimasi"/"belum lengkap").

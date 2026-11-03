@@ -5,7 +5,7 @@ import type { Lengan } from "./types";
 // (biaya roll dibagi hasil cutting), FINAL = baris dari roll yang sudah ditutup (dibagi Finish Good aktual) plus baris rework/pool lama.
 // Begitu roll ditutup baris-barisnya pindah otomatis ke FINAL karena pengelompokan memakai `HppRow.sementara`. Tiap kelompok punya:
 //  - Item   : satu baris per warna · lengan · size, rata-rata TERTIMBANG pcs dari semua roll, koli, resi, dan vendor (tidak melebar)
-//  - Roll   : satu baris per roll x size (koli/resi digabung dalam satu sel; ongkir rata-rata tertimbang)
+//  - Roll   : satu baris per roll x size x koli (resi dan ongkirnya jelas per baris; baris pool lama tanpa koli digabung)
 
 export type HppReportRow = HppRow & { noResi?: string; tanggalKirim?: string };
 
@@ -52,6 +52,11 @@ export type HppRollLine = {
   fg: number;
   resi: string;
   koli: string;
+  /** Rincian ongkir (satu baris = satu koli): ongkir per pcs = ongkirResi x beratKoli / beratResi / pcsKoli. Null untuk baris pool lama tanpa koli. */
+  ongkirResi: number | null;
+  beratResi: number | null;
+  beratKoli: number | null;
+  pcsKoli: number | null;
   bahanPcs: number;
   diskonPcs: number;
   ribPcs: number;
@@ -91,7 +96,8 @@ function buildGroup(rows: HppReportRow[]): HppReportGroup {
     const ik = r.warna + "|" + r.lengan + "|" + r.size;
     byItem.set(ik, [...(byItem.get(ik) ?? []), r]);
     const rollKey = r.rollId ?? (r.rework > 0 ? "rework" : "pool");
-    const rk = r.vendorProduksi + "|" + rollKey + "|" + ik;
+    // Satu baris Detail Roll = satu roll x size x koli, supaya ongkir per resi / koli bisa ditulis sebagai rumus yang bisa ditelusuri.
+    const rk = r.vendorProduksi + "|" + rollKey + "|" + ik + "|" + (r.koliId ?? "");
     byRoll.set(rk, [...(byRoll.get(rk) ?? []), r]);
   }
 
@@ -147,6 +153,10 @@ function buildGroup(rows: HppReportRow[]): HppReportGroup {
       fg,
       resi: uniq(rs.map((r) => r.noResi).filter(Boolean)).join(", "),
       koli: uniq(rs.map((r) => r.noKoli).filter(Boolean)).join(", "),
+      ongkirResi: first.ongkirResi ?? null,
+      beratResi: first.beratResi ?? null,
+      beratKoli: first.beratKoli ?? null,
+      pcsKoli: first.pcsKoli ?? null,
       bahanPcs: wavg(rs, bahanOf),
       diskonPcs: wavg(rs, (r) => r.diskonPerItem ?? 0),
       ribPcs: wavg(rs, ribOf),

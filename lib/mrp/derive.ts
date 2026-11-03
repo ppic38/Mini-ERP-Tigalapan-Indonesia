@@ -1360,6 +1360,20 @@ export function koliOngkirShare(koli: DeliveryKoli, allKolis: DeliveryKoli[], ra
   return totalOngkir * ((koli.beratKoli ?? 0) / totalWeight);
 }
 
+/** Rincian `koliOngkirShare` untuk unduhan HPP (rumus Excel yang bisa ditelusuri): ongkir koli = ongkirResi x beratKoli / beratResi. Angka akhir
+ *  SAMA dengan `koliOngkirShare` (koli tanpa grup resi: resi = koli itu sendiri; ekspedisi kosong atau berat resi 0 = semua 0). */
+export function koliOngkirBreakdown(koli: DeliveryKoli, allKolis: DeliveryKoli[], rates: EkspedisiRateRow[]): { ongkirResi: number; beratResi: number; beratKoli: number } {
+  const beratKoli = koli.beratKoli ?? 0;
+  if (!koli.ekspedisi) return { ongkirResi: 0, beratResi: koli.resiGroupId ? allKolis.filter((k) => k.resiGroupId === koli.resiGroupId).reduce((s, k) => s + (k.beratKoli ?? 0), 0) : beratKoli, beratKoli };
+  if (!koli.resiGroupId) return { ongkirResi: ekspedisiPrice(koli.ekspedisi, beratKoli, rates), beratResi: beratKoli, beratKoli };
+  const beratResi = allKolis.filter((k) => k.resiGroupId === koli.resiGroupId).reduce((s, k) => s + (k.beratKoli ?? 0), 0);
+  return { ongkirResi: beratResi > 0 ? ekspedisiPrice(koli.ekspedisi, beratResi, rates) : 0, beratResi, beratKoli };
+}
+
+function koliOngkirDetail(koli: DeliveryKoli, allKolis: DeliveryKoli[], rates: EkspedisiRateRow[], pcsKoli: number) {
+  return { ...koliOngkirBreakdown(koli, allKolis, rates), pcsKoli };
+}
+
 /** Status approval SCM untuk MRP yang diajukan PPIC — gerbang sebelum Procurement bisa bikin PO
  *  (lihat selectable di app/procurement/po-approval/page.tsx). Dipakai di halaman PPIC (kolom
  *  "Status SCM"), halaman approval & monitoring SCM. */
@@ -4085,6 +4099,11 @@ export type HppRow = {
   biayaProduksiPerItem: number;
   ongkirPerItem: number;
   totalOngkirRow: number;
+  /** Rincian ongkir untuk sheet Detail Roll (ongkir per pcs = ongkirResi x beratKoli / beratResi / pcsKoli). Hanya baris yang bisa ditelusuri ke satu koli. */
+  ongkirResi?: number;
+  beratResi?: number;
+  beratKoli?: number;
+  pcsKoli?: number;
   /** Baris dari roll yang MASIH TERBUKA: kain per pcs = biaya roll / FG yang sudah diinput sejauh ini (sisa menggantung dianggap reject
    *  dulu), jadi angkanya bisa turun sampai roll ditutup. Setelah roll ditutup baris ini final. */
   sementara?: boolean;
@@ -4659,6 +4678,7 @@ export function hppRowsForInvoicePerRoll(
         biayaProduksiPerItem,
         ongkirPerItem: ongkirPerPc,
         totalOngkirRow: ongkirPerPc * fgQty,
+        ...koliOngkirDetail(koli, deliveryKolis, ekspedisiRates, totalPcsInKoli),
         sementara: !roll.closedAt,
         hppPerItem,
         bahanPerItem: bahanPerPc,
@@ -4739,6 +4759,7 @@ export function hppRowsForInvoicePerRoll(
         biayaProduksiPerItem,
         ongkirPerItem: ongkirPerPc,
         totalOngkirRow: ongkirPerPc * takeQty,
+        ...koliOngkirDetail(c.koli, deliveryKolis, ekspedisiRates, totalPcsInKoli),
         hppPerItem,
         size: c.size,
         sellingPricePerItem,
