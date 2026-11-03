@@ -20,14 +20,19 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
   const [koliFilter, setKoliFilter] = useState("");
   const [hppFilter, setHppFilter] = useState("");
 
-  // HPP baru ditampilkan kalau parameternya lengkap: invoice vendor sudah dibayar (tidak ada gateReason) dan roll sudah final.
-  // Selama belum, nilainya disembunyikan supaya tidak terbaca sebagai HPP final.
-  const hppReady = !group.gateReason;
+  // HPP per item selalu tampil begitu ada baris HPP-nya (dari mesin HPP yang sama dengan Laporan HPP Finance: master data harga
+  // maklon + biaya bahan + ongkir), TIDAK menunggu Finance membayar invoice. Selama roll belum ditutup nilainya diberi tanda
+  // "estimasi"; reject tidak punya HPP.
+  const hasHpp = (it: WarehouseReceivableGroup["items"][number]) => it.kind !== "REJECT" && it.hppPerItem > 0;
+  const hppItems = group.items.filter(hasHpp);
+  const anyEstimasi = hppItems.some((it) => it.sementara);
+  const totalHppQty = hppItems.reduce((s, it) => s + it.qty, 0);
+  const totalHppNilai = hppItems.reduce((s, it) => s + it.qty * it.hppPerItem, 0);
   const koliOptions = Array.from(new Set(group.items.map((it) => it.noKoli ?? it.deliveryKoliId))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  const hppQuery = hppFilter.replace(/D/g, "");
+  const hppQuery = hppFilter.replace(/[^0-9]/g, "");
   const visibleItems = group.items.filter((it) => {
     if (koliFilter && (it.noKoli ?? it.deliveryKoliId) !== koliFilter) return false;
-    if (hppQuery && !(hppReady && !it.sementara && String(Math.round(it.hppPerItem)).includes(hppQuery))) return false;
+    if (hppQuery && !(hasHpp(it) && String(Math.round(it.hppPerItem)).includes(hppQuery))) return false;
     return true;
   });
 
@@ -58,10 +63,8 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
           value={hppFilter}
           onChange={(e) => setHppFilter(e.target.value)}
           inputMode="numeric"
-          disabled={!hppReady}
-          title={!hppReady ? "HPP belum tersedia" : undefined}
           placeholder="Filter HPP/item (angka)…"
-          className="input !w-[190px] !py-1.5 !text-[11.5px] disabled:opacity-50"
+          className="input !w-[190px] !py-1.5 !text-[11.5px]"
         />
         {(koliFilter || hppFilter) && (
           <button onClick={() => { setKoliFilter(""); setHppFilter(""); }} className="font-sans text-[11px] font-semibold text-accent-blue">
@@ -95,10 +98,23 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
                 <td className="px-3 py-1.5">{it.size}</td>
                 <td className="px-3 py-1.5">{it.kind === "FG" ? "FG" : it.kind === "REWORK" ? "Rework" : "Reject"}</td>
                 <td className="px-3 py-1.5 text-right font-mono">{formatPcs(it.qty)}</td>
-                <td className="px-3 py-1.5 text-right font-mono">{hppReady && !it.sementara ? formatRupiah(it.hppPerItem) : "—"}</td>
-                <td className="px-3 py-1.5 text-right font-mono font-semibold text-text-primary">{hppReady && !it.sementara ? formatRupiah(it.qty * it.hppPerItem) : "—"}</td>
+                <td className="px-3 py-1.5 text-right font-mono">
+                  {hasHpp(it) ? formatRupiah(it.hppPerItem) : "—"}
+                  {hasHpp(it) && it.sementara && <span className="ml-1.5 rounded bg-warning-bg px-1.5 py-0.5 font-sans text-[9px] font-semibold text-warning-fg">Estimasi</span>}
+                </td>
+                <td className="px-3 py-1.5 text-right font-mono font-semibold text-text-primary">{hasHpp(it) ? formatRupiah(it.qty * it.hppPerItem) : "—"}</td>
               </tr>
             ))}
+            {hppItems.length > 0 && (
+              <tr className="border-t-2 border-accent-blue bg-info-bg font-sans text-[11.5px] font-semibold text-info-fg">
+                <td colSpan={4} className="px-3 py-1.5 text-left">
+                  Total HPP{anyEstimasi ? " (termasuk estimasi)" : ""}
+                </td>
+                <td className="px-3 py-1.5 text-right font-mono">{formatPcs(totalHppQty)}</td>
+                <td />
+                <td className="px-3 py-1.5 text-right font-mono">{formatRupiah(totalHppNilai)}</td>
+              </tr>
+            )}
             {visibleItems.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-3 py-4 text-center font-sans text-[11.5px] text-text-muted">
@@ -109,6 +125,10 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
           </tbody>
         </table>
       </div>
+
+      {anyEstimasi && (
+        <div className="font-sans text-[10.5px] text-text-muted">Estimasi = roll bahan belum ditutup Finance, jadi angka HPP masih bisa berubah sampai roll final. HPP dihitung dari data yang sama dengan Laporan HPP Finance.</div>
+      )}
 
       {group.gateReason ? (
         <div className="rounded-md border border-[#EFC9C4] bg-[#FCF3F1] px-3 py-2 font-sans text-[11.5px] font-medium text-danger-fg">{group.gateReason}</div>
@@ -146,7 +166,7 @@ export default function WarehousePenerimaanPage() {
 
   if (!mounted) return null;
 
-  const groups = warehouseReceivableGroups(
+  const groupsUnsorted = warehouseReceivableGroups(
     deliveryKolis,
     vendorInvoices,
     mrpDetails,
@@ -160,6 +180,26 @@ export default function WarehousePenerimaanPage() {
     itemSellingPrices
   );
 
+  // Terbaru di atas: tanggal kirim terbaru dulu, sama tanggal -> kunci resi yang lebih baru dulu.
+  const groups = [...groupsUnsorted].sort((a, b) => (b.deliveredAt ?? "").localeCompare(a.deliveredAt ?? "") || b.resiGroupId.localeCompare(a.resiGroupId, undefined, { numeric: true }));
+
+  const statusLabelOf = (g: WarehouseReceivableGroup) => {
+    if (!g.gateReason) return "Siap dibongkar";
+    if (g.gateReason.startsWith("Menunggu Finance")) return "Menunggu Finance membayar invoice";
+    if (g.gateReason.startsWith("Belum ada invoice")) return "Belum ada invoice vendor";
+    if (g.gateReason.includes("revisi")) return "Invoice dalam revisi";
+    return "Lainnya";
+  };
+  const uniqSorted = (xs: string[]) => Array.from(new Set(xs.filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const vendorName = (g: WarehouseReceivableGroup) => VENDOR_PRODUKSI[g.vendorProduksi]?.name ?? g.vendorProduksi;
+  // Tanggal kirim terbaru di atas pada pilihan filter.
+  const tanggalOptions = Array.from(new Set(groups.map((g) => formatDate(g.deliveredAt)).filter((d) => d && d !== "—")));
+  const hppOf = (g: WarehouseReceivableGroup) => {
+    const billable = g.items.filter((it) => it.kind !== "REJECT");
+    const missing = billable.some((it) => it.hppPerItem <= 0);
+    return { value: g.totalNilai, anyEstimasi: g.items.some((it) => it.sementara), missing, none: billable.every((it) => it.hppPerItem <= 0) };
+  };
+
   const readyCount = groups.filter((g) => !g.gateReason).length;
   const waitingCount = groups.length - readyCount;
   const totalNilaiReady = groups.filter((g) => !g.gateReason).reduce((s, g) => s + g.totalNilai, 0);
@@ -172,6 +212,25 @@ export default function WarehousePenerimaanPage() {
     { key: "vendor", label: "Vendor Produksi", default: true, render: (g) => VENDOR_PRODUKSI[g.vendorProduksi]?.name ?? g.vendorProduksi },
     { key: "invoice", label: "No Invoice Vendor", default: false, render: (g) => (g.invoiceIds.length > 0 ? g.invoiceIds.join(", ") : "—") },
     { key: "qty", label: "Total Qty", default: true, align: "right", render: (g) => formatPcs(g.totalQty) },
+    {
+      // HPP resi ini = Σ qty x HPP/item (mesin HPP yang sama dengan Laporan HPP Finance), tampil walau invoice belum dibayar.
+      key: "totalHpp",
+      label: "Total HPP",
+      default: true,
+      align: "right",
+      render: (g) => {
+        const h = hppOf(g);
+        if (h.none) return <span className="text-text-muted">—</span>;
+        return (
+          <span className="font-mono">
+            {formatRupiah(h.value)}
+            {(h.anyEstimasi || h.missing) && (
+              <span className="mt-0.5 block font-sans text-[9.5px] font-semibold text-warning-fg">{h.missing ? "belum lengkap" : "estimasi"}</span>
+            )}
+          </span>
+        );
+      },
+    },
     {
       // Item 2026-09-16 (integrasi WMS, migration 0041) -- status TERPISAH dari kolom "Status" di
       // bawah (yang soal gate invoice/HPP): ini murni menandai barang sudah dicek fisik masuk di
@@ -218,6 +277,18 @@ export default function WarehousePenerimaanPage() {
         columns={columns}
         rows={groups}
         keyOf={(g) => g.resiGroupId}
+        search={{
+          placeholder: "Cari no resi, no koli, no MRP, no invoice…",
+          getText: (g) => [g.noResi, g.resiGroupId, g.noKoli, g.mrpLabel, g.mrpId, g.invoiceIds.join(" ")].filter(Boolean).join(" "),
+        }}
+        filterDefs={[
+          { label: "Status", options: ["Siap dibongkar", "Menunggu Finance membayar invoice", "Belum ada invoice vendor", "Invoice dalam revisi", "Lainnya"].filter((o) => groups.some((g) => statusLabelOf(g) === o)), test: (g, v) => statusLabelOf(g) === v },
+          { label: "Ekspedisi", options: uniqSorted(groups.map((g) => g.ekspedisi)), test: (g, v) => g.ekspedisi === v },
+          { label: "Vendor Produksi", options: uniqSorted(groups.map(vendorName)), test: (g, v) => vendorName(g) === v },
+          { label: "No MRP", options: uniqSorted(groups.flatMap((g) => g.mrpLabel.split(", ").map((m) => m.trim()))), test: (g, v) => g.mrpLabel.split(", ").some((m) => m.trim() === v) },
+          { label: "Tanggal Kirim", options: tanggalOptions, test: (g, v) => formatDate(g.deliveredAt) === v },
+          { label: "Status WMS", options: ["Diterima WMS", "Belum dikonfirmasi WMS"], test: (g, v) => (v === "Diterima WMS") === !!g.wmsReceivedAt },
+        ]}
         firstColumnLabel="No Resi"
         firstColumnRender={(g) => <span className="font-mono">{g.noResi ?? g.resiGroupId}</span>}
         renderExpanded={(g) => <ReceivableGroupPanel group={g} />}

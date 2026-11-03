@@ -1,5 +1,11 @@
 # Migrasi Project — Status & Riwayat
 
+## Warehouse Penerimaan: filter, terbaru di atas, HPP per item tanpa menunggu pembayaran (2026-11-03, tanpa migration)
+Owner: halaman Penerimaan Warehouse perlu filter, urutan terbaru di atas, dan HPP per item meski Finance belum membayar invoice (harga maklon sudah dari master data, pakai data HPP Finance). Hanya tampilan; gate "Bongkar" (invoice harus PAID) TIDAK berubah.
+- `app/warehouse/penerimaan/page.tsx`: urutan tanggal kirim menurun (kunci resi menurun sebagai pemecah seri); kotak cari (no resi, no koli, no MRP, no invoice); filter Status, Ekspedisi, Vendor Produksi, No MRP, Tanggal Kirim, Status WMS; kolom baru "Total HPP" (Σ qty x HPP/item, tanda "estimasi"/"belum lengkap").
+- HPP/item dan Nilai di rincian resi sekarang selalu tampil begitu baris HPP-nya ada (sumber tetap `hppRowsForInvoicePerRoll` = Laporan HPP Finance), dulu disembunyikan selama invoice belum PAID atau roll belum final. Baris dari roll yang belum ditutup diberi label "Estimasi"; ada baris Total HPP. Reject tetap tanpa HPP. Resi yang belum punya invoice vendor sama sekali tetap "—" (mesin HPP berjalan per baris invoice).
+- Perbaikan kecil: filter angka HPP memakai `/[^0-9]/g` (sebelumnya `/D/g` salah, tidak membuang non-angka).
+
 ## Tampilan HP Vendor Produksi, tahap 2: bagian atas menempel, popup detail PO material, header Invoice (2026-11-03, tanpa migration)
 Owner: hanya tampilan HP/tablet tegak (< 1024px), tidak mengubah data atau alur input.
 - **Navbar + judul + filter menempel bertumpuk** saat di-scroll: `AppShell` membungkus Topbar, judul, dan pilihan PO Produksi/Material dalam `.vp-sticky-head` (sticky, z-25; untuk modul lain/desktop class `contents` = tidak mengubah tata letak). Tinggi blok itu diukur `ResizeObserver` dan dibagikan sebagai `--vp-head-h`; `.dt-filters` (filter DataTable kartu) menempel tepat di bawahnya. Filter kustom non-DataTable (mis. Riwayat pengiriman) tidak ikut menempel.
