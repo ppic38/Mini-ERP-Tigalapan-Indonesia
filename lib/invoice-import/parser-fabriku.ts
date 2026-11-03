@@ -10,8 +10,9 @@ import { checkInvoiceFileName, type FileNameRule } from "./filename";
 import { fmtNum, lineOk, normColor, round2 } from "./parser-knitto";
 import type { InvoiceCheck, InvoiceLine, ParsedInvoice, ParsedInvoiceGroup } from "./types";
 
-/** Nomor invoice FABRIKU di nama file: huruf/angka (boleh strip), minimal ada satu angka, mis. A027. */
-export const FABRIKU_FILENAME_RULE: FileNameRule = { noPattern: /^(?=.*\d)[A-Z0-9-]{2,20}$/, example: "A027.1234.pdf" };
+/** Nomor invoice FABRIKU di nama file: huruf/angka (boleh strip), minimal ada satu angka, mis. A027. Untuk FABRIKU nomor invoice
+ *  sekaligus kode transaksi/transfer di PV, jadi kode transaksi boleh sama dengan nomor invoice (mis. A033.A033.pdf), selain 4 digit angka. */
+export const FABRIKU_FILENAME_RULE: FileNameRule = { noPattern: /^(?=.*\d)[A-Z0-9-]{2,20}$/, example: "A027.1234.pdf", kodeAlsoInvoiceNo: true };
 
 const MONTHS: Record<string, number> = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, MEI: 5, JUN: 6, JUL: 7, AUG: 8, AGU: 8, AGS: 8, SEP: 9, OCT: 10, OKT: 10, NOV: 11, DEC: 12, DES: 12 };
 

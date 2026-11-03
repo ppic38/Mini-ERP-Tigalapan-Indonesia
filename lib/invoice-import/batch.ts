@@ -3,6 +3,7 @@
 // nomor invoice ganda di dalam batch ikut tertangkap. Murni (tanpa DOM/React).
 
 import { autoMap, evaluateMapping, findDuplicateInvoices, findFileNameVendorMismatch, type AliasMap, type Evaluation, type GroupMapping, type PoColorInfo } from "./mapping";
+import { isValidKodeTransaksi } from "./filename";
 import type { InvoiceAdapter, ParsedInvoice } from "./types";
 
 /** Batas lampiran PDF otomatis ke PV (body Server Action ±2 MB, base64 +33%) -- sama dengan wizard. */
@@ -60,7 +61,7 @@ export function assessBatch(args: {
     const unconfirmed = mappings.filter((m) => m.alloc.length === 0 || !m.confirmed);
     if (unconfirmed.length > 0) review.push(`${unconfirmed.length} warna perlu dikonfirmasi / dipetakan`);
     if (findFileNameVendorMismatch(parsed.fileNameParts, args.poVendorId, args.vendors)) review.push("Nama file menyebut vendor lain");
-    if (!/^\d{4}$/.test(parsed.kodeTransfer)) review.push("Kode transaksi (4 digit) tidak ada di nama file");
+    if (!isValidKodeTransaksi(parsed.kodeTransfer, parsed.noPenjualan, args.adapter.fileNameRule.kodeAlsoInvoiceNo)) review.push(args.adapter.fileNameRule.kodeAlsoInvoiceNo ? "Kode transaksi (4 digit atau sama dengan nomor invoice) tidak ada di nama file" : "Kode transaksi (4 digit) tidak ada di nama file");
     if (file.size > BATCH_MAX_ATTACH_BYTES) review.push("File terlalu besar untuk dilampirkan otomatis");
     if (ev.issues.some((i) => i.level === "error" && !/saran|belum dipetakan/i.test(i.message)) && blocked.length === 0 && review.length === 0) review.push("Ada pemeriksaan yang belum lulus");
 

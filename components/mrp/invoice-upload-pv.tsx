@@ -4,7 +4,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { InvoiceBatchReview, type BatchReadFailure, type BatchReviewItem, type PvBookInput } from "@/components/mrp/invoice-batch-review";
 import { assessBatch } from "@/lib/invoice-import/batch";
-import { checkInvoiceFileName } from "@/lib/invoice-import/filename";
+import { checkInvoiceFileName, isValidKodeTransaksi } from "@/lib/invoice-import/filename";
 import { aliasesToSave, autoMap, buildPvDraft, evaluateMapping, findDuplicateInvoices, findFileNameVendorMismatch, poColorsFromPo, type AliasMap, type GroupMapping, aliasKey } from "@/lib/invoice-import/mapping";
 import { lineOk, parseMoney, parseWeight, round2 } from "@/lib/invoice-import/parser-knitto";
 import { pdfToText, terminateOcr } from "@/lib/invoice-import/pdf-text";
@@ -318,7 +318,7 @@ export function InvoiceUploadPanel({
       addBuys: draft.addBuys.map((a) => ({ id: a.id, item: a.item, warna: a.warna, beratKg: a.beratKg, hargaPerKg: a.hargaPerKg, totalHarga: a.totalHarga, remark: a.remark })),
       diskon: draft.diskon,
       noInvoiceVendor: parsed.noPenjualan,
-      kodeTransaksi: /^\d{4}$/.test(parsed.kodeTransfer) ? parsed.kodeTransfer : "",
+      kodeTransaksi: isValidKodeTransaksi(parsed.kodeTransfer, parsed.noPenjualan, adapter.fileNameRule.kodeAlsoInvoiceNo) ? parsed.kodeTransfer : "",
       file,
       info,
     });
@@ -396,7 +396,7 @@ export function InvoiceUploadPanel({
               <div className="text-[13px] font-semibold text-text-primary">Tarik &amp; lepas PDF invoice {adapter.label} di sini, atau klik untuk memilih file</div>
               <div className="mt-1 text-[11.5px] font-medium text-info-fg">Bisa banyak file sekaligus — dibaca semua, lalu ringkasan menunjukkan yang siap disimpan (tiap invoice jadi Paying Voucher sendiri).</div>
               <div className="mt-1.5 text-[11.5px] text-text-muted">
-                Nama file WAJIB: <span className="font-mono">NOINVOICE.KODETRANSAKSI.pdf</span> (kode transaksi 4 digit) — mis. <span className="font-mono">{adapter.fileNameRule.example}</span>. File dengan nama lain ditolak.
+                Nama file WAJIB: <span className="font-mono">NOINVOICE.KODETRANSAKSI.pdf</span> (kode transaksi 4 digit{adapter.fileNameRule.kodeAlsoInvoiceNo ? ", atau sama dengan nomor invoice" : ""}) — mis. <span className="font-mono">{adapter.fileNameRule.example}</span>{adapter.fileNameRule.kodeAlsoInvoiceNo ? <> atau <span className="font-mono">A027.A027.pdf</span></> : null}. File dengan nama lain ditolak.
               </div>
               <div className="mt-1 text-[11px] text-text-muted">PDF dibaca langsung di browser Anda (tidak dikirim ke server). Hasil bisa dicek &amp; diedit sebelum dipakai.</div>
             </>

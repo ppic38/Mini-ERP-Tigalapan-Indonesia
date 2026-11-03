@@ -153,6 +153,7 @@ export function PayingVoucherWizard({
   // invoicenya sudah didaftarkan (lib/invoice-import/adapters.ts). Hasil upload DITERAPKAN ke form manual di
   // bawah (tetap bisa diedit), jadi submit & validasi server sama persis seperti input manual.
   const invoiceAdapter = adapterForSupplier(po.supplier);
+  const kodeAlnum = !!invoiceAdapter?.fileNameRule.kodeAlsoInvoiceNo;
   const existingInvoices = useMrpStore((s) => s.invoices);
   const [inputMode, setInputMode] = useState<"upload" | "manual">(invoiceAdapter ? "upload" : "manual");
   const [applied, setApplied] = useState<AppliedImport | null>(null);
@@ -817,10 +818,11 @@ export function PayingVoucherWizard({
           <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Kode transaksi</div>
           <input
             value={kodeTransaksi}
-            onChange={(e) => setKodeTransaksi(e.target.value.replace(/\D/g, "").slice(0, 4))}
-            placeholder="1234"
-            maxLength={4}
-            inputMode="numeric"
+            // Supplier yang nomor invoicenya sekaligus kode transaksi (FABRIKU, mis. A033) boleh huruf/angka/strip; lainnya 4 digit angka.
+            onChange={(e) => setKodeTransaksi(kodeAlnum ? e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 20) : e.target.value.replace(/[^0-9]/g, "").slice(0, 4))}
+            placeholder={kodeAlnum ? "1234 atau A033" : "1234"}
+            maxLength={kodeAlnum ? 20 : 4}
+            inputMode={kodeAlnum ? "text" : "numeric"}
             className="input mt-1"
           />
         </div>

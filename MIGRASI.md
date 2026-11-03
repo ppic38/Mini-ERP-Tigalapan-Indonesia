@@ -1,5 +1,13 @@
 # Migrasi Project — Status & Riwayat
 
+## Paying Voucher FABRIKU: kode transaksi boleh sama dengan nomor invoice (2026-11-03, tanpa migration)
+Owner: untuk supplier FABRIKU nomor invoice sekaligus kode transaksi/transfer (mis. A033), jadi nama file `A033.A033.pdf` harus diterima, padahal aturan lama memaksa kode transaksi 4 digit angka.
+- `lib/invoice-import/filename.ts`: `FileNameRule.kodeAlsoInvoiceNo` + `isValidKodeTransaksi(kode, noInvoice, allowSameAsInvoice=false)`. Kode sah = 4 digit angka, atau (hanya bila aturan supplier mengizinkan) sama dengan nomor invoice (tanpa beda huruf besar/kecil, disimpan huruf besar). Pesan penolakan menyebut kemungkinan itu.
+- `parser-fabriku.ts`: `FABRIKU_FILENAME_RULE.kodeAlsoInvoiceNo = true`. KNITTO dan supplier lain TIDAK berubah (tetap 4 digit angka).
+- `batch.ts` (pemeriksaan "Kode transaksi ... tidak ada di nama file") dan `invoice-upload-pv.tsx` (nilai kode yang dibawa ke form) memakai fungsi yang sama; teks petunjuk upload menyebut contoh `A027.A027.pdf`.
+- `paying-voucher-wizard.tsx`: kolom Kode transaksi manual untuk FABRIKU menerima huruf/angka/strip (maks 20, huruf besar); supplier lain tetap 4 angka.
+- Server/DB tidak berubah (`kode_transaksi` memang kolom teks tanpa pembatasan angka).
+
 ## Unduhan HPP: ongkir per resi dan ongkir/pcs berupa rumus (2026-11-03, tanpa migration)
 Owner: di sheet Detail Roll harus kelihatan ongkir total per resi, dan ongkir/pcs berupa rumus (sebelumnya angka masukan). Detail Roll On Going/Final kini satu baris per roll x size x KOLI (`hppReport.ts`, dulu koli/resi digabung dalam satu sel). Kolom baru (`exportHppExcel.ts`): Ongkir Resi (tarif master x berat seluruh koli resi, masukan), Berat Resi, Berat Koli, **Ongkir Koli = Ongkir Resi x Berat Koli / Berat Resi** (rumus), Pcs di Koli, dan **Ongkir/pcs = Ongkir Koli / Pcs di Koli** (rumus; HPP/pcs dan seterusnya tetap rumus dari sini). Angka sama dengan `koliOngkirShare` (`koliOngkirBreakdown` di derive.ts, field baru `HppRow.ongkirResi/beratResi/beratKoli/pcsKoli`, terisi untuk baris roll dan rework). Baris pool lama tanpa koli tetap angka ongkir/pcs akhir. Sheet HPP per item tidak berubah (rata-rata tertimbang dari Detail Roll). Hanya export; layar Laporan HPP dan perhitungan tidak berubah.
 
