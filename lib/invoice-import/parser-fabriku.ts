@@ -83,7 +83,8 @@ export function parseFabrikuInvoice(text: string, fileName = ""): ParsedInvoice 
       inv.totals.totalKg = round2(weight(qty[1]));
       continue;
     }
-    const total = line.match(/^\s*TOTAL\s*(?:Rp\.?)?\s*([\d.,]+)\s*$/i);
+    // TOTAL bisa tercetak sebaris dengan "Terbilang : ..." (pengelompokan baris menurut y), jadi tidak harus di awal baris.
+    const total = line.match(/(?:^|\s)TOTAL\s*(?:Rp\.?)?\s*([\d.,]+)\s*$/i);
     if (total) {
       inv.totals.totalBayar = money(total[1]);
       continue;
