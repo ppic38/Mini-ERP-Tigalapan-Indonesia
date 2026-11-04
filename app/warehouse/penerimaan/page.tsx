@@ -184,6 +184,7 @@ export default function WarehousePenerimaanPage() {
   const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
   const ekspedisiRates = useMrpStore((s) => s.ekspedisiRates);
   const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
+  const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
 
   if (!mounted) return null;
 
@@ -198,7 +199,8 @@ export default function WarehousePenerimaanPage() {
     rawInvoices,
     warehouseReceipts,
     ekspedisiRates,
-    itemSellingPrices
+    itemSellingPrices,
+    hargaMaklon
   );
 
   // Terbaru di atas: tanggal kirim terbaru dulu, sama tanggal -> kunci resi yang lebih baru dulu.
@@ -207,7 +209,7 @@ export default function WarehousePenerimaanPage() {
   const statusLabelOf = (g: WarehouseReceivableGroup) => {
     if (!g.gateReason) return "Siap dibongkar";
     if (g.gateReason.startsWith("Menunggu Finance")) return "Menunggu Finance membayar invoice";
-    if (g.gateReason.startsWith("Belum ada invoice")) return "Belum ada invoice vendor";
+    if (g.gateReason.startsWith("Belum ada invoice") || g.gateReason.startsWith("Sebagian item")) return "Belum ada invoice vendor";
     if (g.gateReason.includes("revisi")) return "Invoice dalam revisi";
     return "Lainnya";
   };

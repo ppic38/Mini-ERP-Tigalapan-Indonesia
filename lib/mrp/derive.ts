@@ -5035,7 +5035,10 @@ export function warehouseReceivableGroups(
   rawInvoices: RawMaterialInvoice[],
   warehouseReceipts: WarehouseReceipt[],
   ekspedisiRates: EkspedisiRateRow[],
-  itemSellingPrices: ItemSellingPriceRow[]
+  itemSellingPrices: ItemSellingPriceRow[],
+  /** Kalau diisi, koli terkirim yang belum masuk invoice vendor tetap dapat HPP ESTIMASI dari Master Data Harga Maklon (sama dengan
+   *  harga yang dipakai saat vendor mengajukan invoice). Gate Bongkar tidak berubah: tetap butuh invoice vendor PAID. */
+  hargaMaklon?: HargaMaklonRow[]
 ): WarehouseReceivableGroup[] {
   // R8: kandidat = SEMUA koli dalam grup sudah delivered, DAN grup belum pernah diterima penuh
   // oleh Warehouse (1 resi group = tepat 1 warehouse_receipt, lihat R10/R12) -- grup yang sudah
@@ -5054,6 +5057,33 @@ export function warehouseReceivableGroups(
   // Cache hppRows PER VENDOR (dipanggil sekali per vendor, bukan berulang per grup) -- beberapa
   // grup resi biasanya berasal dari vendor yang sama.
   const hppRowsByVendor = new Map<string, HppRow[]>();
+  // Invoice BAYANGAN (hanya di memori, tidak pernah disimpan) untuk qty terkirim yang belum diinvoice vendor, supaya HPP-nya sudah tampil.
+  // submittedAt dibuat paling akhir: alokasi FIFO memberi invoice asli duluan, bayangan hanya kebagian sisanya.
+  const estimateIds = new Set<string>();
+  function estimateInvoicesForVendor(vendorProduksi: string): VendorInvoice[] {
+    if (!hargaMaklon) return [];
+    const invoiced = invoicedQtyByMrp(vendorProduksi, vendorInvoices);
+    const cumulativeByTipe = vendorCumulativeQtyByTipe(vendorProduksi, mrpDetails);
+    const out: VendorInvoice[] = [];
+    for (const d of deliveredQtyByMrp(vendorProduksi, deliveryKolis)) {
+      const qty = d.qty - (invoiced.get(invoiceLineKey(d.mrpId, d.warna, d.lengan, d.usia)) ?? 0);
+      if (qty <= 0) continue;
+      const ratePerPc = hargaMaklonLineRate(hargaMaklon, vendorProduksi, maklonTipeForWarna(d.mrpId, d.warna, d.lengan, mrpDetails, d.usia), d.lengan, cumulativeByTipe).rate;
+      const id = `EST-${vendorProduksi}-${out.length + 1}`;
+      estimateIds.add(id);
+      out.push({
+        id,
+        vendorProduksi,
+        lines: [{ mrpId: d.mrpId, warna: d.warna, lengan: d.lengan, usia: d.usia, qty, ratePerPc, amount: qty * ratePerPc }],
+        totalTagihan: qty * ratePerPc,
+        netTagihan: qty * ratePerPc,
+        adjustments: [],
+        status: "SUBMITTED",
+        submittedAt: `9999-12-31T23:59:59.${String(out.length + 1).padStart(3, "0")}Z`,
+      });
+    }
+    return out;
+  }
   function hppRowsForVendor(vendorProduksi: string): HppRow[] {
     const cached = hppRowsByVendor.get(vendorProduksi);
     if (cached) return cached;
@@ -5061,8 +5091,10 @@ export function warehouseReceivableGroups(
     // "masih dalam revisi", lihat catatan HppRow.invoiceId di derive.ts). `allVendorInvoices` param
     // tetap non-REVISION (basis alokasi FIFO yang benar, konsisten dgn pemanggilan lain di app).
     const invoicesForVendor = vendorInvoices.filter((i) => i.vendorProduksi === vendorProduksi);
-    const rows = invoicesForVendor.flatMap((inv) =>
-      hppRowsForInvoicePerRoll(inv, nonRevisionInvoices, mrpDetails, staticMrps, productionBatches, productionResults, productionGroupMeta, rawInvoices, deliveryKolis, ekspedisiRates, itemSellingPrices)
+    const estimates = hargaMaklon ? estimateInvoicesForVendor(vendorProduksi) : [];
+    const allocationBase = estimates.length > 0 ? [...nonRevisionInvoices, ...estimates] : nonRevisionInvoices;
+    const rows = [...invoicesForVendor, ...estimates].flatMap((inv) =>
+      hppRowsForInvoicePerRoll(inv, allocationBase, mrpDetails, staticMrps, productionBatches, productionResults, productionGroupMeta, rawInvoices, deliveryKolis, ekspedisiRates, itemSellingPrices)
     );
     hppRowsByVendor.set(vendorProduksi, rows);
     return rows;
@@ -5087,6 +5119,7 @@ export function warehouseReceivableGroups(
     const items: WarehouseReceivableItem[] = [];
     const invoiceIdSet = new Set<string>();
     let anyUntraceable = false;
+    let anyNoInvoice = false;
 
     for (const koli of kolis) {
       for (const it of koli.items) {
@@ -5105,9 +5138,12 @@ export function warehouseReceivableGroups(
         } else {
           const totalFg = matches.reduce((s, r) => s + r.fg, 0);
           hppPerItem = totalFg > 0 ? matches.reduce((s, r) => s + r.hppPerItem * r.fg, 0) / totalFg : matches[0].hppPerItem;
-          for (const r of matches) invoiceIdSet.add(r.invoiceId);
+          for (const r of matches) {
+            if (estimateIds.has(r.invoiceId)) anyNoInvoice = true;
+            else invoiceIdSet.add(r.invoiceId);
+          }
         }
-        items.push({ deliveryKoliId: koli.id, noKoli: koli.noKoli, warna: it.warna, lengan: it.lengan, size: it.size, kind: it.kind, qty: it.qty, sourceBatchId: it.sourceBatchId, hppPerItem, sementara: matches.some((r) => r.sementara) || undefined });
+        items.push({ deliveryKoliId: koli.id, noKoli: koli.noKoli, warna: it.warna, lengan: it.lengan, size: it.size, kind: it.kind, qty: it.qty, sourceBatchId: it.sourceBatchId, hppPerItem, sementara: matches.some((r) => r.sementara || estimateIds.has(r.invoiceId)) || undefined });
       }
     }
 
@@ -5128,6 +5164,8 @@ export function warehouseReceivableGroups(
         gateReason = `Invoice ${revisionInv.id} masih dalam revisi`;
       } else if (unpaid.length > 0) {
         gateReason = `Menunggu Finance membayar invoice ${unpaid.map((i) => i.id).join(", ")}`;
+      } else if (anyNoInvoice) {
+        gateReason = "Sebagian item resi ini belum ada invoice vendor";
       } else if (anyUntraceable) {
         gateReason = "HPP item ini tidak bisa ditelusuri ke koli (data lama)";
       }
