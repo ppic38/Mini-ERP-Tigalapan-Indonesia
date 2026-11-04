@@ -1,6 +1,7 @@
 import { supabaseServer } from "../supabase/server";
 import { compareNoKoli } from "./derive";
 import { fileLinkSignature, signWebhook } from "./wosSign";
+import { sheetsConfig, writeResiToSheets } from "./wosSheets";
 
 /** Integrasi dorong (webhook) ke Warehouse Operation System (WOS) partner -- owner 2026-10-28.
  *  Begitu vendor selesai "Set Ekspedisi & Resi" (setKoliEkspedisiResiGroupAction), ERP mengirim satu kejadian
@@ -50,7 +51,7 @@ type ResiPayload = {
     koliNo: string;
     mrpNo: string;
     weightKg: number | null;
-    items: { color: string; sleeve: string; size: string; sku: string | null; qty: number; kind: string; age: string | null }[];
+    items: { color: string; sleeve: string; size: string; sku: string | null; itemName: string | null; qty: number; kind: string; age: string | null }[];
   }[];
 };
 
@@ -68,11 +69,13 @@ async function buildResiPayload(db: Db, resiGroupId: string): Promise<ResiPayloa
 
   const warnas = Array.from(new Set(items.map((i) => i.warna as string)));
   const skuByKey = new Map<string, string>();
+  const nameByKey = new Map<string, string>();
   if (warnas.length > 0) {
-    const { data: skuRows } = await db.from("item_selling_prices").select("warna,lengan,size,sku").in("warna", warnas);
+    const { data: skuRows } = await db.from("item_selling_prices").select("warna,lengan,size,sku,item_name").in("warna", warnas);
     for (const r of skuRows ?? []) {
       const key = `${r.warna}|${r.lengan}|${r.size}`;
       if (r.sku && !skuByKey.has(key)) skuByKey.set(key, r.sku as string);
+      if (r.item_name && !nameByKey.has(key)) nameByKey.set(key, r.item_name as string);
     }
   }
 
@@ -93,6 +96,7 @@ async function buildResiPayload(db: Db, resiGroupId: string): Promise<ResiPayloa
           sleeve: i.lengan as string,
           size: i.size as string,
           sku: skuByKey.get(`${i.warna}|${i.lengan}|${i.size}`) ?? null,
+          itemName: nameByKey.get(`${i.warna}|${i.lengan}|${i.size}`) ?? null,
           qty: Number(i.qty),
           kind: ((i.kind as string | null) ?? "FG") as string,
           age: (i.usia as string | null) ?? null,
@@ -183,8 +187,10 @@ async function postToWos(cfg: WosConfig, payload: object, idempotencyKey: string
 
 /** Kirim baris antrean yang PENDING/FAILED (maks `limit`, paling lama dulu). Mengembalikan jumlah yang terkirim. */
 export async function processWosOutbox(limit = 10): Promise<{ sent: number; failed: number }> {
-  const cfg = wosConfig();
-  if (!cfg) return { sent: 0, failed: 0 };
+  // Tujuan: Google Sheets (tab ERP_INCOMING) kalau env-nya lengkap, kalau tidak webhook ke endpoint WOS. Sheets didahulukan.
+  const sheets = sheetsConfig();
+  const cfg = sheets ? null : wosConfig();
+  if (!sheets && !cfg) return { sent: 0, failed: 0 };
   const db = supabaseServer();
   const { data: rows, error } = await db
     .from("wos_outbox")
@@ -199,8 +205,18 @@ export async function processWosOutbox(limit = 10): Promise<{ sent: number; fail
   let failed = 0;
   for (const row of rows) {
     const resiGroupId = row.resi_group_id as string;
-    const attachments = await buildAttachments(cfg, db, resiGroupId);
-    const result = await postToWos(cfg, { ...(row.payload as object), sentAt: new Date().toISOString(), attachments }, `${row.event}:${resiGroupId}`);
+    let result: { ok: boolean; status: number | null; error?: string };
+    if (sheets) {
+      try {
+        await writeResiToSheets(sheets, row.payload as Parameters<typeof writeResiToSheets>[1]);
+        result = { ok: true, status: 200 };
+      } catch (e) {
+        result = { ok: false, status: null, error: e instanceof Error ? e.message : String(e) };
+      }
+    } else {
+      const attachments = await buildAttachments(cfg!, db, resiGroupId);
+      result = await postToWos(cfg!, { ...(row.payload as object), sentAt: new Date().toISOString(), attachments }, `${row.event}:${resiGroupId}`);
+    }
     const now = new Date().toISOString();
     if (result.ok) {
       sent++;
@@ -216,7 +232,8 @@ export async function processWosOutbox(limit = 10): Promise<{ sent: number; fail
 /** Dipanggil setelah vendor selesai Set Ekspedisi & Resi: catat ke antrean lalu coba kirim. Tidak pernah melempar error. */
 export async function notifyWosResiCreated(resiGroupId: string): Promise<void> {
   try {
-    if (!wosConfig()) return;
+    const viaSheets = !!sheetsConfig();
+    if (!viaSheets && !wosConfig()) return;
     const db = supabaseServer();
     const payload = await buildResiPayload(db, resiGroupId);
     if (!payload) return;
@@ -227,7 +244,8 @@ export async function notifyWosResiCreated(resiGroupId: string): Promise<void> {
       console.error("[wos] gagal menulis antrean:", error.message);
       return;
     }
-    await new Promise((r) => setTimeout(r, EXTRA_FILES_GRACE_MS));
+    // Jeda hanya untuk webhook (menunggu foto ke-2 dst. tersimpan); Sheets tidak memuat lampiran.
+    if (!viaSheets) await new Promise((r) => setTimeout(r, EXTRA_FILES_GRACE_MS));
     await processWosOutbox();
   } catch (e) {
     console.error("[wos] notifyWosResiCreated:", e instanceof Error ? e.message : e);

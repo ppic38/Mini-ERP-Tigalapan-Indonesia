@@ -8,6 +8,9 @@ Dokumen untuk tim WOS. ERP **mengirim (POST)** data resi ke WOS setiap kali vend
 > Kodenya diajukan lewat pull request ke repo WOS; panduan pemasangan untuk partner ada di `docs/erp-integrasi/PANDUAN.md` di repo itu.
 > Contoh endpoint di bawah berlaku sebagai acuan umum.
 
+> **Jalur Google Sheets (2026-11-05):** selain webhook, ERP bisa menulis langsung ke tab `ERP_INCOMING` di spreadsheet WOS lewat akun layanan Google
+> (env `WOS_SHEETS_ID`, `GOOGLE_SA_EMAIL`, `GOOGLE_SA_PRIVATE_KEY`). Kalau env itu lengkap, jalur ini dipakai dan webhook tidak. Lihat MIGRASI.md.
+
 ## Gambaran singkat
 
 1. Vendor menerbitkan resi di ERP.
