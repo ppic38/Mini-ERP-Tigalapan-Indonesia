@@ -4702,7 +4702,16 @@ async function editRollFgImpl(batchId: string, sizeQty: Record<string, number>):
   const { error: snapErr } = await db.from("production_batches").update({ fg_logged_snapshot: clean }).eq("id", batchId);
   if (snapErr) throw new Error(snapErr.message);
   await stampActor(db, "production_batches", [batchId], { fg_by: actor.actorLabel });
-  if (batch.closed_at && meta?.fg_confirmed_at) await recomputeAutoRejectForGroup(db, groupKey, batch.mrp_id, batch.vendor_produksi, batch.warna, batch.lengan as Lengan);
+  // Roll terbuka yang FG-nya jadi penuh (semua size >= hasil cutting) ditutup otomatis, seperti simpanan qty per size: kalau dibiarkan
+  // terbuka, HPP-nya tetap "Estimasi" padahal FG sudah sama dengan target cutting.
+  const nowFull = !batch.closed_at && Object.entries(target).every(([size, tQty]) => tQty <= 0 || (clean[size] ?? 0) >= tQty) && Object.values(target).some((q) => q > 0);
+  if (nowFull) {
+    const { error: closeErr } = await db.from("production_batches").update({ closed_at: today() }).eq("id", batchId);
+    if (closeErr) throw new Error(closeErr.message);
+    await stampActor(db, "production_batches", [batchId], { closed_by: actor.actorLabel });
+    await logVendorAction(actor, `Tutup Roll otomatis (Edit FG penuh) ${batch.code_roll ?? batchId} — ${batch.warna} · ${batch.lengan}`, "production_batches", batchId);
+  }
+  if ((batch.closed_at || nowFull) && meta?.fg_confirmed_at) await recomputeAutoRejectForGroup(db, groupKey, batch.mrp_id, batch.vendor_produksi, batch.warna, batch.lengan as Lengan);
   await maybeAdvanceMaklonToDelivery(batch.mrp_id, batch.vendor_produksi);
 }
 

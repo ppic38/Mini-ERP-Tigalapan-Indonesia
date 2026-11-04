@@ -1457,7 +1457,14 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     const previous = get().productionBatches;
     const cleaned = Object.fromEntries(Object.entries(sizeQty).filter(([, q]) => q > 0));
     const tmpResultId = optimisticFgCorrection(batchId, cleaned);
-    set({ productionBatches: previous.map((b) => (b.id === batchId ? { ...b, fgSizeQty: Object.keys(cleaned).length > 0 ? cleaned : undefined } : b)) });
+    // Roll terbuka yang jadi penuh ikut tertutup otomatis di server; layar langsung menampilkannya tertutup.
+    const isFull = (b: ProductionBatch) => {
+      const t = Object.entries(b.sizeQty ?? {});
+      return t.some(([, q]) => q > 0) && t.every(([size, q]) => q <= 0 || (cleaned[size] ?? 0) >= q);
+    };
+    set({
+      productionBatches: previous.map((b) => (b.id === batchId ? { ...b, fgSizeQty: Object.keys(cleaned).length > 0 ? cleaned : undefined, closedAt: b.closedAt ?? (isFull(b) ? localDateString(new Date()) : undefined) } : b)),
+    });
     try {
       unwrapAction(await actions.editRollFgAction(batchId, sizeQty));
     } catch (err) {

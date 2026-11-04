@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Edit FG: roll yang jadi penuh ikut tertutup otomatis (2026-11-05, tanpa migration)
+Owner: roll yang FG-nya sudah penuh terhadap hasil cutting tetapi masih Terbuka membuat HPP-nya tetap "Estimasi" dan membingungkan Finance. Penutupan otomatis sebelumnya hanya terjadi lewat simpanan qty per size (`saveSizeTotals`); koreksi lewat Edit FG (atau roll yang dibuka lagi lalu diedit) tidak menutup. `editRollFgImpl` (lib/mrp/actions.ts): kalau roll TERBUKA dan setelah koreksi semua size >= hasil cutting, `closed_at` diisi, `closed_by` dicatat, dan tercatat di vendor_action_log ("Tutup Roll otomatis (Edit FG penuh)"); reject grup yang sudah Selesai Produksi dihitung ulang seperti Tutup Roll biasa. `editRollFg` di store menandai roll tertutup seketika. "Buka lagi" TIDAK menutup ulang (supaya roll bisa diedit); roll yang sudah terlanjur penuh dan terbuka sebelum perubahan ini tetap perlu Tutup Roll manual sekali.
+
 ## Detail Roll: info pengiriman koli + header berwarna per kelompok biaya (2026-11-05, tanpa migration)
 Owner: perlu tahu koli/pengiriman mana yang sudah dikirim (status Delivery), dan batas kelompok material / maklon / ongkir di sheet Detail Roll terlihat dari warna header.
 - `lib/mrp/hppReport.ts`: `HppReportRow` bertambah `ekspedisi` dan `wmsReceivedAt`; `HppRollLine` bertambah `ekspedisi`, `tanggalKirim`, `statusKirim`. Status: "Delivery" = koli sudah di-Delivery vendor (semua baris HPP berasal dari koli yang sudah dikirim), "Diterima WMS" = WMS sudah konfirmasi (`DeliveryKoli.wmsReceivedAt`), kosong untuk baris yang tidak bisa ditelusuri ke satu koli. `components/mrp/laporan-hpp-view.tsx` mengisi kedua field dari `DeliveryKoli`.
