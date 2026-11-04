@@ -164,7 +164,7 @@ function VendorHppTable({ rows }: { rows: HppTableRow[] }) {
         </div>
       )}
       <div className="max-h-[60vh] min-h-[300px] overflow-auto">
-        <table className="w-full min-w-[1500px] border-collapse">
+        <table className="w-full min-w-[1250px] border-collapse">
           <thead className="sticky top-0 z-10">
             <tr className="border-b border-[#E4E9EE] bg-[#F2F5F8] font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
               <FilterableTh label="Status" options={["On Going", "Final"]} value={statusFilter} onChange={setStatusFilter} />
@@ -178,19 +178,15 @@ function VendorHppTable({ rows }: { rows: HppTableRow[] }) {
               <th className="px-3 py-2 text-right">Maklon/pcs</th>
               <th className="px-3 py-2 text-right">Ongkir/pcs</th>
               <th className="px-3 py-2 text-right">HPP/pcs</th>
-              <th className="px-3 py-2 text-right">HPP Min</th>
-              <th className="px-3 py-2 text-right">HPP Maks</th>
               <th className="px-3 py-2 text-right">Harga Jual</th>
               <th className="px-3 py-2 text-right">Ratio HPP</th>
               <th className="px-3 py-2 text-right">Total HPP</th>
-              <th className="px-3 py-2 text-right">Roll</th>
-              <th className="px-3 py-2 text-right">Resi</th>
             </tr>
           </thead>
           <tbody>
             {lines.length === 0 && (
               <tr>
-                <td colSpan={18} className="px-3 py-6 text-center font-sans text-[11.5px] text-text-muted">
+                <td colSpan={14} className="px-3 py-6 text-center font-sans text-[11.5px] text-text-muted">
                   Tidak ada baris yang cocok dengan filter.
                 </td>
               </tr>
@@ -210,13 +206,9 @@ function VendorHppTable({ rows }: { rows: HppTableRow[] }) {
                 <td className="px-3 py-1.5 text-right font-mono tabular-nums">{formatRupiah(l.maklonPcs)}</td>
                 <td className="px-3 py-1.5 text-right font-mono tabular-nums">{formatRupiah(l.ongkirPcs)}</td>
                 <td className="px-3 py-1.5 text-right font-mono font-semibold tabular-nums text-text-primary">{formatRupiah(l.hppPcs)}</td>
-                <td className="px-3 py-1.5 text-right font-mono tabular-nums text-text-muted">{formatRupiah(l.hppMin)}</td>
-                <td className="px-3 py-1.5 text-right font-mono tabular-nums text-text-muted">{formatRupiah(l.hppMax)}</td>
                 <td className="px-3 py-1.5 text-right font-mono tabular-nums">{l.hargaJual != null ? formatRupiah(l.hargaJual) : "—"}</td>
                 <td className="px-3 py-1.5 text-right font-mono tabular-nums">{l.ratio != null ? (l.ratio * 100).toFixed(1) + "%" : "—"}</td>
                 <td className="px-3 py-1.5 text-right font-mono tabular-nums">{formatRupiah(l.totalHpp)}</td>
-                <td className="px-3 py-1.5 text-right font-mono tabular-nums">{l.jumlahRoll}</td>
-                <td className="px-3 py-1.5 text-right font-mono tabular-nums">{l.jumlahResi}</td>
               </tr>
             ))}
           </tbody>
@@ -229,10 +221,9 @@ function VendorHppTable({ rows }: { rows: HppTableRow[] }) {
                 <td className="px-3 py-2 text-right font-mono tabular-nums">{formatPcs(totalFg)}</td>
                 <td colSpan={5} />
                 <td className="px-3 py-2 text-right font-mono tabular-nums">{formatRupiah(totalFg > 0 ? totalHpp / totalFg : 0)}</td>
-                <td colSpan={3} />
+                <td />
                 <td className="px-3 py-2 text-right font-mono tabular-nums">{pctLabel(hppPercentOf(filteredRows))}</td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums">{formatRupiah(totalHpp)}</td>
-                <td colSpan={2} />
               </tr>
             </tfoot>
           )}
