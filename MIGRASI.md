@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Procurement Paying Voucher: kolom "Tgl Upload Bukti" (2026-11-04, tanpa migration)
+Owner: tanggal upload bukti bayar juga tampil di modul Procurement. `components/procurement/paying-voucher-material-panel.tsx`: kolom "Tgl Upload Bukti" (tanggal + jam, `formatDateTime`) setelah Bukti Pembayaran di Riwayat Paying Voucher; "—" kalau belum ada bukti. Data dari `RawMaterialInvoice.buktiBayarAt` yang sama dengan halaman Finance. Hanya tampilan.
+
 ## Warehouse Penerimaan: HPP estimasi dari Master Data meski vendor belum mengajukan invoice (2026-11-04, tanpa migration)
 Owner: HPP item di Penerimaan Warehouse harus sudah ada walau invoice vendor belum diajukan, memakai Master Data Harga Maklon (harga yang sama dengan saat invoice dibuat). `warehouseReceivableGroups` (derive.ts) kini punya parameter opsional `hargaMaklon`: untuk tiap (MRP, warna, lengan, usia) qty terkirim yang belum masuk invoice vendor dibuatkan invoice BAYANGAN di memori (tidak disimpan; submittedAt paling akhir sehingga invoice asli dialokasikan duluan; rate = `hargaMaklonLineRate`, sama dengan `submitResiGroupInvoiceAction`), lalu mesin HPP per roll yang sama (`hppRowsForInvoicePerRoll`) dipakai apa adanya. Item bertanda Estimasi. **Gate Bongkar TIDAK berubah**: resi tanpa invoice tetap "Belum ada invoice vendor untuk resi ini", resi dengan sebagian item belum diinvoice "Sebagian item resi ini belum ada invoice vendor"; invoice yang tampil di kolom No Invoice hanya yang asli. Hanya halaman Penerimaan yang memakai estimasi (page.tsx meneruskan `hargaMaklon`); badge, aksi Bongkar di server, dan Laporan HPP Finance tidak berubah.
 

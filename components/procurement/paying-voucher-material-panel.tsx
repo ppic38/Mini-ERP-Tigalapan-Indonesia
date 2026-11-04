@@ -5,7 +5,7 @@ import { ClosePoReasonModal } from "@/components/mrp/close-po-reason-modal";
 import { PayingVoucherWizard } from "@/components/mrp/paying-voucher-wizard";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
-import { formatRupiah, invoiceBadge, materialSupplierNamesForWarna } from "@/lib/mrp/derive";
+import { formatDateTime, formatRupiah, invoiceBadge, materialSupplierNamesForWarna } from "@/lib/mrp/derive";
 import { useMrpStore } from "@/lib/mrp/store";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { MaterialPO, RawMaterialInvoice } from "@/lib/mrp/types";
@@ -476,6 +476,7 @@ export function PayingVoucherMaterialPanel() {
                     <th className="px-3 py-[9px] text-left">Status</th>
                     <th className="px-3 py-[9px] text-left">Lampiran Invoice</th>
                     <th className="px-3 py-[9px] text-left">Bukti Pembayaran</th>
+                    <th className="px-3 py-[9px] text-left">Tgl Upload Bukti</th>
                     <SysadminTh />
                   </tr>
                 </thead>
@@ -504,6 +505,7 @@ export function PayingVoucherMaterialPanel() {
                           </td>
                           <td className="px-3 py-[11px]" />
                           <td className="px-3 py-[11px]" />
+                          <td className="px-3 py-[11px]" />
                           <SysadminTd className="py-[11px]" />
                         </tr>
                         {mrpActive &&
@@ -529,6 +531,7 @@ export function PayingVoucherMaterialPanel() {
                                   <td className="px-3 py-[10px]">
                                     <StatusPill tone="neutral">{s.invs.length} PV</StatusPill>
                                   </td>
+                                  <td className="px-3 py-[10px]" />
                                   <td className="px-3 py-[10px]" />
                                   <td className="px-3 py-[10px]" />
                                   <SysadminTd />
@@ -582,11 +585,12 @@ export function PayingVoucherMaterialPanel() {
                                               <span className="font-sans text-[11px] text-text-muted">—</span>
                                             )}
                                           </td>
+                                          <td className="px-3 py-[10px] font-sans text-[11px] text-[#31414F]">{inv.buktiBayarAt ? formatDateTime(inv.buktiBayarAt) : "—"}</td>
                                           <SysadminTd actions={materialInvoiceVoidCorrections(inv)} />
                                         </tr>
                                         {invActive && (
                                           <tr>
-                                            <td colSpan={5 + (sysadminMode ? 1 : 0)} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
+                                            <td colSpan={6 + (sysadminMode ? 1 : 0)} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
                                               {invoiceColorBreakdown(inv)}
                                             </td>
                                           </tr>
