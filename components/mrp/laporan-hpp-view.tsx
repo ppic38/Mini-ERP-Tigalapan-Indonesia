@@ -7,6 +7,7 @@ import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { MultiSelectFilter } from "@/components/mrp/multi-select-filter";
 import { StatusPill } from "@/components/ui/status-pill";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatPcs, formatRupiah, hppRowsForInvoicePerRoll, type HppRow } from "@/lib/mrp/derive";
@@ -56,66 +57,6 @@ const lenganLabel = (l: string) => (l === "PENDEK" ? "Pendek" : "Panjang");
 const statusOf = (r: HppRow) => (r.sementara ? "On Going" : "Final");
 const byText = (a: string, b: string) => a.localeCompare(b, "id-ID", { numeric: true });
 
-/** Header kolom yang bisa difilter (klik judul kolom -> daftar nilai, boleh pilih lebih dari satu; kosong = semua). */
-function FilterableTh({
-  label,
-  align = "left",
-  options,
-  value,
-  onChange,
-}: {
-  label: string;
-  align?: "left" | "right";
-  options: string[];
-  value: Set<string>;
-  onChange: (v: Set<string>) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  function toggle(o: string) {
-    const next = new Set(value);
-    if (next.has(o)) next.delete(o);
-    else next.add(o);
-    onChange(next);
-  }
-  return (
-    <th className={"relative px-3 py-2 " + (align === "right" ? "text-right" : "text-left")}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className={"inline-flex items-center gap-1 font-sans text-[10px] font-semibold uppercase tracking-wider hover:text-action-primary " + (value.size > 0 ? "text-action-primary" : "text-text-muted")}
-      >
-        {label}
-        {value.size > 0 ? <span className="rounded-full bg-action-primary px-1.5 py-px text-[9px] font-bold text-white">{value.size}</span> : <span className="text-[9px]">▾</span>}
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-full z-30 mt-1 flex max-h-72 w-60 flex-col overflow-hidden rounded-md border border-border-subtle bg-white text-left shadow-[0_8px_20px_rgba(11,19,27,.15)]">
-            <div className="flex items-center justify-between border-b border-[#F1F4F7] px-2 py-1.5">
-              <button type="button" onClick={() => onChange(new Set(options))} className="font-sans text-[10.5px] font-semibold normal-case tracking-normal text-action-primary">
-                Pilih semua
-              </button>
-              <button type="button" onClick={() => onChange(new Set())} className="font-sans text-[10.5px] font-semibold normal-case tracking-normal text-action-primary">
-                Kosongkan
-              </button>
-            </div>
-            <div className="overflow-y-auto p-1">
-              {options.map((o) => (
-                <label key={o} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-left normal-case tracking-normal hover:bg-[#F7F9FB]">
-                  <input type="checkbox" checked={value.has(o)} onChange={() => toggle(o)} className="h-3.5 w-3.5 flex-none accent-accent-blue" />
-                  <span className="truncate font-sans text-[11px] font-medium text-[#31414F]" title={o}>
-                    {o}
-                  </span>
-                </label>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
-    </th>
-  );
-}
-
 /** Tabel setelah memilih vendor = sheet "HPP" di unduhan untuk vendor itu: satu baris per warna · lengan · size, rata-rata tertimbang (bobot Qty FG)
  *  dari semua roll, koli, dan resi. Judul kolom Status/Warna/Lengan/Size bisa difilter; rata-rata dan baris Total dihitung ulang dari baris yang lolos filter. */
 function VendorHppTable({ rows }: { rows: HppTableRow[] }) {
@@ -144,33 +85,39 @@ function VendorHppTable({ rows }: { rows: HppTableRow[] }) {
   const totalHpp = lines.reduce((s, l) => s + l.totalHpp, 0);
   return (
     <div className="overflow-hidden rounded-md border border-[#E4E9EE] bg-white">
-      {hasFilter && (
-        <div className="flex items-center gap-2 border-b border-[#E4E9EE] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10.5px] text-text-muted">
-          <span>
-            {lines.length} baris · {formatPcs(totalFg)} pcs FG
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              setStatusFilter(new Set());
-              setWarnaFilter(new Set());
-              setLenganFilter(new Set());
-              setSizeFilter(new Set());
-            }}
-            className="font-semibold text-action-primary underline"
-          >
-            ✕ Hapus semua filter
-          </button>
-        </div>
-      )}
-      <div className="max-h-[60vh] min-h-[300px] overflow-auto">
-        <table className="w-full min-w-[1250px] border-collapse">
+      <div className="flex flex-wrap items-center gap-2 border-b border-[#E4E9EE] bg-[#FAFBFC] px-4 py-2.5">
+        <MultiSelectFilter label="Status" options={["On Going", "Final"]} value={Array.from(statusFilter)} onChange={(v) => setStatusFilter(new Set(v))} />
+        <MultiSelectFilter label="Warna" options={warnaOptions} value={Array.from(warnaFilter)} onChange={(v) => setWarnaFilter(new Set(v))} />
+        <MultiSelectFilter label="Lengan" options={lenganOptions} value={Array.from(lenganFilter)} onChange={(v) => setLenganFilter(new Set(v))} />
+        <MultiSelectFilter label="Size" options={sizeOptions} value={Array.from(sizeFilter)} onChange={(v) => setSizeFilter(new Set(v))} />
+        {hasFilter && (
+          <>
+            <span className="font-sans text-[10.5px] text-text-muted">
+              {lines.length} baris · {formatPcs(totalFg)} pcs FG
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setStatusFilter(new Set());
+                setWarnaFilter(new Set());
+                setLenganFilter(new Set());
+                setSizeFilter(new Set());
+              }}
+              className="font-sans text-[10.5px] font-semibold text-action-primary underline"
+            >
+              ✕ Hapus semua filter
+            </button>
+          </>
+        )}
+      </div>
+      <div className="max-h-[60vh] overflow-auto">
+        <table className="w-full min-w-[1100px] border-collapse">
           <thead className="sticky top-0 z-10">
             <tr className="border-b border-[#E4E9EE] bg-[#F2F5F8] font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-              <FilterableTh label="Status" options={["On Going", "Final"]} value={statusFilter} onChange={setStatusFilter} />
-              <FilterableTh label="Warna" options={warnaOptions} value={warnaFilter} onChange={setWarnaFilter} />
-              <FilterableTh label="Lengan" options={lenganOptions} value={lenganFilter} onChange={setLenganFilter} />
-              <FilterableTh label="Size" options={sizeOptions} value={sizeFilter} onChange={setSizeFilter} />
+              <th className="px-3 py-2 text-left">Status</th>
+              <th className="px-3 py-2 text-left">Warna</th>
+              <th className="px-3 py-2 text-left">Lengan</th>
+              <th className="px-3 py-2 text-left">Size</th>
               <th className="px-3 py-2 text-right">Qty FG</th>
               <th className="px-3 py-2 text-right">Bahan/pcs</th>
               <th className="px-3 py-2 text-right">Rib/pcs</th>
@@ -180,13 +127,12 @@ function VendorHppTable({ rows }: { rows: HppTableRow[] }) {
               <th className="px-3 py-2 text-right">HPP/pcs</th>
               <th className="px-3 py-2 text-right">Harga Jual</th>
               <th className="px-3 py-2 text-right">Ratio HPP</th>
-              <th className="px-3 py-2 text-right">Total HPP</th>
             </tr>
           </thead>
           <tbody>
             {lines.length === 0 && (
               <tr>
-                <td colSpan={14} className="px-3 py-6 text-center font-sans text-[11.5px] text-text-muted">
+                <td colSpan={13} className="px-3 py-6 text-center font-sans text-[11.5px] text-text-muted">
                   Tidak ada baris yang cocok dengan filter.
                 </td>
               </tr>
@@ -208,7 +154,6 @@ function VendorHppTable({ rows }: { rows: HppTableRow[] }) {
                 <td className="px-3 py-1.5 text-right font-mono font-semibold tabular-nums text-text-primary">{formatRupiah(l.hppPcs)}</td>
                 <td className="px-3 py-1.5 text-right font-mono tabular-nums">{l.hargaJual != null ? formatRupiah(l.hargaJual) : "—"}</td>
                 <td className="px-3 py-1.5 text-right font-mono tabular-nums">{l.ratio != null ? (l.ratio * 100).toFixed(1) + "%" : "—"}</td>
-                <td className="px-3 py-1.5 text-right font-mono tabular-nums">{formatRupiah(l.totalHpp)}</td>
               </tr>
             ))}
           </tbody>
@@ -223,7 +168,6 @@ function VendorHppTable({ rows }: { rows: HppTableRow[] }) {
                 <td className="px-3 py-2 text-right font-mono tabular-nums">{formatRupiah(totalFg > 0 ? totalHpp / totalFg : 0)}</td>
                 <td />
                 <td className="px-3 py-2 text-right font-mono tabular-nums">{pctLabel(hppPercentOf(filteredRows))}</td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums">{formatRupiah(totalHpp)}</td>
               </tr>
             </tfoot>
           )}
