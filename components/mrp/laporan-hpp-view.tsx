@@ -73,8 +73,8 @@ function sortHppRowsForDetail(rows: HppTableRow[]): HppTableRow[] {
   });
 }
 
-/** Unduh Laporan HPP 1 MRP (template CAL HPP ERP, revisi 2026-11-02): sheet HPP On Going (estimasi) dan HPP Final (satu baris per warna·lengan·size,
- *  rata-rata tertimbang semua roll/koli/resi/vendor) plus Detail Roll On Going dan Final (satu baris per roll x size). Pengelompokan estimasi/final
+/** Unduh Laporan HPP 1 MRP (template CAL HPP ERP, revisi 2026-11-05): tiga sheet: HPP (satu baris per warna·lengan·size,
+ *  rata-rata tertimbang semua roll/koli/resi/vendor), Detail Roll (satu baris per roll x size) dan Validasi; kolom Status membedakan On Going/Final. Pengelompokan estimasi/final
  *  mengikuti `sementara` (roll belum/sudah ditutup), jadi roll yang ditutup pindah ke Final otomatis. Lihat lib/mrp/hppReport.ts dan exportHppExcel.ts. */
 function downloadMrpHpp(m: MrpHppSummary) {
   const rows = m.vendors.flatMap((v) => v.itemRows);

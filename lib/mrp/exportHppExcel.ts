@@ -2,9 +2,10 @@ import type { CellFormulaValue, Workbook, Worksheet } from "exceljs";
 import { VENDOR_PRODUKSI } from "./seed";
 import type { HppItemLine, HppReport, HppRollLine } from "./hppReport";
 
-// Unduh Laporan HPP per MRP (template CAL HPP ERP, revisi 2026-11-02): empat sheet -- HPP On Going (estimasi) dan HPP Final (satu baris per
-// warna · lengan · size, rata-rata tertimbang), lalu Detail Roll On Going dan Detail Roll Final (satu baris per roll x size). Header berwarna
-// (hijau = final, oranye = estimasi), baris header ber-filter dan dibekukan. Angka dihitung di hppRowsForInvoicePerRoll / buildHppReport.
+// Unduh Laporan HPP per MRP (template CAL HPP ERP, revisi 2026-11-05): TIGA sheet -- HPP (satu baris per warna · lengan · size, rata-rata
+// tertimbang), Detail Roll (satu baris per roll x size) dan Validasi. HPP dan Detail Roll memuat baris On Going (estimasi) dan Final dalam satu
+// sheet; kolom pertama "Status" (oranye = On Going, hijau = Final) bisa difilter. Baris header ber-filter dan dibekukan. Angka dihitung di
+// hppRowsForInvoicePerRoll / buildHppReport.
 //
 // RUMUS EXCEL (owner 2026-11-02: "by formula saat di export jadi bisa ketahuan"): kolom hasil hitung ditulis sebagai rumus yang bisa diklik dan
 // ditelusuri, bukan angka mati. Sheet Detail Roll: biaya bahan = berat x harga/kg, porsi diskon = diskon invoice x berat / total kg invoice, porsi rib =
@@ -14,20 +15,25 @@ import type { HppItemLine, HppReport, HppRollLine } from "./hppReport";
 
 const INK = "FF1A1A1F";
 const INPUT_INK = "FF1D4ED8";
-const FINAL_BG = "FF0D9488";
-const ESTIMASI_BG = "FFB45309";
+const HEAD_BG = "FF0D9488";
+const ST_ONGOING = "On Going";
+const ST_FINAL = "Final";
+const ST_ONGOING_BG = "FFFEF3C7";
+const ST_FINAL_BG = "FFD1FAE5";
 const SOFT = "FFF0F3F6";
 const LINE = "FFD3D8DF";
 const FONT = "Calibri";
 const thin = { style: "thin" as const, color: { argb: LINE } };
 const BORDER = { top: thin, left: thin, bottom: thin, right: thin };
 const FIRST_ROW = 5;
+const WS_HPP = "HPP";
+const WS_DETAIL = "Detail Roll";
 
 const vendorName = (id: string) => VENDOR_PRODUKSI[id]?.name ?? id;
 const lenganLabel = (l: string) => (l === "PENDEK" ? "Pendek" : "Panjang");
 
 type CellValue = string | number | null | { formula: string; result: string | number | null };
-type Col = { head: string; width: number; kind: "text" | "int" | "rp" | "dec" | "pct" };
+type Col = { head: string; width: number; kind: "text" | "int" | "rp" | "dec" | "pct" | "status" };
 
 const colLetter = (n: number) => {
   let s = "";
@@ -57,7 +63,7 @@ function sheet(wb: Workbook, name: string, bg: string, title: string, note: stri
     cell.value = c.head;
     cell.font = { name: FONT, size: 10, bold: true, color: { argb: "FFFFFFFF" } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: bg } };
-    cell.alignment = { vertical: "middle", horizontal: c.kind === "text" ? "left" : "right", wrapText: true };
+    cell.alignment = { vertical: "middle", horizontal: c.kind === "text" || c.kind === "status" ? "left" : "right", wrapText: true };
     cell.border = BORDER;
     ws.getColumn(i + 1).width = c.width;
   });
@@ -72,11 +78,16 @@ function sheet(wb: Workbook, name: string, bg: string, title: string, note: stri
       const isInput = !isFormula && typeof v === "number";
       cell.font = { name: FONT, size: 10, color: { argb: isInput ? INPUT_INK : INK } };
       cell.border = BORDER;
-      cell.alignment = { vertical: "middle", horizontal: c.kind === "text" ? "left" : "right" };
+      cell.alignment = { vertical: "middle", horizontal: c.kind === "text" || c.kind === "status" ? "left" : "right" };
       if (c.kind === "int" || c.kind === "rp") cell.numFmt = "#,##0";
       if (c.kind === "dec") cell.numFmt = "#,##0.00";
       if (c.kind === "pct") cell.numFmt = "0.0%";
       if (ri % 2 === 1) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: SOFT } };
+      if (c.kind === "status") {
+        const on = v === ST_ONGOING;
+        cell.font = { name: FONT, size: 10, bold: true, color: { argb: on ? AMBER : GREEN } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: on ? ST_ONGOING_BG : ST_FINAL_BG } };
+      }
     });
   });
   if (rows.length > 0) ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: cols.length } };
@@ -86,11 +97,12 @@ function sheet(wb: Workbook, name: string, bg: string, title: string, note: stri
 
 // ---- Sheet Detail Roll: satu baris per roll x size ----
 const RC = {
-  vendor: 1, warna: 2, lengan: 3, size: 4, roll: 5, invoice: 6, berat: 7, hargaKg: 8, biaya: 9, invDiskon: 10, invKg: 11, diskon: 12, warnaRib: 13, warnaKg: 14,
-  rib: 15, pembagi: 16, fg: 17, resi: 18, koli: 19, ongkirResi: 20, beratResi: 21, beratKoli: 22, ongkirKoli: 23, pcsKoli: 24,
-  bahan: 25, diskonPcs: 26, ribPcs: 27, cogs: 28, maklon: 29, ongkir: 30, hpp: 31, jual: 32, ratio: 33, total: 34,
+  status: 1, vendor: 2, warna: 3, lengan: 4, size: 5, roll: 6, invoice: 7, berat: 8, hargaKg: 9, biaya: 10, invDiskon: 11, invKg: 12, diskon: 13, warnaRib: 14, warnaKg: 15,
+  rib: 16, pembagi: 17, fg: 18, resi: 19, koli: 20, ongkirResi: 21, beratResi: 22, beratKoli: 23, ongkirKoli: 24, pcsKoli: 25,
+  bahan: 26, diskonPcs: 27, ribPcs: 28, cogs: 29, maklon: 30, ongkir: 31, hpp: 32, jual: 33, ratio: 34, total: 35,
 } as const;
 const ROLL_COLS: Col[] = [
+  { head: "Status", width: 10, kind: "status" },
   { head: "Vendor", width: 18, kind: "text" },
   { head: "Warna", width: 24, kind: "text" },
   { head: "Lengan", width: 9, kind: "text" },
@@ -127,7 +139,7 @@ const ROLL_COLS: Col[] = [
   { head: "Total HPP (Rp)", width: 16, kind: "rp" },
 ];
 
-function rollRow(r: HppRollLine, rowNo: number): CellValue[] {
+function rollRow(r: HppRollLine, rowNo: number, status: string): CellValue[] {
   const c = (k: keyof typeof RC) => colLetter(RC[k]) + rowNo;
   // Baris yang bisa ditelusuri ke roll di invoice material memakai rumus penuh; baris rework / data lama tanpa roll hanya punya angka akhir.
   const traced = r.grossKg != null && r.hargaPerKg != null && r.invKg != null && r.warnaKg != null && r.invDiskon != null && r.warnaRib != null && !!r.pembagi && r.pembagi > 0;
@@ -135,6 +147,7 @@ function rollRow(r: HppRollLine, rowNo: number): CellValue[] {
   const set = (k: keyof typeof RC, v: CellValue) => {
     out[RC[k] - 1] = v;
   };
+  set("status", status);
   set("vendor", vendorName(r.vendor));
   set("warna", r.warna);
   set("lengan", lenganLabel(r.lengan));
@@ -187,9 +200,10 @@ function rollRow(r: HppRollLine, rowNo: number): CellValue[] {
   return out;
 }
 
-// ---- Sheet HPP (per item): rata-rata tertimbang dari sheet Detail Roll pasangannya ----
-const IC = { warna: 1, lengan: 2, size: 3, vendor: 4, fg: 5, bahan: 6, rib: 7, cogs: 8, maklon: 9, ongkir: 10, hpp: 11, min: 12, max: 13, jual: 14, ratio: 15, total: 16, roll: 17, resi: 18 } as const;
+// ---- Sheet HPP (per item): rata-rata tertimbang dari baris Detail Roll kelompoknya (On Going atau Final) ----
+const IC = { status: 1, warna: 2, lengan: 3, size: 4, vendor: 5, fg: 6, bahan: 7, rib: 8, cogs: 9, maklon: 10, ongkir: 11, hpp: 12, min: 13, max: 14, jual: 15, ratio: 16, total: 17, roll: 18, resi: 19 } as const;
 const ITEM_COLS: Col[] = [
+  { head: "Status", width: 10, kind: "status" },
   { head: "Warna", width: 24, kind: "text" },
   { head: "Lengan", width: 9, kind: "text" },
   { head: "Size", width: 8, kind: "text" },
@@ -210,15 +224,21 @@ const ITEM_COLS: Col[] = [
   { head: "Jumlah Resi", width: 9, kind: "int" },
 ];
 
-function itemRow(i: HppItemLine, rowNo: number, detailSheet: string, detailRows: number): CellValue[] {
-  const rng = (k: keyof typeof RC) => `'${detailSheet}'!$${colLetter(RC[k])}$${FIRST_ROW}:$${colLetter(RC[k])}$${FIRST_ROW + detailRows - 1}`;
+// Baris Detail Roll kelompok ini = detailFirst .. detailFirst + detailCount - 1 di sheet Detail Roll (On Going di atas, Final di bawahnya).
+function itemRow(i: HppItemLine, rowNo: number, status: string, detailSheet: string, detailFirst: number, detailCount: number): CellValue[] {
+  const rng = (k: keyof typeof RC) => `'${detailSheet}'!$${colLetter(RC[k])}$${detailFirst}:$${colLetter(RC[k])}$${detailFirst + detailCount - 1}`;
   const c = (k: keyof typeof IC) => colLetter(IC[k]) + rowNo;
-  const match = `(${rng("warna")}=$A${rowNo})*(${rng("lengan")}=$B${rowNo})*(${rng("size")}=$C${rowNo})`;
+  const a = (k: keyof typeof IC) => `$${colLetter(IC[k])}${rowNo}`;
+  // Kelompok tanpa baris Detail Roll tidak punya rentang rumus: tulis angka akhirnya saja.
+  const live = detailCount > 0;
+  const f = (formula: string, result: string | number | null): CellValue => (live ? { formula, result } : result);
+  const match = `(${rng("warna")}=${a("warna")})*(${rng("lengan")}=${a("lengan")})*(${rng("size")}=${a("size")})`;
   const weighted = (k: keyof typeof RC) => `IF(${c("fg")}=0,0,SUMPRODUCT(${match}*${rng(k)}*${rng("fg")})/${c("fg")})`;
   const out: CellValue[] = new Array(ITEM_COLS.length).fill(null);
   const set = (k: keyof typeof IC, v: CellValue) => {
     out[IC[k] - 1] = v;
   };
+  set("status", status);
   set("warna", i.warna);
   set("lengan", lenganLabel(i.lengan));
   set("size", i.size);
@@ -252,29 +272,36 @@ export async function buildHppWorkbook(mrpId: string, report: HppReport): Promis
   const rumus =
     "Rumus per pcs: Bahan = (biaya bahan roll - porsi diskon) / pembagi; Diskon roll = diskon invoice / total kg kain invoice x berat roll; Rib = biaya rib warna / total kg kain warna x berat roll / pembagi; " +
     "COGS Bahan = Bahan + Rib; HPP = COGS Bahan + Maklon + Ongkir; Ratio HPP = HPP / Harga Jual. Maklon/pcs = harga maklon master; Ongkir Resi = tarif ekspedisi master x berat seluruh koli resi, Ongkir Koli = Ongkir Resi x Berat Koli / Berat Resi, Ongkir/pcs = Ongkir Koli / Pcs di Koli (satu baris Detail Roll = satu koli). " +
-    "Sheet HPP menghitung rata-rata tertimbang (bobot Qty FG) dari sheet Detail Roll pasangannya.";
-  const estimasiNote = `MRP ${mrpId} · diunduh ${stamp} · ESTIMASI: roll yang belum ditutup, pembagi = hasil cutting roll (berubah sampai roll ditutup). ${rumus}`;
-  const finalNote = `MRP ${mrpId} · diunduh ${stamp} · FINAL: roll yang sudah ditutup (pembagi = Finish Good aktual), plus baris rework dan data lama tanpa roll. ${rumus}`;
+    "Sheet HPP menghitung rata-rata tertimbang (bobot Qty FG) dari baris Detail Roll dengan Status yang sama.";
+  const note =
+    `MRP ${mrpId} · diunduh ${stamp} · Kolom Status: ON GOING (oranye) = roll yang belum ditutup, pembagi = hasil cutting roll (estimasi, berubah sampai roll ditutup); ` +
+    `FINAL (hijau) = roll yang sudah ditutup (pembagi = Finish Good aktual), plus baris rework dan data lama tanpa roll. Gunakan filter di kolom Status untuk memilih salah satunya. ${rumus}`;
 
+  // Urutan baris: On Going di atas, Final di bawahnya (di sheet HPP maupun Detail Roll).
   const groups = [
-    { key: "estimasi" as const, bg: ESTIMASI_BG, item: "HPP On Going (Estimasi)", detail: "Detail Roll On Going", itemTitle: "HPP On Going (Estimasi)", detailTitle: "Detail Roll On Going (Estimasi)", note: estimasiNote },
-    { key: "final" as const, bg: FINAL_BG, item: "HPP Final", detail: "Detail Roll Final", itemTitle: "HPP Final", detailTitle: "Detail Roll Final", note: finalNote },
+    { status: ST_ONGOING, key: "estimasi" as const },
+    { status: ST_FINAL, key: "final" as const },
   ];
-  // Urutan sheet: HPP estimasi, HPP final, detail estimasi, detail final.
-  for (const g of groups) {
+  let nextFirst = FIRST_ROW;
+  const placed = groups.map((g) => {
     const rolls = report[g.key].rolls;
-    sheet(wb, g.item, g.bg, `${g.itemTitle} — ${mrpId}`, g.note, ITEM_COLS, report[g.key].items.map((it, ri) => itemRow(it, FIRST_ROW + ri, g.detail, rolls.length)));
-  }
-  for (const g of groups) {
-    sheet(wb, g.detail, g.bg, `${g.detailTitle} — ${mrpId}`, g.note, ROLL_COLS, report[g.key].rolls.map((r, ri) => rollRow(r, FIRST_ROW + ri)));
-  }
+    const first = nextFirst;
+    nextFirst += rolls.length;
+    return { ...g, rolls, items: report[g.key].items, first };
+  });
+  const itemRows: CellValue[][] = [];
+  for (const g of placed) for (const it of g.items) itemRows.push(itemRow(it, FIRST_ROW + itemRows.length, g.status, WS_DETAIL, g.first, g.rolls.length));
+  const rollRows: CellValue[][] = [];
+  for (const g of placed) for (const r of g.rolls) rollRows.push(rollRow(r, FIRST_ROW + rollRows.length, g.status));
+  sheet(wb, WS_HPP, HEAD_BG, `HPP — ${mrpId}`, note, ITEM_COLS, itemRows);
+  sheet(wb, WS_DETAIL, HEAD_BG, `Detail Roll — ${mrpId}`, note, ROLL_COLS, rollRows);
   // Sheet validasi (owner 2026-11-04): total sumber vs jumlah (nilai per pcs x Qty FG), supaya terlihat kalau per pcs tidak kembali ke totalnya.
-  // Tiga sheet (Ringkasan, Ongkir, Bahan Diskon Rib) yang membaca Detail Roll On Going DAN Final sekaligus.
-  addValidasiSheets(
+  // Satu sheet (owner 2026-11-05: export disederhanakan): ringkasan, rincian ongkir, rincian bahan/diskon/rib. Membaca baris Detail Roll On Going DAN Final.
+  addValidasiSheet(
     wb,
     mrpId,
-    groups.map((g) => ({ key: g.key, detail: g.detail, rolls: report[g.key].rolls })),
-    FINAL_BG
+    placed.map((g) => ({ key: g.key, detail: WS_DETAIL, first: g.first, rolls: g.rolls })),
+    HEAD_BG
   );
   return wb;
 }
@@ -293,23 +320,23 @@ export async function exportHppExcel(mrpId: string, report: HppReport, fileName:
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-// ---- Sheet Validasi (tiga sheet), owner 2026-11-04 ----
+// ---- Sheet Validasi (satu sheet, tiga bagian), owner 2026-11-04 / disederhanakan 2026-11-05 ----
 // Tujuan: membuktikan bahwa nilai per pcs di sheet Detail Roll bisa dikembalikan ke total biayanya (bahan, diskon, rib, ongkir), dan kalau tidak
 // kembali, menunjukkan DI MANA selisihnya. Tabel bergaya pivot (bukan PivotTable asli) yang seluruh angkanya rumus Excel (SUMPRODUCT / SUMIFS) ke
-// sheet Detail Roll On Going DAN Final sekaligus, karena satu koli bisa terbagi di dua sheet itu (roll sudah ditutup vs belum).
-//  - Validasi Ongkir            : per resi -> pengiriman -> koli (harga per koli dijumlahkan, dibandingkan tagihan resi).
-//  - Validasi Bahan Diskon Rib  : per invoice material (bahan, diskon), per warna (rib), dan per roll.
-//  - Validasi Ringkasan         : semua komponen dalam satu tabel.
+// baris Detail Roll On Going DAN Final sekaligus, karena satu koli bisa terbagi di dua kelompok itu (roll sudah ditutup vs belum).
+//  - A. Ringkasan                  : semua komponen dalam satu tabel.
+//  - B. Ongkir                     : per resi -> pengiriman -> koli (harga per koli dijumlahkan, dibandingkan tagihan resi).
+//  - C. Bahan, Diskon, dan Rib     : per invoice material (bahan, diskon), per warna (rib), dan per roll.
 const DIFF_FMT = "#,##0;[Red]-#,##0";
 const GREEN = "FF047857";
 const AMBER = "FFB45309";
 const TOLERANCE = 1;
-const WS_RINGKASAN = "Validasi Ringkasan";
-const WS_ONGKIR = "Validasi Ongkir";
-const WS_BAHAN = "Validasi Bahan Diskon Rib";
+const WS_VALIDASI = "Validasi";
+const RINGKASAN_ROWS = 10; // jumlah baris tabel ringkasan (bagian A); bagian B dan C diletakkan di bawahnya
+const NCOL = 16; // lebar sheet Validasi (kolom A..P)
 
 type VStyle = { fmt?: string; bold?: boolean; bg?: string; color?: string; align?: "left" | "right" | "center"; wrap?: boolean };
-type VPart = { key: "estimasi" | "final"; detail: string; rolls: HppRollLine[] };
+type VPart = { key: "estimasi" | "final"; detail: string; first: number; rolls: HppRollLine[] };
 type VRoll = HppRollLine & { part: "estimasi" | "final" };
 
 function vput(ws: Worksheet, row: number, col: number, v: CellValue, st: VStyle = {}) {
@@ -366,6 +393,23 @@ function vtitle(ws: Worksheet, title: string, note: string, legend: string, last
   ws.getCell(3, 1).font = { name: FONT, size: 9, bold: true, color: { argb: INPUT_INK } };
 }
 
+/** Pita judul bagian (A / B / C) di sheet Validasi, diikuti satu baris keterangan. */
+function vbanner(ws: Worksheet, row: number, text: string, note: string, bg: string) {
+  ws.mergeCells(row, 1, row, NCOL);
+  const t = ws.getCell(row, 1);
+  t.value = text;
+  t.font = { name: FONT, size: 13, bold: true, color: { argb: "FFFFFFFF" } };
+  t.fill = { type: "pattern", pattern: "solid", fgColor: { argb: bg } };
+  t.alignment = { vertical: "middle", horizontal: "left" };
+  ws.getRow(row).height = 24;
+  ws.mergeCells(row + 1, 1, row + 1, NCOL);
+  const n = ws.getCell(row + 1, 1);
+  n.value = note;
+  n.font = { name: FONT, size: 9, italic: true, color: { argb: "FF828290" } };
+  n.alignment = { wrapText: true, vertical: "top" };
+  ws.getRow(row + 1).height = 44;
+}
+
 function statusRules(ws: Worksheet, ref: string, topLeft: string) {
   ws.addConditionalFormatting({
     ref,
@@ -379,41 +423,43 @@ function statusRules(ws: Worksheet, ref: string, topLeft: string) {
 const vsum = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
 const numCmp = (a: string, b: string) => a.localeCompare(b, "id-ID", { numeric: true });
 const cmpNote = "Selisih sampai Rp 1 (atau 0,05 kg) dianggap cocok (pembulatan).";
-const rngOf = (p: VPart, k: keyof typeof RC) => `'${p.detail}'!$${colLetter(RC[k])}$${FIRST_ROW}:$${colLetter(RC[k])}$${FIRST_ROW + p.rolls.length - 1}`;
+const rngOf = (p: VPart, k: keyof typeof RC) => `'${p.detail}'!$${colLetter(RC[k])}$${p.first}:$${colLetter(RC[k])}$${p.first + p.rolls.length - 1}`;
 const joinParts = (parts: VPart[], sep: string, fn: (p: VPart) => string) => (parts.length === 0 ? "0" : parts.map(fn).join(sep));
 
-/** Sisipkan tiga sheet validasi. `parts` = kelompok On Going dan Final (yang kosong dilewati). */
-function addValidasiSheets(wb: Workbook, mrpId: string, allParts: VPart[], bg: string) {
+/** Sisipkan sheet Validasi. `parts` = kelompok On Going dan Final (yang kosong dilewati). */
+function addValidasiSheet(wb: Workbook, mrpId: string, allParts: VPart[], bg: string) {
   const parts = allParts.filter((p) => p.rolls.length > 0);
-  const wsR = wb.addWorksheet(WS_RINGKASAN, { views: [{ showGridLines: false }] });
-  const wsO = wb.addWorksheet(WS_ONGKIR, { views: [{ showGridLines: false }] });
-  const wsB = wb.addWorksheet(WS_BAHAN, { views: [{ showGridLines: false }] });
+  const ws = wb.addWorksheet(WS_VALIDASI, { views: [{ showGridLines: false }] });
+  ws.columns = [40, 22, 22, 16, 14, 14, 16, 16, 14, 16, 16, 14, 16, 16, 14, 56].map((width) => ({ width }));
   const legend = `Semua angka adalah rumus Excel yang membaca sheet Detail Roll (On Going dan Final) · klik sel untuk melihat cara hitungnya · hijau = cocok, oranye = ada selisih. ${cmpNote}`;
+  const note =
+    "Membuktikan bahwa nilai per pcs di sheet Detail Roll bisa dikembalikan ke total biayanya, dan kalau tidak kembali, menunjukkan di mana selisihnya. " +
+    "Bagian A = ringkasan semua komponen; bagian B = rincian ongkir per resi dan koli; bagian C = rincian bahan, diskon, dan rib per invoice, warna, dan roll. " +
+    "Selisih tidak selalu berarti salah: wajar kalau pembagi roll belum sama dengan Finish Good (roll belum ditutup / pcs belum masuk koli), atau kalau diskon/rib/ongkir dibagi ke semua roll/koli di sumbernya sedangkan laporan ini hanya memuat milik MRP ini.";
+  vtitle(ws, `Validasi — ${mrpId}`, note, legend, NCOL);
   if (parts.length === 0) {
-    for (const ws of [wsR, wsO, wsB]) {
-      vtitle(ws, `Validasi — ${mrpId}`, "Belum ada data HPP untuk MRP ini.", legend, 10);
-      ws.getCell(5, 1).value = "Belum ada data.";
-    }
+    ws.getCell(5, 1).value = "Belum ada data HPP untuk MRP ini.";
     return;
   }
-  const ongkir = fillOngkirSheet(wsO, mrpId, parts, bg, legend);
-  const bahan = fillBahanSheet(wsB, mrpId, parts, bg, legend);
-  fillRingkasanSheet(wsR, mrpId, parts, bg, legend, ongkir, bahan);
+  const RING = 5;
+  const ringEnd = RING + 3 + RINGKASAN_ROWS; // baris terakhir tabel ringkasan
+  const ongkir = fillOngkirSheet(ws, mrpId, parts, bg, ringEnd + 3);
+  const bahan = fillBahanSheet(ws, mrpId, parts, bg, ongkir.end + 1);
+  fillRingkasanSheet(ws, parts, bg, RING, ongkir, bahan);
 }
 
 // ======================= Validasi Ongkir: resi -> pengiriman -> koli =======================
-type OngkirRefs = { tagihan: { cell: string; v: number }; koli: { cell: string; v: number }; alloc: { cell: string; v: number }; noKoli: number };
+type OngkirRefs = { tagihan: { cell: string; v: number }; koli: { cell: string; v: number }; alloc: { cell: string; v: number }; noKoli: number; end: number };
 
-function fillOngkirSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: string, legend: string): OngkirRefs {
-  ws.columns = [18, 16, 16, 14, 14, 14, 16, 12, 12, 12, 14, 12, 16, 12, 14, 56].map((width) => ({ width }));
-  vtitle(
+function fillOngkirSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: string, base: number): OngkirRefs {
+  vbanner(
     ws,
-    `Validasi Ongkir per resi dan koli — ${mrpId}`,
+    base,
+    `B. Ongkir per resi dan koli — ${mrpId}`,
     "Ongkir resi = tarif ekspedisi master × berat seluruh koli pengiriman itu. Ongkir koli (HARGA BIAYA PER KOLI) = ongkir resi × berat koli / berat resi. Ongkir/pcs = ongkir koli / pcs di koli. " +
       "Total per koli harus sama dengan tagihan resi, dan Σ (ongkir/pcs × Qty FG) harus sama dengan total koli. Nomor resi yang dipakai lebih dari sekali (dikirim beberapa kali) ditampilkan sebagai pengiriman terpisah. " +
-      "Qty FG dijumlahkan dari sheet On Going dan Final sekaligus, karena satu koli bisa berisi roll yang sudah dan yang belum ditutup.",
-    legend,
-    16
+      "Qty FG dijumlahkan dari baris On Going dan Final sekaligus, karena satu koli bisa berisi roll yang sudah dan yang belum ditutup.",
+    bg
   );
   const all: VRoll[] = parts.flatMap((p) => p.rolls.map((r) => ({ ...r, part: p.key })));
   const rows = all.filter((r) => (r.ongkirResi ?? 0) > 0 && r.resi && r.koli);
@@ -433,14 +479,14 @@ function fillOngkirSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: strin
   }
   const grpList = Array.from(groups.values()).sort((a, b) => a.vendor.localeCompare(b.vendor) || numCmp(a.resi, b.resi) || b.beratResi - a.beratResi);
   if (grpList.length === 0) {
-    ws.getCell(5, 1).value = "Belum ada baris dengan rincian ongkir resi dan koli.";
-    return { tagihan: { cell: "0", v: 0 }, koli: { cell: "0", v: 0 }, alloc: { cell: "0", v: 0 }, noKoli: 0 };
+    ws.getCell(base + 3, 1).value = "Belum ada baris dengan rincian ongkir resi dan koli.";
+    return { tagihan: { cell: "0", v: 0 }, koli: { cell: "0", v: 0 }, alloc: { cell: "0", v: 0 }, noKoli: 0, end: base + 4 };
   }
   const resiKeys = Array.from(new Set(grpList.map((g) => g.vendor + "|" + g.resi)));
   const nResi = resiKeys.length;
 
   // ---- tata letak: ringkasan per nomor resi di atas, lalu blok per pengiriman ----
-  const S0 = 5;
+  const S0 = base + 3;
   const SH = S0 + 3;
   const SFIRST = SH + 1;
   const STOTAL = SFIRST + nResi;
@@ -457,7 +503,7 @@ function fillOngkirSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: strin
   });
 
   // ---- 2) blok per pengiriman ----
-  vsection(ws, T0, "2. Rincian per pengiriman → koli (harga biaya per koli)", "Satu blok per pengiriman. Baris koli: isi koli (pcs), Qty FG di laporan, ongkir koli, dan ongkir/pcs × Qty FG. Di bawahnya total koli dibandingkan tagihan resi.", 16);
+  vsection(ws, T0, "B.2 Rincian per pengiriman → koli (harga biaya per koli)", "Satu blok per pengiriman. Baris koli: isi koli (pcs), Qty FG di laporan, ongkir koli, dan ongkir/pcs × Qty FG. Di bawahnya total koli dibandingkan tagihan resi.", 16);
   vhead(ws, TH, ["Vendor", "No Resi", "Ongkir Resi pengiriman (Rp)", "Berat Resi pengiriman (kg)", "No Koli", "Berat Koli (kg)", "Ongkir Koli (Rp)", "Pcs di Koli", "Qty FG Final", "Qty FG On Going", "Σ Qty FG di laporan", "Ongkir / pcs", "Teralokasi (Σ Ongkir/pcs × FG)", "Selisih Pcs", "Selisih Rp", "Status"], bg);
   const SOFTBLUE = "FFEFF6FF";
   for (const b of blocks) {
@@ -540,7 +586,7 @@ function fillOngkirSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: strin
   }
 
   // ---- 1) ringkasan per nomor resi (merujuk blok di bawah) ----
-  vsection(ws, S0, "1. Ringkasan per nomor resi", "Satu baris per nomor resi (semua pengiriman dengan nomor itu dijumlahkan). Kolom Tagihan dan Ongkir koli membuktikan total per koli = total resi; kolom Teralokasi membuktikan ongkir/pcs × Qty FG kembali ke total koli.", 16);
+  vsection(ws, S0, "B.1 Ringkasan per nomor resi", "Satu baris per nomor resi (semua pengiriman dengan nomor itu dijumlahkan). Kolom Tagihan dan Ongkir koli membuktikan total per koli = total resi; kolom Teralokasi membuktikan ongkir/pcs × Qty FG kembali ke total koli.", 16);
   vhead(ws, SH, ["Vendor", "No Resi", "Jumlah pengiriman", "Tagihan resi (Σ pengiriman)", "Ongkir koli di laporan (Σ koli)", "Selisih tagihan − koli", "Teralokasi (Σ Ongkir/pcs × FG)", "Selisih koli − teralokasi", "Status"], bg, 16);
   let gTag = 0;
   let gKoli = 0;
@@ -581,8 +627,8 @@ function fillOngkirSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: strin
   ws.mergeCells(STOTAL, 9, STOTAL, 16);
   vput(ws, STOTAL, 9, null, { bg: SOFT });
   statusRules(ws, `I${SFIRST}:I${STOTAL - 1}`, `I${SFIRST}`);
-  const q = (c: string) => `'${WS_ONGKIR}'!$${c}$${STOTAL}`;
-  return { tagihan: { cell: q("D"), v: gTag }, koli: { cell: q("E"), v: gKoli }, alloc: { cell: q("G"), v: gAlloc }, noKoli: grpList.length };
+  const q = (c: string) => `'${WS_VALIDASI}'!$${c}$${STOTAL}`;
+  return { tagihan: { cell: q("D"), v: gTag }, koli: { cell: q("E"), v: gKoli }, alloc: { cell: q("G"), v: gAlloc }, noKoli: grpList.length, end: cursor };
 }
 
 // ======================= Validasi Bahan Diskon Rib: invoice, warna, roll =======================
@@ -597,18 +643,18 @@ type BahanRefs = {
   diskonInvoiceAlloc: { cell: string; v: number };
   ribWarna: { cell: string; v: number };
   ribWarnaAlloc: { cell: string; v: number };
+  end: number;
 };
 
-function fillBahanSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: string, legend: string): BahanRefs {
-  ws.columns = [26, 22, 20, 14, 14, 14, 16, 16, 14, 16, 16, 14, 16, 16, 14, 56].map((width) => ({ width }));
-  vtitle(
+function fillBahanSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: string, base: number): BahanRefs {
+  vbanner(
     ws,
-    `Validasi Bahan, Diskon, dan Rib — ${mrpId}`,
+    base,
+    `C. Bahan, Diskon, dan Rib — ${mrpId}`,
     "Bahan: biaya roll = berat × harga/kg. Diskon: porsi roll = diskon invoice × berat roll / total kg kain invoice. Rib: porsi roll = biaya rib warna × berat roll / total kg kain warna. " +
       "Per pcs = biaya roll (atau porsi) / pembagi. Total per roll harus kembali ke biayanya kalau Σ Qty FG di laporan = pembagi. Total per invoice (diskon) dan per warna (rib) kembali ke angka di invoice " +
       "kalau semua roll invoice/warna itu ada di laporan ini.",
-    legend,
-    16
+    bg
   );
   const all: VRoll[] = parts.flatMap((p) => p.rolls.map((r) => ({ ...r, part: p.key })));
   const traced = all.filter((r) => (r.grossKg ?? 0) > 0);
@@ -617,10 +663,10 @@ function fillBahanSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: string
   const rolls = Array.from(firstOf.values()).sort((a, b) => a.invoiceMaterial.localeCompare(b.invoiceMaterial) || a.warna.localeCompare(b.warna) || a.roll.localeCompare(b.roll));
   const empty: BahanRefs = {
     bahanPool: { cell: "0", v: 0 }, bahanAlloc: { cell: "0", v: 0 }, diskonPool: { cell: "0", v: 0 }, diskonAlloc: { cell: "0", v: 0 }, ribPool: { cell: "0", v: 0 }, ribAlloc: { cell: "0", v: 0 },
-    diskonInvoice: { cell: "0", v: 0 }, diskonInvoiceAlloc: { cell: "0", v: 0 }, ribWarna: { cell: "0", v: 0 }, ribWarnaAlloc: { cell: "0", v: 0 },
+    diskonInvoice: { cell: "0", v: 0 }, diskonInvoiceAlloc: { cell: "0", v: 0 }, ribWarna: { cell: "0", v: 0 }, ribWarnaAlloc: { cell: "0", v: 0 }, end: base + 4,
   };
   if (rolls.length === 0) {
-    ws.getCell(5, 1).value = "Belum ada roll yang bisa ditelusuri ke invoice material.";
+    ws.getCell(base + 3, 1).value = "Belum ada roll yang bisa ditelusuri ke invoice material.";
     return empty;
   }
   const rollNums = rolls.map((u) => {
@@ -635,7 +681,7 @@ function fillBahanSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: string
   const warnaInv = Array.from(new Map(rolls.filter((u) => (u.warnaRib ?? 0) > 0).map((u) => [u.warna + "|" + u.invoiceMaterial, u])).values()).sort((a, b) => a.warna.localeCompare(b.warna) || a.invoiceMaterial.localeCompare(b.invoiceMaterial));
 
   // ---- tata letak ----
-  const A0 = 5;
+  const A0 = base + 3;
   const AH = A0 + 3;
   const AFIRST = AH + 1;
   const ATOTAL = AFIRST + invoices.length;
@@ -651,7 +697,7 @@ function fillBahanSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: string
   const col = (c: string) => `$${c}$${CFIRST}:$${c}$${CLAST}`;
 
   // ---- 3) per roll ----
-  vsection(ws, C0, "3. Per roll: bahan, diskon, rib", "Satu baris per roll yang bisa ditelusuri ke invoice material. Pembagi = pcs yang menanggung biaya roll (hasil cutting kalau roll belum ditutup, Finish Good kalau sudah). Σ Qty FG = pcs roll ini di laporan.", 16);
+  vsection(ws, C0, "C.3 Per roll: bahan, diskon, rib", "Satu baris per roll yang bisa ditelusuri ke invoice material. Pembagi = pcs yang menanggung biaya roll (hasil cutting kalau roll belum ditutup, Finish Good kalau sudah). Σ Qty FG = pcs roll ini di laporan.", 16);
   vhead(ws, CH, ["Invoice Material", "Warna", "Code Roll", "Berat Roll (kg)", "Pembagi (pcs)", "Σ Qty FG di laporan", "Biaya Bahan Roll", "Teralokasi Bahan", "Selisih Bahan", "Diskon (porsi roll)", "Teralokasi Diskon", "Selisih Diskon", "Rib (porsi roll)", "Teralokasi Rib", "Selisih Rib", "Status"], bg);
   rollNums.forEach(({ u, fg, aB, aD, aR }, i) => {
     const r = CFIRST + i;
@@ -705,7 +751,7 @@ function fillBahanSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: string
   statusRules(ws, `P${CFIRST}:P${CLAST}`, `P${CFIRST}`);
 
   // ---- 1) per invoice material: bahan dan diskon ----
-  vsection(ws, A0, "1. Per invoice material: bahan dan diskon", "Satu baris per invoice. Diskon invoice dibandingkan Σ porsi diskon roll di laporan (selisih = roll invoice itu yang tidak masuk laporan ini); porsi dibandingkan Σ diskon/pcs × Qty FG (selisih = pembagi ≠ Qty FG).", 16);
+  vsection(ws, A0, "C.1 Per invoice material: bahan dan diskon", "Satu baris per invoice. Diskon invoice dibandingkan Σ porsi diskon roll di laporan (selisih = roll invoice itu yang tidak masuk laporan ini); porsi dibandingkan Σ diskon/pcs × Qty FG (selisih = pembagi ≠ Qty FG).", 16);
   vhead(ws, AH, ["Invoice Material", "Total kg kain invoice", "Σ kg roll di laporan", "Cakupan roll", "Σ Biaya Bahan Roll", "Σ Teralokasi Bahan", "Selisih Bahan", "Diskon invoice (Rp)", "Σ porsi diskon roll", "Σ Teralokasi Diskon", "Selisih diskon invoice − porsi", "Selisih porsi − teralokasi", "Status"], bg, 16);
   let invDiskonTot = 0;
   let invDiskonAlloc = 0;
@@ -761,7 +807,7 @@ function fillBahanSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: string
   statusRules(ws, `M${AFIRST}:M${ATOTAL - 1}`, `M${AFIRST}`);
 
   // ---- 2) per warna: rib ----
-  vsection(ws, B0, "2. Per warna: rib", "Satu baris per warna (dalam satu invoice). Biaya rib warna di invoice dibandingkan Σ porsi rib roll di laporan (selisih = roll warna itu yang tidak masuk laporan ini); porsi dibandingkan Σ rib/pcs × Qty FG (selisih = pembagi ≠ Qty FG).", 16);
+  vsection(ws, B0, "C.2 Per warna: rib", "Satu baris per warna (dalam satu invoice). Biaya rib warna di invoice dibandingkan Σ porsi rib roll di laporan (selisih = roll warna itu yang tidak masuk laporan ini); porsi dibandingkan Σ rib/pcs × Qty FG (selisih = pembagi ≠ Qty FG).", 16);
   vhead(ws, BH, ["Warna", "Invoice Material", "Biaya rib warna di invoice (Rp)", "Total kg kain warna", "Σ kg roll di laporan", "Cakupan roll", "Σ porsi rib roll", "Σ Teralokasi Rib", "Selisih biaya rib − porsi", "Selisih porsi − teralokasi", "Status"], bg, 16);
   let ribTot = 0;
   let ribAllocW = 0;
@@ -809,7 +855,7 @@ function fillBahanSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: string
   vput(ws, BTOTAL, 11, null, { bg: SOFT });
   statusRules(ws, `K${BFIRST}:K${BTOTAL - 1}`, `K${BFIRST}`);
 
-  const q = (c: string, row: number) => `'${WS_BAHAN}'!$${c}$${row}`;
+  const q = (c: string, row: number) => `'${WS_VALIDASI}'!$${c}$${row}`;
   return {
     bahanPool: { cell: q("G", CTOTAL), v: tot.G },
     bahanAlloc: { cell: q("H", CTOTAL), v: tot.H },
@@ -821,21 +867,12 @@ function fillBahanSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: string
     diskonInvoiceAlloc: { cell: q("J", ATOTAL), v: invDiskonAlloc },
     ribWarna: { cell: q("C", BTOTAL), v: ribTot },
     ribWarnaAlloc: { cell: q("H", BTOTAL), v: ribAllocW },
+    end: CTOTAL,
   };
 }
 
-// ======================= Validasi Ringkasan =======================
-function fillRingkasanSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: string, legend: string, ongkir: OngkirRefs, bahan: BahanRefs) {
-  ws.columns = [40, 20, 22, 16, 14, 14, 16, 16, 16, 16, 16, 16, 16, 16].map((width) => ({ width }));
-  vtitle(
-    ws,
-    `Validasi Ringkasan — ${mrpId}`,
-    "Ringkasan semua komponen biaya: TOTAL SUMBER (pool) = biaya asli (invoice material, rib, tagihan ekspedisi); TERALOKASI = jumlah (nilai per pcs × Qty FG) dari sheet Detail Roll. " +
-      "Selisih tidak selalu berarti salah: wajar kalau pembagi roll belum sama dengan Finish Good (roll belum ditutup / pcs belum masuk koli), atau kalau diskon/rib/ongkir dibagi ke semua roll/koli di sumbernya " +
-      "sedangkan laporan ini hanya memuat milik MRP ini. Rincian per invoice, warna, roll, resi, dan koli ada di dua sheet validasi lain.",
-    legend,
-    14
-  );
+// ======================= A. Ringkasan =======================
+function fillRingkasanSheet(ws: Worksheet, parts: VPart[], bg: string, base: number, ongkir: OngkirRefs, bahan: BahanRefs) {
   const all = parts.flatMap((p) => p.rolls);
   const sumPartsExpr = (fn: (p: VPart) => string) => joinParts(parts, "+", fn);
   const berat = (p: VPart) => rngOf(p, "berat");
@@ -846,14 +883,14 @@ function fillRingkasanSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: st
   const totalHpp = vsum(all.map((r) => r.totalHpp));
   const totalKomp = vsum(all.map((r) => (r.bahanPcs + r.ribPcs + r.maklonPcs + r.ongkirPcs) * r.fg));
 
-  const S0 = 5;
-  vsection(ws, S0, "Ringkasan: total sumber vs jumlah per pcs (On Going + Final)", "Selisih = total sumber dikurangi teralokasi; positif berarti ada biaya yang belum terbagi ke pcs di laporan ini.", 14);
+  const S0 = base;
+  vsection(ws, S0, "A. Ringkasan: total sumber vs jumlah per pcs (On Going + Final)", "Selisih = total sumber dikurangi teralokasi; positif berarti ada biaya yang belum terbagi ke pcs di laporan ini.", NCOL);
   const SH = S0 + 3;
-  vhead(ws, SH, ["Komponen", "Total sumber (pool)", "Teralokasi (Σ per pcs × Qty FG)", "Selisih", "% Teralokasi", "Status", "Penjelasan"], bg, 14);
+  vhead(ws, SH, ["Komponen", "Total sumber (pool)", "Teralokasi (Σ per pcs × Qty FG)", "Selisih", "% Teralokasi", "Status", "Penjelasan"], bg, NCOL);
   type Row = { label: string; pool: CellValue | null; alloc: CellValue; poolV: number | null; allocV: number; note: string };
   const R = (i: number) => SH + 1 + i;
   const rows: Row[] = [
-    { label: "Bahan kain sebelum diskon", pool: f(bahan.bahanPool.cell, bahan.bahanPool.v), alloc: f(bahan.bahanAlloc.cell, bahan.bahanAlloc.v), poolV: bahan.bahanPool.v, allocV: bahan.bahanAlloc.v, note: "Pool = Σ biaya tiap roll (berat × harga/kg). Teralokasi = Σ (bahan/pcs + diskon/pcs) × Qty FG. Rincian per invoice dan roll: sheet Validasi Bahan Diskon Rib." },
+    { label: "Bahan kain sebelum diskon", pool: f(bahan.bahanPool.cell, bahan.bahanPool.v), alloc: f(bahan.bahanAlloc.cell, bahan.bahanAlloc.v), poolV: bahan.bahanPool.v, allocV: bahan.bahanAlloc.v, note: "Pool = Σ biaya tiap roll (berat × harga/kg). Teralokasi = Σ (bahan/pcs + diskon/pcs) × Qty FG. Rincian per invoice dan roll: bagian C di bawah." },
     { label: "Diskon invoice (porsi roll)", pool: f(bahan.diskonPool.cell, bahan.diskonPool.v), alloc: f(bahan.diskonAlloc.cell, bahan.diskonAlloc.v), poolV: bahan.diskonPool.v, allocV: bahan.diskonAlloc.v, note: "Pool = Σ porsi diskon roll. Teralokasi = Σ Diskon/pcs × Qty FG. Selisih hanya karena pembagi ≠ Qty FG." },
     {
       label: "Bahan kain setelah diskon",
@@ -866,8 +903,8 @@ function fillRingkasanSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: st
     { label: "Rib (porsi roll)", pool: f(bahan.ribPool.cell, bahan.ribPool.v), alloc: f(bahan.ribAlloc.cell, bahan.ribAlloc.v), poolV: bahan.ribPool.v, allocV: bahan.ribAlloc.v, note: "Pool = Σ porsi rib roll (biaya rib warna × berat roll / total kg kain warna). Teralokasi = Σ Rib/pcs × Qty FG. Selisih hanya karena pembagi ≠ Qty FG." },
     { label: "Diskon: total diskon di invoice material", pool: f(bahan.diskonInvoice.cell, bahan.diskonInvoice.v), alloc: f(bahan.diskonInvoiceAlloc.cell, bahan.diskonInvoiceAlloc.v), poolV: bahan.diskonInvoice.v, allocV: bahan.diskonInvoiceAlloc.v, note: "Angka diskon di invoice. Selisih ke 'porsi roll' = roll invoice itu yang tidak masuk laporan ini (diskon dibagi ke semua roll invoice), lalu pembagi ≠ Qty FG." },
     { label: "Rib: total biaya rib per warna di invoice", pool: f(bahan.ribWarna.cell, bahan.ribWarna.v), alloc: f(bahan.ribWarnaAlloc.cell, bahan.ribWarnaAlloc.v), poolV: bahan.ribWarna.v, allocV: bahan.ribWarnaAlloc.v, note: "Angka total rib di invoice (mis. Rp 100.000 per warna). Selisih ke Rib per pcs: roll warna itu yang tidak masuk laporan ini (rib dibagi ke semua roll warna), lalu pembagi ≠ Qty FG." },
-    { label: "Ongkir: tagihan ekspedisi per resi", pool: f(ongkir.tagihan.cell, ongkir.tagihan.v), alloc: f(ongkir.alloc.cell, ongkir.alloc.v), poolV: ongkir.tagihan.v, allocV: ongkir.alloc.v, note: "Pool = Σ tagihan semua pengiriman (tarif master × berat seluruh koli). Nomor resi yang dipakai beberapa kali dijumlahkan per pengiriman. Rincian: sheet Validasi Ongkir." },
-    { label: "Ongkir: koli yang ikut laporan ini", pool: f(ongkir.koli.cell, ongkir.koli.v), alloc: f(ongkir.alloc.cell, ongkir.alloc.v), poolV: ongkir.koli.v, allocV: ongkir.alloc.v, note: "Pool = Σ ongkir koli (harga biaya per koli). Selisih = pcs di koli tidak sama dengan Qty FG baris HPP; koli mana-nya terlihat di sheet Validasi Ongkir." },
+    { label: "Ongkir: tagihan ekspedisi per resi", pool: f(ongkir.tagihan.cell, ongkir.tagihan.v), alloc: f(ongkir.alloc.cell, ongkir.alloc.v), poolV: ongkir.tagihan.v, allocV: ongkir.alloc.v, note: "Pool = Σ tagihan semua pengiriman (tarif master × berat seluruh koli). Nomor resi yang dipakai beberapa kali dijumlahkan per pengiriman. Rincian: bagian B di bawah." },
+    { label: "Ongkir: koli yang ikut laporan ini", pool: f(ongkir.koli.cell, ongkir.koli.v), alloc: f(ongkir.alloc.cell, ongkir.alloc.v), poolV: ongkir.koli.v, allocV: ongkir.alloc.v, note: "Pool = Σ ongkir koli (harga biaya per koli). Selisih = pcs di koli tidak sama dengan Qty FG baris HPP; koli mana-nya terlihat di bagian B di bawah." },
     {
       label: "Ongkir pada baris tanpa rincian koli (rework / data lama)",
       pool: null,
@@ -903,9 +940,10 @@ function fillRingkasanSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: st
       vput(ws, r, 5, f(`IF(B${r}=0,"",C${r}/B${r})`, s.poolV === 0 ? "" : s.allocV / s.poolV), { fmt: "0.0%" });
       vput(ws, r, 6, f(`IF(ABS(D${r})<=${TOLERANCE},"Cocok","Selisih")`, Math.abs(diff) <= TOLERANCE ? "Cocok" : "Selisih"), { align: "center", bold: true });
     }
-    ws.mergeCells(r, 7, r, 14);
+    ws.mergeCells(r, 7, r, NCOL);
     vput(ws, r, 7, s.note, { wrap: true, color: "FF4B5563" });
-    for (let c = 8; c <= 14; c++) ws.getCell(r, c).border = BORDER;
+    for (let c = 8; c <= NCOL; c++) ws.getCell(r, c).border = BORDER;
   });
+  if (rows.length !== RINGKASAN_ROWS) throw new Error("RINGKASAN_ROWS tidak sama dengan jumlah baris ringkasan");
   statusRules(ws, `F${R(0)}:F${R(rows.length - 1)}`, `F${R(0)}`);
 }
