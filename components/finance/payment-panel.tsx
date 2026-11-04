@@ -328,7 +328,7 @@ export function PaymentPanel() {
     { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (i) => <SysadminActionsBar compact actions={materialInvoicePaymentCorrections(i, vendorDeposits)} /> },
     { key: "noMrp", label: "No MRP", default: true, render: (i) => <span className="font-mono">{i.mrpId}</span> },
     // "No PO" = nama PO tanpa akhiran entitas (PO yang dipecah per entitas terbaca sama); "No PO ID" = primary key asli, disembunyikan lewat Kolom.
-    { key: "noPo", label: "No PO", default: true, render: (i) => <span className="font-mono font-medium">{poDisplayNo(i.poId, i.entity)}</span> },
+    { key: "noPo", label: "No PO", default: false, render: (i) => <span className="font-mono font-medium">{poDisplayNo(i.poId, i.entity)}</span> },
     { key: "noPoId", label: "No PO ID", default: false, render: (i) => <span className="font-mono">{i.poId}</span> },
     { key: "vendorProduksi", label: "Vendor Produksi", default: true, render: (i) => vendorProduksiName(i) },
     // Revisi 2026-09-06 (v2): "PO Reference" ke invoice LAMA yang diretur (cuma terisi untuk PV
@@ -516,7 +516,7 @@ export function PaymentPanel() {
       },
     },
     // Tanggal + jam bukti pembayaran diupload (bukti_bayar_at); kalau bukti diganti, yang tampil waktu unggahan terakhir. Kosong kalau belum ada bukti.
-    { key: "buktiBayarAt", label: "Tgl Upload Bukti", default: true, render: (i) => <span className="font-sans text-[11px]">{i.buktiBayarAt ? formatDateTime(i.buktiBayarAt) : "—"}</span> },
+    { key: "buktiBayarAt", label: "Tgl Upload Bukti", default: false, render: (i) => <span className="font-sans text-[11px]">{i.buktiBayarAt ? formatDateTime(i.buktiBayarAt) : "—"}</span> },
     // PIC Finance yang memproses pembayaran (migration 0082); kosong untuk invoice yang belum dibayar.
     { key: "paidBy", label: "PIC Pembayaran", default: true, render: (i) => <span className="font-sans text-[11px]">{i.status === "PAID" || i.paidAt ? i.paidBy ?? "-" : "—"}</span> },
   ];
