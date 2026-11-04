@@ -82,6 +82,8 @@ export const NAV: Record<RoleKey, RoleNav> = {
       // dipasang di menu.
       // Panduan Vendor (owner 2026-10-22): kelola video/gambar/tautan tutorial yang tampil di halaman Panduan portal Vendor.
       { label: "Panduan Vendor", href: "/sysadmin/panduan" },
+      // Kirim ke WOS (owner 2026-11-05): pantau antrean pengiriman resi ke WOS, kirim ulang resi lama, coba lagi yang gagal.
+      { label: "Kirim ke WOS", href: "/sysadmin/wos" },
       { label: "Log Audit", href: "/sysadmin/audit-log" },
     ],
   },

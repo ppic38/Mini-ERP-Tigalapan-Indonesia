@@ -122,8 +122,14 @@ async function sheetsApi<T>(cfg: SheetsConfig, token: string, path: string, init
   return (await res.json()) as T;
 }
 
-/** Tulis (tambah atau timpa) baris resi ke tab. Melempar Error kalau gagal (dipakai antrean untuk dicoba ulang). */
-export async function writeResiToSheets(cfg: SheetsConfig, p: SheetResi): Promise<{ added: number; updated: number }> {
+const UPDATE_CHUNK = 400;
+const APPEND_CHUNK = 500;
+
+/** Tulis (tambah atau timpa) baris SEMUA resi di `payloads` ke tab, dengan judul dan kolom id dibaca SEKALI (aman untuk kirim ulang
+ *  ratusan resi lama: hanya beberapa panggilan Google, jauh di bawah batas 60 tulis/menit). Melempar Error kalau gagal. */
+export async function writeResisToSheets(cfg: SheetsConfig, payloads: SheetResi[]): Promise<{ added: number; updated: number }> {
+  const rows = payloads.flatMap((p) => buildSheetRows(p, witaNow()));
+  if (rows.length === 0) return { added: 0, updated: 0 };
   const token = await accessToken(cfg);
   const range = (a1: string) => encodeURIComponent(`'${cfg.tab}'!${a1}`);
 
@@ -142,7 +148,6 @@ export async function writeResiToSheets(cfg: SheetsConfig, p: SheetResi): Promis
     if (r[0]) rowOfId.set(String(r[0]), i + 2);
   });
 
-  const rows = buildSheetRows(p, witaNow());
   const updates: { range: string; values: string[][] }[] = [];
   const appends: string[][] = [];
   const width = Math.max(headers.length, ...SHEET_HEADERS.map((h) => col.get(h)! + 1));
@@ -161,9 +166,16 @@ export async function writeResiToSheets(cfg: SheetsConfig, p: SheetResi): Promis
     }
   }
 
-  if (updates.length > 0) await sheetsApi(cfg, token, "values:batchUpdate", { method: "POST", body: { valueInputOption: "RAW", data: updates } });
-  if (appends.length > 0) {
-    await sheetsApi(cfg, token, `values/${range("A1")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: { values: appends } });
+  for (let i = 0; i < updates.length; i += UPDATE_CHUNK) {
+    await sheetsApi(cfg, token, "values:batchUpdate", { method: "POST", body: { valueInputOption: "RAW", data: updates.slice(i, i + UPDATE_CHUNK) } });
+  }
+  for (let i = 0; i < appends.length; i += APPEND_CHUNK) {
+    await sheetsApi(cfg, token, `values/${range("A1")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: { values: appends.slice(i, i + APPEND_CHUNK) } });
   }
   return { added: appends.length, updated: rows.length - appends.length };
+}
+
+/** Satu resi (dipakai pengiriman saat resi terbit). */
+export function writeResiToSheets(cfg: SheetsConfig, p: SheetResi): Promise<{ added: number; updated: number }> {
+  return writeResisToSheets(cfg, [p]);
 }
