@@ -203,3 +203,24 @@ function buildGroup(rows: HppReportRow[]): HppReportGroup {
 export function buildHppReport(rows: HppReportRow[]): HppReport {
   return { estimasi: buildGroup(rows.filter((r) => r.sementara)), final: buildGroup(rows.filter((r) => !r.sementara)) };
 }
+
+/** Satu baris tabel HPP gabungan di halaman Laporan HPP = satu baris sheet "HPP" di unduhan (per warna · lengan · size), ditambah MRP dan status. */
+export type HppTableLine = HppItemLine & { mrpId: string; status: "On Going" | "Final" };
+
+/** Baris tabel halaman Laporan HPP untuk banyak MRP sekaligus: item dihitung per MRP (sama dengan unduhan per MRP), On Going = roll belum ditutup,
+ *  Final = roll sudah ditutup (plus rework dan data lama tanpa roll). */
+export function buildHppTableLines(rows: HppReportRow[]): HppTableLine[] {
+  const byMrp = new Map<string, HppReportRow[]>();
+  for (const r of rows) {
+    const list = byMrp.get(r.mrpId);
+    if (list) list.push(r);
+    else byMrp.set(r.mrpId, [r]);
+  }
+  const out: HppTableLine[] = [];
+  for (const [mrpId, list] of byMrp) {
+    const rep = buildHppReport(list);
+    for (const i of rep.estimasi.items) out.push({ ...i, mrpId, status: "On Going" });
+    for (const i of rep.final.items) out.push({ ...i, mrpId, status: "Final" });
+  }
+  return out;
+}
