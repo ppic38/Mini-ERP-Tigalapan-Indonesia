@@ -1,5 +1,11 @@
 # Migrasi Project — Status & Riwayat
 
+## Detail Roll: info pengiriman koli + header berwarna per kelompok biaya (2026-11-05, tanpa migration)
+Owner: perlu tahu koli/pengiriman mana yang sudah dikirim (status Delivery), dan batas kelompok material / maklon / ongkir di sheet Detail Roll terlihat dari warna header.
+- `lib/mrp/hppReport.ts`: `HppReportRow` bertambah `ekspedisi` dan `wmsReceivedAt`; `HppRollLine` bertambah `ekspedisi`, `tanggalKirim`, `statusKirim`. Status: "Delivery" = koli sudah di-Delivery vendor (semua baris HPP berasal dari koli yang sudah dikirim), "Diterima WMS" = WMS sudah konfirmasi (`DeliveryKoli.wmsReceivedAt`), kosong untuk baris yang tidak bisa ditelusuri ke satu koli. `components/mrp/laporan-hpp-view.tsx` mengisi kedua field dari `DeliveryKoli`.
+- `lib/mrp/exportHppExcel.ts`: Detail Roll punya tiga kolom baru setelah No Koli: Ekspedisi, Tgl Kirim, Status Pengiriman. Header diwarnai per kelompok (`Col.bg`): biru = material (kain, diskon, rib, bahan/diskon/rib/COGS per pcs), ungu = maklon, oranye = ongkir dan pengiriman, abu = identitas/pembagi/qty, hijau = hasil HPP. Sheet HPP memakai warna yang sama. Baris 3 memuat keterangan warna header.
+- Diuji ulang dengan data HPP-W39: 18.417 rumus dihitung di Excel, tanpa error dan tanpa selisih nilai.
+
 ## Unduhan HPP disederhanakan: 7 sheet jadi 3 (2026-11-05, tanpa migration)
 Owner: export HPP terlalu banyak sheet. Sebelumnya 7 sheet (HPP On Going, HPP Final, Detail Roll On Going, Detail Roll Final, Validasi Ringkasan, Validasi Ongkir, Validasi Bahan Diskon Rib); sekarang 3 sheet dengan isi yang sama.
 - `lib/mrp/exportHppExcel.ts`: sheet `HPP` dan `Detail Roll` memuat baris On Going (di atas) dan Final (di bawah) dalam satu sheet. Kolom pertama baru `Status` (oranye = On Going, hijau = Final) bisa difilter; semua kolom lain bergeser satu ke kanan (konstanta `RC` dan `IC`). Rata-rata tertimbang di sheet HPP tetap membaca sub-rentang baris Detail Roll kelompoknya (`detailFirst`/`detailCount`), jadi hasilnya sama dengan sebelumnya. Header seragam hijau teal.

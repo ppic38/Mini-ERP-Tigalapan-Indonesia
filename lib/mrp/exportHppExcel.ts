@@ -16,6 +16,12 @@ import type { HppItemLine, HppReport, HppRollLine } from "./hppReport";
 const INK = "FF1A1A1F";
 const INPUT_INK = "FF1D4ED8";
 const HEAD_BG = "FF0D9488";
+// Warna header per kelompok biaya (sheet HPP dan Detail Roll), supaya batas material / maklon / ongkir terlihat.
+const GRP_ID = "FF475569"; // identitas, pembagi, qty
+const GRP_MAT = "FF1D4ED8"; // material: kain, diskon, rib
+const GRP_MAK = "FF7C3AED"; // maklon
+const GRP_ONG = "FFB45309"; // ongkir dan pengiriman
+const GRP_HPP = HEAD_BG; // hasil HPP
 const ST_ONGOING = "On Going";
 const ST_FINAL = "Final";
 const ST_ONGOING_BG = "FFFEF3C7";
@@ -33,7 +39,7 @@ const vendorName = (id: string) => VENDOR_PRODUKSI[id]?.name ?? id;
 const lenganLabel = (l: string) => (l === "PENDEK" ? "Pendek" : "Panjang");
 
 type CellValue = string | number | null | { formula: string; result: string | number | null };
-type Col = { head: string; width: number; kind: "text" | "int" | "rp" | "dec" | "pct" | "status" };
+type Col = { head: string; width: number; kind: "text" | "int" | "rp" | "dec" | "pct" | "status"; bg?: string };
 
 const colLetter = (n: number) => {
   let s = "";
@@ -52,8 +58,9 @@ function sheet(wb: Workbook, name: string, bg: string, title: string, note: stri
   ws.getCell(2, 1).font = { name: FONT, size: 9, italic: true, color: { argb: "FF828290" } };
   ws.getCell(2, 1).alignment = { wrapText: true, vertical: "top" };
   ws.getRow(2).height = 52;
-  ws.mergeCells(3, 1, 3, Math.min(cols.length, 9));
-  ws.getCell(3, 1).value = "Warna font: BIRU = data masukan (invoice, master, produksi, ekspedisi) · HITAM = rumus Excel (klik sel untuk melihat cara hitungnya)";
+  ws.mergeCells(3, 1, 3, Math.min(cols.length, 16));
+  ws.getCell(3, 1).value =
+    "Warna font: BIRU = data masukan (invoice, master, produksi, ekspedisi) · HITAM = rumus Excel (klik sel untuk melihat cara hitungnya)   |   Warna header: BIRU = material (kain, diskon, rib) · UNGU = maklon · ORANYE = ongkir & pengiriman · ABU = identitas & qty · HIJAU = hasil HPP";
   ws.getCell(3, 1).font = { name: FONT, size: 9, bold: true, color: { argb: INPUT_INK } };
 
   const head = ws.getRow(4);
@@ -62,7 +69,7 @@ function sheet(wb: Workbook, name: string, bg: string, title: string, note: stri
     const cell = head.getCell(i + 1);
     cell.value = c.head;
     cell.font = { name: FONT, size: 10, bold: true, color: { argb: "FFFFFFFF" } };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: bg } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: c.bg ?? bg } };
     cell.alignment = { vertical: "middle", horizontal: c.kind === "text" || c.kind === "status" ? "left" : "right", wrapText: true };
     cell.border = BORDER;
     ws.getColumn(i + 1).width = c.width;
@@ -98,45 +105,48 @@ function sheet(wb: Workbook, name: string, bg: string, title: string, note: stri
 // ---- Sheet Detail Roll: satu baris per roll x size ----
 const RC = {
   status: 1, vendor: 2, warna: 3, lengan: 4, size: 5, roll: 6, invoice: 7, berat: 8, hargaKg: 9, biaya: 10, invDiskon: 11, invKg: 12, diskon: 13, warnaRib: 14, warnaKg: 15,
-  rib: 16, pembagi: 17, fg: 18, resi: 19, koli: 20, ongkirResi: 21, beratResi: 22, beratKoli: 23, ongkirKoli: 24, pcsKoli: 25,
-  bahan: 26, diskonPcs: 27, ribPcs: 28, cogs: 29, maklon: 30, ongkir: 31, hpp: 32, jual: 33, ratio: 34, total: 35,
+  rib: 16, pembagi: 17, fg: 18, resi: 19, koli: 20, ekspedisi: 21, tglKirim: 22, statusKirim: 23, ongkirResi: 24, beratResi: 25, beratKoli: 26, ongkirKoli: 27, pcsKoli: 28,
+  bahan: 29, diskonPcs: 30, ribPcs: 31, cogs: 32, maklon: 33, ongkir: 34, hpp: 35, jual: 36, ratio: 37, total: 38,
 } as const;
 const ROLL_COLS: Col[] = [
-  { head: "Status", width: 10, kind: "status" },
-  { head: "Vendor", width: 18, kind: "text" },
-  { head: "Warna", width: 24, kind: "text" },
-  { head: "Lengan", width: 9, kind: "text" },
-  { head: "Size", width: 8, kind: "text" },
-  { head: "Code Roll", width: 16, kind: "text" },
-  { head: "No Invoice Material", width: 18, kind: "text" },
-  { head: "Berat Roll Gross (kg)", width: 12, kind: "dec" },
-  { head: "Harga/kg", width: 11, kind: "rp" },
-  { head: "Biaya Bahan Roll", width: 15, kind: "rp" },
-  { head: "Diskon Invoice (Rp)", width: 13, kind: "rp" },
-  { head: "Total kg Kain Invoice", width: 12, kind: "dec" },
-  { head: "Diskon (porsi roll)", width: 17, kind: "rp" },
-  { head: "Biaya Rib Warna (Rp)", width: 13, kind: "rp" },
-  { head: "Total kg Kain Warna", width: 12, kind: "dec" },
-  { head: "Rib (porsi roll)", width: 17, kind: "rp" },
-  { head: "Pembagi (pcs)", width: 10, kind: "int" },
-  { head: "Qty FG (pcs)", width: 10, kind: "int" },
-  { head: "No Resi", width: 18, kind: "text" },
-  { head: "No Koli", width: 14, kind: "text" },
-  { head: "Ongkir Resi (Rp)", width: 15, kind: "rp" },
-  { head: "Berat Resi (kg)", width: 13, kind: "dec" },
-  { head: "Berat Koli (kg)", width: 11, kind: "dec" },
-  { head: "Ongkir Koli (Rp)", width: 19, kind: "rp" },
-  { head: "Pcs di Koli", width: 10, kind: "int" },
-  { head: "Bahan/pcs", width: 18, kind: "rp" },
-  { head: "Diskon/pcs", width: 13, kind: "rp" },
-  { head: "Rib/pcs", width: 12, kind: "rp" },
-  { head: "COGS Bahan/pcs", width: 14, kind: "rp" },
-  { head: "Maklon/pcs", width: 11, kind: "rp" },
-  { head: "Ongkir/pcs", width: 18, kind: "rp" },
-  { head: "HPP/pcs", width: 17, kind: "rp" },
-  { head: "Harga Jual", width: 11, kind: "rp" },
-  { head: "Ratio HPP", width: 14, kind: "pct" },
-  { head: "Total HPP (Rp)", width: 16, kind: "rp" },
+  { head: "Status", width: 10, kind: "status", bg: GRP_ID },
+  { head: "Vendor", width: 18, kind: "text", bg: GRP_ID },
+  { head: "Warna", width: 24, kind: "text", bg: GRP_ID },
+  { head: "Lengan", width: 9, kind: "text", bg: GRP_ID },
+  { head: "Size", width: 8, kind: "text", bg: GRP_ID },
+  { head: "Code Roll", width: 16, kind: "text", bg: GRP_ID },
+  { head: "No Invoice Material", width: 18, kind: "text", bg: GRP_MAT },
+  { head: "Berat Roll Gross (kg)", width: 12, kind: "dec", bg: GRP_MAT },
+  { head: "Harga/kg", width: 11, kind: "rp", bg: GRP_MAT },
+  { head: "Biaya Bahan Roll", width: 15, kind: "rp", bg: GRP_MAT },
+  { head: "Diskon Invoice (Rp)", width: 13, kind: "rp", bg: GRP_MAT },
+  { head: "Total kg Kain Invoice", width: 12, kind: "dec", bg: GRP_MAT },
+  { head: "Diskon (porsi roll)", width: 17, kind: "rp", bg: GRP_MAT },
+  { head: "Biaya Rib Warna (Rp)", width: 13, kind: "rp", bg: GRP_MAT },
+  { head: "Total kg Kain Warna", width: 12, kind: "dec", bg: GRP_MAT },
+  { head: "Rib (porsi roll)", width: 17, kind: "rp", bg: GRP_MAT },
+  { head: "Pembagi (pcs)", width: 10, kind: "int", bg: GRP_ID },
+  { head: "Qty FG (pcs)", width: 10, kind: "int", bg: GRP_ID },
+  { head: "No Resi", width: 18, kind: "text", bg: GRP_ONG },
+  { head: "No Koli", width: 14, kind: "text", bg: GRP_ONG },
+  { head: "Ekspedisi", width: 14, kind: "text", bg: GRP_ONG },
+  { head: "Tgl Kirim", width: 12, kind: "text", bg: GRP_ONG },
+  { head: "Status Pengiriman", width: 15, kind: "text", bg: GRP_ONG },
+  { head: "Ongkir Resi (Rp)", width: 15, kind: "rp", bg: GRP_ONG },
+  { head: "Berat Resi (kg)", width: 13, kind: "dec", bg: GRP_ONG },
+  { head: "Berat Koli (kg)", width: 11, kind: "dec", bg: GRP_ONG },
+  { head: "Ongkir Koli (Rp)", width: 19, kind: "rp", bg: GRP_ONG },
+  { head: "Pcs di Koli", width: 10, kind: "int", bg: GRP_ONG },
+  { head: "Bahan/pcs", width: 18, kind: "rp", bg: GRP_MAT },
+  { head: "Diskon/pcs", width: 13, kind: "rp", bg: GRP_MAT },
+  { head: "Rib/pcs", width: 12, kind: "rp", bg: GRP_MAT },
+  { head: "COGS Bahan/pcs", width: 14, kind: "rp", bg: GRP_MAT },
+  { head: "Maklon/pcs", width: 11, kind: "rp", bg: GRP_MAK },
+  { head: "Ongkir/pcs", width: 18, kind: "rp", bg: GRP_ONG },
+  { head: "HPP/pcs", width: 17, kind: "rp", bg: GRP_HPP },
+  { head: "Harga Jual", width: 11, kind: "rp", bg: GRP_HPP },
+  { head: "Ratio HPP", width: 14, kind: "pct", bg: GRP_HPP },
+  { head: "Total HPP (Rp)", width: 16, kind: "rp", bg: GRP_HPP },
 ];
 
 function rollRow(r: HppRollLine, rowNo: number, status: string): CellValue[] {
@@ -164,6 +174,9 @@ function rollRow(r: HppRollLine, rowNo: number, status: string): CellValue[] {
   set("fg", r.fg);
   set("resi", r.resi);
   set("koli", r.koli);
+  set("ekspedisi", r.ekspedisi);
+  set("tglKirim", r.tanggalKirim ? r.tanggalKirim.split("-").reverse().join("/") : "");
+  set("statusKirim", r.statusKirim);
   set("maklon", r.maklonPcs);
   set("jual", r.hargaJual);
   // Ongkir/pcs rumus kalau baris ini bisa ditelusuri ke satu koli; baris pool lama tanpa koli tetap angka akhir.
@@ -203,25 +216,25 @@ function rollRow(r: HppRollLine, rowNo: number, status: string): CellValue[] {
 // ---- Sheet HPP (per item): rata-rata tertimbang dari baris Detail Roll kelompoknya (On Going atau Final) ----
 const IC = { status: 1, warna: 2, lengan: 3, size: 4, vendor: 5, fg: 6, bahan: 7, rib: 8, cogs: 9, maklon: 10, ongkir: 11, hpp: 12, min: 13, max: 14, jual: 15, ratio: 16, total: 17, roll: 18, resi: 19 } as const;
 const ITEM_COLS: Col[] = [
-  { head: "Status", width: 10, kind: "status" },
-  { head: "Warna", width: 24, kind: "text" },
-  { head: "Lengan", width: 9, kind: "text" },
-  { head: "Size", width: 8, kind: "text" },
-  { head: "Vendor", width: 18, kind: "text" },
-  { head: "Qty FG (pcs)", width: 14, kind: "int" },
-  { head: "Bahan/pcs (setelah diskon)", width: 16, kind: "rp" },
-  { head: "Rib/pcs", width: 13, kind: "rp" },
-  { head: "COGS Bahan/pcs", width: 14, kind: "rp" },
-  { head: "Maklon/pcs", width: 14, kind: "rp" },
-  { head: "Ongkir/pcs", width: 14, kind: "rp" },
-  { head: "HPP/pcs", width: 17, kind: "rp" },
-  { head: "HPP Min", width: 15, kind: "rp" },
-  { head: "HPP Maks", width: 15, kind: "rp" },
-  { head: "Harga Jual", width: 14, kind: "rp" },
-  { head: "Ratio HPP", width: 13, kind: "pct" },
-  { head: "Total HPP (Rp)", width: 16, kind: "rp" },
-  { head: "Jumlah Roll", width: 9, kind: "int" },
-  { head: "Jumlah Resi", width: 9, kind: "int" },
+  { head: "Status", width: 10, kind: "status", bg: GRP_ID },
+  { head: "Warna", width: 24, kind: "text", bg: GRP_ID },
+  { head: "Lengan", width: 9, kind: "text", bg: GRP_ID },
+  { head: "Size", width: 8, kind: "text", bg: GRP_ID },
+  { head: "Vendor", width: 18, kind: "text", bg: GRP_ID },
+  { head: "Qty FG (pcs)", width: 14, kind: "int", bg: GRP_ID },
+  { head: "Bahan/pcs (setelah diskon)", width: 16, kind: "rp", bg: GRP_MAT },
+  { head: "Rib/pcs", width: 13, kind: "rp", bg: GRP_MAT },
+  { head: "COGS Bahan/pcs", width: 14, kind: "rp", bg: GRP_MAT },
+  { head: "Maklon/pcs", width: 14, kind: "rp", bg: GRP_MAK },
+  { head: "Ongkir/pcs", width: 14, kind: "rp", bg: GRP_ONG },
+  { head: "HPP/pcs", width: 17, kind: "rp", bg: GRP_HPP },
+  { head: "HPP Min", width: 15, kind: "rp", bg: GRP_HPP },
+  { head: "HPP Maks", width: 15, kind: "rp", bg: GRP_HPP },
+  { head: "Harga Jual", width: 14, kind: "rp", bg: GRP_HPP },
+  { head: "Ratio HPP", width: 13, kind: "pct", bg: GRP_HPP },
+  { head: "Total HPP (Rp)", width: 16, kind: "rp", bg: GRP_HPP },
+  { head: "Jumlah Roll", width: 9, kind: "int", bg: GRP_ID },
+  { head: "Jumlah Resi", width: 9, kind: "int", bg: GRP_ONG },
 ];
 
 // Baris Detail Roll kelompok ini = detailFirst .. detailFirst + detailCount - 1 di sheet Detail Roll (On Going di atas, Final di bawahnya).

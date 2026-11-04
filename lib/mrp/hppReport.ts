@@ -7,7 +7,17 @@ import type { Lengan } from "./types";
 //  - Item   : satu baris per warna · lengan · size, rata-rata TERTIMBANG pcs dari semua roll, koli, resi, dan vendor (tidak melebar)
 //  - Roll   : satu baris per roll x size x koli (resi dan ongkirnya jelas per baris; baris pool lama tanpa koli digabung)
 
-export type HppReportRow = HppRow & { noResi?: string; tanggalKirim?: string };
+export type HppReportRow = HppRow & { noResi?: string; tanggalKirim?: string; ekspedisi?: string; wmsReceivedAt?: string };
+
+/** Status pengiriman koli asal baris HPP. Baris HPP hanya dibuat dari koli yang sudah di-Delivery vendor, jadi "Delivery" = sudah dikirim;
+ *  "Diterima WMS" = WMS sudah mengonfirmasi koli diterima fisik. Kosong untuk baris yang tidak bisa ditelusuri ke satu koli (pool lama). */
+export const STATUS_KIRIM_DELIVERY = "Delivery";
+export const STATUS_KIRIM_WMS = "Diterima WMS";
+function statusKirimOf(r: HppReportRow): string {
+  if (!r.koliId) return "";
+  if (r.wmsReceivedAt) return STATUS_KIRIM_WMS;
+  return r.tanggalKirim ? STATUS_KIRIM_DELIVERY : "";
+}
 
 export type HppItemLine = {
   warna: string;
@@ -52,6 +62,10 @@ export type HppRollLine = {
   fg: number;
   resi: string;
   koli: string;
+  /** Info pengiriman koli (kosong kalau baris tidak bisa ditelusuri ke satu koli). Tanggal kirim = YYYY-MM-DD. */
+  ekspedisi: string;
+  tanggalKirim: string;
+  statusKirim: string;
   /** Rincian ongkir (satu baris = satu koli): ongkir per pcs = ongkirResi x beratKoli / beratResi / pcsKoli. Null untuk baris pool lama tanpa koli. */
   ongkirResi: number | null;
   beratResi: number | null;
@@ -153,6 +167,9 @@ function buildGroup(rows: HppReportRow[]): HppReportGroup {
       fg,
       resi: uniq(rs.map((r) => r.noResi).filter(Boolean)).join(", "),
       koli: uniq(rs.map((r) => r.noKoli).filter(Boolean)).join(", "),
+      ekspedisi: uniq(rs.map((r) => r.ekspedisi).filter((x): x is string => !!x)).join(", "),
+      tanggalKirim: (first.tanggalKirim ?? "").slice(0, 10),
+      statusKirim: statusKirimOf(first),
       ongkirResi: first.ongkirResi ?? null,
       beratResi: first.beratResi ?? null,
       beratKoli: first.beratKoli ?? null,

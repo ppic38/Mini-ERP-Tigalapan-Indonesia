@@ -17,7 +17,7 @@ import type { DeliveryKoli } from "@/lib/mrp/types";
  *  `tanggalKirim`/`noResi` (lookup `koliId` -> DeliveryKoli, dihitung SEKALI saat membangun `rows`
  *  supaya tabel & export Excel pakai nilai yang sama persis) supaya 2 baris begitu tetap bisa
  *  dibedakan tanpa pindah ke halaman Payment Maklon > Lampiran ekspedisi. */
-type HppTableRow = HppRow & { rowId: string; tanggalKirim?: string; noResi?: string };
+type HppTableRow = HppRow & { rowId: string; tanggalKirim?: string; noResi?: string; ekspedisi?: string; wmsReceivedAt?: string };
 
 /** Struktur agregat per vendor untuk 1 MRP -- persis rumus yang tadinya melekat langsung pada
  *  baris utama tabel (grouping key `mrpId|vendorProduksi`), sekarang jadi 1 entry di dalam
@@ -313,7 +313,7 @@ export function LaporanHppView({ role, activeHref }: { role: "finance" | "scm"; 
   const rows: HppTableRow[] = relevantInvoices.flatMap((inv) =>
     hppRowsForInvoicePerRoll(inv, relevantInvoices, mrpDetails, staticMrps, productionBatches, productionResults, productionGroupMeta, rawInvoices, deliveryKolis, ekspedisiRates, itemSellingPrices).map((r, i) => {
       const koli = r.koliId ? kolisById.get(r.koliId) : undefined;
-      return { ...r, rowId: inv.id + "-" + i, tanggalKirim: koli?.deliveredAt, noResi: koli?.noResi };
+      return { ...r, rowId: inv.id + "-" + i, tanggalKirim: koli?.deliveredAt, noResi: koli?.noResi, ekspedisi: koli?.ekspedisi, wmsReceivedAt: koli?.wmsReceivedAt };
     })
   );
 
