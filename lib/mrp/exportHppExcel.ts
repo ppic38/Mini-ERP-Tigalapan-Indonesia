@@ -269,15 +269,13 @@ export async function buildHppWorkbook(mrpId: string, report: HppReport): Promis
     sheet(wb, g.detail, g.bg, `${g.detailTitle} — ${mrpId}`, g.note, ROLL_COLS, report[g.key].rolls.map((r, ri) => rollRow(r, FIRST_ROW + ri)));
   }
   // Sheet validasi (owner 2026-11-04): total sumber vs jumlah (nilai per pcs x Qty FG), supaya terlihat kalau per pcs tidak kembali ke totalnya.
-  for (const g of groups) {
-    addValidasiSheet(wb, {
-      name: g.key === "estimasi" ? "Validasi On Going" : "Validasi Final",
-      bg: g.bg,
-      title: `Validasi ${g.itemTitle} — ${mrpId}`,
-      detail: g.detail,
-      rolls: report[g.key].rolls,
-    });
-  }
+  // Tiga sheet (Ringkasan, Ongkir, Bahan Diskon Rib) yang membaca Detail Roll On Going DAN Final sekaligus.
+  addValidasiSheets(
+    wb,
+    mrpId,
+    groups.map((g) => ({ key: g.key, detail: g.detail, rolls: report[g.key].rolls })),
+    FINAL_BG
+  );
   return wb;
 }
 
@@ -295,16 +293,24 @@ export async function exportHppExcel(mrpId: string, report: HppReport, fileName:
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-// ---- Sheet Validasi: total sumber (pool) vs jumlah (nilai per pcs x Qty FG), owner 2026-11-04 ----
+// ---- Sheet Validasi (tiga sheet), owner 2026-11-04 ----
 // Tujuan: membuktikan bahwa nilai per pcs di sheet Detail Roll bisa dikembalikan ke total biayanya (bahan, diskon, rib, ongkir), dan kalau tidak
-// kembali, menunjukkan DI MANA selisihnya. Semua angka berupa rumus yang membaca sheet Detail Roll pasangannya. Tiga bagian:
-//  1) Ringkasan semua komponen, 2) per roll (bahan, diskon, rib), 3) per resi (ongkir).
+// kembali, menunjukkan DI MANA selisihnya. Tabel bergaya pivot (bukan PivotTable asli) yang seluruh angkanya rumus Excel (SUMPRODUCT / SUMIFS) ke
+// sheet Detail Roll On Going DAN Final sekaligus, karena satu koli bisa terbagi di dua sheet itu (roll sudah ditutup vs belum).
+//  - Validasi Ongkir            : per resi -> pengiriman -> koli (harga per koli dijumlahkan, dibandingkan tagihan resi).
+//  - Validasi Bahan Diskon Rib  : per invoice material (bahan, diskon), per warna (rib), dan per roll.
+//  - Validasi Ringkasan         : semua komponen dalam satu tabel.
 const DIFF_FMT = "#,##0;[Red]-#,##0";
 const GREEN = "FF047857";
 const AMBER = "FFB45309";
 const TOLERANCE = 1;
+const WS_RINGKASAN = "Validasi Ringkasan";
+const WS_ONGKIR = "Validasi Ongkir";
+const WS_BAHAN = "Validasi Bahan Diskon Rib";
 
 type VStyle = { fmt?: string; bold?: boolean; bg?: string; color?: string; align?: "left" | "right" | "center"; wrap?: boolean };
+type VPart = { key: "estimasi" | "final"; detail: string; rolls: HppRollLine[] };
+type VRoll = HppRollLine & { part: "estimasi" | "final" };
 
 function vput(ws: Worksheet, row: number, col: number, v: CellValue, st: VStyle = {}) {
   const cell = ws.getCell(row, col);
@@ -334,16 +340,30 @@ function vhead(ws: Worksheet, row: number, heads: string[], bg: string, mergeTo?
   }
 }
 
-function vsection(ws: Worksheet, row: number, text: string, hint: string) {
+function vsection(ws: Worksheet, row: number, text: string, hint: string, lastCol = 14) {
   const t = ws.getCell(row, 1);
   t.value = text;
   t.font = { name: FONT, size: 12, bold: true, color: { argb: INK } };
-  ws.mergeCells(row + 1, 1, row + 1, 14);
+  ws.mergeCells(row + 1, 1, row + 1, lastCol);
   const h = ws.getCell(row + 1, 1);
   h.value = hint;
   h.font = { name: FONT, size: 9, italic: true, color: { argb: "FF828290" } };
   h.alignment = { wrapText: true, vertical: "top" };
   ws.getRow(row + 1).height = 28;
+}
+
+function vtitle(ws: Worksheet, title: string, note: string, legend: string, lastCol: number) {
+  ws.mergeCells(1, 1, 1, Math.min(lastCol, 10));
+  ws.getCell(1, 1).value = title;
+  ws.getCell(1, 1).font = { name: FONT, size: 14, bold: true, color: { argb: INK } };
+  ws.mergeCells(2, 1, 2, lastCol);
+  ws.getCell(2, 1).value = note;
+  ws.getCell(2, 1).font = { name: FONT, size: 9, italic: true, color: { argb: "FF828290" } };
+  ws.getCell(2, 1).alignment = { wrapText: true, vertical: "top" };
+  ws.getRow(2).height = 44;
+  ws.mergeCells(3, 1, 3, lastCol);
+  ws.getCell(3, 1).value = legend;
+  ws.getCell(3, 1).font = { name: FONT, size: 9, bold: true, color: { argb: INPUT_INK } };
 }
 
 function statusRules(ws: Worksheet, ref: string, topLeft: string) {
@@ -356,219 +376,536 @@ function statusRules(ws: Worksheet, ref: string, topLeft: string) {
   });
 }
 
-function addValidasiSheet(wb: Workbook, o: { name: string; bg: string; title: string; detail: string; rolls: HppRollLine[] }) {
-  const ws = wb.addWorksheet(o.name, { views: [{ showGridLines: false }] });
-  ws.columns = [34, 22, 22, 16, 16, 18, 16, 16, 16, 16, 16, 16, 16, 16, 52].map((width) => ({ width }));
-  ws.mergeCells(1, 1, 1, 10);
-  ws.getCell(1, 1).value = o.title;
-  ws.getCell(1, 1).font = { name: FONT, size: 14, bold: true, color: { argb: INK } };
-  ws.mergeCells(2, 1, 2, 14);
-  ws.getCell(2, 1).value =
-    "Sheet ini membuktikan nilai per pcs di sheet Detail Roll bisa dikembalikan ke total biayanya. TOTAL SUMBER (pool) = biaya asli (invoice material, rib, tagihan ekspedisi). " +
-    "TERALOKASI = jumlah (nilai per pcs x Qty FG) dari sheet Detail Roll. SELISIH tidak selalu berarti salah. Penyebab yang wajar: (1) pembagi roll belum sama dengan Finish Good " +
-    "(roll belum ditutup memakai hasil cutting, atau sebagian pcs belum masuk koli/resi), (2) diskon, rib, dan ongkir dibagi ke SEMUA roll/koli di sumbernya, sedangkan laporan ini hanya memuat " +
-    `roll/koli milik MRP ini. Selisih sampai Rp ${TOLERANCE} dianggap cocok (pembulatan).`;
-  ws.getCell(2, 1).font = { name: FONT, size: 9, italic: true, color: { argb: "FF828290" } };
-  ws.getCell(2, 1).alignment = { wrapText: true, vertical: "top" };
-  ws.getRow(2).height = 56;
-  ws.mergeCells(3, 1, 3, 14);
-  ws.getCell(3, 1).value = `Semua angka di sini adalah rumus Excel yang membaca sheet "${o.detail}" (klik sel untuk melihat cara hitungnya). Hijau = cocok, oranye = ada selisih (lihat penjelasan).`;
-  ws.getCell(3, 1).font = { name: FONT, size: 9, bold: true, color: { argb: INPUT_INK } };
+const vsum = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
+const numCmp = (a: string, b: string) => a.localeCompare(b, "id-ID", { numeric: true });
+const cmpNote = "Selisih sampai Rp 1 (atau 0,05 kg) dianggap cocok (pembulatan).";
+const rngOf = (p: VPart, k: keyof typeof RC) => `'${p.detail}'!$${colLetter(RC[k])}$${FIRST_ROW}:$${colLetter(RC[k])}$${FIRST_ROW + p.rolls.length - 1}`;
+const joinParts = (parts: VPart[], sep: string, fn: (p: VPart) => string) => (parts.length === 0 ? "0" : parts.map(fn).join(sep));
 
-  const rolls = o.rolls;
-  const N = rolls.length;
-  if (N === 0) {
-    ws.getCell(5, 1).value = "Belum ada data untuk kelompok ini.";
+/** Sisipkan tiga sheet validasi. `parts` = kelompok On Going dan Final (yang kosong dilewati). */
+function addValidasiSheets(wb: Workbook, mrpId: string, allParts: VPart[], bg: string) {
+  const parts = allParts.filter((p) => p.rolls.length > 0);
+  const wsR = wb.addWorksheet(WS_RINGKASAN, { views: [{ showGridLines: false }] });
+  const wsO = wb.addWorksheet(WS_ONGKIR, { views: [{ showGridLines: false }] });
+  const wsB = wb.addWorksheet(WS_BAHAN, { views: [{ showGridLines: false }] });
+  const legend = `Semua angka adalah rumus Excel yang membaca sheet Detail Roll (On Going dan Final) · klik sel untuk melihat cara hitungnya · hijau = cocok, oranye = ada selisih. ${cmpNote}`;
+  if (parts.length === 0) {
+    for (const ws of [wsR, wsO, wsB]) {
+      vtitle(ws, `Validasi — ${mrpId}`, "Belum ada data HPP untuk MRP ini.", legend, 10);
+      ws.getCell(5, 1).value = "Belum ada data.";
+    }
     return;
   }
-  const rg = (k: keyof typeof RC) => `'${o.detail}'!$${colLetter(RC[k])}$${FIRST_ROW}:$${colLetter(RC[k])}$${FIRST_ROW + N - 1}`;
-  const sum = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
-  const berat = rg("berat");
-  const roll = rg("roll");
-  const fg = rg("fg");
+  const ongkir = fillOngkirSheet(wsO, mrpId, parts, bg, legend);
+  const bahan = fillBahanSheet(wsB, mrpId, parts, bg, legend);
+  fillRingkasanSheet(wsR, mrpId, parts, bg, legend, ongkir, bahan);
+}
 
-  // ---- nilai cadangan (hasil hitung di aplikasi) untuk tiap rumus ----
-  const traced = rolls.filter((r) => (r.grossKg ?? 0) > 0);
-  const firstOfRoll = new Map<string, HppRollLine>();
-  for (const r of traced) if (!firstOfRoll.has(r.roll)) firstOfRoll.set(r.roll, r);
-  const uniqRolls = Array.from(firstOfRoll.values()).sort((a, b) => a.vendor.localeCompare(b.vendor) || a.warna.localeCompare(b.warna) || a.roll.localeCompare(b.roll));
-  const ribRows = rolls.filter((r) => (r.warnaRib ?? 0) > 0);
-  const ribWarnaPool = sum(Array.from(new Map(ribRows.map((r) => [r.warna + "|" + r.invoiceMaterial, r.warnaRib as number])).values()));
-  const withResi = rolls.filter((r) => (r.ongkirResi ?? 0) > 0 && r.resi);
-  const ongkirResiPool = sum(Array.from(new Map(withResi.map((r) => [r.resi, r.ongkirResi as number])).values()));
-  const koliOngkir = (r: HppRollLine) => r.ongkirPcs * (r.pcsKoli ?? 0);
-  const ongkirKoliPool = sum(Array.from(new Map(withResi.map((r) => [r.resi + "|" + r.koli, koliOngkir(r)])).values()));
-  const ongkirAlloc = sum(withResi.map((r) => r.ongkirPcs * r.fg));
+// ======================= Validasi Ongkir: resi -> pengiriman -> koli =======================
+type OngkirRefs = { tagihan: { cell: string; v: number }; koli: { cell: string; v: number }; alloc: { cell: string; v: number }; noKoli: number };
 
-  // ---- 1) Ringkasan ----
+function fillOngkirSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: string, legend: string): OngkirRefs {
+  ws.columns = [18, 16, 16, 14, 14, 14, 16, 12, 12, 12, 14, 12, 16, 12, 14, 56].map((width) => ({ width }));
+  vtitle(
+    ws,
+    `Validasi Ongkir per resi dan koli — ${mrpId}`,
+    "Ongkir resi = tarif ekspedisi master × berat seluruh koli pengiriman itu. Ongkir koli (HARGA BIAYA PER KOLI) = ongkir resi × berat koli / berat resi. Ongkir/pcs = ongkir koli / pcs di koli. " +
+      "Total per koli harus sama dengan tagihan resi, dan Σ (ongkir/pcs × Qty FG) harus sama dengan total koli. Nomor resi yang dipakai lebih dari sekali (dikirim beberapa kali) ditampilkan sebagai pengiriman terpisah. " +
+      "Qty FG dijumlahkan dari sheet On Going dan Final sekaligus, karena satu koli bisa berisi roll yang sudah dan yang belum ditutup.",
+    legend,
+    16
+  );
+  const all: VRoll[] = parts.flatMap((p) => p.rolls.map((r) => ({ ...r, part: p.key })));
+  const rows = all.filter((r) => (r.ongkirResi ?? 0) > 0 && r.resi && r.koli);
+  type Koli = { koli: string; beratKoli: number; ongkirKoli: number; pcsKoli: number; fgFinal: number; fgOn: number; alloc: number };
+  type Grp = { vendor: string; resi: string; ongkirResi: number; beratResi: number; kolis: Map<string, Koli> };
+  const groups = new Map<string, Grp>();
+  for (const r of rows) {
+    const vn = vendorName(r.vendor);
+    const gk = [vn, r.resi, r.ongkirResi, r.beratResi].join("|");
+    const g = groups.get(gk) ?? { vendor: vn, resi: r.resi, ongkirResi: r.ongkirResi as number, beratResi: r.beratResi ?? 0, kolis: new Map<string, Koli>() };
+    const k = g.kolis.get(r.koli) ?? { koli: r.koli, beratKoli: r.beratKoli ?? 0, ongkirKoli: r.ongkirPcs * (r.pcsKoli ?? 0), pcsKoli: r.pcsKoli ?? 0, fgFinal: 0, fgOn: 0, alloc: 0 };
+    if (r.part === "final") k.fgFinal += r.fg;
+    else k.fgOn += r.fg;
+    k.alloc += r.ongkirPcs * r.fg;
+    g.kolis.set(r.koli, k);
+    groups.set(gk, g);
+  }
+  const grpList = Array.from(groups.values()).sort((a, b) => a.vendor.localeCompare(b.vendor) || numCmp(a.resi, b.resi) || b.beratResi - a.beratResi);
+  if (grpList.length === 0) {
+    ws.getCell(5, 1).value = "Belum ada baris dengan rincian ongkir resi dan koli.";
+    return { tagihan: { cell: "0", v: 0 }, koli: { cell: "0", v: 0 }, alloc: { cell: "0", v: 0 }, noKoli: 0 };
+  }
+  const resiKeys = Array.from(new Set(grpList.map((g) => g.vendor + "|" + g.resi)));
+  const nResi = resiKeys.length;
+
+  // ---- tata letak: ringkasan per nomor resi di atas, lalu blok per pengiriman ----
   const S0 = 5;
-  vsection(ws, S0, "1. Ringkasan: total sumber vs jumlah per pcs", "Satu baris per komponen biaya. Selisih = total sumber dikurangi teralokasi; positif berarti ada biaya yang belum terbagi ke pcs di laporan ini.");
   const SH = S0 + 3;
-  vhead(ws, SH, ["Komponen", "Total sumber (pool)", "Teralokasi (Σ per pcs × Qty FG)", "Selisih", "% Teralokasi", "Status", "Penjelasan"], o.bg, 14);
-  type SumRow = { label: string; pool: CellValue; alloc: CellValue; poolV: number; allocV: number; note: string };
-  const R = (i: number) => SH + 1 + i; // nomor baris ringkasan ke-i
-  const poolBahan = sum(uniqRolls.map((r) => r.biayaBahanRoll));
-  const poolDiskon = sum(uniqRolls.map((r) => r.diskonRoll));
-  const summary: SumRow[] = [
-    {
-      label: "Bahan kain sebelum diskon",
-      pool: f(`SUMPRODUCT((${berat}>0)*${rg("biaya")}/COUNTIFS(${roll},${roll}))`, poolBahan),
-      alloc: f(`SUMPRODUCT((${berat}>0)*(${rg("bahan")}+${rg("diskonPcs")})*${fg})`, sum(traced.map((r) => (r.bahanPcs + r.diskonPcs) * r.fg))),
-      poolV: poolBahan,
-      allocV: sum(traced.map((r) => (r.bahanPcs + r.diskonPcs) * r.fg)),
-      note: "Pool = Σ biaya tiap roll (berat × harga/kg). Teralokasi = Σ (bahan/pcs + diskon/pcs) × Qty FG. Kembali penuh kalau pembagi roll = jumlah FG roll itu di laporan; lihat bagian 2.",
-    },
-    {
-      label: "Diskon invoice (porsi roll)",
-      pool: f(`SUMPRODUCT((${berat}>0)*${rg("diskon")}/COUNTIFS(${roll},${roll}))`, poolDiskon),
-      alloc: f(`SUMPRODUCT((${berat}>0)*${rg("diskonPcs")}*${fg})`, sum(traced.map((r) => r.diskonPcs * r.fg))),
-      poolV: poolDiskon,
-      allocV: sum(traced.map((r) => r.diskonPcs * r.fg)),
-      note: "Pool = Σ porsi diskon roll (diskon invoice × berat roll / total kg kain invoice). Teralokasi = Σ Diskon/pcs × Qty FG.",
-    },
+  const SFIRST = SH + 1;
+  const STOTAL = SFIRST + nResi;
+  const T0 = STOTAL + 3;
+  const TH = T0 + 3;
+  let cursor = TH + 1;
+  type Blk = { g: Grp; title: number; first: number; total: number; tagihan: number; selisih: number; kolis: Koli[]; idx: number; of: number };
+  const blocks: Blk[] = grpList.map((g) => {
+    const kolis = Array.from(g.kolis.values()).sort((a, b) => numCmp(a.koli, b.koli));
+    const same = grpList.filter((x) => x.vendor === g.vendor && x.resi === g.resi);
+    const b: Blk = { g, title: cursor, first: cursor + 1, total: cursor + 1 + kolis.length, tagihan: cursor + 2 + kolis.length, selisih: cursor + 3 + kolis.length, kolis, idx: same.indexOf(g) + 1, of: same.length };
+    cursor += kolis.length + 5;
+    return b;
+  });
+
+  // ---- 2) blok per pengiriman ----
+  vsection(ws, T0, "2. Rincian per pengiriman → koli (harga biaya per koli)", "Satu blok per pengiriman. Baris koli: isi koli (pcs), Qty FG di laporan, ongkir koli, dan ongkir/pcs × Qty FG. Di bawahnya total koli dibandingkan tagihan resi.", 16);
+  vhead(ws, TH, ["Vendor", "No Resi", "Ongkir Resi pengiriman (Rp)", "Berat Resi pengiriman (kg)", "No Koli", "Berat Koli (kg)", "Ongkir Koli (Rp)", "Pcs di Koli", "Qty FG Final", "Qty FG On Going", "Σ Qty FG di laporan", "Ongkir / pcs", "Teralokasi (Σ Ongkir/pcs × FG)", "Selisih Pcs", "Selisih Rp", "Status"], bg);
+  const SOFTBLUE = "FFEFF6FF";
+  for (const b of blocks) {
+    const g = b.g;
+    ws.mergeCells(b.title, 1, b.title, 16);
+    vput(ws, b.title, 1, `No Resi: ${g.resi}  ·  ${g.vendor}  ·  pengiriman ${b.idx} dari ${b.of}${b.of > 1 ? " (nomor resi ini dipakai lebih dari sekali)" : ""}`, { bold: true, bg: SOFTBLUE });
+    for (let c = 2; c <= 16; c++) ws.getCell(b.title, c).border = BORDER;
+    b.kolis.forEach((k, i) => {
+      const r = b.first + i;
+      const match = (p: VPart) => `(${rngOf(p, "vendor")}=$A${r})*(${rngOf(p, "resi")}=$B${r})*(${rngOf(p, "koli")}=$E${r})*(${rngOf(p, "ongkirResi")}=$C${r})*(${rngOf(p, "beratResi")}=$D${r})`;
+      const maxOf = (key: keyof typeof RC) => `MAX(${joinParts(parts, ",", (p) => `SUMPRODUCT(MAX(${match(p)}*${rngOf(p, key)}))`)})`;
+      const fgOf = (part: "estimasi" | "final") => {
+        const p = parts.find((x) => x.key === part);
+        return p ? `SUMPRODUCT(${match(p)}*${rngOf(p, "fg")})` : "0";
+      };
+      const fgSum = k.fgFinal + k.fgOn;
+      const ongkirPcs = k.pcsKoli === 0 ? 0 : k.ongkirKoli / k.pcsKoli;
+      const dPcs = k.pcsKoli - fgSum;
+      const dRp = k.ongkirKoli - k.alloc;
+      const ok = dPcs === 0 && Math.abs(dRp) <= TOLERANCE;
+      const status = ok ? "Cocok" : dPcs > 0 ? "Pcs di koli lebih banyak dari Qty FG baris HPP (ada pcs koli tanpa baris HPP)" : dPcs < 0 ? "Qty FG baris HPP lebih banyak dari isi koli (baris HPP melebihi isi koli)" : "Selisih pembulatan";
+      vput(ws, r, 1, g.vendor);
+      vput(ws, r, 2, g.resi);
+      vput(ws, r, 3, g.ongkirResi, { fmt: "#,##0", color: INPUT_INK });
+      vput(ws, r, 4, g.beratResi, { fmt: "#,##0.00", color: INPUT_INK });
+      vput(ws, r, 5, k.koli);
+      vput(ws, r, 6, f(maxOf("beratKoli"), k.beratKoli), { fmt: "#,##0.00" });
+      vput(ws, r, 7, f(maxOf("ongkirKoli"), k.ongkirKoli), { fmt: "#,##0" });
+      vput(ws, r, 8, f(maxOf("pcsKoli"), k.pcsKoli), { fmt: "#,##0" });
+      vput(ws, r, 9, f(fgOf("final"), k.fgFinal), { fmt: "#,##0" });
+      vput(ws, r, 10, f(fgOf("estimasi"), k.fgOn), { fmt: "#,##0" });
+      vput(ws, r, 11, f(`I${r}+J${r}`, fgSum), { fmt: "#,##0" });
+      vput(ws, r, 12, f(`IF(H${r}=0,0,G${r}/H${r})`, ongkirPcs), { fmt: "#,##0.00" });
+      vput(ws, r, 13, f(joinParts(parts, "+", (p) => `SUMPRODUCT(${match(p)}*${rngOf(p, "ongkir")}*${rngOf(p, "fg")})`), k.alloc), { fmt: "#,##0" });
+      vput(ws, r, 14, f(`H${r}-K${r}`, dPcs), { fmt: DIFF_FMT });
+      vput(ws, r, 15, f(`G${r}-M${r}`, dRp), { fmt: DIFF_FMT });
+      vput(ws, r, 16, f(`IF(AND(N${r}=0,ABS(O${r})<=${TOLERANCE}),"Cocok",IF(N${r}>0,"Pcs di koli lebih banyak dari Qty FG baris HPP (ada pcs koli tanpa baris HPP)",IF(N${r}<0,"Qty FG baris HPP lebih banyak dari isi koli (baris HPP melebihi isi koli)","Selisih pembulatan")))`, status), { align: "left", bold: true });
+    });
+    const f0 = b.first;
+    const f1 = b.first + b.kolis.length - 1;
+    const sumK = (fn: (k: Koli) => number) => vsum(b.kolis.map(fn));
+    const tBerat = sumK((k) => k.beratKoli);
+    const tOng = sumK((k) => k.ongkirKoli);
+    const tPcs = sumK((k) => k.pcsKoli);
+    const tFgF = sumK((k) => k.fgFinal);
+    const tFgO = sumK((k) => k.fgOn);
+    const tAlloc = sumK((k) => k.alloc);
+    const T = b.total;
+    vput(ws, T, 1, "Total koli di laporan", { bold: true, bg: SOFT, align: "right" });
+    ws.mergeCells(T, 1, T, 5);
+    vput(ws, T, 6, f(`SUM(F${f0}:F${f1})`, tBerat), { fmt: "#,##0.00", bold: true, bg: SOFT });
+    vput(ws, T, 7, f(`SUM(G${f0}:G${f1})`, tOng), { fmt: "#,##0", bold: true, bg: SOFT });
+    vput(ws, T, 8, f(`SUM(H${f0}:H${f1})`, tPcs), { fmt: "#,##0", bold: true, bg: SOFT });
+    vput(ws, T, 9, f(`SUM(I${f0}:I${f1})`, tFgF), { fmt: "#,##0", bold: true, bg: SOFT });
+    vput(ws, T, 10, f(`SUM(J${f0}:J${f1})`, tFgO), { fmt: "#,##0", bold: true, bg: SOFT });
+    vput(ws, T, 11, f(`SUM(K${f0}:K${f1})`, tFgF + tFgO), { fmt: "#,##0", bold: true, bg: SOFT });
+    vput(ws, T, 12, null, { bg: SOFT });
+    vput(ws, T, 13, f(`SUM(M${f0}:M${f1})`, tAlloc), { fmt: "#,##0", bold: true, bg: SOFT });
+    vput(ws, T, 14, f(`H${T}-K${T}`, tPcs - tFgF - tFgO), { fmt: DIFF_FMT, bold: true, bg: SOFT });
+    vput(ws, T, 15, f(`G${T}-M${T}`, tOng - tAlloc), { fmt: DIFF_FMT, bold: true, bg: SOFT });
+    vput(ws, T, 16, null, { bg: SOFT });
+    const G = b.tagihan;
+    for (const c of [7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) vput(ws, G, c, null);
+    vput(ws, G, 1, "Tagihan resi pengiriman ini (tarif × berat resi)", { bold: true, align: "right" });
+    ws.mergeCells(G, 1, G, 5);
+    vput(ws, G, 6, f(`D${b.first}`, g.beratResi), { fmt: "#,##0.00", bold: true });
+    vput(ws, G, 7, f(`C${b.first}`, g.ongkirResi), { fmt: "#,##0", bold: true });
+    const S = b.selisih;
+    for (const c of [8, 9, 10, 11, 12, 13, 14, 15]) vput(ws, S, c, null);
+    const dBerat = g.beratResi - tBerat;
+    const dOng = g.ongkirResi - tOng;
+    const okBlock = Math.abs(dBerat) <= 0.05 && Math.abs(dOng) <= TOLERANCE;
+    vput(ws, S, 1, "Selisih tagihan resi − total koli", { bold: true, align: "right" });
+    ws.mergeCells(S, 1, S, 5);
+    vput(ws, S, 6, f(`F${G}-F${T}`, dBerat), { fmt: "#,##0.00;[Red]-#,##0.00", bold: true });
+    vput(ws, S, 7, f(`G${G}-G${T}`, dOng), { fmt: DIFF_FMT, bold: true });
+    vput(ws, S, 16, f(`IF(AND(ABS(F${S})<=0.05,ABS(G${S})<=${TOLERANCE}),"Cocok: total per koli = tagihan resi","Selisih: ada koli resi ini di luar laporan (MRP/vendor lain)")`, okBlock ? "Cocok: total per koli = tagihan resi" : "Selisih: ada koli resi ini di luar laporan (MRP/vendor lain)"), { align: "left", bold: true });
+    statusRules(ws, `P${b.first}:P${b.first + b.kolis.length - 1}`, `P${b.first}`);
+    statusRules(ws, `P${S}:P${S}`, `P${S}`);
+  }
+
+  // ---- 1) ringkasan per nomor resi (merujuk blok di bawah) ----
+  vsection(ws, S0, "1. Ringkasan per nomor resi", "Satu baris per nomor resi (semua pengiriman dengan nomor itu dijumlahkan). Kolom Tagihan dan Ongkir koli membuktikan total per koli = total resi; kolom Teralokasi membuktikan ongkir/pcs × Qty FG kembali ke total koli.", 16);
+  vhead(ws, SH, ["Vendor", "No Resi", "Jumlah pengiriman", "Tagihan resi (Σ pengiriman)", "Ongkir koli di laporan (Σ koli)", "Selisih tagihan − koli", "Teralokasi (Σ Ongkir/pcs × FG)", "Selisih koli − teralokasi", "Status"], bg, 16);
+  let gTag = 0;
+  let gKoli = 0;
+  let gAlloc = 0;
+  resiKeys.forEach((rk, i) => {
+    const r = SFIRST + i;
+    const bl = blocks.filter((b) => b.g.vendor + "|" + b.g.resi === rk);
+    const tag = vsum(bl.map((b) => b.g.ongkirResi));
+    const kol = vsum(bl.map((b) => vsum(b.kolis.map((k) => k.ongkirKoli))));
+    const alc = vsum(bl.map((b) => vsum(b.kolis.map((k) => k.alloc))));
+    gTag += tag;
+    gKoli += kol;
+    gAlloc += alc;
+    const dA = tag - kol;
+    const dB = kol - alc;
+    const status = Math.abs(dA) <= TOLERANCE && Math.abs(dB) <= TOLERANCE ? "Cocok" : Math.abs(dA) > TOLERANCE ? "Selisih: ada koli resi ini di luar laporan (MRP/vendor lain)" : "Selisih: pcs di koli tidak sama dengan Qty FG baris HPP (lihat rincian per koli)";
+    vput(ws, r, 1, bl[0].g.vendor, { bold: true });
+    vput(ws, r, 2, bl[0].g.resi, { bold: true });
+    vput(ws, r, 3, bl.length, { fmt: "#,##0" });
+    vput(ws, r, 4, f(bl.map((b) => `G${b.tagihan}`).join("+"), tag), { fmt: "#,##0" });
+    vput(ws, r, 5, f(bl.map((b) => `G${b.total}`).join("+"), kol), { fmt: "#,##0" });
+    vput(ws, r, 6, f(`D${r}-E${r}`, dA), { fmt: DIFF_FMT });
+    vput(ws, r, 7, f(bl.map((b) => `M${b.total}`).join("+"), alc), { fmt: "#,##0" });
+    vput(ws, r, 8, f(`E${r}-G${r}`, dB), { fmt: DIFF_FMT });
+    ws.mergeCells(r, 9, r, 16);
+    vput(ws, r, 9, f(`IF(AND(ABS(F${r})<=${TOLERANCE},ABS(H${r})<=${TOLERANCE}),"Cocok",IF(ABS(F${r})>${TOLERANCE},"Selisih: ada koli resi ini di luar laporan (MRP/vendor lain)","Selisih: pcs di koli tidak sama dengan Qty FG baris HPP (lihat rincian per koli)"))`, status), { align: "left", bold: true });
+    for (let c = 10; c <= 16; c++) ws.getCell(r, c).border = BORDER;
+  });
+  const gr = (col: string) => `SUM(${col}${SFIRST}:${col}${STOTAL - 1})`;
+  vput(ws, STOTAL, 1, "Total semua resi", { bold: true, bg: SOFT });
+  vput(ws, STOTAL, 2, null, { bg: SOFT });
+  vput(ws, STOTAL, 3, f(gr("C"), blocks.length), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, STOTAL, 4, f(gr("D"), gTag), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, STOTAL, 5, f(gr("E"), gKoli), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, STOTAL, 6, f(`D${STOTAL}-E${STOTAL}`, gTag - gKoli), { fmt: DIFF_FMT, bold: true, bg: SOFT });
+  vput(ws, STOTAL, 7, f(gr("G"), gAlloc), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, STOTAL, 8, f(`E${STOTAL}-G${STOTAL}`, gKoli - gAlloc), { fmt: DIFF_FMT, bold: true, bg: SOFT });
+  ws.mergeCells(STOTAL, 9, STOTAL, 16);
+  vput(ws, STOTAL, 9, null, { bg: SOFT });
+  statusRules(ws, `I${SFIRST}:I${STOTAL - 1}`, `I${SFIRST}`);
+  const q = (c: string) => `'${WS_ONGKIR}'!$${c}$${STOTAL}`;
+  return { tagihan: { cell: q("D"), v: gTag }, koli: { cell: q("E"), v: gKoli }, alloc: { cell: q("G"), v: gAlloc }, noKoli: grpList.length };
+}
+
+// ======================= Validasi Bahan Diskon Rib: invoice, warna, roll =======================
+type BahanRefs = {
+  bahanPool: { cell: string; v: number };
+  bahanAlloc: { cell: string; v: number };
+  diskonPool: { cell: string; v: number };
+  diskonAlloc: { cell: string; v: number };
+  ribPool: { cell: string; v: number };
+  ribAlloc: { cell: string; v: number };
+  diskonInvoice: { cell: string; v: number };
+  diskonInvoiceAlloc: { cell: string; v: number };
+  ribWarna: { cell: string; v: number };
+  ribWarnaAlloc: { cell: string; v: number };
+};
+
+function fillBahanSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: string, legend: string): BahanRefs {
+  ws.columns = [26, 22, 20, 14, 14, 14, 16, 16, 14, 16, 16, 14, 16, 16, 14, 56].map((width) => ({ width }));
+  vtitle(
+    ws,
+    `Validasi Bahan, Diskon, dan Rib — ${mrpId}`,
+    "Bahan: biaya roll = berat × harga/kg. Diskon: porsi roll = diskon invoice × berat roll / total kg kain invoice. Rib: porsi roll = biaya rib warna × berat roll / total kg kain warna. " +
+      "Per pcs = biaya roll (atau porsi) / pembagi. Total per roll harus kembali ke biayanya kalau Σ Qty FG di laporan = pembagi. Total per invoice (diskon) dan per warna (rib) kembali ke angka di invoice " +
+      "kalau semua roll invoice/warna itu ada di laporan ini.",
+    legend,
+    16
+  );
+  const all: VRoll[] = parts.flatMap((p) => p.rolls.map((r) => ({ ...r, part: p.key })));
+  const traced = all.filter((r) => (r.grossKg ?? 0) > 0);
+  const firstOf = new Map<string, VRoll>();
+  for (const r of traced) if (!firstOf.has(r.roll)) firstOf.set(r.roll, r);
+  const rolls = Array.from(firstOf.values()).sort((a, b) => a.invoiceMaterial.localeCompare(b.invoiceMaterial) || a.warna.localeCompare(b.warna) || a.roll.localeCompare(b.roll));
+  const empty: BahanRefs = {
+    bahanPool: { cell: "0", v: 0 }, bahanAlloc: { cell: "0", v: 0 }, diskonPool: { cell: "0", v: 0 }, diskonAlloc: { cell: "0", v: 0 }, ribPool: { cell: "0", v: 0 }, ribAlloc: { cell: "0", v: 0 },
+    diskonInvoice: { cell: "0", v: 0 }, diskonInvoiceAlloc: { cell: "0", v: 0 }, ribWarna: { cell: "0", v: 0 }, ribWarnaAlloc: { cell: "0", v: 0 },
+  };
+  if (rolls.length === 0) {
+    ws.getCell(5, 1).value = "Belum ada roll yang bisa ditelusuri ke invoice material.";
+    return empty;
+  }
+  const rollNums = rolls.map((u) => {
+    const mine = traced.filter((x) => x.roll === u.roll);
+    const fg = vsum(mine.map((x) => x.fg));
+    const aB = vsum(mine.map((x) => (x.bahanPcs + x.diskonPcs) * x.fg));
+    const aD = vsum(mine.map((x) => x.diskonPcs * x.fg));
+    const aR = vsum(mine.map((x) => x.ribPcs * x.fg));
+    return { u, fg, aB, aD, aR };
+  });
+  const invoices = Array.from(new Set(rolls.map((u) => u.invoiceMaterial))).sort();
+  const warnaInv = Array.from(new Map(rolls.filter((u) => (u.warnaRib ?? 0) > 0).map((u) => [u.warna + "|" + u.invoiceMaterial, u])).values()).sort((a, b) => a.warna.localeCompare(b.warna) || a.invoiceMaterial.localeCompare(b.invoiceMaterial));
+
+  // ---- tata letak ----
+  const A0 = 5;
+  const AH = A0 + 3;
+  const AFIRST = AH + 1;
+  const ATOTAL = AFIRST + invoices.length;
+  const B0 = ATOTAL + 3;
+  const BH = B0 + 3;
+  const BFIRST = BH + 1;
+  const BTOTAL = BFIRST + warnaInv.length;
+  const C0 = BTOTAL + 3;
+  const CH = C0 + 3;
+  const CFIRST = CH + 1;
+  const CLAST = CFIRST + rolls.length - 1;
+  const CTOTAL = CLAST + 1;
+  const col = (c: string) => `$${c}$${CFIRST}:$${c}$${CLAST}`;
+
+  // ---- 3) per roll ----
+  vsection(ws, C0, "3. Per roll: bahan, diskon, rib", "Satu baris per roll yang bisa ditelusuri ke invoice material. Pembagi = pcs yang menanggung biaya roll (hasil cutting kalau roll belum ditutup, Finish Good kalau sudah). Σ Qty FG = pcs roll ini di laporan.", 16);
+  vhead(ws, CH, ["Invoice Material", "Warna", "Code Roll", "Berat Roll (kg)", "Pembagi (pcs)", "Σ Qty FG di laporan", "Biaya Bahan Roll", "Teralokasi Bahan", "Selisih Bahan", "Diskon (porsi roll)", "Teralokasi Diskon", "Selisih Diskon", "Rib (porsi roll)", "Teralokasi Rib", "Selisih Rib", "Status"], bg);
+  rollNums.forEach(({ u, fg, aB, aD, aR }, i) => {
+    const r = CFIRST + i;
+    const p = parts.find((x) => x.key === u.part) as VPart;
+    const m = `(${rngOf(p, "roll")}=$C${r})`;
+    const maxOf = (k: keyof typeof RC) => `SUMPRODUCT(MAX(${m}*${rngOf(p, k)}))`;
+    const dB = u.biayaBahanRoll - aB;
+    const dD = u.diskonRoll - aD;
+    const dR = u.ribRoll - aR;
+    const pemb = u.pembagi ?? 0;
+    const ok = Math.abs(dB) <= TOLERANCE && Math.abs(dD) <= TOLERANCE && Math.abs(dR) <= TOLERANCE;
+    const status = ok ? "Cocok" : fg < pemb ? "Qty FG di laporan < pembagi: sisa pcs roll belum terkirim / belum masuk koli" : fg > pemb ? "Qty FG di laporan > pembagi: cek roll ini" : "Selisih pembulatan";
+    vput(ws, r, 1, u.invoiceMaterial);
+    vput(ws, r, 2, u.warna);
+    vput(ws, r, 3, u.roll);
+    vput(ws, r, 4, f(maxOf("berat"), u.grossKg ?? 0), { fmt: "#,##0.00" });
+    vput(ws, r, 5, f(maxOf("pembagi"), pemb), { fmt: "#,##0" });
+    vput(ws, r, 6, f(`SUMPRODUCT(${m}*${rngOf(p, "fg")})`, fg), { fmt: "#,##0" });
+    vput(ws, r, 7, f(maxOf("biaya"), u.biayaBahanRoll), { fmt: "#,##0" });
+    vput(ws, r, 8, f(`SUMPRODUCT(${m}*(${rngOf(p, "bahan")}+${rngOf(p, "diskonPcs")})*${rngOf(p, "fg")})`, aB), { fmt: "#,##0" });
+    vput(ws, r, 9, f(`G${r}-H${r}`, dB), { fmt: DIFF_FMT });
+    vput(ws, r, 10, f(maxOf("diskon"), u.diskonRoll), { fmt: "#,##0" });
+    vput(ws, r, 11, f(`SUMPRODUCT(${m}*${rngOf(p, "diskonPcs")}*${rngOf(p, "fg")})`, aD), { fmt: "#,##0" });
+    vput(ws, r, 12, f(`J${r}-K${r}`, dD), { fmt: DIFF_FMT });
+    vput(ws, r, 13, f(maxOf("rib"), u.ribRoll), { fmt: "#,##0" });
+    vput(ws, r, 14, f(`SUMPRODUCT(${m}*${rngOf(p, "ribPcs")}*${rngOf(p, "fg")})`, aR), { fmt: "#,##0" });
+    vput(ws, r, 15, f(`M${r}-N${r}`, dR), { fmt: DIFF_FMT });
+    vput(
+      ws,
+      r,
+      16,
+      f(`IF(AND(ABS(I${r})<=${TOLERANCE},ABS(L${r})<=${TOLERANCE},ABS(O${r})<=${TOLERANCE}),"Cocok",IF(F${r}<E${r},"Qty FG di laporan < pembagi: sisa pcs roll belum terkirim / belum masuk koli",IF(F${r}>E${r},"Qty FG di laporan > pembagi: cek roll ini","Selisih pembulatan")))`, status),
+      { align: "left", bold: true, wrap: true }
+    );
+  });
+  const totC = (c: string) => `SUM(${c}${CFIRST}:${c}${CLAST})`;
+  const tot = { D: vsum(rollNums.map((x) => x.u.grossKg ?? 0)), F: vsum(rollNums.map((x) => x.fg)), G: vsum(rollNums.map((x) => x.u.biayaBahanRoll)), H: vsum(rollNums.map((x) => x.aB)), J: vsum(rollNums.map((x) => x.u.diskonRoll)), K: vsum(rollNums.map((x) => x.aD)), M: vsum(rollNums.map((x) => x.u.ribRoll)), N: vsum(rollNums.map((x) => x.aR)) };
+  vput(ws, CTOTAL, 1, "Total semua roll di laporan", { bold: true, bg: SOFT });
+  for (const c of [2, 3, 5, 16]) vput(ws, CTOTAL, c, null, { bg: SOFT });
+  vput(ws, CTOTAL, 4, f(totC("D"), tot.D), { fmt: "#,##0.00", bold: true, bg: SOFT });
+  vput(ws, CTOTAL, 6, f(totC("F"), tot.F), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, CTOTAL, 7, f(totC("G"), tot.G), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, CTOTAL, 8, f(totC("H"), tot.H), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, CTOTAL, 9, f(`G${CTOTAL}-H${CTOTAL}`, tot.G - tot.H), { fmt: DIFF_FMT, bold: true, bg: SOFT });
+  vput(ws, CTOTAL, 10, f(totC("J"), tot.J), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, CTOTAL, 11, f(totC("K"), tot.K), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, CTOTAL, 12, f(`J${CTOTAL}-K${CTOTAL}`, tot.J - tot.K), { fmt: DIFF_FMT, bold: true, bg: SOFT });
+  vput(ws, CTOTAL, 13, f(totC("M"), tot.M), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, CTOTAL, 14, f(totC("N"), tot.N), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, CTOTAL, 15, f(`M${CTOTAL}-N${CTOTAL}`, tot.M - tot.N), { fmt: DIFF_FMT, bold: true, bg: SOFT });
+  statusRules(ws, `P${CFIRST}:P${CLAST}`, `P${CFIRST}`);
+
+  // ---- 1) per invoice material: bahan dan diskon ----
+  vsection(ws, A0, "1. Per invoice material: bahan dan diskon", "Satu baris per invoice. Diskon invoice dibandingkan Σ porsi diskon roll di laporan (selisih = roll invoice itu yang tidak masuk laporan ini); porsi dibandingkan Σ diskon/pcs × Qty FG (selisih = pembagi ≠ Qty FG).", 16);
+  vhead(ws, AH, ["Invoice Material", "Total kg kain invoice", "Σ kg roll di laporan", "Cakupan roll", "Σ Biaya Bahan Roll", "Σ Teralokasi Bahan", "Selisih Bahan", "Diskon invoice (Rp)", "Σ porsi diskon roll", "Σ Teralokasi Diskon", "Selisih diskon invoice − porsi", "Selisih porsi − teralokasi", "Status"], bg, 16);
+  let invDiskonTot = 0;
+  let invDiskonAlloc = 0;
+  invoices.forEach((inv, i) => {
+    const r = AFIRST + i;
+    const mine = rollNums.filter((x) => x.u.invoiceMaterial === inv);
+    const u0 = mine[0].u;
+    const kgInv = u0.invKg ?? 0;
+    const diskInv = u0.invDiskon ?? 0;
+    const kgRoll = vsum(mine.map((x) => x.u.grossKg ?? 0));
+    const sB = vsum(mine.map((x) => x.u.biayaBahanRoll));
+    const sAB = vsum(mine.map((x) => x.aB));
+    const sPD = vsum(mine.map((x) => x.u.diskonRoll));
+    const sAD = vsum(mine.map((x) => x.aD));
+    invDiskonTot += diskInv;
+    invDiskonAlloc += sAD;
+    const dBhn = sB - sAB;
+    const dK = diskInv - sPD;
+    const dL = sPD - sAD;
+    const status = Math.abs(dK) <= TOLERANCE && Math.abs(dL) <= TOLERANCE && Math.abs(dBhn) <= TOLERANCE ? "Cocok" : Math.abs(dK) > TOLERANCE ? "Selisih: ada roll invoice ini di luar laporan (MRP/vendor lain)" : "Selisih: pembagi tidak sama dengan Qty FG (lihat per roll)";
+    const maxInv = (k: keyof typeof RC) => `MAX(${joinParts(parts, ",", (p) => `SUMPRODUCT(MAX((${rngOf(p, "invoice")}=$A${r})*${rngOf(p, k)}))`)})`;
+    vput(ws, r, 1, inv, { bold: true });
+    vput(ws, r, 2, f(maxInv("invKg"), kgInv), { fmt: "#,##0.00" });
+    vput(ws, r, 3, f(`SUMIFS(${col("D")},${col("A")},$A${r})`, kgRoll), { fmt: "#,##0.00" });
+    vput(ws, r, 4, f(`IF(B${r}=0,"",C${r}/B${r})`, kgInv === 0 ? "" : kgRoll / kgInv), { fmt: "0.0%" });
+    vput(ws, r, 5, f(`SUMIFS(${col("G")},${col("A")},$A${r})`, sB), { fmt: "#,##0" });
+    vput(ws, r, 6, f(`SUMIFS(${col("H")},${col("A")},$A${r})`, sAB), { fmt: "#,##0" });
+    vput(ws, r, 7, f(`E${r}-F${r}`, dBhn), { fmt: DIFF_FMT });
+    vput(ws, r, 8, f(maxInv("invDiskon"), diskInv), { fmt: "#,##0" });
+    vput(ws, r, 9, f(`SUMIFS(${col("J")},${col("A")},$A${r})`, sPD), { fmt: "#,##0" });
+    vput(ws, r, 10, f(`SUMIFS(${col("K")},${col("A")},$A${r})`, sAD), { fmt: "#,##0" });
+    vput(ws, r, 11, f(`H${r}-I${r}`, dK), { fmt: DIFF_FMT });
+    vput(ws, r, 12, f(`I${r}-J${r}`, dL), { fmt: DIFF_FMT });
+    ws.mergeCells(r, 13, r, 16);
+    vput(ws, r, 13, f(`IF(AND(ABS(K${r})<=${TOLERANCE},ABS(L${r})<=${TOLERANCE},ABS(G${r})<=${TOLERANCE}),"Cocok",IF(ABS(K${r})>${TOLERANCE},"Selisih: ada roll invoice ini di luar laporan (MRP/vendor lain)","Selisih: pembagi tidak sama dengan Qty FG (lihat per roll)"))`, status), { align: "left", bold: true });
+    for (let c = 14; c <= 16; c++) ws.getCell(r, c).border = BORDER;
+  });
+  const ta = (c: string) => `SUM(${c}${AFIRST}:${c}${ATOTAL - 1})`;
+  vput(ws, ATOTAL, 1, "Total semua invoice", { bold: true, bg: SOFT });
+  vput(ws, ATOTAL, 2, f(ta("B"), vsum(invoices.map((inv) => rollNums.find((x) => x.u.invoiceMaterial === inv)?.u.invKg ?? 0))), { fmt: "#,##0.00", bold: true, bg: SOFT });
+  vput(ws, ATOTAL, 3, f(ta("C"), tot.D), { fmt: "#,##0.00", bold: true, bg: SOFT });
+  vput(ws, ATOTAL, 4, null, { bg: SOFT });
+  vput(ws, ATOTAL, 5, f(ta("E"), tot.G), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, ATOTAL, 6, f(ta("F"), tot.H), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, ATOTAL, 7, f(`E${ATOTAL}-F${ATOTAL}`, tot.G - tot.H), { fmt: DIFF_FMT, bold: true, bg: SOFT });
+  vput(ws, ATOTAL, 8, f(ta("H"), invDiskonTot), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, ATOTAL, 9, f(ta("I"), tot.J), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, ATOTAL, 10, f(ta("J"), invDiskonAlloc), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, ATOTAL, 11, f(`H${ATOTAL}-I${ATOTAL}`, invDiskonTot - tot.J), { fmt: DIFF_FMT, bold: true, bg: SOFT });
+  vput(ws, ATOTAL, 12, f(`I${ATOTAL}-J${ATOTAL}`, tot.J - invDiskonAlloc), { fmt: DIFF_FMT, bold: true, bg: SOFT });
+  ws.mergeCells(ATOTAL, 13, ATOTAL, 16);
+  vput(ws, ATOTAL, 13, null, { bg: SOFT });
+  statusRules(ws, `M${AFIRST}:M${ATOTAL - 1}`, `M${AFIRST}`);
+
+  // ---- 2) per warna: rib ----
+  vsection(ws, B0, "2. Per warna: rib", "Satu baris per warna (dalam satu invoice). Biaya rib warna di invoice dibandingkan Σ porsi rib roll di laporan (selisih = roll warna itu yang tidak masuk laporan ini); porsi dibandingkan Σ rib/pcs × Qty FG (selisih = pembagi ≠ Qty FG).", 16);
+  vhead(ws, BH, ["Warna", "Invoice Material", "Biaya rib warna di invoice (Rp)", "Total kg kain warna", "Σ kg roll di laporan", "Cakupan roll", "Σ porsi rib roll", "Σ Teralokasi Rib", "Selisih biaya rib − porsi", "Selisih porsi − teralokasi", "Status"], bg, 16);
+  let ribTot = 0;
+  let ribAllocW = 0;
+  warnaInv.forEach((w, i) => {
+    const r = BFIRST + i;
+    const mine = rollNums.filter((x) => x.u.warna === w.warna && x.u.invoiceMaterial === w.invoiceMaterial);
+    const biaya = w.warnaRib ?? 0;
+    const kgW = w.warnaKg ?? 0;
+    const kgRoll = vsum(mine.map((x) => x.u.grossKg ?? 0));
+    const pr = vsum(mine.map((x) => x.u.ribRoll));
+    const ar = vsum(mine.map((x) => x.aR));
+    ribTot += biaya;
+    ribAllocW += ar;
+    const dI = biaya - pr;
+    const dJ = pr - ar;
+    const status = Math.abs(dI) <= TOLERANCE && Math.abs(dJ) <= TOLERANCE ? "Cocok" : Math.abs(dI) > TOLERANCE ? "Selisih: ada roll warna ini di luar laporan (MRP/vendor lain)" : "Selisih: pembagi tidak sama dengan Qty FG (lihat per roll)";
+    const maxW = (k: keyof typeof RC) => `MAX(${joinParts(parts, ",", (p) => `SUMPRODUCT(MAX((${rngOf(p, "warna")}=$A${r})*(${rngOf(p, "invoice")}=$B${r})*${rngOf(p, k)}))`)})`;
+    vput(ws, r, 1, w.warna, { bold: true });
+    vput(ws, r, 2, w.invoiceMaterial);
+    vput(ws, r, 3, f(maxW("warnaRib"), biaya), { fmt: "#,##0" });
+    vput(ws, r, 4, f(maxW("warnaKg"), kgW), { fmt: "#,##0.00" });
+    vput(ws, r, 5, f(`SUMIFS(${col("D")},${col("B")},$A${r},${col("A")},$B${r})`, kgRoll), { fmt: "#,##0.00" });
+    vput(ws, r, 6, f(`IF(D${r}=0,"",E${r}/D${r})`, kgW === 0 ? "" : kgRoll / kgW), { fmt: "0.0%" });
+    vput(ws, r, 7, f(`SUMIFS(${col("M")},${col("B")},$A${r},${col("A")},$B${r})`, pr), { fmt: "#,##0" });
+    vput(ws, r, 8, f(`SUMIFS(${col("N")},${col("B")},$A${r},${col("A")},$B${r})`, ar), { fmt: "#,##0" });
+    vput(ws, r, 9, f(`C${r}-G${r}`, dI), { fmt: DIFF_FMT });
+    vput(ws, r, 10, f(`G${r}-H${r}`, dJ), { fmt: DIFF_FMT });
+    ws.mergeCells(r, 11, r, 16);
+    vput(ws, r, 11, f(`IF(AND(ABS(I${r})<=${TOLERANCE},ABS(J${r})<=${TOLERANCE}),"Cocok",IF(ABS(I${r})>${TOLERANCE},"Selisih: ada roll warna ini di luar laporan (MRP/vendor lain)","Selisih: pembagi tidak sama dengan Qty FG (lihat per roll)"))`, status), { align: "left", bold: true });
+    for (let c = 12; c <= 16; c++) ws.getCell(r, c).border = BORDER;
+  });
+  const tb = (c: string) => `SUM(${c}${BFIRST}:${c}${BTOTAL - 1})`;
+  const ribPorsi = vsum(warnaInv.map((w) => vsum(rollNums.filter((x) => x.u.warna === w.warna && x.u.invoiceMaterial === w.invoiceMaterial).map((x) => x.u.ribRoll))));
+  vput(ws, BTOTAL, 1, "Total semua warna", { bold: true, bg: SOFT });
+  vput(ws, BTOTAL, 2, null, { bg: SOFT });
+  vput(ws, BTOTAL, 3, f(tb("C"), ribTot), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, BTOTAL, 4, null, { bg: SOFT });
+  vput(ws, BTOTAL, 5, null, { bg: SOFT });
+  vput(ws, BTOTAL, 6, null, { bg: SOFT });
+  vput(ws, BTOTAL, 7, f(tb("G"), ribPorsi), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, BTOTAL, 8, f(tb("H"), ribAllocW), { fmt: "#,##0", bold: true, bg: SOFT });
+  vput(ws, BTOTAL, 9, f(`C${BTOTAL}-G${BTOTAL}`, ribTot - ribPorsi), { fmt: DIFF_FMT, bold: true, bg: SOFT });
+  vput(ws, BTOTAL, 10, f(`G${BTOTAL}-H${BTOTAL}`, ribPorsi - ribAllocW), { fmt: DIFF_FMT, bold: true, bg: SOFT });
+  ws.mergeCells(BTOTAL, 11, BTOTAL, 16);
+  vput(ws, BTOTAL, 11, null, { bg: SOFT });
+  statusRules(ws, `K${BFIRST}:K${BTOTAL - 1}`, `K${BFIRST}`);
+
+  const q = (c: string, row: number) => `'${WS_BAHAN}'!$${c}$${row}`;
+  return {
+    bahanPool: { cell: q("G", CTOTAL), v: tot.G },
+    bahanAlloc: { cell: q("H", CTOTAL), v: tot.H },
+    diskonPool: { cell: q("J", CTOTAL), v: tot.J },
+    diskonAlloc: { cell: q("K", CTOTAL), v: tot.K },
+    ribPool: { cell: q("M", CTOTAL), v: tot.M },
+    ribAlloc: { cell: q("N", CTOTAL), v: tot.N },
+    diskonInvoice: { cell: q("H", ATOTAL), v: invDiskonTot },
+    diskonInvoiceAlloc: { cell: q("J", ATOTAL), v: invDiskonAlloc },
+    ribWarna: { cell: q("C", BTOTAL), v: ribTot },
+    ribWarnaAlloc: { cell: q("H", BTOTAL), v: ribAllocW },
+  };
+}
+
+// ======================= Validasi Ringkasan =======================
+function fillRingkasanSheet(ws: Worksheet, mrpId: string, parts: VPart[], bg: string, legend: string, ongkir: OngkirRefs, bahan: BahanRefs) {
+  ws.columns = [40, 20, 22, 16, 14, 14, 16, 16, 16, 16, 16, 16, 16, 16].map((width) => ({ width }));
+  vtitle(
+    ws,
+    `Validasi Ringkasan — ${mrpId}`,
+    "Ringkasan semua komponen biaya: TOTAL SUMBER (pool) = biaya asli (invoice material, rib, tagihan ekspedisi); TERALOKASI = jumlah (nilai per pcs × Qty FG) dari sheet Detail Roll. " +
+      "Selisih tidak selalu berarti salah: wajar kalau pembagi roll belum sama dengan Finish Good (roll belum ditutup / pcs belum masuk koli), atau kalau diskon/rib/ongkir dibagi ke semua roll/koli di sumbernya " +
+      "sedangkan laporan ini hanya memuat milik MRP ini. Rincian per invoice, warna, roll, resi, dan koli ada di dua sheet validasi lain.",
+    legend,
+    14
+  );
+  const all = parts.flatMap((p) => p.rolls);
+  const sumPartsExpr = (fn: (p: VPart) => string) => joinParts(parts, "+", fn);
+  const berat = (p: VPart) => rngOf(p, "berat");
+  const fg = (p: VPart) => rngOf(p, "fg");
+  const tracedRows = all.filter((r) => (r.grossKg ?? 0) > 0);
+  const bahanNet = vsum(tracedRows.map((r) => r.bahanPcs * r.fg));
+  const noKoliOng = vsum(all.filter((r) => !((r.ongkirResi ?? 0) > 0)).map((r) => r.ongkirPcs * r.fg));
+  const totalHpp = vsum(all.map((r) => r.totalHpp));
+  const totalKomp = vsum(all.map((r) => (r.bahanPcs + r.ribPcs + r.maklonPcs + r.ongkirPcs) * r.fg));
+
+  const S0 = 5;
+  vsection(ws, S0, "Ringkasan: total sumber vs jumlah per pcs (On Going + Final)", "Selisih = total sumber dikurangi teralokasi; positif berarti ada biaya yang belum terbagi ke pcs di laporan ini.", 14);
+  const SH = S0 + 3;
+  vhead(ws, SH, ["Komponen", "Total sumber (pool)", "Teralokasi (Σ per pcs × Qty FG)", "Selisih", "% Teralokasi", "Status", "Penjelasan"], bg, 14);
+  type Row = { label: string; pool: CellValue | null; alloc: CellValue; poolV: number | null; allocV: number; note: string };
+  const R = (i: number) => SH + 1 + i;
+  const rows: Row[] = [
+    { label: "Bahan kain sebelum diskon", pool: f(bahan.bahanPool.cell, bahan.bahanPool.v), alloc: f(bahan.bahanAlloc.cell, bahan.bahanAlloc.v), poolV: bahan.bahanPool.v, allocV: bahan.bahanAlloc.v, note: "Pool = Σ biaya tiap roll (berat × harga/kg). Teralokasi = Σ (bahan/pcs + diskon/pcs) × Qty FG. Rincian per invoice dan roll: sheet Validasi Bahan Diskon Rib." },
+    { label: "Diskon invoice (porsi roll)", pool: f(bahan.diskonPool.cell, bahan.diskonPool.v), alloc: f(bahan.diskonAlloc.cell, bahan.diskonAlloc.v), poolV: bahan.diskonPool.v, allocV: bahan.diskonAlloc.v, note: "Pool = Σ porsi diskon roll. Teralokasi = Σ Diskon/pcs × Qty FG. Selisih hanya karena pembagi ≠ Qty FG." },
     {
       label: "Bahan kain setelah diskon",
-      pool: f(`B${R(0)}-B${R(1)}`, poolBahan - poolDiskon),
-      alloc: f(`SUMPRODUCT((${berat}>0)*${rg("bahan")}*${fg})`, sum(traced.map((r) => r.bahanPcs * r.fg))),
-      poolV: poolBahan - poolDiskon,
-      allocV: sum(traced.map((r) => r.bahanPcs * r.fg)),
+      pool: f(`B${R(0)}-B${R(1)}`, bahan.bahanPool.v - bahan.diskonPool.v),
+      alloc: f(sumPartsExpr((p) => `SUMPRODUCT((${berat(p)}>0)*${rngOf(p, "bahan")}*${fg(p)})`), bahanNet),
+      poolV: bahan.bahanPool.v - bahan.diskonPool.v,
+      allocV: bahanNet,
       note: "Pool = bahan sebelum diskon dikurangi diskon. Teralokasi = Σ Bahan/pcs × Qty FG (Bahan/pcs sudah setelah diskon).",
     },
+    { label: "Rib (porsi roll)", pool: f(bahan.ribPool.cell, bahan.ribPool.v), alloc: f(bahan.ribAlloc.cell, bahan.ribAlloc.v), poolV: bahan.ribPool.v, allocV: bahan.ribAlloc.v, note: "Pool = Σ porsi rib roll (biaya rib warna × berat roll / total kg kain warna). Teralokasi = Σ Rib/pcs × Qty FG. Selisih hanya karena pembagi ≠ Qty FG." },
+    { label: "Diskon: total diskon di invoice material", pool: f(bahan.diskonInvoice.cell, bahan.diskonInvoice.v), alloc: f(bahan.diskonInvoiceAlloc.cell, bahan.diskonInvoiceAlloc.v), poolV: bahan.diskonInvoice.v, allocV: bahan.diskonInvoiceAlloc.v, note: "Angka diskon di invoice. Selisih ke 'porsi roll' = roll invoice itu yang tidak masuk laporan ini (diskon dibagi ke semua roll invoice), lalu pembagi ≠ Qty FG." },
+    { label: "Rib: total biaya rib per warna di invoice", pool: f(bahan.ribWarna.cell, bahan.ribWarna.v), alloc: f(bahan.ribWarnaAlloc.cell, bahan.ribWarnaAlloc.v), poolV: bahan.ribWarna.v, allocV: bahan.ribWarnaAlloc.v, note: "Angka total rib di invoice (mis. Rp 100.000 per warna). Selisih ke Rib per pcs: roll warna itu yang tidak masuk laporan ini (rib dibagi ke semua roll warna), lalu pembagi ≠ Qty FG." },
+    { label: "Ongkir: tagihan ekspedisi per resi", pool: f(ongkir.tagihan.cell, ongkir.tagihan.v), alloc: f(ongkir.alloc.cell, ongkir.alloc.v), poolV: ongkir.tagihan.v, allocV: ongkir.alloc.v, note: "Pool = Σ tagihan semua pengiriman (tarif master × berat seluruh koli). Nomor resi yang dipakai beberapa kali dijumlahkan per pengiriman. Rincian: sheet Validasi Ongkir." },
+    { label: "Ongkir: koli yang ikut laporan ini", pool: f(ongkir.koli.cell, ongkir.koli.v), alloc: f(ongkir.alloc.cell, ongkir.alloc.v), poolV: ongkir.koli.v, allocV: ongkir.alloc.v, note: "Pool = Σ ongkir koli (harga biaya per koli). Selisih = pcs di koli tidak sama dengan Qty FG baris HPP; koli mana-nya terlihat di sheet Validasi Ongkir." },
     {
-      label: "Rib (porsi roll)",
-      pool: f(`SUMPRODUCT((${berat}>0)*${rg("rib")}/COUNTIFS(${roll},${roll}))`, sum(uniqRolls.map((r) => r.ribRoll))),
-      alloc: f(`SUMPRODUCT((${berat}>0)*${rg("ribPcs")}*${fg})`, sum(traced.map((r) => r.ribPcs * r.fg))),
-      poolV: sum(uniqRolls.map((r) => r.ribRoll)),
-      allocV: sum(traced.map((r) => r.ribPcs * r.fg)),
-      note: "Pool = Σ porsi rib roll (biaya rib warna × berat roll / total kg kain warna). Teralokasi = Σ Rib/pcs × Qty FG. Selisih di sini hanya karena pembagi ≠ Qty FG (lihat bagian 2).",
-    },
-    {
-      label: "Rib: total biaya rib per warna di invoice",
-      pool: f(`SUMPRODUCT((${rg("warnaRib")}>0)*${rg("warnaRib")}/(COUNTIFS(${rg("warna")},${rg("warna")},${rg("invoice")},${rg("invoice")})+(${rg("invoice")}="")))`, ribWarnaPool),
-      alloc: f(`SUMPRODUCT((${rg("warnaRib")}>0)*${rg("ribPcs")}*${fg})`, sum(ribRows.map((r) => r.ribPcs * r.fg))),
-      poolV: ribWarnaPool,
-      allocV: sum(ribRows.map((r) => r.ribPcs * r.fg)),
-      note: "Inilah angka total rib di invoice (mis. Rp 100.000 per warna). Selisih ke Rib per pcs berasal dari: roll warna itu yang tidak masuk laporan ini (rib dibagi ke semua roll warna), lalu pembagi ≠ Qty FG.",
-    },
-    {
-      label: "Ongkir: tagihan ekspedisi per resi",
-      pool: f(`SUMPRODUCT((${rg("ongkirResi")}>0)*${rg("ongkirResi")}/(COUNTIFS(${rg("resi")},${rg("resi")},${rg("ongkirResi")},">0")+(${rg("ongkirResi")}=0)))`, ongkirResiPool),
-      alloc: f(`SUMPRODUCT((${rg("ongkirResi")}>0)*${rg("ongkir")}*${fg})`, ongkirAlloc),
-      poolV: ongkirResiPool,
-      allocV: ongkirAlloc,
-      note: "Pool = Σ ongkir resi (tarif master × berat seluruh koli resi). Resi sering memuat koli MRP/vendor lain, jadi selisih wajar; lihat bagian 3 per resi.",
-    },
-    {
-      label: "Ongkir: koli yang ikut laporan ini",
-      pool: f(`SUMPRODUCT((${rg("ongkirResi")}>0)*${rg("ongkirKoli")}/(COUNTIFS(${rg("resi")},${rg("resi")},${rg("koli")},${rg("koli")},${rg("ongkirResi")},">0")+(${rg("ongkirResi")}=0)))`, ongkirKoliPool),
-      alloc: f(`SUMPRODUCT((${rg("ongkirResi")}>0)*${rg("ongkir")}*${fg})`, ongkirAlloc),
-      poolV: ongkirKoliPool,
-      allocV: ongkirAlloc,
-      note: "Pool = Σ ongkir koli (ongkir resi × berat koli / berat resi) hanya untuk koli yang ada di laporan. Selisih = pcs di koli itu yang bukan bagian laporan ini (Pcs di Koli > Qty FG baris).",
+      label: "Ongkir pada baris tanpa rincian koli (rework / data lama)",
+      pool: null,
+      alloc: f(sumPartsExpr((p) => `SUMPRODUCT((${rngOf(p, "ongkirResi")}=0)*${rngOf(p, "ongkir")}*${fg(p)})`), noKoliOng),
+      poolV: null,
+      allocV: noKoliOng,
+      note: "Info: ongkir/pcs × Qty FG pada baris yang tidak bisa ditelusuri ke satu koli (rework atau data lama). Tidak punya total sumber, jadi tidak dibandingkan.",
     },
     {
       label: "Total HPP = Σ komponen per pcs × Qty FG",
-      pool: f(`SUM(${rg("total")})`, sum(rolls.map((r) => r.totalHpp))),
-      alloc: f(`SUMPRODUCT((${rg("bahan")}+${rg("ribPcs")}+${rg("maklon")}+${rg("ongkir")})*${fg})`, sum(rolls.map((r) => (r.bahanPcs + r.ribPcs + r.maklonPcs + r.ongkirPcs) * r.fg))),
-      poolV: sum(rolls.map((r) => r.totalHpp)),
-      allocV: sum(rolls.map((r) => (r.bahanPcs + r.ribPcs + r.maklonPcs + r.ongkirPcs) * r.fg)),
-      note: "Pemeriksaan rumus: Total HPP (kolom Total HPP di Detail Roll) harus sama dengan bahan + rib + maklon + ongkir per pcs × Qty FG. Selisih di sini = ada baris yang rumusnya tidak konsisten.",
+      pool: f(sumPartsExpr((p) => `SUM(${rngOf(p, "total")})`), totalHpp),
+      alloc: f(sumPartsExpr((p) => `SUMPRODUCT((${rngOf(p, "bahan")}+${rngOf(p, "ribPcs")}+${rngOf(p, "maklon")}+${rngOf(p, "ongkir")})*${fg(p)})`), totalKomp),
+      poolV: totalHpp,
+      allocV: totalKomp,
+      note: "Pemeriksaan rumus: kolom Total HPP di Detail Roll harus sama dengan bahan + rib + maklon + ongkir per pcs × Qty FG. Selisih = ada baris yang rumusnya tidak konsisten.",
     },
   ];
-  summary.forEach((s, i) => {
+  rows.forEach((s, i) => {
     const r = R(i);
     ws.getRow(r).height = 44;
-    const diff = s.poolV - s.allocV;
-    vput(ws, r, 1, s.label, { bold: true });
-    vput(ws, r, 2, s.pool, { fmt: "#,##0" });
-    vput(ws, r, 3, s.alloc, { fmt: "#,##0" });
-    vput(ws, r, 4, f(`B${r}-C${r}`, diff), { fmt: DIFF_FMT });
-    vput(ws, r, 5, f(`IF(B${r}=0,"",C${r}/B${r})`, s.poolV === 0 ? "" : s.allocV / s.poolV), { fmt: "0.0%" });
-    vput(ws, r, 6, f(`IF(ABS(D${r})<=${TOLERANCE},"Cocok","Selisih")`, Math.abs(diff) <= TOLERANCE ? "Cocok" : "Selisih"), { align: "center", bold: true });
+    vput(ws, r, 1, s.label, { bold: true, wrap: true });
+    if (s.poolV === null) {
+      vput(ws, r, 2, "—", { align: "right" });
+      vput(ws, r, 3, s.alloc, { fmt: "#,##0" });
+      vput(ws, r, 4, "—", { align: "right" });
+      vput(ws, r, 5, "—", { align: "right" });
+      vput(ws, r, 6, "Info", { align: "center", bold: true, color: "FF6B7280" });
+    } else {
+      const diff = s.poolV - s.allocV;
+      vput(ws, r, 2, s.pool, { fmt: "#,##0" });
+      vput(ws, r, 3, s.alloc, { fmt: "#,##0" });
+      vput(ws, r, 4, f(`B${r}-C${r}`, diff), { fmt: DIFF_FMT });
+      vput(ws, r, 5, f(`IF(B${r}=0,"",C${r}/B${r})`, s.poolV === 0 ? "" : s.allocV / s.poolV), { fmt: "0.0%" });
+      vput(ws, r, 6, f(`IF(ABS(D${r})<=${TOLERANCE},"Cocok","Selisih")`, Math.abs(diff) <= TOLERANCE ? "Cocok" : "Selisih"), { align: "center", bold: true });
+    }
     ws.mergeCells(r, 7, r, 14);
     vput(ws, r, 7, s.note, { wrap: true, color: "FF4B5563" });
     for (let c = 8; c <= 14; c++) ws.getCell(r, c).border = BORDER;
   });
-  statusRules(ws, `F${R(0)}:F${R(summary.length - 1)}`, `F${R(0)}`);
-
-  // ---- 2) Per roll ----
-  const T0 = R(summary.length - 1) + 3;
-  vsection(ws, T0, "2. Validasi per roll: bahan, diskon, rib", "Satu baris per roll yang bisa ditelusuri ke invoice material. Pembagi = pcs yang menanggung biaya roll (hasil cutting kalau belum ditutup, Finish Good kalau sudah). Σ Qty FG = pcs roll ini yang ada di laporan.");
-  const TH = T0 + 3;
-  vhead(ws, TH, ["Warna", "Code Roll", "No Invoice Material", "Pembagi (pcs)", "Σ Qty FG di laporan", "Biaya Bahan Roll", "Teralokasi Bahan", "Selisih Bahan", "Diskon (porsi roll)", "Teralokasi Diskon", "Selisih Diskon", "Rib (porsi roll)", "Teralokasi Rib", "Selisih Rib", "Status"], o.bg);
-  uniqRolls.forEach((u, i) => {
-    const r = TH + 1 + i;
-    const mine = traced.filter((x) => x.roll === u.roll);
-    const k = `$B${r}`;
-    const fgSum = sum(mine.map((x) => x.fg));
-    const aBahan = sum(mine.map((x) => (x.bahanPcs + x.diskonPcs) * x.fg));
-    const aDisk = sum(mine.map((x) => x.diskonPcs * x.fg));
-    const aRib = sum(mine.map((x) => x.ribPcs * x.fg));
-    const dB = u.biayaBahanRoll - aBahan;
-    const dD = u.diskonRoll - aDisk;
-    const dR = u.ribRoll - aRib;
-    const pemb = u.pembagi ?? 0;
-    const ok = Math.abs(dB) <= TOLERANCE && Math.abs(dD) <= TOLERANCE && Math.abs(dR) <= TOLERANCE;
-    const status = ok ? "Cocok" : fgSum < pemb ? "Qty FG di laporan < pembagi: sisa pcs roll belum terkirim / belum masuk koli" : fgSum > pemb ? "Qty FG di laporan > pembagi: cek roll ini" : "Selisih pembulatan";
-    vput(ws, r, 1, u.warna);
-    vput(ws, r, 2, u.roll);
-    vput(ws, r, 3, u.invoiceMaterial);
-    vput(ws, r, 4, f(`AVERAGEIFS(${rg("pembagi")},${roll},${k})`, pemb), { fmt: "#,##0" });
-    vput(ws, r, 5, f(`SUMIFS(${fg},${roll},${k})`, fgSum), { fmt: "#,##0" });
-    vput(ws, r, 6, f(`AVERAGEIFS(${rg("biaya")},${roll},${k})`, u.biayaBahanRoll), { fmt: "#,##0" });
-    vput(ws, r, 7, f(`SUMPRODUCT((${roll}=${k})*(${rg("bahan")}+${rg("diskonPcs")})*${fg})`, aBahan), { fmt: "#,##0" });
-    vput(ws, r, 8, f(`F${r}-G${r}`, dB), { fmt: DIFF_FMT });
-    vput(ws, r, 9, f(`AVERAGEIFS(${rg("diskon")},${roll},${k})`, u.diskonRoll), { fmt: "#,##0" });
-    vput(ws, r, 10, f(`SUMPRODUCT((${roll}=${k})*${rg("diskonPcs")}*${fg})`, aDisk), { fmt: "#,##0" });
-    vput(ws, r, 11, f(`I${r}-J${r}`, dD), { fmt: DIFF_FMT });
-    vput(ws, r, 12, f(`AVERAGEIFS(${rg("rib")},${roll},${k})`, u.ribRoll), { fmt: "#,##0" });
-    vput(ws, r, 13, f(`SUMPRODUCT((${roll}=${k})*${rg("ribPcs")}*${fg})`, aRib), { fmt: "#,##0" });
-    vput(ws, r, 14, f(`L${r}-M${r}`, dR), { fmt: DIFF_FMT });
-    vput(
-      ws,
-      r,
-      15,
-      f(`IF(AND(ABS(H${r})<=${TOLERANCE},ABS(K${r})<=${TOLERANCE},ABS(N${r})<=${TOLERANCE}),"Cocok",IF(E${r}<D${r},"Qty FG di laporan < pembagi: sisa pcs roll belum terkirim / belum masuk koli",IF(E${r}>D${r},"Qty FG di laporan > pembagi: cek roll ini","Selisih pembulatan")))`, status),
-      { align: "left", bold: true, wrap: true }
-    );
-  });
-  const rollEnd = TH + Math.max(uniqRolls.length, 1);
-  if (uniqRolls.length === 0) ws.getCell(TH + 1, 1).value = "Belum ada roll yang bisa ditelusuri ke invoice material.";
-  else statusRules(ws, `O${TH + 1}:O${rollEnd}`, `O${TH + 1}`);
-
-  // ---- 3) Per resi (ongkir) ----
-  const U0 = rollEnd + 3;
-  vsection(ws, U0, "3. Validasi ongkir per resi", "Ongkir resi dibagi ke koli menurut berat koli, lalu ke pcs di koli. Koli di resi yang sama bisa milik MRP/vendor lain, jadi total resi bisa lebih besar dari yang masuk laporan ini.");
-  const UH = U0 + 3;
-  vhead(ws, UH, ["No Resi", "Ongkir Resi (Rp)", "Berat Resi (kg)", "Σ Berat Koli di laporan (kg)", "Ongkir Koli di laporan (Rp)", "Teralokasi (Σ Ongkir/pcs × FG)", "Selisih Resi − Koli", "Selisih Koli − Teralokasi", "Status"], o.bg, 14);
-  const resiList = Array.from(new Set(withResi.map((r) => r.resi))).sort((a, b) => a.localeCompare(b, "id-ID", { numeric: true }));
-  resiList.forEach((resi, i) => {
-    const r = UH + 1 + i;
-    const k = `$A${r}`;
-    const mine = rolls.filter((x) => x.resi === resi && (x.ongkirResi ?? 0) > 0);
-    const oResi = mine[0].ongkirResi as number;
-    const bResi = mine[0].beratResi ?? 0;
-    const koliMap = new Map(mine.map((x) => [x.koli, x]));
-    const bKoli = sum(Array.from(koliMap.values()).map((x) => x.beratKoli ?? 0));
-    const oKoli = sum(Array.from(koliMap.values()).map(koliOngkir));
-    const alloc = sum(mine.map((x) => x.ongkirPcs * x.fg));
-    const gA = oResi - oKoli;
-    const gB = oKoli - alloc;
-    const status = Math.abs(gA) <= TOLERANCE && Math.abs(gB) <= TOLERANCE ? "Cocok" : gA > TOLERANCE ? "Ada koli resi ini di luar laporan (MRP/vendor lain)" : gB > TOLERANCE ? "Pcs di koli lebih banyak dari Qty FG di laporan" : "Selisih pembulatan";
-    const keys = `${rg("resi")},${rg("resi")},${rg("koli")},${rg("koli")}`;
-    const denom = `(COUNTIFS(${keys},${rg("ongkirResi")},">0")+(${rg("ongkirResi")}=0))`;
-    vput(ws, r, 1, resi, { bold: true });
-    vput(ws, r, 2, f(`IFERROR(AVERAGEIFS(${rg("ongkirResi")},${rg("resi")},${k},${rg("ongkirResi")},">0"),0)`, oResi), { fmt: "#,##0" });
-    vput(ws, r, 3, f(`IFERROR(AVERAGEIFS(${rg("beratResi")},${rg("resi")},${k},${rg("beratResi")},">0"),0)`, bResi), { fmt: "#,##0.00" });
-    vput(ws, r, 4, f(`SUMPRODUCT((${rg("resi")}=${k})*${rg("beratKoli")}/${denom})`, bKoli), { fmt: "#,##0.00" });
-    vput(ws, r, 5, f(`SUMPRODUCT((${rg("resi")}=${k})*${rg("ongkirKoli")}/${denom})`, oKoli), { fmt: "#,##0" });
-    vput(ws, r, 6, f(`SUMPRODUCT((${rg("resi")}=${k})*(${rg("ongkirResi")}>0)*${rg("ongkir")}*${fg})`, alloc), { fmt: "#,##0" });
-    vput(ws, r, 7, f(`B${r}-E${r}`, gA), { fmt: DIFF_FMT });
-    vput(ws, r, 8, f(`E${r}-F${r}`, gB), { fmt: DIFF_FMT });
-    ws.mergeCells(r, 9, r, 14);
-    vput(ws, r, 9, f(`IF(AND(ABS(G${r})<=${TOLERANCE},ABS(H${r})<=${TOLERANCE}),"Cocok",IF(G${r}>${TOLERANCE},"Ada koli resi ini di luar laporan (MRP/vendor lain)",IF(H${r}>${TOLERANCE},"Pcs di koli lebih banyak dari Qty FG di laporan","Selisih pembulatan")))`, status), { align: "left", bold: true });
-    for (let c = 10; c <= 14; c++) ws.getCell(r, c).border = BORDER;
-  });
-  if (resiList.length === 0) ws.getCell(UH + 1, 1).value = "Belum ada baris dengan rincian ongkir resi.";
-  else statusRules(ws, `I${UH + 1}:I${UH + resiList.length}`, `I${UH + 1}`);
+  statusRules(ws, `F${R(0)}:F${R(rows.length - 1)}`, `F${R(0)}`);
 }
