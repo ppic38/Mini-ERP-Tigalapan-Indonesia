@@ -1,5 +1,11 @@
 # Migrasi Project — Status & Riwayat
 
+## Unduhan HPP: sheet Validasi (total sumber vs jumlah per pcs) (2026-11-04, tanpa migration)
+Owner: unduhan Laporan HPP perlu sheet validasi supaya terlihat apakah nilai per pcs (diskon, rib, bahan, ongkir) kembali ke totalnya; contoh: total rib Rp 100.000 tetapi rib per pcs dijumlahkan tidak 100.000.
+- `lib/mrp/exportHppExcel.ts`: `buildHppWorkbook` (dipisah dari unduhan `exportHppExcel`, supaya bisa diuji) menambah dua sheet, "Validasi On Going" dan "Validasi Final", dibangun `addValidasiSheet`. Semua angka berupa rumus yang membaca sheet Detail Roll pasangannya (diverifikasi dihitung ulang di Excel, selisih 0).
+- Isi tiap sheet: (1) Ringkasan komponen: bahan sebelum/sesudah diskon, diskon, rib (porsi roll dan total rib per warna di invoice), ongkir (tagihan per resi dan ongkir koli yang ikut laporan), serta pemeriksaan Total HPP = Σ komponen per pcs × Qty FG; kolom total sumber, teralokasi, selisih, % teralokasi, status Cocok/Selisih (toleransi Rp 1), dan penjelasan penyebab. (2) Per roll: pembagi, Σ Qty FG di laporan, serta biaya/diskon/rib roll vs teralokasi dengan status (mis. "Qty FG di laporan < pembagi"). (3) Per resi: ongkir resi, berat resi, Σ berat/ongkir koli di laporan, teralokasi, status (mis. "Ada koli resi ini di luar laporan").
+- Penyebab selisih yang wajar dijelaskan di sheet: pembagi belum sama dengan Finish Good (roll belum ditutup / pcs belum masuk koli), dan diskon/rib/ongkir dibagi ke semua roll/koli di sumbernya sedangkan laporan hanya memuat MRP ini. Status memakai pemformatan bersyarat (hijau/oranye). Rumus nilai unik memakai pola SUMPRODUCT/COUNTIFS (nilai dibagi jumlah barisnya) dengan penjaga pembagi nol.
+
 ## Procurement Paying Voucher: kolom "Tgl Upload Bukti" (2026-11-04, tanpa migration)
 Owner: tanggal upload bukti bayar juga tampil di modul Procurement. `components/procurement/paying-voucher-material-panel.tsx`: kolom "Tgl Upload Bukti" (tanggal + jam, `formatDateTime`) setelah Bukti Pembayaran di Riwayat Paying Voucher; "—" kalau belum ada bukti. Data dari `RawMaterialInvoice.buktiBayarAt` yang sama dengan halaman Finance. Hanya tampilan.
 
