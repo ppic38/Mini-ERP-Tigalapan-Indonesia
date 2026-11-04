@@ -1,5 +1,9 @@
 # Migrasi Project — Status & Riwayat
 
+## Finance Payment: kolom "Tgl Upload Bukti" (2026-11-04, tanpa migration)
+Owner: tabel Invoice material (Riwayat Pembayaran) perlu menampilkan kapan bukti pembayaran diupload. Datanya sudah ada: `raw_material_invoices.bukti_bayar_at` (migration 0017) diisi `setInvoicesPaidAction` / `setInvoicePaymentProofAction` setiap bukti diupload atau diganti, dan sudah ikut snapshot sebagai `RawMaterialInvoice.buktiBayarAt`.
+- `components/finance/payment-panel.tsx`: kolom baru `buktiBayarAt` ("Tgl Upload Bukti", tampil default, format tanggal + jam id-ID lewat `formatDateTime`) di antara Bukti Pembayaran dan PIC Pembayaran; "—" kalau belum ada bukti. Kalau bukti diganti, yang tampil waktu unggahan terakhir. Invoice lama yang bukti bayarnya sudah ada sebelum kolom itu terisi tetap tampil selama `bukti_bayar_at` terisi.
+
 ## Warehouse Penerimaan: unduh Excel per resi (2026-11-04, tanpa migration)
 Owner: resi di halaman Penerimaan Warehouse perlu bisa diunduh sebagai Excel yang rapi dan berheader warna. Hanya tampilan/unduhan; gate Bongkar tidak berubah.
 - `lib/mrp/exportResiExcel.ts` (`buildResiWorkbook` + `exportResiExcel`): satu file per resi, dua sheet. "Rincian Item" = blok info resi (no resi, ekspedisi, tanggal kirim, no MRP, vendor, no koli, no invoice, status, status WMS) lalu tabel isi koli (koli, warna, lengan, size, jenis, qty, HPP/item, nilai HPP, catatan); "Ringkasan Item" = per warna · lengan · size (Finish Good, Rework, Reject, total qty, total HPP, HPP rata-rata) lewat SUMIFS. Header biru (tema ERP), baris selang-seling, filter, tanpa garis kisi; sel masukan biru, sel rumus hitam; Nilai HPP, total, dan ringkasan ditulis sebagai rumus (diverifikasi dihitung ulang di Excel, selisih 0). Baris "Estimasi" (roll belum ditutup) diberi tanda oranye; reject dan item tanpa HPP diberi catatan.

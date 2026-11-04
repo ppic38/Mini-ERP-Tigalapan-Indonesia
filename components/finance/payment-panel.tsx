@@ -9,6 +9,7 @@ import { useMrpStore } from "@/lib/mrp/store";
 import {
   claimKeySourceInvoiceId,
   formatDate,
+  formatDateTime,
   formatDecimal,
   formatRupiah,
   invoiceBadge,
@@ -514,6 +515,8 @@ export function PaymentPanel() {
         return <span className="font-sans text-[11px] text-text-muted">—</span>;
       },
     },
+    // Tanggal + jam bukti pembayaran diupload (bukti_bayar_at); kalau bukti diganti, yang tampil waktu unggahan terakhir. Kosong kalau belum ada bukti.
+    { key: "buktiBayarAt", label: "Tgl Upload Bukti", default: true, render: (i) => <span className="font-sans text-[11px]">{i.buktiBayarAt ? formatDateTime(i.buktiBayarAt) : "—"}</span> },
     // PIC Finance yang memproses pembayaran (migration 0082); kosong untuk invoice yang belum dibayar.
     { key: "paidBy", label: "PIC Pembayaran", default: true, render: (i) => <span className="font-sans text-[11px]">{i.status === "PAID" || i.paidAt ? i.paidBy ?? "-" : "—"}</span> },
   ];
