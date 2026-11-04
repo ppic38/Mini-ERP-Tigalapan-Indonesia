@@ -4478,7 +4478,10 @@ export function hppRowsForInvoicePerRoll(
   type RollChunk = { roll: ProductionBatch; koli: DeliveryKoli; size: string; fgQty: number; cuttingQty: number; rejectQty: number; reworkQty: number };
   type ReworkChunk = { koli: DeliveryKoli; size: string; usia?: Usia; qty: number };
 
-  for (const line of inv.lines) {
+  // Baris tanpa usia (baris utama) diproses lebih dulu, baris ber-usia (KIDS/DEWASA, biasanya sisa hasil rework di ujung pool) sesudahnya;
+  // sort stabil, jadi urutan asli tetap dipertahankan di dalam tiap kelompok. Lihat BUG FIX sameInvoiceBefore di bawah.
+  const orderedLines = [...inv.lines].sort((a, b) => (a.usia ? 1 : 0) - (b.usia ? 1 : 0));
+  for (const [lineIdx, line] of orderedLines.entries()) {
     const groupKey = line.mrpId + "|" + line.warna + "|" + line.lengan;
     const shippedRolls = productionBatches.filter(
       (b) =>
@@ -4558,9 +4561,18 @@ export function hppRowsForInvoicePerRoll(
     const invoicesForGroup = allVendorInvoices
       .filter((o) => o.status !== "REVISION" && o.vendorProduksi === inv.vendorProduksi)
       .flatMap((o) => o.lines.filter((l) => l.mrpId === line.mrpId && l.warna === line.warna && l.lengan === line.lengan).map((l) => ({ invId: o.id, submittedAt: o.submittedAt, qty: l.qty })));
-    const priorQty = invoicesForGroup
-      .filter((e) => e.submittedAt < inv.submittedAt || (e.submittedAt === inv.submittedAt && e.invId < inv.id))
-      .reduce((s, e) => s + e.qty, 0);
+    // BUG FIX 2026-11-04 (W39 YOGI 02, VINV-13102): satu invoice boleh punya LEBIH DARI SATU baris untuk warna·lengan yang sama (mis. baris
+    // utama + baris KIDS/DEWASA). Dulu hanya invoice LAIN yang dihitung sebagai "sudah mengklaim", jadi baris kedua mulai dari titik yang sama
+    // dengan baris pertama: pcs roll di awal pool ditagih dua kali (baris roll kelebihan) dan pcs rework di ujung pool tidak pernah tertagih.
+    // Sekarang baris sebelumnya di invoice ini (urutan `orderedLines`) ikut dihitung.
+    const sameInvoiceBefore = orderedLines
+      .slice(0, lineIdx)
+      .filter((l) => l.mrpId === line.mrpId && l.warna === line.warna && l.lengan === line.lengan)
+      .reduce((s, l) => s + l.qty, 0);
+    const priorQty =
+      invoicesForGroup
+        .filter((e) => e.submittedAt < inv.submittedAt || (e.submittedAt === inv.submittedAt && e.invId < inv.id))
+        .reduce((s, e) => s + e.qty, 0) + sameInvoiceBefore;
     const before = Math.min(priorQty, totalPool);
     const after = Math.min(priorQty + line.qty, totalPool);
     const combinedPortion = Math.max(0, after - before);
