@@ -1,5 +1,10 @@
 # Migrasi Project — Status & Riwayat
 
+## Warehouse Penerimaan: unduh Excel per resi (2026-11-04, tanpa migration)
+Owner: resi di halaman Penerimaan Warehouse perlu bisa diunduh sebagai Excel yang rapi dan berheader warna. Hanya tampilan/unduhan; gate Bongkar tidak berubah.
+- `lib/mrp/exportResiExcel.ts` (`buildResiWorkbook` + `exportResiExcel`): satu file per resi, dua sheet. "Rincian Item" = blok info resi (no resi, ekspedisi, tanggal kirim, no MRP, vendor, no koli, no invoice, status, status WMS) lalu tabel isi koli (koli, warna, lengan, size, jenis, qty, HPP/item, nilai HPP, catatan); "Ringkasan Item" = per warna · lengan · size (Finish Good, Rework, Reject, total qty, total HPP, HPP rata-rata) lewat SUMIFS. Header biru (tema ERP), baris selang-seling, filter, tanpa garis kisi; sel masukan biru, sel rumus hitam; Nilai HPP, total, dan ringkasan ditulis sebagai rumus (diverifikasi dihitung ulang di Excel, selisih 0). Baris "Estimasi" (roll belum ditutup) diberi tanda oranye; reject dan item tanpa HPP diberi catatan.
+- `app/warehouse/penerimaan/page.tsx`: tombol "Download Excel" di rincian resi (isi SELURUH resi, tidak terpengaruh filter baris di panel); nama file `Resi-<noresi>.xlsx`.
+
 ## Paying Voucher FABRIKU: kode transaksi boleh sama dengan nomor invoice (2026-11-03, tanpa migration)
 Owner: untuk supplier FABRIKU nomor invoice sekaligus kode transaksi/transfer (mis. A033), jadi nama file `A033.A033.pdf` harus diterima, padahal aturan lama memaksa kode transaksi 4 digit angka.
 - `lib/invoice-import/filename.ts`: `FileNameRule.kodeAlsoInvoiceNo` + `isValidKodeTransaksi(kode, noInvoice, allowSameAsInvoice=false)`. Kode sah = 4 digit angka, atau (hanya bila aturan supplier mengizinkan) sama dengan nomor invoice (tanpa beda huruf besar/kecil, disimpan huruf besar). Pesan penolakan menyebut kemungkinan itu.

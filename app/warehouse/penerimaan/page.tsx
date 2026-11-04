@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Download } from "lucide-react";
+import { exportResiExcel } from "@/lib/mrp/exportResiExcel";
 import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Button } from "@/components/ui/button";
@@ -19,6 +21,7 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
   const [error, setError] = useState("");
   const [koliFilter, setKoliFilter] = useState("");
   const [hppFilter, setHppFilter] = useState("");
+  const [downloading, setDownloading] = useState(false);
 
   // HPP per item selalu tampil begitu ada baris HPP-nya (dari mesin HPP yang sama dengan Laporan HPP Finance: master data harga
   // maklon + biaya bahan + ongkir), TIDAK menunggu Finance membayar invoice. Selama roll belum ditutup nilainya diberi tanda
@@ -35,6 +38,19 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
     if (hppQuery && !(hasHpp(it) && String(Math.round(it.hppPerItem)).includes(hppQuery))) return false;
     return true;
   });
+
+  async function handleDownload() {
+    setDownloading(true);
+    setError("");
+    try {
+      const safe = String(group.noResi ?? group.resiGroupId).replace(/[^A-Za-z0-9_-]+/g, "_");
+      await exportResiExcel(group, `Resi-${safe}.xlsx`);
+    } catch (err) {
+      setError("Gagal membuat file Excel: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   async function handleBongkar() {
     setSubmitting(true);
@@ -74,6 +90,11 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
         <span className="font-sans text-[10.5px] text-text-muted">
           {visibleItems.length} dari {group.items.length} baris
         </span>
+        {/* Unduh SELURUH isi resi ini (bukan hanya baris yang lolos filter di atas). */}
+        <Button variant="accent" size="sm" disabled={downloading || group.items.length === 0} onClick={handleDownload} className="ml-auto inline-flex items-center gap-1.5">
+          <Download className="h-3.5 w-3.5" />
+          {downloading ? "Menyiapkan…" : "Download Excel"}
+        </Button>
       </div>
       <div className="overflow-x-auto rounded-md border border-[#E4E9EE] bg-white">
         <table className="w-full min-w-[760px] border-collapse">
