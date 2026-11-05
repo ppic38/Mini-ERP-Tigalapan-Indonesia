@@ -1,4 +1,6 @@
-import { ekspedisiPrice } from "./derive";
+import { ekspedisiPrice, isEkspedisiBerbiaya } from "./derive";
+
+export { isEkspedisiBerbiaya };
 import type { EkspedisiRateRow } from "./masterData";
 import type { DeliveryKoli, EkspedisiInvoice, EkspedisiInvoiceStatus } from "./types";
 
@@ -41,10 +43,8 @@ export type EkspedisiResiGroup = {
   staleBiaya?: number;
 };
 
-/** Ekspedisi yang tidak menimbulkan biaya (mis. pengiriman internal vendor MKS) tidak perlu invoice ekspedisi. */
-export function isEkspedisiBerbiaya(ekspedisi: string): boolean {
-  return !!ekspedisi && !/^pengiriman internal/i.test(ekspedisi.trim());
-}
+/** `isEkspedisiBerbiaya` (ekspedisi yang tidak menimbulkan biaya, mis. pengiriman internal vendor MKS, tidak perlu invoice ekspedisi) kini ada di derive.ts
+ *  supaya gate Bongkar Koli memakai aturan yang sama; diekspor ulang di atas agar impor lama tetap jalan. */
 
 /** Kunci resi dasar sebuah koli. */
 export function ekspedisiBaseKey(k: DeliveryKoli): string {

@@ -1349,6 +1349,11 @@ export function ekspedisiPrice(ekspedisi: string, beratKg: number, rates: Eksped
  *  lama) dihitung APA ADANYA seperti sebelumnya (grup isinya cuma dirinya sendiri, portion = 1) --
  *  MENGGANTIKAN semua pemanggilan `ekspedisiPrice(k.ekspedisi, k.beratKoli ?? 0)` langsung di
  *  seluruh app (autoOngkirForInvoice, hppRowsForInvoicePerRoll, halaman Pengiriman). */
+/** Ekspedisi yang menimbulkan biaya (pengiriman internal vendor, mis. MKS, tidak). Dipakai Invoice Ekspedisi dan gate Bongkar Koli. */
+export function isEkspedisiBerbiaya(ekspedisi: string): boolean {
+  return !!ekspedisi && !/^pengiriman internal/i.test(ekspedisi.trim());
+}
+
 /** Biaya ekspedisi AKTUAL (Rp, total satu resi) hasil validasi Procurement lewat Invoice Ekspedisi (migration 0088), atau null kalau resi ini belum divalidasi. */
 export function ekspedisiActualBiaya(koli: DeliveryKoli): number | null {
   const inv = koli.ekspedisiInvoice;
@@ -5207,6 +5212,13 @@ export function warehouseReceivableGroups(
       } else if (anyUntraceable) {
         gateReason = "HPP item ini tidak bisa ditelusuri ke koli (data lama)";
       }
+    }
+    // Gate ongkir (owner 2026-11-05): resi baru boleh dibongkar setelah Procurement membuat Invoice Ekspedisi-nya (tervalidasi, diajukan, atau lunas),
+    // supaya ongkir yang masuk snapshot HPP saat Bongkar sudah pasti, bukan estimasi tarif master. DITAMBAH ke gate invoice vendor di atas (keduanya
+    // harus lolos). Pengecualian: pengiriman internal tanpa biaya ekspedisi dan resi yang hanya berisi reject (hasBillableItems false).
+    if (hasBillableItems && kolis.some((k) => isEkspedisiBerbiaya(k.ekspedisi) && ekspedisiActualBiaya(k) == null)) {
+      const ongkirReason = "Menunggu Procurement memvalidasi invoice ekspedisi resi ini";
+      gateReason = gateReason ? `${gateReason}; ${ongkirReason}` : ongkirReason;
     }
 
     result.push({

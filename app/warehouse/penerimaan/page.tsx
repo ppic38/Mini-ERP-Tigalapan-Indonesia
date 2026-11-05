@@ -209,6 +209,7 @@ export default function WarehousePenerimaanPage() {
   const statusLabelOf = (g: WarehouseReceivableGroup) => {
     if (!g.gateReason) return "Siap dibongkar";
     if (g.gateReason.startsWith("Menunggu Finance")) return "Menunggu Finance membayar invoice";
+    if (g.gateReason === "Menunggu Procurement memvalidasi invoice ekspedisi resi ini") return "Menunggu Procurement memvalidasi ongkir";
     if (g.gateReason.startsWith("Belum ada invoice") || g.gateReason.startsWith("Sebagian item")) return "Belum ada invoice vendor";
     if (g.gateReason.includes("revisi")) return "Invoice dalam revisi";
     return "Lainnya";
@@ -289,7 +290,7 @@ export default function WarehousePenerimaanPage() {
       title="Penerimaan"
     >
       <div className="grid grid-cols-3 gap-3.5">
-        <KpiCard label="Siap dibongkar" value={formatPcs(readyCount)} sub="resi dengan invoice sudah dibayar" accent="success" />
+        <KpiCard label="Siap dibongkar" value={formatPcs(readyCount)} sub="invoice vendor dibayar dan ongkir tervalidasi" accent="success" />
         <KpiCard label="Menunggu invoice" value={formatPcs(waitingCount)} sub="resi belum lolos syarat" accent="orange" />
         <KpiCard label="Nilai siap dibongkar" value={formatRupiah(totalNilaiReady)} accent="blue" />
       </div>
@@ -305,7 +306,7 @@ export default function WarehousePenerimaanPage() {
           getText: (g) => [g.noResi, g.resiGroupId, g.noKoli, g.mrpLabel, g.mrpId, g.invoiceIds.join(" ")].filter(Boolean).join(" "),
         }}
         filterDefs={[
-          { label: "Status", options: ["Siap dibongkar", "Menunggu Finance membayar invoice", "Belum ada invoice vendor", "Invoice dalam revisi", "Lainnya"].filter((o) => groups.some((g) => statusLabelOf(g) === o)), test: (g, v) => statusLabelOf(g) === v },
+          { label: "Status", options: ["Siap dibongkar", "Menunggu Finance membayar invoice", "Menunggu Procurement memvalidasi ongkir", "Belum ada invoice vendor", "Invoice dalam revisi", "Lainnya"].filter((o) => groups.some((g) => statusLabelOf(g) === o)), test: (g, v) => statusLabelOf(g) === v },
           { label: "Ekspedisi", options: uniqSorted(groups.map((g) => g.ekspedisi)), test: (g, v) => g.ekspedisi === v },
           { label: "Vendor Produksi", options: uniqSorted(groups.map(vendorName)), test: (g, v) => vendorName(g) === v },
           { label: "No MRP", options: uniqSorted(groups.flatMap((g) => g.mrpLabel.split(", ").map((m) => m.trim()))), test: (g, v) => g.mrpLabel.split(", ").some((m) => m.trim() === v) },
