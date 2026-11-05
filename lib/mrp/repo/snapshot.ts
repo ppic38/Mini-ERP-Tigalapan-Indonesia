@@ -101,6 +101,23 @@ type RawTables = Record<
   TableResult
 >;
 
+/** PostgREST membatasi satu respons maksimal 1.000 baris (max-rows bawaan Supabase) TANPA error. Jalur per-tabel dulu memanggil
+ *  `select *` sekali per tabel, jadi tabel yang lebih dari 1.000 baris (roll 2.146, batch produksi 1.090, ukuran lengan 3.814,
+ *  hasil produksi 1.761, item koli 1.674, dst.) DIAM-DIAM terpotong -- gejalanya roll "0/0" dan data hilang di layar vendor setiap kali jalur
+ *  ini terpakai. Sekarang dibaca per halaman 1.000 baris (urutan sudah stabil karena tiap query punya order by id/kunci). */
+const LEGACY_PAGE_SIZE = 1000;
+async function paged(build: (from: number, to: number) => PromiseLike<TableResult>): Promise<TableResult> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const all: any[] = [];
+  for (let from = 0; ; from += LEGACY_PAGE_SIZE) {
+    const res = await build(from, from + LEGACY_PAGE_SIZE - 1);
+    if (res.error) return { data: null, error: res.error };
+    const rows = res.data ?? [];
+    for (const r of rows) all.push(r);
+    if (rows.length < LEGACY_PAGE_SIZE) return { data: all, error: null };
+  }
+}
+
 /** Cara LAMA -- 32 query terpisah ke PostgREST lewat Promise.all. Tetap dipertahankan sebagai
  *  fallback (lihat fetchFlowRows) supaya app tidak pernah benar-benar berhenti bisa muat data
  *  cuma karena migration 0008 (RPC get_flow_snapshot_raw) belum sempat di-apply -- urutan deploy
@@ -163,60 +180,60 @@ async function fetchFlowRowsLegacy(db: SupabaseClient): Promise<RawTables> {
     // actionnya sendiri) -- setiap tabel di bawah SEKARANG diurutkan stabil & deterministik
     // (timestamp "sekali isi saat insert" kalau ada, else primary key), SAMA PERSIS kolom yang
     // dipakai jalur cepat (RPC get_flow_snapshot_raw) supaya kedua jalur konsisten.
-    db.from("mrp").select("*").order("created_at").order("id"),
-    db.from("lengan_groups").select("*").order("id"),
-    db.from("lengan_group_sizes").select("*").order("id"),
-    db.from("aduan_pola_rows").select("*").order("id"),
-    db.from("aduan_pola_sizes").select("*").order("id"),
-    db.from("material_rows").select("*").order("id"),
-    db.from("material_pos").select("*").order("created_at").order("id"),
-    db.from("material_po_color_breakdown").select("*").order("id"),
-    db.from("material_po_invoiced_by_color").select("*").order("material_po_id").order("color_key"),
-    db.from("maklon_pos").select("*").order("id"),
-    db.from("maklon_po_cancelled_lines").select("*").order("id"),
-    db.from("raw_material_invoices").select("*").order("booked_at").order("id"),
-    db.from("raw_material_invoice_colors").select("*").order("id"),
-    db.from("raw_material_invoice_rolls").select("*").order("id"),
-    db.from("raw_material_invoice_addbuys").select("*").order("id"),
-    db.from("maklon_invoices").select("*").order("submitted_at").order("id"),
-    db.from("production_batches").select("*").order("created_at").order("id"),
-    db.from("production_batch_sizes").select("*").order("id"),
-    db.from("production_batch_fg_sizes").select("*").order("id"),
-    db.from("production_yield_resolutions").select("*").order("production_batch_id"),
-    db.from("production_results").select("*").order("recorded_at").order("id"),
-    db.from("production_result_sizes").select("*").order("id"),
-    db.from("production_group_meta").select("*").order("group_key"),
-    db.from("delivery_kolis").select("*").order("created_at").order("id"),
-    db.from("delivery_koli_items").select("*").order("id"),
-    db.from("delivery_koli_batches").select("*").order("id"),
-    db.from("vendor_invoices").select("*").order("submitted_at").order("id"),
-    db.from("vendor_invoice_lines").select("*").order("id"),
-    db.from("vendor_invoice_adjustments").select("*").order("added_at").order("id"),
+    paged((a, b) => db.from("mrp").select("*").order("created_at").order("id").range(a, b)),
+    paged((a, b) => db.from("lengan_groups").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("lengan_group_sizes").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("aduan_pola_rows").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("aduan_pola_sizes").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("material_rows").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("material_pos").select("*").order("created_at").order("id").range(a, b)),
+    paged((a, b) => db.from("material_po_color_breakdown").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("material_po_invoiced_by_color").select("*").order("material_po_id").order("color_key").range(a, b)),
+    paged((a, b) => db.from("maklon_pos").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("maklon_po_cancelled_lines").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("raw_material_invoices").select("*").order("booked_at").order("id").range(a, b)),
+    paged((a, b) => db.from("raw_material_invoice_colors").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("raw_material_invoice_rolls").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("raw_material_invoice_addbuys").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("maklon_invoices").select("*").order("submitted_at").order("id").range(a, b)),
+    paged((a, b) => db.from("production_batches").select("*").order("created_at").order("id").range(a, b)),
+    paged((a, b) => db.from("production_batch_sizes").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("production_batch_fg_sizes").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("production_yield_resolutions").select("*").order("production_batch_id").range(a, b)),
+    paged((a, b) => db.from("production_results").select("*").order("recorded_at").order("id").range(a, b)),
+    paged((a, b) => db.from("production_result_sizes").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("production_group_meta").select("*").order("group_key").range(a, b)),
+    paged((a, b) => db.from("delivery_kolis").select("*").order("created_at").order("id").range(a, b)),
+    paged((a, b) => db.from("delivery_koli_items").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("delivery_koli_batches").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("vendor_invoices").select("*").order("submitted_at").order("id").range(a, b)),
+    paged((a, b) => db.from("vendor_invoice_lines").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("vendor_invoice_adjustments").select("*").order("added_at").order("id").range(a, b)),
     // Migration 0031 (Portal Warehouse) -- tabel belum tentu ada di environment yang belum
     // di-migrate, `.data ?? []` di bawah gracefully jadi kosong sama seperti tabel opsional lain.
-    db.from("warehouse_receipts").select("*").order("created_at").order("id"),
-    db.from("warehouse_receipt_kolis").select("*").order("id"),
-    db.from("warehouse_receipt_items").select("*").order("id"),
-    db.from("material_claim_history").select("*").order("id"),
-    db.from("vendor_deposits").select("*").order("created_at").order("id"),
-    db.from("notifications").select("*").order("time").order("id"),
-    db.from("harga_maklon").select("*").order("id"),
-    db.from("harga_kain").select("*").order("id"),
-    db.from("harga_kain_pks").select("*").order("id"),
-    db.from("entitas").select("*").order("id"),
-    db.from("suppliers").select("*").order("id"),
+    paged((a, b) => db.from("warehouse_receipts").select("*").order("created_at").order("id").range(a, b)),
+    paged((a, b) => db.from("warehouse_receipt_kolis").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("warehouse_receipt_items").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("material_claim_history").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("vendor_deposits").select("*").order("created_at").order("id").range(a, b)),
+    paged((a, b) => db.from("notifications").select("*").order("time").order("id").range(a, b)),
+    paged((a, b) => db.from("harga_maklon").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("harga_kain").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("harga_kain_pks").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("entitas").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("suppliers").select("*").order("id").range(a, b)),
     // SENGAJA select kolom spesifik (bukan "*") -- tabel ini juga punya password_hash (bcrypt,
     // lihat loginVendorAction di lib/auth/actions.ts) yang TIDAK BOLEH pernah ikut snapshot yang
     // sampai ke client/browser.
-    db.from("vendors_produksi").select("id,name,kategori,base_capacity").order("id"),
-    db.from("ekspedisi_rates").select("*").order("id"),
-    db.from("item_selling_prices").select("*").order("id"),
-    db.from("kerah_manset_settings").select("*").order("kind"),
-    db.from("harga_rib").select("*").order("id"),
-    db.from("harga_kerah_manset").select("*").order("id"),
-    db.from("material_suppliers").select("*").order("id"),
-    db.from("warna_aliases").select("*").order("mrp_warna"),
-    db.from("harga_fob").select("*").order("id"),
+    paged((a, b) => db.from("vendors_produksi").select("id,name,kategori,base_capacity").order("id").range(a, b)),
+    paged((a, b) => db.from("ekspedisi_rates").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("item_selling_prices").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("kerah_manset_settings").select("*").order("kind").range(a, b)),
+    paged((a, b) => db.from("harga_rib").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("harga_kerah_manset").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("material_suppliers").select("*").order("id").range(a, b)),
+    paged((a, b) => db.from("warna_aliases").select("*").order("mrp_warna").range(a, b)),
+    paged((a, b) => db.from("harga_fob").select("*").order("id").range(a, b)),
   ]);
   return {
     mrpRows,
