@@ -8,10 +8,11 @@ import { MultiFileInput } from "@/components/mrp/multi-file-input";
 import { viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
 import { useMrpStore } from "@/lib/mrp/store";
 import { readProofAsDataUrl } from "@/lib/mrp/clientFiles";
-import { saveEkspedisiInvoiceFiles, viewEkspedisiInvoiceFiles, type AttachFile } from "@/lib/mrp/attachments";
+import { viewEkspedisiInvoiceFiles, type AttachFile } from "@/lib/mrp/attachments";
 import { ekspedisiInvoiceBadge, ekspedisiResiGroups, type EkspedisiResiGroup } from "@/lib/mrp/ekspedisiInvoice";
 import { formatDate, formatRupiah } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import { ResiKoliDetail } from "@/components/mrp/resi-koli-detail";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { ekspedisiInvoiceCorrections } from "@/components/sysadmin/finance-corrections";
 
@@ -37,8 +38,6 @@ function diffText(biaya: number, estimasi: number): { text: string; tone: string
 
 function EkspedisiInvoiceModal({ group, onClose }: { group: EkspedisiResiGroup; onClose: () => void }) {
   const saveEkspedisiInvoice = useMrpStore((s) => s.saveEkspedisiInvoice);
-  const submitEkspedisiInvoice = useMrpStore((s) => s.submitEkspedisiInvoice);
-  const refresh = useMrpStore((s) => s.refresh);
   const inv = group.invoice;
   const [noResi, setNoResi] = useState(inv?.noResi ?? group.noResi);
   const [noNota, setNoNota] = useState(inv?.noNota ?? "");
@@ -63,17 +62,12 @@ function EkspedisiInvoiceModal({ group, onClose }: { group: EkspedisiResiGroup; 
     setBusy(true);
     setError("");
     try {
-      await saveEkspedisiInvoice({ key: group.key, noResi: noResi.trim(), biaya, noNota: noNota.trim(), catatan: catatan.trim() });
-      if (files.length > 0) {
-        const fileError = await saveEkspedisiInvoiceFiles(group.key, "NOTA", files);
-        if (fileError) {
-          setError("Biaya tersimpan, tetapi nota gagal diunggah: " + fileError);
-          await refresh();
-          return;
-        }
-        await refresh();
+      // Satu alur: simpan + unggah nota + (ajukan), satu kali ambil-ulang data di akhir (sebelumnya tiga langkah dengan tiga kali ambil-ulang, sehingga lama).
+      const res = await saveEkspedisiInvoice({ key: group.key, noResi: noResi.trim(), biaya, noNota: noNota.trim(), catatan: catatan.trim(), submit: submitAfter }, files);
+      if (res.extraError) {
+        setError("Biaya tersimpan, tetapi langkah berikutnya gagal: " + res.extraError);
+        return;
       }
-      if (submitAfter) await submitEkspedisiInvoice(group.key);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -286,7 +280,8 @@ export function EkspedisiInvoicePanel() {
     { key: "mrp", label: "No MRP", default: true, render: (g) => <span className="font-mono">{g.mrpId}</span> },
     { key: "vendor", label: "Vendor", default: true, render: (g) => vendorName(g.vendorProduksi) },
     { key: "ekspedisi", label: "Ekspedisi", default: true, render: (g) => g.ekspedisi },
-    { key: "koli", label: "No Koli", default: true, render: (g) => <span className="font-mono text-[11px]">{g.noKolis.join(", ")}</span> },
+    // Daftar nomor koli disembunyikan secara default (owner 2026-11-05): nomornya terlihat saat baris dibuka (klik nomor untuk melihat isinya), atau tampilkan lewat menu Kolom.
+    { key: "koli", label: "No Koli", default: false, render: (g) => <span className="font-mono text-[11px]">{g.noKolis.join(", ")}</span> },
     { key: "jumlahKoli", label: "Jumlah Koli", default: true, align: "right", render: (g) => <span className="font-mono font-semibold">{g.koliIds.length}</span> },
     { key: "tgl", label: "Tgl Kirim", default: true, render: (g) => formatDate(g.tanggalKirim) },
     { key: "berat", label: "Berat Resi", default: true, align: "right", render: (g) => <span className="font-mono">{kg(g.beratResi)}</span> },
@@ -407,6 +402,7 @@ export function EkspedisiInvoicePanel() {
             {g.invoice?.noResiAsli && <span className="font-sans text-[10px] text-warning-fg">diubah dari {g.invoice.noResiAsli}</span>}
           </span>
         )}
+        renderExpanded={(g) => <ResiKoliDetail kolis={g.kolis} />}
         emptyText="Belum ada resi yang dikirim vendor."
       />
       {editing && <EkspedisiInvoiceModal group={editing} onClose={() => setEditKey(null)} />}

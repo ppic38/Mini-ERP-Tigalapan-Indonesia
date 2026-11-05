@@ -6110,8 +6110,11 @@ async function countEkspedisiFiles(db: ReturnType<typeof supabaseServer>, kind: 
 
 const rupiahText = (n: number) => "Rp " + Math.round(n).toLocaleString("id-ID");
 
-/** Procurement: simpan (validasi) biaya ekspedisi aktual satu resi + sesuaikan no resi. Mengubah ongkir HPP resi ini SEKARANG JUGA (status DRAFT sudah dipakai HPP). */
-export async function saveEkspedisiInvoiceAction(input: { key: string; noResi: string; biaya: number; noNota?: string; catatan?: string }): Promise<ActionResult<void>> {
+/** Procurement: simpan (validasi) biaya ekspedisi aktual satu resi + sesuaikan no resi. Mengubah ongkir HPP resi ini SEKARANG JUGA (status DRAFT sudah dipakai HPP).
+ *  SATU panggilan untuk kasus umum: `nota` (file nota pertama, MENGGANTI nota lama) ikut disimpan, dan `submit` langsung mengajukan ke Finance. Server Action satu browser
+ *  berjalan berurutan, jadi menggabungkan langkah-langkah ini menghindari antrean beberapa kali ambil-ulang data (dulu simpan, unggah, ajukan = 3 panggilan + 3 snapshot).
+ *  File nota ke-2 dan seterusnya (jarang) menyusul lewat `addEkspedisiInvoiceFileAction`. */
+export async function saveEkspedisiInvoiceAction(input: { key: string; noResi: string; biaya: number; noNota?: string; catatan?: string; submit?: boolean }, nota?: AttachmentFileInput): Promise<ActionResult<void>> {
   return toActionResult(async () => {
     const actor = await requireInternalRoleWithActor("procurement");
     const noResi = (input.noResi ?? "").trim();
@@ -6128,11 +6131,23 @@ export async function saveEkspedisiInvoiceAction(input: { key: string; noResi: s
     const existing = rows[0].ekspedisi_invoice;
     if (existing?.status === "SUBMITTED") throw new Error("Invoice ekspedisi ini sudah diajukan ke Finance -- Tarik kembali dulu kalau mau mengubahnya.");
     if (existing?.status === "PAID") throw new Error("Invoice ekspedisi ini sudah dibayar Finance dan terkunci.");
-    const { data: rate } = await db.from("ekspedisi_rates").select("price_per_kg").eq("nama", rows[0].ekspedisi).maybeSingle();
+    if (nota) checkEkspedisiFile(nota);
+    const [{ data: rate }, existingNotaCount] = await Promise.all([
+      db.from("ekspedisi_rates").select("price_per_kg").eq("nama", rows[0].ekspedisi).maybeSingle(),
+      input.submit && !nota ? countEkspedisiFiles(db, "NOTA", input.key) : Promise.resolve(existing?.notaCount ?? 0),
+    ]);
+    // Syarat pengajuan dicek SEBELUM ada yang ditulis, supaya gagal tidak meninggalkan setengah tersimpan.
+    if (input.submit && !nota && existingNotaCount === 0) throw new Error("Upload nota/lampiran ekspedisi dulu sebelum diajukan ke Finance.");
+    if (nota) {
+      const { error: delErr } = await db.from("attachment_files").delete().eq("kind", ekspedisiFileKind("NOTA")).eq("ref_id", input.key);
+      if (delErr) throw new Error(delErr.message.includes("attachment_files") ? ATTACHMENT_TABLE_MISSING : delErr.message);
+      const { error: insErr } = await db.from("attachment_files").insert({ kind: ekspedisiFileKind("NOTA"), ref_id: input.key, data_url: nota.dataUrl, file_name: nota.fileName ?? null });
+      if (insErr) throw new Error(`Gagal menyimpan nota: ${insErr.message}`);
+    }
     const beratResi = rows.reduce((s, r) => s + (Number(r.berat_koli) || 0), 0);
     const noResiVendor = existing?.noResiAsli ?? rows[0].no_resi ?? "";
     const next: EkspedisiInvoice = {
-      status: "DRAFT",
+      status: input.submit ? "SUBMITTED" : "DRAFT",
       noResi,
       noResiAsli: noResi !== noResiVendor ? noResiVendor : undefined,
       biaya,
@@ -6140,14 +6155,16 @@ export async function saveEkspedisiInvoiceAction(input: { key: string; noResi: s
       beratResi,
       noNota: noNota || undefined,
       catatan: catatan || undefined,
-      notaCount: existing?.notaCount,
+      notaCount: nota ? 1 : existingNotaCount,
       buktiCount: existing?.buktiCount,
       savedBy: actor.actorName,
       savedAt: nowIso(),
+      ...(input.submit ? { submittedBy: actor.actorName, submittedAt: nowIso() } : {}),
     };
     await writeEkspedisiInvoice(db, rows.map((r) => r.id), next, noResi !== (rows[0].no_resi ?? "") ? { no_resi: noResi } : undefined);
     const resiNote = next.noResiAsli ? ` (no resi vendor ${next.noResiAsli} diubah)` : "";
-    await logInternalAction(actor, `Validasi invoice ekspedisi resi ${noResi}: ${rupiahText(biaya)}${resiNote}`, "delivery_kolis", input.key);
+    await logInternalAction(actor, `${input.submit ? "Validasi dan ajukan" : "Validasi"} invoice ekspedisi resi ${noResi}: ${rupiahText(biaya)}${resiNote}`, "delivery_kolis", input.key);
+    if (input.submit) await insertNotification(notif(`Invoice ekspedisi resi ${noResi} (${rupiahText(biaya)}) menunggu pembayaran Finance`, ["finance"]));
   });
 }
 

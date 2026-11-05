@@ -437,7 +437,12 @@ type FlowActions = {
   deletePaymentProposal: (no: string) => Promise<void>;
   setVendorInvoicePaymentProof: (invoiceIds: string[], proof: { dataUrl: string; fileName?: string }) => Promise<void>;
   /** Invoice Ekspedisi (migration 0088): validasi biaya aktual per resi + sesuaikan no resi (Procurement), ajukan/tarik kembali, dan bayar (Finance). `key` = resiGroupId ?? id koli. */
-  saveEkspedisiInvoice: (input: { key: string; noResi: string; biaya: number; noNota?: string; catatan?: string }) => Promise<void>;
+  /** Simpan (validasi) + unggah nota (+ ajukan kalau `submit`) dalam SATU alur dengan satu ambil-ulang data di akhir. `files` = nota yang dipilih (menggantikan nota lama).
+   *  Mengembalikan `extraError` kalau biaya sudah tersimpan tetapi file nota ke-2 dan seterusnya (atau pengajuannya) gagal. */
+  saveEkspedisiInvoice: (
+    input: { key: string; noResi: string; biaya: number; noNota?: string; catatan?: string; submit?: boolean },
+    files?: { dataUrl: string; fileName: string }[]
+  ) => Promise<{ extraError?: string }>;
   submitEkspedisiInvoice: (key: string) => Promise<void>;
   withdrawEkspedisiInvoice: (key: string) => Promise<void>;
   payEkspedisiInvoices: (keys: string[], proof: { dataUrl: string; fileName?: string }) => Promise<void>;
@@ -1686,8 +1691,10 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     backgroundRefresh();
   },
   // Invoice Ekspedisi: perubahan status dipatch dulu di klien (nilainya pasti dari argumen), dibatalkan kalau server menolak.
-  saveEkspedisiInvoice: async (input) => {
+  saveEkspedisiInvoice: async (input, files = []) => {
     const previous = get().deliveryKolis;
+    // Bila ada file ke-2 dst., pengajuan menunggu semua file terunggah (nota hanya boleh diganti selagi belum diajukan); selain itu diajukan di panggilan pertama.
+    const submitInFirst = !!input.submit && files.length <= 1;
     set({
       deliveryKolis: previous.map((k) =>
         (k.resiGroupId ?? k.id) === input.key
@@ -1696,25 +1703,40 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
               noResi: input.noResi.trim(),
               ekspedisiInvoice: {
                 ...(k.ekspedisiInvoice ?? { status: "DRAFT" as const, noResi: "" }),
-                status: "DRAFT",
+                status: submitInFirst ? "SUBMITTED" : "DRAFT",
                 noResi: input.noResi.trim(),
                 noResiAsli: k.ekspedisiInvoice?.noResiAsli ?? (k.noResi && k.noResi !== input.noResi.trim() ? k.noResi : undefined),
                 biaya: Math.round(input.biaya),
                 noNota: input.noNota?.trim() || undefined,
                 catatan: input.catatan?.trim() || undefined,
+                notaCount: files.length > 0 ? files.length : k.ekspedisiInvoice?.notaCount,
               },
             }
           : k
       ),
     });
     try {
-      unwrapAction(await actions.saveEkspedisiInvoiceAction(input));
+      unwrapAction(await actions.saveEkspedisiInvoiceAction({ ...input, submit: submitInFirst }, files[0]));
     } catch (err) {
       set({ deliveryKolis: previous });
       notifyError("Gagal menyimpan invoice ekspedisi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
+    // Biaya sudah tersimpan. File ke-2 dst. (jarang) dan pengajuan menyusul berurutan; kegagalannya dilaporkan tanpa membatalkan yang sudah tersimpan.
+    let extraError: string | undefined;
+    for (const file of files.slice(1)) {
+      const res = await actions.addEkspedisiInvoiceFileAction(input.key, "NOTA", file, false);
+      if (!res.ok) {
+        extraError = res.error;
+        break;
+      }
+    }
+    if (!extraError && input.submit && !submitInFirst) {
+      const res = await actions.submitEkspedisiInvoiceAction(input.key);
+      if (!res.ok) extraError = res.error;
+    }
     backgroundRefresh();
+    return { extraError };
   },
   submitEkspedisiInvoice: async (key) => {
     const previous = get().deliveryKolis;

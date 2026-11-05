@@ -24,7 +24,9 @@ export function MultiFileInput({
 }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const locked = !!disabled || busy || files.length >= max;
 
   async function pick(list: FileList | null) {
     if (!list || list.length === 0) return;
@@ -47,8 +49,26 @@ export function MultiFileInput({
     if (inputRef.current) inputRef.current.value = "";
   }
 
+  // Seret file dari komputer ke kotak ini (drag and drop); tetap bisa memilih lewat tombol. Berlaku di semua tempat yang memakai komponen ini.
   return (
-    <div className="flex flex-col gap-1.5">
+    <div
+      className={"flex flex-col gap-1.5 rounded-md transition-colors " + (dragging ? "bg-info-bg outline-dashed outline-2 outline-offset-2 outline-accent-blue" : "")}
+      onDragOver={(e) => {
+        if (locked || !e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        if (!dragging) setDragging(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragging(false);
+        if (locked) return;
+        void pick(e.dataTransfer.files);
+      }}
+    >
       <input
         ref={inputRef}
         type="file"
@@ -59,7 +79,7 @@ export function MultiFileInput({
         className={inputClassName ?? "w-full text-[11.5px] file:mr-2 file:rounded-md file:border-0 file:bg-[#EEF1F4] file:px-3 file:py-1.5 file:font-sans file:text-[11.5px] file:font-semibold file:text-text-primary"}
       />
       {busy && <span className="font-sans text-[11px] text-text-muted">Memproses file…</span>}
-      {files.length === 0 && !busy && !error && <span className="font-sans text-[11px] text-text-muted">Belum ada file dipilih. Boleh pilih lebih dari satu (maks {max}).</span>}
+      {files.length === 0 && !busy && !error && <span className="font-sans text-[11px] text-text-muted">{dragging ? "Lepas file di sini." : `Belum ada file dipilih. Pilih atau seret file ke sini; boleh lebih dari satu (maks ${max}).`}</span>}
       {files.length > 0 && (
         <ul className="flex flex-col gap-1">
           {files.map((f, i) => (

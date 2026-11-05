@@ -17,6 +17,8 @@ export type EkspedisiResiGroup = {
   noResi: string;
   koliIds: string[];
   noKolis: string[];
+  /** Koli-koli resi ini (lengkap dengan isinya), untuk rincian koli dan popup isi koli. */
+  kolis: DeliveryKoli[];
   /** Koli pertama grup, dipakai untuk membuka lampiran ekspedisi dari vendor. */
   firstKoliId: string;
   hasVendorPhoto: boolean;
@@ -56,6 +58,7 @@ export function ekspedisiResiGroups(kolis: DeliveryKoli[], rates: EkspedisiRateR
       noResi: first.noResi ?? "",
       koliIds: members.map((k) => k.id),
       noKolis: members.map((k) => k.noKoli || k.id),
+      kolis: members,
       firstKoliId: first.id,
       hasVendorPhoto: members.some((k) => !!k.ekspedisiNoteAt),
       tanggalKirim: first.deliveredAt,
