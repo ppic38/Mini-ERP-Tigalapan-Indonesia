@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Filter tabel saling memengaruhi (2026-11-05, tanpa migration)
+Owner: pilihan sebuah filter hanya memuat nilai yang ada di hasil filter lain (contoh: pilih MRP W39, filter Vendor hanya berisi vendor di W39), diterapkan di semua filter. Diubah di satu tempat, komponen bersama `components/mrp/data-table.tsx` (`optionsFor`), jadi SEMUA tabel yang memakai `filterDefs` (sekitar 26 tabel di Finance, Procurement, Warehouse, SCM, Produksi, Vendor Produksi) ikut. Daftar pilihan sebuah filter = nilai yang masih punya baris yang lolos SEMUA filter lain dan kotak cari; pilihan yang sedang aktif selalu tetap tampil; kalau tidak ada filter lain atau pencarian yang aktif, daftarnya sama seperti sebelumnya. Belum ikut: filter di luar DataTable (mis. bar pil `MultiSelectFilter` di Laporan HPP dan halaman MRP, filter Riwayat pengiriman vendor).
+
 ## Perbaikan: "Lihat" lampiran vendor di Invoice Ekspedisi ditolak untuk Procurement (2026-11-05, tanpa migration)
 Laporan owner: klik "Lihat" lampiran vendor di tab Invoice Ekspedisi menampilkan "Forbidden: koli ini bukan milik vendor Anda." Penyebab: `getDeliveryKoliEkspedisiPhotoAction` memeriksa `session.vendorId` lebih dulu, padahal satu browser bisa memuat login Procurement dan login vendor sekaligus, sehingga Procurement dicek sebagai vendor. Sekarang akses internal (procurement/finance/sysadmin) diperiksa DULU, pola sama `getInvoicePaymentProofAction`; vendor tetap hanya boleh melihat foto koli miliknya. Berlaku juga untuk tombol lihat foto resi di Invoice Vendor dan Payment Maklon.
 

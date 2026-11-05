@@ -149,6 +149,21 @@ export function DataTable<T>({
       ((filterDefs ?? []).every((f, i) => !filterValues[i] || f.test(r, filterValues[i])) &&
         (!search || !trimmedQuery || search.getText(r).toLowerCase().includes(trimmedQuery)))
   );
+  // Filter saling memengaruhi (permintaan owner 2026-11-05): pilihan sebuah filter hanya memuat nilai yang MASIH ADA di baris yang lolos SEMUA filter lain
+  // (dan kotak cari). Contoh: pilih MRP W39 -> filter Vendor hanya berisi vendor yang punya baris di W39. Pilihan yang sedang aktif selalu tetap tampil.
+  // Tanpa filter lain/pencarian yang aktif, daftar pilihannya apa adanya seperti sebelumnya.
+  const filterDefList = filterDefs ?? [];
+  function optionsFor(i: number): string[] {
+    const f = filterDefList[i];
+    const othersActive = filterDefList.some((_, j) => j !== i && !!filterValues[j]);
+    if (!othersActive && !trimmedQuery) return f.options;
+    const pool = rows.filter(
+      (r) =>
+        filterDefList.every((g, j) => j === i || !filterValues[j] || g.test(r, filterValues[j])) &&
+        (!search || !trimmedQuery || search.getText(r).toLowerCase().includes(trimmedQuery))
+    );
+    return f.options.filter((o) => o === filterValues[i] || pool.some((r) => f.test(r, o)));
+  }
   const sysadminMode = useSysadminMode();
   const visibleColumns = [...columns.filter((c) => !c.sysadmin && visible.has(c.key)), ...(sysadminMode ? columns.filter((c) => c.sysadmin) : [])];
 
@@ -201,7 +216,7 @@ export function DataTable<T>({
               className="max-w-full rounded-md border border-border-subtle bg-white px-2.5 py-[6px] max-md:w-full font-sans text-[11.5px] font-medium text-[#31414F]"
             >
               <option value="">{f.label}: Semua</option>
-              {f.options.map((o) => (
+              {optionsFor(i).map((o) => (
                 <option key={o} value={o}>
                   {o}
                 </option>
