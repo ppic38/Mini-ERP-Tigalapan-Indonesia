@@ -5574,11 +5574,13 @@ export async function setKoliEkspedisiResiGroupAction(
  *  internal role dicek lewat requireAnyInternalRole). */
 export async function getDeliveryKoliEkspedisiPhotoAction(koliId: string): Promise<{ dataUrl: string; fileName?: string } | null> {
   const session = await requireSession();
-  if (session.vendorId) {
+  // Akses internal diperiksa DULU: satu browser bisa memuat login internal dan login vendor sekaligus (sama seperti getInvoicePaymentProofAction),
+  // dan dulu sesi yang kebetulan juga login sebagai vendor selalu dicek sebagai vendor sehingga Procurement/Finance ditolak "bukan milik vendor Anda".
+  const internalOk = ["procurement", "finance", "sysadmin"].some((r) => session.internalRoles.includes(r as (typeof session.internalRoles)[number]));
+  if (!internalOk) {
+    if (!session.vendorId) requireAnyInternalRole(session, ["procurement", "finance", "sysadmin"]);
     const { data: koli } = await supabaseServer().from("delivery_kolis").select("vendor_produksi").eq("id", koliId).maybeSingle();
     if (koli?.vendor_produksi !== session.vendorId) throw new Error("Forbidden: koli ini bukan milik vendor Anda.");
-  } else {
-    requireAnyInternalRole(session, ["procurement", "finance", "sysadmin"]);
   }
   const db = supabaseServer();
   const { data } = await db.from("delivery_koli_ekspedisi_photos").select("data_url,file_name").eq("delivery_koli_id", koliId).maybeSingle();
