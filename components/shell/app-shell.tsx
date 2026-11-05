@@ -280,8 +280,8 @@ export function AppShell({
       // bukan "pekerjaan pending" melainkan PO baru yang belum pernah dibuka -- hilang begitu
       // halamannya dikunjungi sekali (revisi 2026-09-19, lihat lib/shell/seen-po.ts). Filter PO
       // di sini HARUS sama dengan yang ditampilkan halamannya masing-masing.
-      "/vendor-maklon/po-produksi": maklonPOs.filter((p) => p.vendorProduksi === vendorId && p.approved && !seenPoProduksi.has(p.id)).length,
-      "/vendor-maklon/po-material": materialPOs.filter((p) => p.vendorProduksi === vendorId && p.approved && p.status !== "CANCELLED" && !seenPoMaterial.has(p.id)).length,
+      "/vendor-maklon/po-produksi": maklonPOs.filter((p) => p.vendorProduksi === vendorId && (p.approved || p.earlyRelease) && !seenPoProduksi.has(p.id)).length,
+      "/vendor-maklon/po-material": materialPOs.filter((p) => p.vendorProduksi === vendorId && (p.approved || p.earlyRelease) && p.status !== "CANCELLED" && !seenPoMaterial.has(p.id)).length,
       "/vendor-maklon/receiving": countVendorGoodReceiveEligible(vendorId, invoices),
       "/vendor-maklon/production": countVendorProduksiActionable(vendorId, productionBatches, productionResults, invoices, productionGroupMeta, {
         resolutions: materialClaimResolutions,

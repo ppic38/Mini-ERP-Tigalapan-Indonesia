@@ -409,7 +409,8 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
 
   // Terbaru di atas (revisi 2026-10-18): urut Tanggal PO menurun, lalu No MRP menurun.
   const myPOs = maklonPOs
-    .filter((p) => p.vendorProduksi === vendorId && p.approved)
+    // PO bertanda dispensasi Sysadmin (migration 0090: bahan sudah ada di vendor sebelum approval PO selesai) juga tampil, lengkap dengan Form Rasio.
+    .filter((p) => p.vendorProduksi === vendorId && (p.approved || p.earlyRelease))
     .sort((a, b) => compareNewestFirst(mrpDetailFor(a.mrpId, mrpDetails)?.dates.poSent, a.mrpId, mrpDetailFor(b.mrpId, mrpDetails)?.dates.poSent, b.mrpId));
   // Badge sidebar "PO Produksi Saya" hilang begitu halaman ini dibuka (lib/shell/seen-po.ts).
   useMarkPoSeen(seenPoKey(vendorId, "po-produksi"), myPOs.map((p) => p.id));

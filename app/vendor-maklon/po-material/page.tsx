@@ -218,7 +218,7 @@ function PoMaterialContent({ vendorId }: { vendorId: string }) {
   const invoices = useMrpStore((s) => s.invoices);
   const productionBatches = useMrpStore((s) => s.productionBatches);
 
-  const myPOs = materialPOs.filter((p) => p.vendorProduksi === vendorId && p.approved && p.status !== "CANCELLED");
+  const myPOs = materialPOs.filter((p) => p.vendorProduksi === vendorId && (p.approved || p.earlyRelease) && p.status !== "CANCELLED");
   // Badge sidebar "PO Material Saya" hilang begitu halaman ini dibuka (lib/shell/seen-po.ts).
   useMarkPoSeen(seenPoKey(vendorId, "po-material"), myPOs.map((p) => p.id));
   const myInvoices = invoices.filter((i) => i.destinationVendor === vendorId);
