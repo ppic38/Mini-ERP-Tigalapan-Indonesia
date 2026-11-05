@@ -6853,7 +6853,12 @@ export async function getFlowSnapshotAction(clientMasterVersion?: number | null)
   const dataVersion = await readDataVersion();
   const masterVersion = vendorOnly ? null : await readMasterDataVersion();
   const masterUnchanged = masterVersion !== null && clientMasterVersion !== null && clientMasterVersion !== undefined && masterVersion === clientMasterVersion;
-  const { state, masterIncluded } = await getFlowSnapshotWithMeta({ skipMaster: vendorOnly || masterUnchanged });
+  const { state, masterIncluded, servedVersion } = await getFlowSnapshotWithMeta({ skipMaster: vendorOnly || masterUnchanged, version: dataVersion });
+  // Kalau yang dikirim salinan LAMA (database sedang kewalahan), laporkan versi salinan itu -- bukan versi terbaru --
+  // supaya browser mengambil ulang pada pengecekan berikutnya; versi master juga dikosongkan agar master ikut diambil ulang.
+  const servedStale = servedVersion !== undefined && dataVersion !== null && servedVersion !== dataVersion;
+  const reportedVersion = servedStale ? servedVersion : dataVersion;
+  const reportedMasterVersion = servedStale && masterIncluded ? null : masterVersion;
   // Toleransi selisih berat (Master Data SCM) ikut dikirim bersama snapshot supaya browser semua vendor &
   // modul memakai angka yang sama (dipasang ke derive.ts oleh store.refresh).
   const weightTolerancePct = await loadWeightTolerancePct();
@@ -6861,16 +6866,16 @@ export async function getFlowSnapshotAction(clientMasterVersion?: number | null)
     // Sesi vendor MURNI tidak pernah butuh tabel harga (dulu dibuang di sini setelah ditarik; sekarang
     // tidak ditarik sama sekali kalau migration 0050 sudah jalan). Data dibatasi ke vendor yang login
     // (lib/mrp/vendorScope.ts): browser vendor tidak boleh menerima data vendor lain.
-    return { ...scopeStateToVendor(state, session.vendorId!), hargaMaklon: [], hargaKain: [], hargaKainPks: [], hargaRib: [], hargaKerahManset: [], itemSellingPrices: [], hargaFob: [], dataVersion, masterVersion: null as number | null, weightTolerancePct };
+    return { ...scopeStateToVendor(state, session.vendorId!), hargaMaklon: [], hargaKain: [], hargaKainPks: [], hargaRib: [], hargaKerahManset: [], itemSellingPrices: [], hargaFob: [], dataVersion: reportedVersion, masterVersion: null as number | null, weightTolerancePct };
   }
   // Nama pelaku vendor (migration 0078) hanya untuk vendor itu sendiri dan Sysadmin.
   const visibleState = session.internalRoles.includes("sysadmin") ? state : stripVendorActorNames(state, session.vendorId ?? undefined);
   if (!masterIncluded) {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { hargaMaklon, hargaKain, hargaKainPks, hargaRib, hargaKerahManset, itemSellingPrices, hargaFob, ...rest } = visibleState;
-    return { ...rest, dataVersion, masterVersion: masterVersion as number | null, weightTolerancePct };
+    return { ...rest, dataVersion: reportedVersion, masterVersion: reportedMasterVersion as number | null, weightTolerancePct };
   }
-  return { ...visibleState, dataVersion, masterVersion, weightTolerancePct };
+  return { ...visibleState, dataVersion: reportedVersion, masterVersion: reportedMasterVersion, weightTolerancePct };
 }
 
 // =========================================================================

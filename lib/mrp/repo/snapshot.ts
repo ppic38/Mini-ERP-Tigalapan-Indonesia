@@ -362,7 +362,7 @@ async function fetchFlowRowsFast(db: SupabaseClient, skipMaster: boolean): Promi
   return { tables, masterIncluded };
 }
 
-async function fetchFlowRows(db: SupabaseClient, skipMaster: boolean): Promise<{ tables: RawTables; masterIncluded: boolean }> {
+async function fetchFlowRows(db: SupabaseClient, skipMaster: boolean, opts?: { noLegacy?: boolean }): Promise<{ tables: RawTables; masterIncluded: boolean }> {
   let failure: unknown;
   try {
     return await fetchFlowRowsFast(db, skipMaster);
@@ -380,6 +380,8 @@ async function fetchFlowRows(db: SupabaseClient, skipMaster: boolean): Promise<{
       failure = err;
     }
   }
+  // Pemanggil yang masih punya salinan lama (cache server) memilih memakainya daripada menambah beban dengan ~35 query per tabel.
+  if (opts?.noLegacy) throw failure;
   // Migration 0008 belum di-apply, atau RPC gagal berturut-turut -- diam-diam fallback ke
   // cara lama (lebih lambat, tapi tetap benar) alih-alih bikin SELURUH app gagal muat data.
   console.warn("getFlowSnapshot: get_flow_snapshot_raw gagal, fallback ke query per-tabel —", failure instanceof Error ? failure.message : failure);
@@ -393,9 +395,50 @@ export async function getFlowSnapshot(): Promise<FlowState> {
 /** [hemat-egress] Sama seperti getFlowSnapshot, tapi `skipMaster` boleh melewati 6 tabel master harga
  *  (hasilnya `masterIncluded: false` -> field harga di `state` KOSONG, pemanggil WAJIB menghapusnya dari hasil
  *  supaya tidak menimpa data yang sudah dipegang client). */
-export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): Promise<{ state: FlowState; masterIncluded: boolean }> {
+// [hemat-io] Cache baris snapshot di memori server, kunci = angka versi data (get_data_version, naik setiap ada tulisan).
+// Versi sama => isi database identik, jadi puluhan tab/vendor yang memuat bersamaan cukup 1 kali baca database (dulu
+// tiap pemuatan = 1 RPC ~2,6 dtk berisi 32 tabel; 344 kali dalam satu jam => ~15 menit waktu database). Pemuatan yang
+// datang saat RPC yang sama masih berjalan ikut menunggu hasilnya (tidak memulai RPC baru). Hanya dipakai kalau pemanggil
+// memberi `version` (getFlowSnapshotAction); pemanggil lain (baca-setelah-tulis di server action) tetap membaca langsung.
+type FlowFetch = { tables: RawTables; masterIncluded: boolean };
+type FlowCacheEntry = { version: number; wantsMaster: boolean; at: number; promise: Promise<FlowFetch> };
+const FLOW_CACHE_MAX_AGE_MS = 5 * 60_000; // batas aman walau versi sama
+const FLOW_STALE_MAX_AGE_MS = 15 * 60_000; // salinan lama boleh dipakai HANYA kalau pembacaan baru gagal
+let flowCache: FlowCacheEntry | null = null;
+let flowLastGood: { version: number; masterIncluded: boolean; at: number; fetched: FlowFetch } | null = null;
+
+async function fetchFlowRowsCached(db: SupabaseClient, skipMaster: boolean, version: number): Promise<FlowFetch & { servedVersion: number }> {
+  const now = Date.now();
+  const hit = flowCache;
+  if (hit && hit.version === version && (skipMaster || hit.wantsMaster) && now - hit.at < FLOW_CACHE_MAX_AGE_MS) {
+    return { ...(await hit.promise), servedVersion: version };
+  }
+  const promise = fetchFlowRows(db, skipMaster, { noLegacy: true });
+  const entry: FlowCacheEntry = { version, wantsMaster: !skipMaster, at: now, promise };
+  flowCache = entry;
+  try {
+    const fetched = await promise;
+    flowLastGood = { version, masterIncluded: fetched.masterIncluded, at: Date.now(), fetched };
+    return { ...fetched, servedVersion: version };
+  } catch (err) {
+    if (flowCache === entry) flowCache = null;
+    // Database sedang kewalahan: pakai salinan terakhir yang berhasil (versi LAMA dilaporkan apa adanya supaya browser
+    // mengambil ulang pada pengecekan berikutnya), kalau tidak ada baru jatuh ke jalur per-tabel yang berat.
+    const good = flowLastGood;
+    if (good && Date.now() - good.at < FLOW_STALE_MAX_AGE_MS && (skipMaster || good.masterIncluded)) {
+      console.warn("getFlowSnapshot: pembacaan baru gagal, memakai salinan lama v" + good.version + " —", err instanceof Error ? err.message : err);
+      return { ...good.fetched, servedVersion: good.version };
+    }
+    console.warn("getFlowSnapshot: get_flow_snapshot gagal, fallback ke query per-tabel —", err instanceof Error ? err.message : err);
+    return { tables: await fetchFlowRowsLegacy(db), masterIncluded: true, servedVersion: version };
+  }
+}
+
+export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean; version?: number | null }): Promise<{ state: FlowState; masterIncluded: boolean; servedVersion?: number }> {
   const db = supabaseServer();
-  const fetched = await fetchFlowRows(db, !!opts.skipMaster);
+  const cachedFetch = typeof opts.version === "number" ? await fetchFlowRowsCached(db, !!opts.skipMaster, opts.version) : null;
+  const fetched = cachedFetch ?? (await fetchFlowRows(db, !!opts.skipMaster));
+  const servedVersion = cachedFetch?.servedVersion;
   const masterIncluded = fetched.masterIncluded;
 
   const {
@@ -1172,7 +1215,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     // menimpa flag yang lagi di-set true oleh action pemanggilnya -- lihat komentar di refresh().
     busy: false,
   };
-  return { state, masterIncluded };
+  return { state, masterIncluded, servedVersion };
 }
 
 function groupBy<T, K extends string | number>(rows: T[], keyFn: (row: T) => K): Record<K, T[]> {
