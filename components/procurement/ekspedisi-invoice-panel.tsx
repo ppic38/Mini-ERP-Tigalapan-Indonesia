@@ -107,7 +107,7 @@ function EkspedisiInvoiceModal({ group, onClose }: { group: EkspedisiResiGroup; 
               Tgl kirim: <span className="font-mono">{formatDate(group.tanggalKirim)}</span>
             </div>
             <div className="col-span-2">
-              No koli: <span className="font-mono">{group.noKolis.join(", ")}</span>
+              No koli ({group.koliIds.length} koli): <span className="font-mono">{group.noKolis.join(", ")}</span>
             </div>
             <div>
               No resi dari vendor: <span className="font-mono font-semibold">{vendorNoResi || "—"}</span>
@@ -274,6 +274,7 @@ export function EkspedisiInvoicePanel() {
     { key: "vendor", label: "Vendor", default: true, render: (g) => vendorName(g.vendorProduksi) },
     { key: "ekspedisi", label: "Ekspedisi", default: true, render: (g) => g.ekspedisi },
     { key: "koli", label: "No Koli", default: true, render: (g) => <span className="font-mono text-[11px]">{g.noKolis.join(", ")}</span> },
+    { key: "jumlahKoli", label: "Jumlah Koli", default: true, align: "right", render: (g) => <span className="font-mono font-semibold">{g.koliIds.length}</span> },
     { key: "tgl", label: "Tgl Kirim", default: true, render: (g) => formatDate(g.tanggalKirim) },
     { key: "berat", label: "Berat Resi", default: true, align: "right", render: (g) => <span className="font-mono">{kg(g.beratResi)}</span> },
     {
