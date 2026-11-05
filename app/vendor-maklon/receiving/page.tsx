@@ -34,7 +34,7 @@ import type { Lengan } from "@/lib/mrp/types";
 // Revisi 2026-09-29 (owner: "buat untuk vendor produksi bisa input code lot"): codeLot opsional,
 // cuma dipakai kalau roll ini BELUM punya code_lot dari Procurement (lihat gating input di render
 // di bawah -- kalau r.codeLot sudah terisi, tetap read-only seperti sebelumnya).
-type DraftCode = { codeRoll: string; codeLot?: string };
+type DraftCode = { codeRoll: string };
 
 // Revisi 2026-09-20 (owner): item tambahan (Rib/Kerah/Manset) ikut terfilter per warna. Item yang warnanya
 // kosong (mis. Bur/umum) dikelompokkan ke pilihan "Tanpa warna (umum)" memakai sentinel ini.
@@ -46,7 +46,7 @@ const warnaLabel = (w: string) => (w === NO_WARNA ? "Tanpa warna (umum)" : w);
 // juga (owner: "buat untuk vendor produksi bisa input code lot"), bukan cuma teks read-only pendek.
 const RECEIVE_GRID = "minmax(80px,0.5fr) minmax(200px,1.6fr) minmax(140px,1fr) minmax(120px,0.8fr) 190px";
 // Tabel roll punya kolom PIC tambahan (tabel item tambahan di bawahnya tetap memakai RECEIVE_GRID).
-const RECEIVE_GRID_ROLL = "minmax(80px,0.5fr) minmax(200px,1.6fr) minmax(140px,1fr) minmax(120px,0.8fr) minmax(110px,0.7fr) 190px";
+const RECEIVE_GRID_ROLL = "minmax(80px,0.5fr) minmax(200px,1.6fr) minmax(120px,0.8fr) minmax(110px,0.7fr) 190px";
 const ROLL_PAGE_SIZE = 5;
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -81,7 +81,6 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   const markRollArrived = useMrpStore((s) => s.markRollArrived);
   const receiveRawMaterialAddBuy = useMrpStore((s) => s.receiveRawMaterialAddBuy);
   const receiveMaterialBatch = useMrpStore((s) => s.receiveMaterialBatch);
-  const setRollCodeLot = useMrpStore((s) => s.setRollCodeLot);
 
   const [selectedMrpId, setSelectedMrpId] = useState("");
   // Filter status PO material — default "Semua" (perilaku lama). Sengaja dipisah dari status
@@ -298,25 +297,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
     const code = draftOf(lengan, idx);
     if (!code.codeRoll.trim()) return;
     if (codeConflictFor(lengan, idx, code.codeRoll)) return;
-    if (strictReceive && !rollHasLot(lengan, idx)) return;
-    markRollArrived(selectedInvoice.id, selectedWarna, lengan, idx, code.codeRoll.trim(), code.codeLot?.trim() || undefined);
-  }
-
-  // Revisi 2026-09-29 (owner: "vendor produksi bisa input code lot jika ... statusnya -"): isi lot
-  // roll yang SUDAH diterima tapi lot-nya masih kosong. Draft terpisah dari draftCode karena
-  // draftCode cuma dipakai roll yang belum diterima.
-  const [lotDraft, setLotDraft] = useState<Record<string, string>>({});
-  function saveLot(lengan: Lengan, idx: number) {
-    if (!selectedInvoice) return;
-    const key = rollKey(lengan, idx);
-    const lot = lotDraft[key]?.trim();
-    if (!lot) return;
-    setLotDraft((prev) => {
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
-    setRollCodeLot(selectedInvoice.id, selectedWarna, lengan, idx, lot).catch(() => {});
+    markRollArrived(selectedInvoice.id, selectedWarna, lengan, idx, code.codeRoll.trim());
   }
 
   // Revisi 2026-09-19 (owner: "tabel terima material & tabel di atasnya ter-close begitu klik Mulai
@@ -343,19 +324,12 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   // Item tambahan yang ditampilkan/diterima = HANYA yang warnanya cocok dengan warna terpilih.
   const selectedWarnaItems = selectedInvoice && selectedWarna ? selectedInvoice.addBuys.filter((b) => (b.warna || NO_WARNA) === selectedWarna) : [];
   const pendingAddBuyIds = selectedInvoice ? selectedWarnaItems.filter((b) => !selectedInvoice.addBuyReceipts[b.id]).map((b) => b.id) : [];
-  // W40+ (owner 2026-10-22): code roll DAN code lot wajib terisi sebelum roll bisa diterima. Lot yang sudah diisi
-  // Procurement saat Paying Voucher (r.codeLot) dianggap terisi.
-  const strictReceive = selectedInvoice ? goodReceiveInputRequiredForMrp(selectedInvoice.mrpId) : false;
-  function rollHasLot(lengan: Lengan, idx: number): boolean {
-    const existing = combinedRolls.find((r) => r.lengan === lengan && r.idx === idx)?.codeLot;
-    return !!(existing || draftCode[rollKey(lengan, idx)]?.codeLot?.trim());
-  }
-  const rollsMissingLot = strictReceive ? pendingRolls.filter((r) => !rollHasLot(r.lengan, r.idx)) : [];
+  // Code lot tidak lagi diinput/diwajibkan (owner 2026-11-05: acuan sekarang code roll saja).
   // Code roll WAJIB terisi sebelum roll boleh diterima (Terima / Terima semua roll).
   const rollsMissingCode = pendingRolls.filter((r) => !draftOf(r.lengan, r.idx).codeRoll.trim());
   const rollsWithCodeConflict = pendingRolls.filter((r) => codeConflictFor(r.lengan, r.idx, draftOf(r.lengan, r.idx).codeRoll));
   function receiveAllRolls() {
-    if (!selectedInvoice || pendingRolls.length === 0 || rollsMissingCode.length > 0 || rollsMissingLot.length > 0 || rollsWithCodeConflict.length > 0) return;
+    if (!selectedInvoice || pendingRolls.length === 0 || rollsMissingCode.length > 0 || rollsWithCodeConflict.length > 0) return;
     // Pendek & Panjang sekarang digabung 1 list -- receiveMaterialBatch tetap per LENGAN (kontrak
     // server tidak berubah), jadi dikelompokkan dulu lalu dikirim per grup.
     for (const c of warnaColorEntries) {
@@ -368,7 +342,6 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
         rollsForLengan.map((r) => ({
           rollIndex: r.idx,
           codeRoll: draftOf(r.lengan, r.idx).codeRoll.trim(),
-          codeLot: draftCode[rollKey(r.lengan, r.idx)]?.codeLot?.trim() || undefined,
         })),
         []
       );
@@ -762,9 +735,8 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                         {pendingRolls.length > 0 && (
                           <span className="flex items-center gap-3 max-md:w-full max-md:flex-wrap">
                             {rollsMissingCode.length > 0 && <span className="font-sans text-[11px] text-warning-fg">{rollsMissingCode.length} roll belum diisi code roll</span>}
-                            {rollsMissingLot.length > 0 && <span className="font-sans text-[11px] text-warning-fg">{rollsMissingLot.length} roll belum diisi code lot</span>}
                             {rollsWithCodeConflict.length > 0 && <span className="font-sans text-[11px] text-danger-fg">{rollsWithCodeConflict.length} roll code roll-nya sudah terdaftar</span>}
-                            <Button onClick={receiveAllRolls} disabled={rollsMissingCode.length > 0 || rollsMissingLot.length > 0 || rollsWithCodeConflict.length > 0} variant="primary" size="sm" className="min-w-[170px] max-md:min-h-11 max-md:w-full max-md:rounded-full max-md:text-[13px]">
+                            <Button onClick={receiveAllRolls} disabled={rollsMissingCode.length > 0 || rollsWithCodeConflict.length > 0} variant="primary" size="sm" className="min-w-[170px] max-md:min-h-11 max-md:w-full max-md:rounded-full max-md:text-[13px]">
                               Terima semua roll ({pendingRolls.length})
                             </Button>
                           </span>
@@ -776,7 +748,6 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                       >
                         <span>Roll</span>
                         <span>Code roll</span>
-                        <span>Code lot</span>
                         <span className="text-right">Berat kotor (kg)</span>
                         <span>PIC</span>
                         <span className="text-right">Status</span>
@@ -821,45 +792,6 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                                 )}
                               </span>
                             )}
-                            {/* Revisi 2026-09-29 (owner: "buat untuk vendor produksi bisa input
-                                code lot") -- kalau Procurement SUDAH mengisi code lot saat Paying
-                                Voucher (r.codeLot terisi), tetap read-only seperti sebelumnya
-                                (tidak boleh ditimpa vendor). Kalau MASIH KOSONG, vendor sekarang
-                                bisa mengisinya sendiri di sini -- opsional, tidak wajib seperti
-                                code roll (tombol Terima tidak menunggu field ini). */}
-                            {arrival && (arrival.codeLot || r.codeLot) ? (
-                              <span data-label="Code lot" className="font-mono text-[11px] text-text-muted max-md:col-span-full">{arrival.codeLot || r.codeLot}</span>
-                            ) : arrival ? (
-                              // Roll SUDAH diterima tapi lot masih "—" (Procurement & vendor sama-sama
-                              // belum mengisi) -- vendor bisa melengkapinya di sini, sekali simpan.
-                              <span data-label="Code lot" className="flex items-center gap-1.5 max-md:col-span-full">
-                                <input
-                                  value={lotDraft[key] ?? ""}
-                                  onChange={(e) => setLotDraft((prev) => ({ ...prev, [key]: e.target.value }))}
-                                  onKeyDown={(e) => e.key === "Enter" && saveLot(r.lengan, r.idx)}
-                                  className="input w-full max-w-[110px] !py-1.5 font-mono text-[11px]"
-                                  placeholder="Code lot"
-                                />
-                                <button
-                                  onClick={() => saveLot(r.lengan, r.idx)}
-                                  disabled={!lotDraft[key]?.trim()}
-                                  className="rounded-md border border-[#CBD5DF] px-2 py-1 font-sans text-[11px] font-semibold text-action-primary disabled:cursor-not-allowed disabled:opacity-40 max-md:min-h-10 max-md:rounded-full max-md:text-[13px]"
-                                >
-                                  Simpan
-                                </button>
-                              </span>
-                            ) : r.codeLot ? (
-                              <span data-label="Code lot" className="font-mono text-[11px] text-text-muted max-md:col-span-full">{r.codeLot}</span>
-                            ) : (
-                              <span data-label="Code lot" className="flex items-center max-md:col-span-full">
-                                <input
-                                  value={code.codeLot ?? ""}
-                                  onChange={(e) => setDraftCode((prev) => ({ ...prev, [key]: { ...code, codeLot: e.target.value } }))}
-                                  className="input w-full max-w-[160px] !py-1.5 font-mono text-[11px]"
-                                  placeholder={strictReceive ? "Code lot (wajib)" : "Code lot"}
-                                />
-                              </span>
-                            )}
                             <span data-label="Berat kotor (kg)" className="text-right font-mono">{formatDecimal(r.grossKg)}</span>
                             <PicText label={arrival?.receivedBy} />
                             <span className="flex flex-col items-end gap-1 max-md:items-stretch">
@@ -870,7 +802,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                                     <StatusPill tone="success">Diterima</StatusPill>
                                   </>
                                 ) : (
-                                  <Button onClick={() => markArrived(r.lengan, r.idx)} disabled={!code.codeRoll.trim() || !!conflictMsg || (strictReceive && !rollHasLot(r.lengan, r.idx))} variant="accent" size="sm" className="w-[96px] max-md:min-h-11 max-md:w-full max-md:rounded-full max-md:text-[13px]">
+                                  <Button onClick={() => markArrived(r.lengan, r.idx)} disabled={!code.codeRoll.trim() || !!conflictMsg} variant="accent" size="sm" className="w-[96px] max-md:min-h-11 max-md:w-full max-md:rounded-full max-md:text-[13px]">
                                     Terima
                                   </Button>
                                 )}

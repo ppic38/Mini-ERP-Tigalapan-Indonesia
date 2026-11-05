@@ -137,8 +137,6 @@ export function PayingVoucherWizard({
   // sekarang diinput Procurement di sini (paralel ke draftRolls), bukan lagi di-generate random
   // vendor di Good Receive. Boleh kosong per roll (opsional, sama seperti code roll di sana).
   const [draftLots, setDraftLots] = useState<string[] | null>(null);
-  // Revisi 2026-09-20 (owner): 1 nilai code lot yang bisa diterapkan ke SEMUA roll warna ini sekaligus.
-  const [lotAll, setLotAll] = useState("");
   const [addBuys, setAddBuys] = useState<AddBuyItem[]>([]);
   const [diskon, setDiskon] = useState(0);
   // Dulu auto-generate "TRX-xxxx" acak dan langsung dipakai sebagai isi field -- sekarang kosong,
@@ -203,7 +201,6 @@ export function PayingVoucherWizard({
     setQtyRoll(1);
     setDraftRolls(null);
     setDraftLots(null);
-    setLotAll("");
   }
 
   function editEntry(index: number) {
@@ -225,11 +222,6 @@ export function PayingVoucherWizard({
     const qty = Math.max(1, Math.min(qtyRoll, activeGroup.totalRemaining));
     setDraftRolls(Array(qty).fill(25.0));
     setDraftLots(Array(qty).fill(""));
-    setLotAll("");
-  }
-  function applyLotToAll() {
-    if (!draftRolls) return;
-    setDraftLots(Array(draftRolls.length).fill(lotAll.trim()));
   }
 
   // Dulu add-buy "Rib" cuma muncul kalau user klik "+ Tambah add buy" sendiri (opsional, gampang
@@ -624,35 +616,8 @@ export function PayingVoucherWizard({
           <div className="font-sans text-xs font-semibold text-info-fg">
             Berat per roll — {activeGroup.warna} ({draftRolls.length} roll)
           </div>
-          {/* Revisi 2026-09-19 (owner: "persimpel & minimize, berat + kode lot dalam 1 baris"):
-              tiap roll = 1 baris (label + input berat + input code lot berukuran sama), label kolom
-              cukup SEKALI di atas, bukan diulang per roll. Beberapa roll disusun 2-3 kolom. */}
-          <div className="mt-1 font-sans text-[10px] text-text-muted">Berat pakai koma untuk desimal (mis. 25,5). Code lot opsional.</div>
-          {/* Revisi 2026-09-20 (owner): isi 1 code lot lalu terapkan ke SEMUA roll warna ini sekaligus
-              (masing-masing roll tetap bisa diubah satu-satu sesudahnya). */}
-          <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-[#CFE0EF] bg-white px-3 py-2">
-            <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Code lot semua roll</span>
-            <input
-              value={lotAll}
-              onChange={(e) => setLotAll(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  applyLotToAll();
-                }
-              }}
-              placeholder="mis. 818"
-              className="input w-[160px] !py-1.5 text-[11px]"
-            />
-            <button
-              type="button"
-              onClick={applyLotToAll}
-              disabled={!lotAll.trim()}
-              className="rounded-md border border-[#A8C5DF] bg-white px-3 py-[6px] font-sans text-[11px] font-semibold text-accent-blue hover:border-accent-blue disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Terapkan ke semua ({draftRolls.length} roll)
-            </button>
-          </div>
+          {/* Code lot tidak lagi diinput (owner 2026-11-05: acuan sekarang code roll saja). */}
+          <div className="mt-1 font-sans text-[10px] text-text-muted">Berat pakai koma untuk desimal (mis. 25,5).</div>
           <div className="mt-2 grid grid-cols-1 gap-x-5 gap-y-1.5 md:grid-cols-2 xl:grid-cols-3">
             {draftRolls.map((w, i) => (
               <div key={i} className="flex items-center gap-2">
@@ -663,15 +628,6 @@ export function PayingVoucherWizard({
                   commaOnly
                   onChange={(v) => setDraftRolls((prev) => prev!.map((x, idx) => (idx === i ? v : x)))}
                   className="input min-w-0 flex-1 !py-1.5"
-                />
-                {/* Item revisi 2026-09-08: kode lot per roll diinput di sini (Procurement, saat
-                    Paying Voucher) -- akan dibawa sampai ke Good Receive vendor (read-only di
-                    sana), tidak lagi di-generate random vendor. Opsional, boleh dikosongkan. */}
-                <input
-                  value={draftLots?.[i] ?? ""}
-                  onChange={(e) => setDraftLots((prev) => (prev ?? draftRolls.map(() => ""))!.map((x, idx) => (idx === i ? e.target.value : x)))}
-                  placeholder="Code lot, mis. 818"
-                  className="input min-w-0 flex-1 !py-1.5 text-[11px]"
                 />
               </div>
             ))}
