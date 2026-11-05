@@ -382,6 +382,8 @@ export function EkspedisiInvoicePanel() {
           { label: "No MRP", options: Array.from(new Set(groups.map((g) => g.mrpId))).sort().reverse(), test: (g, v) => g.mrpId === v },
           { label: "Vendor", options: Array.from(new Set(groups.map((g) => vendorName(g.vendorProduksi)))).sort(), test: (g, v) => vendorName(g.vendorProduksi) === v },
           { label: "Ekspedisi", options: Array.from(new Set(groups.map((g) => g.ekspedisi))).sort(), test: (g, v) => g.ekspedisi === v },
+          // No resi yang tampil di tabel (sudah termasuk penyesuaian Procurement). Satu nomor resi bisa dipakai beberapa pengiriman, jadi satu pilihan bisa memunculkan beberapa baris.
+          { label: "No Resi", options: Array.from(new Set(groups.map((g) => g.invoice?.noResi ?? g.noResi).filter(Boolean))).sort((a, b) => a.localeCompare(b, "id-ID", { numeric: true })), test: (g, v) => (g.invoice?.noResi ?? g.noResi) === v },
           { label: "Status", options: ["BELUM DIVALIDASI", "TERVALIDASI", "DIAJUKAN KE FINANCE", "LUNAS"], test: (g, v) => ekspedisiInvoiceBadge(g.invoice?.status).label === v },
         ]}
         firstColumnLabel="No Resi"
