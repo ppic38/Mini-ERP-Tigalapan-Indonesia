@@ -3797,6 +3797,31 @@ export function reworkedAwayBySize(groupKey: string, results: ProductionResult[]
   return out;
 }
 
+export type ReworkDestination = { toLengan: string; toSize: string; usia?: string; qty: number };
+
+/** Ke size/lengan mana reject tiap size ASAL dirework (owner 2026-11-05: "XL rework 2 tapi tidak tahu jadi size apa dan berapa").
+ *  `groupKey` = grup ASAL (mrp|warna|lengan). Dibaca dari baris FG hasil rework di grup tujuan: lengan+size asal ada di teks note
+ *  ("Rework dari {lengan} size {size} ({usia})"), size tujuan = kunci `sizeQty`, lengan tujuan = lengan baris itu (lihat reworkRejectSizeAction).
+ *  Tujuan yang sama (lengan+size+usia) dijumlahkan. Kembalian: size ASAL -> daftar tujuan. */
+export function reworkDestinationsBySize(groupKey: string, results: ProductionResult[]): Record<string, ReworkDestination[]> {
+  const [mrpId, warna, lengan] = groupKey.split("|");
+  const out: Record<string, ReworkDestination[]> = {};
+  for (const r of results) {
+    if (r.kind !== "FG" || r.mrpId !== mrpId || r.warna !== warna || !r.note?.startsWith("Rework dari")) continue;
+    const m = r.note.match(/^Rework dari (PENDEK|PANJANG) size (\S+)/i);
+    if (!m || m[1].toUpperCase() !== lengan) continue;
+    const fromSize = m[2];
+    for (const [toSize, qty] of Object.entries(r.sizeQty)) {
+      if (!(qty > 0)) continue;
+      const list = (out[fromSize] ??= []);
+      const existing = list.find((d) => d.toLengan === r.lengan && d.toSize === toSize && d.usia === (r.usia ?? undefined));
+      if (existing) existing.qty += qty;
+      else list.push({ toLengan: r.lengan, toSize, usia: r.usia ?? undefined, qty });
+    }
+  }
+  return out;
+}
+
 // Item 19 (feedback batch 2026-09-04): "Buang ke Sisa" dihapus dari UI & flow — `wastedAwayBySize`
 // (dulu dipakai kolom "Sisa/Waste" di production-result-panel.tsx/production-final-tab.tsx) sudah
 // tidak dipakai lagi, jadi dihapus di sini juga. `wasteQtyForGroup` di atas SENGAJA DIPERTAHANKAN

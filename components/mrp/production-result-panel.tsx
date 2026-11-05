@@ -31,6 +31,7 @@ import {
   rejectShippedBySize,
   reworkBySizeForGroup,
   reworkedAwayBySize,
+  reworkDestinationsBySize,
   reworkQtyForGroup,
   targetDoneProduksiForGroup,
   cuttingSizesForGroup,
@@ -666,6 +667,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                           {(() => {
                             const grossPerSize = rejectGrossForGroup(groupKey, productionResults);
                             const reworkPerSize = reworkedAwayBySize(groupKey, productionResults);
+                            const reworkDestPerSize = reworkDestinationsBySize(groupKey, productionResults);
                             const rejectSizes = sizes.filter((size) => (grossPerSize[size] ?? 0) > 0 || (reworkPerSize[size] ?? 0) > 0);
                             if (rejectSizes.length === 0) {
                               return <div className="px-3 py-3 text-center font-sans text-[11px] text-text-muted">Tidak ada reject — finish good sudah mencapai target.</div>;
@@ -683,7 +685,17 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                                   <div className={"vp-rjsize m-stack grid grid-cols-5 items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-2 font-sans text-xs text-[#31414F] " + (isOpen ? "bg-info-bg" : "")}>
                                     <span data-label="Size" className="font-mono font-medium">{size}</span>
                                     <span data-label="Reject (otomatis)" className="text-right font-mono">{grossPerSize[size] ?? 0}</span>
-                                    <span data-label="Rework" className="text-right font-mono text-success-fg">{reworkPerSize[size] ?? 0}</span>
+                                    <span data-label="Rework" className="text-right font-mono text-success-fg">
+                                      {reworkPerSize[size] ?? 0}
+                                      {(reworkDestPerSize[size] ?? []).length > 0 && (
+                                        <span className="mt-0.5 block font-sans text-[10.5px] font-normal leading-snug text-text-muted" title="Rework ke size/lengan apa">
+                                          →{" "}
+                                          {(reworkDestPerSize[size] ?? [])
+                                            .map((d) => `${d.toLengan !== g.lengan ? d.toLengan + " " : ""}${d.toSize}${d.usia === "KIDS" ? " (Kids)" : ""} ${d.qty}`)
+                                            .join(", ")}
+                                        </span>
+                                      )}
+                                    </span>
                                     <span data-label="Sisa reject" className="text-right font-mono text-danger-fg">
                                       {sisaReject}
                                       {shippedReject > 0 && <span className="ml-1 font-sans text-[10px] font-normal text-text-muted">({shippedReject} dikirim)</span>}
