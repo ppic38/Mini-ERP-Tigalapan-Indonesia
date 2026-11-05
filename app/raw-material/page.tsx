@@ -7,10 +7,12 @@ import { Tabs } from "@/components/ui/tabs";
 import { KeepAliveTab } from "@/components/ui/keep-alive-tab";
 import { PayingVoucherMaterialPanel } from "@/components/procurement/paying-voucher-material-panel";
 import { InvoiceVendorReviewPanel } from "@/components/procurement/invoice-vendor-review-panel";
+import { EkspedisiInvoicePanel } from "@/components/procurement/ekspedisi-invoice-panel";
+import { countEkspedisiToProcess } from "@/lib/mrp/ekspedisiInvoice";
 import { useMrpStore } from "@/lib/mrp/store";
 import { countMaterialPOsAwaitingInvoice, countVendorInvoicesAwaitingReview } from "@/lib/shell/badges";
 
-type Tab = "material" | "vendor";
+type Tab = "material" | "vendor" | "ekspedisi";
 
 // Sebelumnya "Invoice Vendor" adalah halaman standalone di sidebar Procurement
 // (/procurement/invoice-vendor) — dipindah ke sini jadi tab kedua supaya sidebar lebih ringkas
@@ -21,16 +23,20 @@ function RawMaterialContent() {
   useEffect(() => setMounted(true), []);
 
   const searchParams = useSearchParams();
-  const initialTab: Tab = searchParams.get("tab") === "vendor" ? "vendor" : "material";
+  const tabParam = searchParams.get("tab");
+  const initialTab: Tab = tabParam === "vendor" ? "vendor" : tabParam === "ekspedisi" ? "ekspedisi" : "material";
   const [tab, setTab] = useState<Tab>(initialTab);
 
   const materialPOs = useMrpStore((s) => s.materialPOs);
   const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
+  const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
+  const ekspedisiRates = useMrpStore((s) => s.ekspedisiRates);
 
   if (!mounted) return null;
 
   const materialBadge = countMaterialPOsAwaitingInvoice(materialPOs);
   const vendorBadge = countVendorInvoicesAwaitingReview(vendorInvoices);
+  const ekspedisiBadge = countEkspedisiToProcess(deliveryKolis, ekspedisiRates);
 
   return (
     <AppShell role="procurement" activeHref="/raw-material" breadcrumb={["Dashboard", "Paying Voucher (Invoice)"]} title="Paying Voucher (Invoice)">
@@ -38,12 +44,14 @@ function RawMaterialContent() {
         items={[
           { key: "material", label: "Invoice Material", badge: materialBadge },
           { key: "vendor", label: "Invoice Vendor", badge: vendorBadge },
+          { key: "ekspedisi", label: "Invoice Ekspedisi", badge: ekspedisiBadge },
         ]}
         active={tab}
         onChange={(k) => setTab(k as Tab)}
       />
       <KeepAliveTab active={tab === "material"}><PayingVoucherMaterialPanel /></KeepAliveTab>
       <KeepAliveTab active={tab === "vendor"}><InvoiceVendorReviewPanel /></KeepAliveTab>
+      <KeepAliveTab active={tab === "ekspedisi"}><EkspedisiInvoicePanel /></KeepAliveTab>
     </AppShell>
   );
 }

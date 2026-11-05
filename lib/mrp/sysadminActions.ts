@@ -572,6 +572,37 @@ export async function sysadminRevertVendorInvoicePaidAction(invoiceId: string, r
   });
 }
 
+/** Invoice Ekspedisi (migration 0088) dimundurkan satu langkah: PAID -> SUBMITTED (bukti bayar dihapus, Finance bayar ulang), SUBMITTED -> DRAFT (kembali ke Procurement), atau
+ *  DRAFT -> NONE (validasi dibuang; ongkir HPP resi itu kembali ke tarif master). No resi yang sudah disesuaikan TIDAK dikembalikan otomatis. */
+export async function sysadminRevertEkspedisiInvoiceAction(key: string, from: "PAID" | "SUBMITTED" | "DRAFT", reason: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(key)) throw new Error("Kunci resi tidak valid.");
+    const db = supabaseServer();
+    const { data, error } = await db.from("delivery_kolis").select("id,mrp_id,vendor_produksi,resi_group_id,ekspedisi_invoice").or(`resi_group_id.eq.${key},id.eq.${key}`);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []).filter((r) => (r.resi_group_id ?? r.id) === key);
+    if (rows.length === 0) throw new Error("Resi tidak ditemukan.");
+    const inv = rows[0].ekspedisi_invoice as { status: string; noResi: string; biaya: number } | null;
+    if (!inv) throw new Error("Resi ini tidak punya invoice ekspedisi.");
+    if (inv.status !== from) throw new Error(`Invoice ekspedisi ini berstatus ${inv.status}, bukan ${from} -- tidak bisa dimundurkan dari langkah itu.`);
+    const ids = rows.map((r) => r.id);
+    const to = from === "PAID" ? "SUBMITTED" : from === "SUBMITTED" ? "DRAFT" : null;
+    const next = to ? (from === "PAID" ? { ...inv, status: to, paidBy: undefined, paidAt: undefined, buktiCount: 0 } : { ...inv, status: to, submittedBy: undefined, submittedAt: undefined }) : null;
+    const { error: updErr } = await db.from("delivery_kolis").update({ ekspedisi_invoice: next }).in("id", ids);
+    if (updErr) throw new Error(updErr.message);
+    // Bukti bayar ikut dihapus kalau pembayaran dibatalkan; nota ikut dihapus kalau validasinya dibuang (best-effort, tabel attachment_files mungkin belum ada).
+    if (from === "PAID") await db.from("attachment_files").delete().eq("kind", "EKSPEDISI_BUKTI").eq("ref_id", key);
+    if (from === "DRAFT") await db.from("attachment_files").delete().in("kind", ["EKSPEDISI_NOTA", "EKSPEDISI_BUKTI"]).eq("ref_id", key);
+    await writeAuditLog("REVERT_EKSPEDISI_INVOICE", "delivery_kolis", key, reason.trim(), { status: from, noResi: inv.noResi, biaya: inv.biaya }, { status: to ?? "NONE" });
+    const rp = "Rp " + Math.round(inv.biaya).toLocaleString("id-ID");
+    const label = from === "PAID" ? "Pembayaran invoice ekspedisi" : from === "SUBMITTED" ? "Pengajuan invoice ekspedisi" : "Validasi invoice ekspedisi";
+    const after = to === "SUBMITTED" ? "Status kembali ke Diajukan; menunggu pembayaran Finance lagi." : to === "DRAFT" ? "Status kembali ke Tervalidasi di Procurement." : "Validasi dibuang; ongkir HPP resi ini memakai tarif master lagi.";
+    await notifyAffected(`${label} resi ${inv.noResi} (${rp}) dibatalkan Sysadmin — alasan: ${reason.trim()}. ${after}`, ["finance", "procurement"]);
+  });
+}
+
 /** Mundurkan invoice PO Produksi FOB (maklon_invoices): PAID -> APPROVED (PO kembali ke DELIVERY, status
  *  sebelum dibayar) atau APPROVED -> SUBMITTED. Hanya invoice FOB -- invoice CMT arsip tidak menyimpan
  *  status PO sebelum bayar, jadi tidak aman dimundurkan otomatis. */
@@ -794,11 +825,19 @@ export async function sysadminUndoKoliShipmentAction(koliId: string, reason: str
     if (rcErr) throw new Error(rcErr.message);
     if ((receiptCount ?? 0) > 0) throw new Error("Koli di grup ini sudah dibongkar Warehouse -- Batalkan bongkar koli dulu (Warehouse -> Riwayat Penerimaan).");
 
+    // Invoice Ekspedisi (migration 0088): yang sudah diajukan/dibayar harus dikembalikan dulu; yang masih tervalidasi dibuang bersama pengirimannya (HPP kembali ke tarif master).
+    const { data: eksRows, error: eksErr } = await db.from("delivery_kolis").select("id,ekspedisi_invoice").in("id", ids);
+    const eksInv = eksErr ? undefined : ((eksRows ?? []).find((r) => r.ekspedisi_invoice)?.ekspedisi_invoice as { status?: string; noResi?: string } | undefined);
+    if (eksInv && eksInv.status !== "DRAFT") {
+      throw new Error(`Resi ${eksInv.noResi ?? ""} sudah ${eksInv.status === "PAID" ? "dibayar Finance" : "diajukan ke Finance"} lewat Invoice Ekspedisi -- kembalikan invoice ekspedisinya dulu (Procurement: Tarik kembali; sudah lunas: koreksi Sysadmin) sebelum pengiriman dibatalkan.`);
+    }
+    const resiKey = rows[0].resi_group_id ?? rows[0].id;
     const { error: updErr } = await db
       .from("delivery_kolis")
-      .update({ delivered_at: null, berat_koli: null, ekspedisi: "", ekspedisi_note: null, ekspedisi_note_at: null, no_resi: null, resi_group_id: null })
+      .update({ delivered_at: null, berat_koli: null, ekspedisi: "", ekspedisi_note: null, ekspedisi_note_at: null, no_resi: null, resi_group_id: null, ...(eksInv ? { ekspedisi_invoice: null } : {}) })
       .in("id", ids);
     if (updErr) throw new Error(updErr.message);
+    if (eksInv) await db.from("attachment_files").delete().in("kind", ["EKSPEDISI_NOTA", "EKSPEDISI_BUKTI"]).eq("ref_id", resiKey);
     const resi = rows[0].no_resi ?? rows[0].resi_group_id ?? koliId;
     await writeAuditLog(
       "UNDO_KOLI_SHIPMENT",

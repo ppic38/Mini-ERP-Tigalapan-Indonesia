@@ -1,6 +1,6 @@
 "use client";
 
-import { addAttachmentExtraAction, clearAttachmentExtrasAction, getAttachmentFilesAction, type AttachmentKind } from "./actions";
+import { addAttachmentExtraAction, addEkspedisiInvoiceFileAction, clearAttachmentExtrasAction, getAttachmentFilesAction, getEkspedisiInvoiceFilesAction, type AttachmentKind } from "./actions";
 import { downloadDataUrl, fillPreviewWindow, fillPreviewWindowMulti, openPreviewWindow } from "./clientFiles";
 
 /** Lampiran lebih dari satu file (migration 0080). File PERTAMA dikirim lewat aksi utama seperti dulu; file ke-2 dan seterusnya disimpan di sini, satu panggilan per file
@@ -24,11 +24,32 @@ export async function saveExtraAttachments(kind: AttachmentKind, refIds: string[
   return null;
 }
 
+/** Invoice Ekspedisi (migration 0088): unggah semua file nota (Procurement) atau bukti bayar (Finance) satu resi. File pertama MENGGANTI file lama, sisanya ditambahkan.
+ *  Mengembalikan pesan kegagalan, atau null kalau berhasil. `skipFirst` dipakai Finance karena file bukti pertama sudah dikirim lewat aksi bayar. */
+export async function saveEkspedisiInvoiceFiles(key: string, kind: "NOTA" | "BUKTI", files: AttachFile[], skipFirst = false): Promise<string | null> {
+  const list = skipFirst ? files.slice(1) : files;
+  for (let i = 0; i < list.length; i++) {
+    const res = await addEkspedisiInvoiceFileAction(key, kind, list[i], !skipFirst && i === 0);
+    if (!res.ok) return res.error;
+  }
+  return null;
+}
+
+/** Buka semua file nota atau bukti bayar satu resi dalam satu tab. */
+export function viewEkspedisiInvoiceFiles(key: string, kind: "NOTA" | "BUKTI"): Promise<void> {
+  return viewAttachments("EKSPEDISI_PHOTO", key, kind === "NOTA" ? "Nota ekspedisi belum diunggah." : "Bukti bayar belum ada.", async () => getEkspedisiInvoiceFilesAction(key, kind));
+}
+
 /** Buka semua file satu lampiran dalam satu tab. Tab dibuka SEKARANG (sebelum await) supaya tidak diblokir popup blocker. Satu file langsung dibuka seperti biasa. */
-export async function viewAttachments(kind: AttachmentKind, refId: string, emptyMessage = "Lampiran belum ada."): Promise<void> {
+export async function viewAttachments(
+  kind: AttachmentKind,
+  refId: string,
+  emptyMessage = "Lampiran belum ada.",
+  fetchFiles?: () => ReturnType<typeof getAttachmentFilesAction>
+): Promise<void> {
   const win = openPreviewWindow();
   try {
-    const res = await getAttachmentFilesAction(kind, refId);
+    const res = await (fetchFiles ? fetchFiles() : getAttachmentFilesAction(kind, refId));
     if (!res.ok) {
       win?.close();
       window.alert("Gagal membuka lampiran: " + res.error);

@@ -890,6 +890,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean }): P
     noResi: k.no_resi ?? undefined,
     resiInvoicedAt: k.resi_invoiced_at ?? undefined,
     wmsReceivedAt: k.wms_received_at ?? undefined,
+    ekspedisiInvoice: k.ekspedisi_invoice ?? undefined,
   }));
 
   // ---- Vendor invoice ----

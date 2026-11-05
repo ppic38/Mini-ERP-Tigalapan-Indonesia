@@ -546,6 +546,37 @@ export type DeliveryKoli = {
    *  warehouseReceivableGroups/"Bongkar Koli" manapun (itu tetap terpisah, tetap manual, tetap
    *  mensyaratkan invoice vendor lunas seperti sebelumnya). */
   wmsReceivedAt?: string;
+  /** Migration 0088 -- Invoice Ekspedisi (validasi biaya ekspedisi aktual per resi oleh Procurement, lalu dibayar Finance). Nilainya IDENTIK di
+   *  semua koli satu grup resi. Kosong = belum divalidasi: ongkir HPP memakai tarif per kg Master Data. Tidak dikirim ke browser vendor. */
+  ekspedisiInvoice?: EkspedisiInvoice;
+};
+
+/** Status Invoice Ekspedisi: DRAFT = tersimpan/divalidasi Procurement (HPP sudah memakai biayanya), SUBMITTED = diajukan ke Finance, PAID = lunas. */
+export type EkspedisiInvoiceStatus = "DRAFT" | "SUBMITTED" | "PAID";
+
+export type EkspedisiInvoice = {
+  status: EkspedisiInvoiceStatus;
+  /** No resi setelah disesuaikan Procurement (sama dengan `DeliveryKoli.noResi` setelah disimpan). */
+  noResi: string;
+  /** No resi yang diisi vendor, hanya terisi kalau Procurement mengubahnya. */
+  noResiAsli?: string;
+  /** TOTAL biaya aktual resi ini (Rp), dari nota ekspedisi. Dipakai sebagai ongkir HPP resi ini. */
+  biaya: number;
+  /** Tarif per kg Master Data saat disimpan (info pembanding saja, tidak dipakai menghitung). */
+  tarifMasterPerKg?: number;
+  /** Berat total resi (kg) saat disimpan. */
+  beratResi?: number;
+  noNota?: string;
+  catatan?: string;
+  /** Jumlah file nota ekspedisi dan bukti bayar yang sudah diunggah (penanda murah; filenya ada di attachment_files). */
+  notaCount?: number;
+  buktiCount?: number;
+  savedBy?: string;
+  savedAt?: string;
+  submittedBy?: string;
+  submittedAt?: string;
+  paidBy?: string;
+  paidAt?: string;
 };
 
 /** Spec Portal Warehouse (migration 0031) — 1 baris item hasil "Bongkar Koli" Warehouse, level

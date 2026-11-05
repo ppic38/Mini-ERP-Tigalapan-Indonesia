@@ -1,8 +1,9 @@
 import type { CorrectionAction } from "@/components/sysadmin/correction-dialog";
 import { formatRupiah } from "@/lib/mrp/derive";
-import type { MaklonInvoice, MaklonPO, RawMaterialInvoice, VendorDepositEntry, VendorInvoice } from "@/lib/mrp/types";
+import type { EkspedisiInvoice, MaklonInvoice, MaklonPO, RawMaterialInvoice, VendorDepositEntry, VendorInvoice } from "@/lib/mrp/types";
 import {
   sysadminDeleteDepositEntryAction,
+  sysadminRevertEkspedisiInvoiceAction,
   sysadminRevertMaklonInvoiceAction,
   sysadminRevertMaterialInvoicePaidAction,
   sysadminRevertVendorInvoicePaidAction,
@@ -105,6 +106,51 @@ export function fobInvoiceCorrections(inv: MaklonInvoice, po: MaklonPO | undefin
     ];
   }
   return [];
+}
+
+/** Invoice Ekspedisi per resi (migration 0088): mundurkan satu langkah. Dipakai di tab Invoice Ekspedisi (Procurement) dan Payment Ekspedisi (Finance). */
+export function ekspedisiInvoiceCorrections(key: string, inv: EkspedisiInvoice | undefined): CorrectionAction[] {
+  if (!inv) return [];
+  if (inv.status === "PAID") {
+    return [
+      {
+        key: "revert-paid",
+        label: "Batalkan pembayaran",
+        title: `Batalkan pembayaran invoice ekspedisi resi ${inv.noResi}`,
+        impact: ["Status kembali ke Diajukan; Finance bisa membayar ulang (upload bukti baru).", "Bukti bayar lama dihapus.", "Finance dan Procurement menerima notifikasi."],
+        confirmLabel: "Batalkan pembayaran",
+        run: (reason) => sysadminRevertEkspedisiInvoiceAction(key, "PAID", reason),
+      },
+    ];
+  }
+  if (inv.status === "SUBMITTED") {
+    return [
+      {
+        key: "revert-submitted",
+        label: "Kembalikan ke Procurement",
+        title: `Kembalikan invoice ekspedisi resi ${inv.noResi} ke Procurement`,
+        impact: ["Status kembali ke Tervalidasi; Procurement bisa mengubah lalu mengajukan ulang.", "Finance dan Procurement menerima notifikasi."],
+        confirmLabel: "Kembalikan",
+        run: (reason) => sysadminRevertEkspedisiInvoiceAction(key, "SUBMITTED", reason),
+      },
+    ];
+  }
+  return [
+    {
+      key: "delete-validation",
+      label: "Buang validasi",
+      danger: true,
+      title: `Buang validasi invoice ekspedisi resi ${inv.noResi}`,
+      impact: [
+        "Biaya aktual dan nota yang diunggah dihapus; ongkir HPP resi ini kembali memakai tarif per kg Master Data.",
+        "No resi yang sudah disesuaikan tidak dikembalikan otomatis.",
+        "Finance dan Procurement menerima notifikasi.",
+      ],
+      confirmLabel: "Buang validasi",
+      confirmText: inv.noResi,
+      run: (reason) => sysadminRevertEkspedisiInvoiceAction(key, "DRAFT", reason),
+    },
+  ];
 }
 
 /** Hapus 1 entri ledger saldo deposit vendor yang keliru (owner 2026-10-06). */

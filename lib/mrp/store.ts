@@ -436,6 +436,11 @@ type FlowActions = {
   savePaymentProposal: (input: SavePaymentProposalInput) => Promise<void>;
   deletePaymentProposal: (no: string) => Promise<void>;
   setVendorInvoicePaymentProof: (invoiceIds: string[], proof: { dataUrl: string; fileName?: string }) => Promise<void>;
+  /** Invoice Ekspedisi (migration 0088): validasi biaya aktual per resi + sesuaikan no resi (Procurement), ajukan/tarik kembali, dan bayar (Finance). `key` = resiGroupId ?? id koli. */
+  saveEkspedisiInvoice: (input: { key: string; noResi: string; biaya: number; noNota?: string; catatan?: string }) => Promise<void>;
+  submitEkspedisiInvoice: (key: string) => Promise<void>;
+  withdrawEkspedisiInvoice: (key: string) => Promise<void>;
+  payEkspedisiInvoices: (keys: string[], proof: { dataUrl: string; fileName?: string }) => Promise<void>;
   /** Spec Portal Warehouse — "Bongkar Koli", SELALU per resi group & SELALU utuh (Q5). Lihat
    *  receiveWarehouseResiGroupAction di actions.ts — qty TIDAK dipercaya dari client. */
   receiveWarehouseResiGroup: (resiGroupId: string, note?: string) => Promise<void>;
@@ -1676,6 +1681,80 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       unwrapAction(await actions.setVendorInvoicePaymentProofAction(invoiceIds, proof));
     } catch (err) {
       notifyError("Gagal menyimpan bukti pembayaran. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  // Invoice Ekspedisi: perubahan status dipatch dulu di klien (nilainya pasti dari argumen), dibatalkan kalau server menolak.
+  saveEkspedisiInvoice: async (input) => {
+    const previous = get().deliveryKolis;
+    set({
+      deliveryKolis: previous.map((k) =>
+        (k.resiGroupId ?? k.id) === input.key
+          ? {
+              ...k,
+              noResi: input.noResi.trim(),
+              ekspedisiInvoice: {
+                ...(k.ekspedisiInvoice ?? { status: "DRAFT" as const, noResi: "" }),
+                status: "DRAFT",
+                noResi: input.noResi.trim(),
+                noResiAsli: k.ekspedisiInvoice?.noResiAsli ?? (k.noResi && k.noResi !== input.noResi.trim() ? k.noResi : undefined),
+                biaya: Math.round(input.biaya),
+                noNota: input.noNota?.trim() || undefined,
+                catatan: input.catatan?.trim() || undefined,
+              },
+            }
+          : k
+      ),
+    });
+    try {
+      unwrapAction(await actions.saveEkspedisiInvoiceAction(input));
+    } catch (err) {
+      set({ deliveryKolis: previous });
+      notifyError("Gagal menyimpan invoice ekspedisi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  submitEkspedisiInvoice: async (key) => {
+    const previous = get().deliveryKolis;
+    set({ deliveryKolis: previous.map((k) => ((k.resiGroupId ?? k.id) === key && k.ekspedisiInvoice ? { ...k, ekspedisiInvoice: { ...k.ekspedisiInvoice, status: "SUBMITTED" } } : k)) });
+    try {
+      unwrapAction(await actions.submitEkspedisiInvoiceAction(key));
+    } catch (err) {
+      set({ deliveryKolis: previous });
+      notifyError("Gagal mengajukan invoice ekspedisi ke Finance. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  withdrawEkspedisiInvoice: async (key) => {
+    const previous = get().deliveryKolis;
+    set({ deliveryKolis: previous.map((k) => ((k.resiGroupId ?? k.id) === key && k.ekspedisiInvoice ? { ...k, ekspedisiInvoice: { ...k.ekspedisiInvoice, status: "DRAFT" } } : k)) });
+    try {
+      unwrapAction(await actions.withdrawEkspedisiInvoiceAction(key));
+    } catch (err) {
+      set({ deliveryKolis: previous });
+      notifyError("Gagal menarik kembali invoice ekspedisi. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  payEkspedisiInvoices: async (keys, proof) => {
+    const previous = get().deliveryKolis;
+    const keySet = new Set(keys);
+    set({
+      deliveryKolis: previous.map((k) =>
+        keySet.has(k.resiGroupId ?? k.id) && k.ekspedisiInvoice && k.ekspedisiInvoice.status === "SUBMITTED"
+          ? { ...k, ekspedisiInvoice: { ...k.ekspedisiInvoice, status: "PAID", paidAt: new Date().toISOString(), buktiCount: 1 } }
+          : k
+      ),
+    });
+    try {
+      unwrapAction(await actions.payEkspedisiInvoicesAction(keys, proof));
+    } catch (err) {
+      set({ deliveryKolis: previous });
+      notifyError("Gagal membayar invoice ekspedisi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();

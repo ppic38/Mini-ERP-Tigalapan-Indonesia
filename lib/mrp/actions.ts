@@ -39,7 +39,8 @@ import { loadWeightTolerancePct, WEIGHT_TOLERANCE_KEY } from "./weightToleranceS
 import { assertRollCodesUnique } from "./rollCodeServer";
 import { normalizeProposal, validateProposal } from "./proposal";
 import { detachBatchExtras, normalizeExtras, persistBatchExtras, removeBatchExtras, saveBatchExtraFg } from "./cuttingExtras";
-import type { CuttingExtra, CuttingExtraStored } from "./types";
+import type { CuttingExtra, CuttingExtraStored, EkspedisiInvoice } from "./types";
+import { isEkspedisiBerbiaya } from "./ekspedisiInvoice";
 import {
   localDateString,
   maklonAmountForLenganBuckets,
@@ -6047,6 +6048,207 @@ export async function getAttachmentFilesAction(kind: AttachmentKind, refId: stri
 }
 
 // =========================================================================
+// Invoice Ekspedisi (migration 0088): Procurement memvalidasi biaya ekspedisi AKTUAL per resi dari nota ekspedisi (boleh menyesuaikan no resi),
+// mengajukannya ke Finance, Finance membayar dengan bukti. Biaya tervalidasi menggantikan tarif master sebagai ongkir HPP untuk resi itu
+// (`ekspedisiActualBiaya`, derive.ts). Satu resi = satu invoice; datanya jsonb `delivery_kolis.ekspedisi_invoice` identik di semua koli resi itu.
+// File nota dan bukti bayar di `attachment_files` (kind EKSPEDISI_NOTA / EKSPEDISI_BUKTI, ref_id = kunci resi).
+// =========================================================================
+
+type EkspedisiKind = "NOTA" | "BUKTI";
+const EKSPEDISI_COLUMN_MISSING = "Jalankan migration 0088 (kolom delivery_kolis.ekspedisi_invoice) di Supabase dulu.";
+const EKSPEDISI_MAX_FILES = 5;
+
+function ekspedisiFileKind(kind: EkspedisiKind): string {
+  return kind === "NOTA" ? "EKSPEDISI_NOTA" : "EKSPEDISI_BUKTI";
+}
+
+type EkspedisiGroupRow = {
+  id: string;
+  mrp_id: string;
+  vendor_produksi: string;
+  ekspedisi: string;
+  no_resi: string | null;
+  berat_koli: number | null;
+  delivered_at: string | null;
+  resi_group_id: string | null;
+  ekspedisi_invoice: EkspedisiInvoice | null;
+};
+
+/** Semua koli satu resi (kunci = resi_group_id, atau id koli untuk koli lama tanpa grup). Kunci divalidasi ketat karena masuk ke filter PostgREST. */
+async function loadEkspedisiGroup(db: ReturnType<typeof supabaseServer>, key: string): Promise<EkspedisiGroupRow[]> {
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(key)) throw new Error("Kunci resi tidak valid.");
+  const { data, error } = await db
+    .from("delivery_kolis")
+    .select("id,mrp_id,vendor_produksi,ekspedisi,no_resi,berat_koli,delivered_at,resi_group_id,ekspedisi_invoice")
+    .or(`resi_group_id.eq.${key},id.eq.${key}`);
+  if (error) throw new Error(error.message.includes("ekspedisi_invoice") ? EKSPEDISI_COLUMN_MISSING : error.message);
+  const rows = ((data ?? []) as EkspedisiGroupRow[]).filter((r) => (r.resi_group_id ?? r.id) === key);
+  if (rows.length === 0) throw new Error("Resi tidak ditemukan.");
+  if (rows.some((r) => !r.delivered_at)) throw new Error("Resi ini belum dikirim (Delivery) oleh vendor.");
+  return rows;
+}
+
+async function writeEkspedisiInvoice(db: ReturnType<typeof supabaseServer>, ids: string[], inv: EkspedisiInvoice | null, extra?: Record<string, unknown>): Promise<void> {
+  const { error } = await db.from("delivery_kolis").update({ ekspedisi_invoice: inv, ...(extra ?? {}) }).in("id", ids);
+  if (error) throw new Error(error.message.includes("ekspedisi_invoice") ? EKSPEDISI_COLUMN_MISSING : error.message);
+}
+
+function checkEkspedisiFile(file: AttachmentFileInput | undefined): asserts file is AttachmentFileInput {
+  if (!file?.dataUrl) throw new Error("File wajib dipilih (PDF, JPG, atau PNG).");
+  if (!/^data:(application\/pdf|image\/jpeg|image\/png);base64,/.test(file.dataUrl)) throw new Error("File harus berformat PDF, JPG, atau PNG.");
+  const approxBytes = Math.floor(((file.dataUrl.length - file.dataUrl.indexOf(",") - 1) * 3) / 4);
+  if (approxBytes > 1.3 * 1024 * 1024) throw new Error("File terlalu besar -- kecilkan dulu ukurannya.");
+}
+
+async function countEkspedisiFiles(db: ReturnType<typeof supabaseServer>, kind: EkspedisiKind, key: string): Promise<number> {
+  const { count, error } = await db.from("attachment_files").select("id", { count: "exact", head: true }).eq("kind", ekspedisiFileKind(kind)).eq("ref_id", key);
+  if (error) throw new Error(error.message.includes("attachment_files") ? ATTACHMENT_TABLE_MISSING : error.message);
+  return count ?? 0;
+}
+
+const rupiahText = (n: number) => "Rp " + Math.round(n).toLocaleString("id-ID");
+
+/** Procurement: simpan (validasi) biaya ekspedisi aktual satu resi + sesuaikan no resi. Mengubah ongkir HPP resi ini SEKARANG JUGA (status DRAFT sudah dipakai HPP). */
+export async function saveEkspedisiInvoiceAction(input: { key: string; noResi: string; biaya: number; noNota?: string; catatan?: string }): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    const actor = await requireInternalRoleWithActor("procurement");
+    const noResi = (input.noResi ?? "").trim();
+    const biaya = Math.round(Number(input.biaya));
+    if (!noResi) throw new Error("No resi wajib diisi.");
+    if (noResi.length > 80) throw new Error("No resi terlalu panjang.");
+    if (!Number.isFinite(biaya) || biaya <= 0) throw new Error("Biaya ekspedisi harus lebih dari 0.");
+    if (biaya > 10_000_000_000) throw new Error("Biaya ekspedisi tidak masuk akal -- periksa lagi angkanya.");
+    const noNota = (input.noNota ?? "").trim().slice(0, 80);
+    const catatan = (input.catatan ?? "").trim().slice(0, 500);
+    const db = supabaseServer();
+    const rows = await loadEkspedisiGroup(db, input.key);
+    if (!isEkspedisiBerbiaya(rows[0].ekspedisi)) throw new Error("Pengiriman internal tidak punya biaya ekspedisi.");
+    const existing = rows[0].ekspedisi_invoice;
+    if (existing?.status === "SUBMITTED") throw new Error("Invoice ekspedisi ini sudah diajukan ke Finance -- Tarik kembali dulu kalau mau mengubahnya.");
+    if (existing?.status === "PAID") throw new Error("Invoice ekspedisi ini sudah dibayar Finance dan terkunci.");
+    const { data: rate } = await db.from("ekspedisi_rates").select("price_per_kg").eq("nama", rows[0].ekspedisi).maybeSingle();
+    const beratResi = rows.reduce((s, r) => s + (Number(r.berat_koli) || 0), 0);
+    const noResiVendor = existing?.noResiAsli ?? rows[0].no_resi ?? "";
+    const next: EkspedisiInvoice = {
+      status: "DRAFT",
+      noResi,
+      noResiAsli: noResi !== noResiVendor ? noResiVendor : undefined,
+      biaya,
+      tarifMasterPerKg: rate?.price_per_kg == null ? undefined : Number(rate.price_per_kg),
+      beratResi,
+      noNota: noNota || undefined,
+      catatan: catatan || undefined,
+      notaCount: existing?.notaCount,
+      buktiCount: existing?.buktiCount,
+      savedBy: actor.actorName,
+      savedAt: nowIso(),
+    };
+    await writeEkspedisiInvoice(db, rows.map((r) => r.id), next, noResi !== (rows[0].no_resi ?? "") ? { no_resi: noResi } : undefined);
+    const resiNote = next.noResiAsli ? ` (no resi vendor ${next.noResiAsli} diubah)` : "";
+    await logInternalAction(actor, `Validasi invoice ekspedisi resi ${noResi}: ${rupiahText(biaya)}${resiNote}`, "delivery_kolis", input.key);
+  });
+}
+
+/** Procurement: ajukan invoice ekspedisi yang sudah tervalidasi ke Finance. Nota ekspedisi minimal satu file. */
+export async function submitEkspedisiInvoiceAction(key: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    const actor = await requireInternalRoleWithActor("procurement");
+    const db = supabaseServer();
+    const rows = await loadEkspedisiGroup(db, key);
+    const inv = rows[0].ekspedisi_invoice;
+    if (!inv) throw new Error("Simpan (validasi) dulu biaya ekspedisi resi ini sebelum diajukan.");
+    if (inv.status !== "DRAFT") throw new Error(inv.status === "PAID" ? "Invoice ini sudah dibayar." : "Invoice ini sudah diajukan ke Finance.");
+    const notaCount = await countEkspedisiFiles(db, "NOTA", key);
+    if (notaCount === 0) throw new Error("Upload nota/lampiran ekspedisi dulu sebelum diajukan ke Finance.");
+    await writeEkspedisiInvoice(db, rows.map((r) => r.id), { ...inv, status: "SUBMITTED", notaCount, submittedBy: actor.actorName, submittedAt: nowIso() });
+    await logInternalAction(actor, `Ajukan invoice ekspedisi resi ${inv.noResi} (${rupiahText(inv.biaya)}) ke Finance`, "delivery_kolis", key);
+    await insertNotification(notif(`Invoice ekspedisi resi ${inv.noResi} (${rupiahText(inv.biaya)}) menunggu pembayaran Finance`, ["finance"]));
+  });
+}
+
+/** Procurement: tarik kembali invoice ekspedisi yang sudah diajukan (belum dibayar) supaya bisa diperbaiki. */
+export async function withdrawEkspedisiInvoiceAction(key: string): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    const actor = await requireInternalRoleWithActor("procurement");
+    const db = supabaseServer();
+    const rows = await loadEkspedisiGroup(db, key);
+    const inv = rows[0].ekspedisi_invoice;
+    if (!inv || inv.status !== "SUBMITTED") throw new Error(inv?.status === "PAID" ? "Invoice ini sudah dibayar Finance dan tidak bisa ditarik." : "Invoice ini tidak sedang diajukan ke Finance.");
+    await writeEkspedisiInvoice(db, rows.map((r) => r.id), { ...inv, status: "DRAFT", submittedBy: undefined, submittedAt: undefined });
+    await logInternalAction(actor, `Tarik kembali invoice ekspedisi resi ${inv.noResi} dari Finance`, "delivery_kolis", key);
+  });
+}
+
+/** Unggah SATU file nota ekspedisi (Procurement) atau bukti bayar (Finance) untuk satu resi. `replace` menghapus file lama jenis itu dulu (dipakai untuk file pertama
+ *  saat mengunggah ulang). Satu panggilan per file supaya tetap di bawah batas ukuran Server Action. */
+export async function addEkspedisiInvoiceFileAction(key: string, kind: EkspedisiKind, file: AttachmentFileInput, replace: boolean): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    const actor = await requireInternalRoleWithActor(kind === "NOTA" ? "procurement" : "finance");
+    checkEkspedisiFile(file);
+    const db = supabaseServer();
+    const rows = await loadEkspedisiGroup(db, key);
+    const inv = rows[0].ekspedisi_invoice;
+    if (!inv) throw new Error("Simpan (validasi) dulu biaya ekspedisi resi ini sebelum mengunggah file.");
+    if (kind === "NOTA" && inv.status !== "DRAFT") throw new Error("Nota hanya bisa diganti selagi invoice belum diajukan -- Tarik kembali dulu.");
+    if (kind === "BUKTI" && inv.status === "DRAFT") throw new Error("Bukti bayar hanya untuk invoice yang sudah diajukan ke Finance.");
+    const fk = ekspedisiFileKind(kind);
+    if (replace) {
+      const { error: delErr } = await db.from("attachment_files").delete().eq("kind", fk).eq("ref_id", key);
+      if (delErr) throw new Error(delErr.message.includes("attachment_files") ? ATTACHMENT_TABLE_MISSING : delErr.message);
+    } else if ((await countEkspedisiFiles(db, kind, key)) >= EKSPEDISI_MAX_FILES) {
+      throw new Error(`Maksimal ${EKSPEDISI_MAX_FILES} file.`);
+    }
+    const { error } = await db.from("attachment_files").insert({ kind: fk, ref_id: key, data_url: file.dataUrl, file_name: file.fileName ?? null });
+    if (error) throw new Error(`Gagal menyimpan file: ${error.message.includes("attachment_files") ? ATTACHMENT_TABLE_MISSING : error.message}`);
+    const count = await countEkspedisiFiles(db, kind, key);
+    await writeEkspedisiInvoice(db, rows.map((r) => r.id), kind === "NOTA" ? { ...inv, notaCount: count } : { ...inv, buktiCount: count });
+    if (replace) await logInternalAction(actor, `${kind === "NOTA" ? "Upload nota" : "Upload bukti bayar"} invoice ekspedisi resi ${inv.noResi}`, "delivery_kolis", key);
+  });
+}
+
+/** Semua file nota atau bukti bayar satu resi, untuk tombol "Lihat / Download". Hanya Procurement, Finance, dan Sysadmin. */
+export async function getEkspedisiInvoiceFilesAction(key: string, kind: EkspedisiKind): Promise<ActionResult<AttachmentFileInput[]>> {
+  return toActionResult(async () => {
+    requireAnyInternalRole(await requireSession(), ["procurement", "finance", "sysadmin"]);
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(key)) throw new Error("Kunci resi tidak valid.");
+    const { data, error } = await supabaseServer().from("attachment_files").select("data_url,file_name").eq("kind", ekspedisiFileKind(kind)).eq("ref_id", key).order("id");
+    if (error) throw new Error(error.message.includes("attachment_files") ? ATTACHMENT_TABLE_MISSING : error.message);
+    return (data ?? []).map((r) => ({ dataUrl: r.data_url as string, fileName: (r.file_name as string | null) ?? undefined }));
+  });
+}
+
+/** Finance: bayar lunas satu atau beberapa invoice ekspedisi yang sudah diajukan. Bukti bayar WAJIB (disimpan dulu, baru status PAID). Satu bukti boleh dipakai
+ *  beberapa resi yang dibayar bersamaan. File bukti ke-2 dan seterusnya diunggah klien lewat `addEkspedisiInvoiceFileAction`. */
+export async function payEkspedisiInvoicesAction(keys: string[], proof: AttachmentFileInput): Promise<ActionResult<void>> {
+  return toActionResult(async () => {
+    const actor = await requireInternalRoleWithActor("finance");
+    checkEkspedisiFile(proof);
+    const unique = Array.from(new Set(keys));
+    if (unique.length === 0) return;
+    const db = supabaseServer();
+    const loaded: { key: string; rows: EkspedisiGroupRow[]; inv: EkspedisiInvoice }[] = [];
+    for (const key of unique) {
+      const rows = await loadEkspedisiGroup(db, key);
+      const inv = rows[0].ekspedisi_invoice;
+      if (!inv || inv.status === "DRAFT") throw new Error(`Invoice ekspedisi resi ${inv?.noResi ?? key} belum diajukan Procurement, jadi belum bisa dibayar.`);
+      loaded.push({ key, rows, inv });
+    }
+    const paidAt = nowIso();
+    for (const { key, rows, inv } of loaded) {
+      if (inv.status === "PAID") continue;
+      const fk = ekspedisiFileKind("BUKTI");
+      const { error: delErr } = await db.from("attachment_files").delete().eq("kind", fk).eq("ref_id", key);
+      if (delErr) throw new Error(delErr.message.includes("attachment_files") ? ATTACHMENT_TABLE_MISSING : delErr.message);
+      const { error: insErr } = await db.from("attachment_files").insert({ kind: fk, ref_id: key, data_url: proof.dataUrl, file_name: proof.fileName ?? null });
+      if (insErr) throw new Error(`Gagal menyimpan bukti pembayaran: ${insErr.message}`);
+      await writeEkspedisiInvoice(db, rows.map((r) => r.id), { ...inv, status: "PAID", paidBy: actor.actorName, paidAt, buktiCount: 1 });
+      await logInternalAction(actor, `Bayar invoice ekspedisi resi ${inv.noResi} (${rupiahText(inv.biaya)})`, "delivery_kolis", key);
+      await insertNotification(notif(`Invoice ekspedisi resi ${inv.noResi} (${rupiahText(inv.biaya)}) telah dibayar Finance`, ["procurement"]));
+    }
+  });
+}
+
+// =========================================================================
 // Warehouse (Spec Portal Warehouse bagian B) — Penerimaan & Bongkar koli barang jadi.
 // =========================================================================
 
@@ -6256,6 +6458,18 @@ async function resetMrpCore(mrpId: string): Promise<void> {
   const { data: koliRowsForThisMrp, error: koliErr } = await db.from("delivery_kolis").select("id").eq("mrp_id", mrpId);
   if (koliErr) throw new Error(`Gagal memvalidasi koli pengiriman sebelum reset MRP ${mrpId}: ${koliErr.message}`);
   const koliIdsForThisMrp = (koliRowsForThisMrp ?? []).map((r) => r.id);
+  // Invoice Ekspedisi (migration 0088): yang sudah diajukan/dibayar tidak boleh ikut hilang; yang masih tervalidasi dibersihkan filenya. Kolom belum ada = dilewati.
+  let ekspedisiResiKeys: string[] = [];
+  if (koliIdsForThisMrp.length > 0) {
+    const { data: eksRows, error: eksErr } = await db.from("delivery_kolis").select("id,resi_group_id,ekspedisi_invoice").in("id", koliIdsForThisMrp);
+    if (!eksErr) {
+      const locked = (eksRows ?? []).find((r) => r.ekspedisi_invoice && (r.ekspedisi_invoice as EkspedisiInvoice).status !== "DRAFT");
+      if (locked) {
+        throw new Error(`Tidak bisa reset MRP ${mrpId} -- invoice ekspedisi resi ${(locked.ekspedisi_invoice as EkspedisiInvoice).noResi} sudah diajukan/dibayar. Tarik kembali atau koreksi dulu lewat Procurement/Sysadmin.`);
+      }
+      ekspedisiResiKeys = Array.from(new Set((eksRows ?? []).filter((r) => r.ekspedisi_invoice).map((r) => (r.resi_group_id ?? r.id) as string)));
+    }
+  }
   let warehouseReceiptIds: string[] = [];
   if (koliIdsForThisMrp.length > 0) {
     const { data: whKoliRows, error: whKoliErr } = await db.from("warehouse_receipt_kolis").select("warehouse_receipt_id").in("delivery_koli_id", koliIdsForThisMrp);
@@ -6320,6 +6534,14 @@ async function resetMrpCore(mrpId: string): Promise<void> {
       for (const invId of rawInvoiceIds) await db.from("attachment_files").delete().eq("kind", "CLAIM_PHOTO").like("ref_id", `${invId}|%`);
     } catch {
       // diabaikan dengan sengaja
+    }
+  }
+
+  if (ekspedisiResiKeys.length > 0) {
+    try {
+      await db.from("attachment_files").delete().in("kind", ["EKSPEDISI_NOTA", "EKSPEDISI_BUKTI"]).in("ref_id", ekspedisiResiKeys);
+    } catch {
+      // diabaikan dengan sengaja (best-effort)
     }
   }
 

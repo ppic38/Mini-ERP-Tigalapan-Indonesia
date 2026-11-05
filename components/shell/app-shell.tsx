@@ -39,6 +39,7 @@ import {
   countVendorProduksiActionable,
   countWarehousePendingReceipt,
 } from "@/lib/shell/badges";
+import { countEkspedisiReadyToPay, countEkspedisiToProcess } from "@/lib/mrp/ekspedisiInvoice";
 
 const GATED_ROLES: InternalRole[] = ["ppic", "procurement", "finance", "scm", "gm", "produksi", "warehouse", "sysadmin"];
 
@@ -231,7 +232,7 @@ export function AppShell({
   if (role === "finance") {
     badgeOverrides = {
       "/finance/po-approval": countPoInProgress(materialPOs, maklonPOs),
-      "/finance/payment": countPaymentTotal(invoices, vendorInvoices),
+      "/finance/payment": countPaymentTotal(invoices, vendorInvoices) + countEkspedisiReadyToPay(deliveryKolis, ekspedisiRates),
     };
   } else if (role === "procurement") {
     badgeOverrides = {
@@ -240,7 +241,7 @@ export function AppShell({
       "/procurement/po-approval": countMrpWithoutPO(mrpDetails) + countPoInProgress(materialPOs, maklonPOs),
       // "Invoice Vendor" sekarang tab kedua di halaman ini (bukan halaman terpisah lagi) —
       // badge-nya digabung ke sini juga.
-      "/raw-material": countMaterialPOsAwaitingInvoice(materialPOs) + countVendorInvoicesAwaitingReview(vendorInvoices),
+      "/raw-material": countMaterialPOsAwaitingInvoice(materialPOs) + countVendorInvoicesAwaitingReview(vendorInvoices) + countEkspedisiToProcess(deliveryKolis, ekspedisiRates),
       "/procurement/material-tracking": countMaterialInvoicesReadyForDelivery(invoices),
       "/procurement/material-claims": countMaterialClaimsUnresolved(invoices, materialClaimResolutions),
     };

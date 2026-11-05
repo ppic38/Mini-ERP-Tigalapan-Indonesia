@@ -1349,9 +1349,23 @@ export function ekspedisiPrice(ekspedisi: string, beratKg: number, rates: Eksped
  *  lama) dihitung APA ADANYA seperti sebelumnya (grup isinya cuma dirinya sendiri, portion = 1) --
  *  MENGGANTIKAN semua pemanggilan `ekspedisiPrice(k.ekspedisi, k.beratKoli ?? 0)` langsung di
  *  seluruh app (autoOngkirForInvoice, hppRowsForInvoicePerRoll, halaman Pengiriman). */
+/** Biaya ekspedisi AKTUAL (Rp, total satu resi) hasil validasi Procurement lewat Invoice Ekspedisi (migration 0088), atau null kalau resi ini belum divalidasi. */
+export function ekspedisiActualBiaya(koli: DeliveryKoli): number | null {
+  const inv = koli.ekspedisiInvoice;
+  return inv && Number.isFinite(inv.biaya) && inv.biaya > 0 ? inv.biaya : null;
+}
+
 export function koliOngkirShare(koli: DeliveryKoli, allKolis: DeliveryKoli[], rates: EkspedisiRateRow[]): number {
   if (!koli.ekspedisi) return 0;
-  // Ongkir SELALU dari tarif per kg Master Data Ekspedisi (owner 2026-10-26: vendor tidak lagi mengisi biaya ekspedisi sendiri).
+  // Biaya AKTUAL hasil validasi Procurement (Invoice Ekspedisi, migration 0088) menggantikan tarif master untuk resi ini; dibagi ke koli menurut berat
+  // (berat semua 0 = dibagi rata). Resi yang belum divalidasi tetap memakai tarif per kg Master Data Ekspedisi (vendor tidak mengisi biaya sendiri).
+  const actual = ekspedisiActualBiaya(koli);
+  if (actual != null) {
+    if (!koli.resiGroupId) return actual;
+    const members = allKolis.filter((k) => k.resiGroupId === koli.resiGroupId);
+    const weight = members.reduce((s, k) => s + (k.beratKoli ?? 0), 0);
+    return weight > 0 ? actual * ((koli.beratKoli ?? 0) / weight) : actual / Math.max(1, members.length);
+  }
   if (!koli.resiGroupId) return ekspedisiPrice(koli.ekspedisi, koli.beratKoli ?? 0, rates);
   const group = allKolis.filter((k) => k.resiGroupId === koli.resiGroupId);
   const totalWeight = group.reduce((s, k) => s + (k.beratKoli ?? 0), 0);
@@ -1365,8 +1379,11 @@ export function koliOngkirShare(koli: DeliveryKoli, allKolis: DeliveryKoli[], ra
 export function koliOngkirBreakdown(koli: DeliveryKoli, allKolis: DeliveryKoli[], rates: EkspedisiRateRow[]): { ongkirResi: number; beratResi: number; beratKoli: number } {
   const beratKoli = koli.beratKoli ?? 0;
   if (!koli.ekspedisi) return { ongkirResi: 0, beratResi: koli.resiGroupId ? allKolis.filter((k) => k.resiGroupId === koli.resiGroupId).reduce((s, k) => s + (k.beratKoli ?? 0), 0) : beratKoli, beratKoli };
-  if (!koli.resiGroupId) return { ongkirResi: ekspedisiPrice(koli.ekspedisi, beratKoli, rates), beratResi: beratKoli, beratKoli };
+  const actual = ekspedisiActualBiaya(koli);
+  if (!koli.resiGroupId) return { ongkirResi: actual ?? ekspedisiPrice(koli.ekspedisi, beratKoli, rates), beratResi: beratKoli, beratKoli };
   const beratResi = allKolis.filter((k) => k.resiGroupId === koli.resiGroupId).reduce((s, k) => s + (k.beratKoli ?? 0), 0);
+  // Biaya aktual (Invoice Ekspedisi) dipakai apa adanya; share koli = ongkirResi x beratKoli / beratResi, sama dengan koliOngkirShare.
+  if (actual != null) return { ongkirResi: actual, beratResi, beratKoli };
   return { ongkirResi: beratResi > 0 ? ekspedisiPrice(koli.ekspedisi, beratResi, rates) : 0, beratResi, beratKoli };
 }
 
