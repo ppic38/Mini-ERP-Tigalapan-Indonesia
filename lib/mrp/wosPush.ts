@@ -1,5 +1,6 @@
 import { supabaseServer } from "../supabase/server";
-import { compareNoKoli } from "./derive";
+import { compareNoKoli, warehouseReceivableGroups } from "./derive";
+import { getFlowSnapshot } from "./repo/snapshot";
 import { fileLinkSignature, signWebhook } from "./wosSign";
 import { sheetsConfig, writeResisToSheets, type SheetResi } from "./wosSheets";
 
@@ -51,7 +52,7 @@ type ResiPayload = {
     koliNo: string;
     mrpNo: string;
     weightKg: number | null;
-    items: { color: string; sleeve: string; size: string; sku: string | null; itemName: string | null; qty: number; kind: string; age: string | null }[];
+    items: { color: string; sleeve: string; size: string; sku: string | null; itemName: string | null; qty: number; kind: string; age: string | null; hppPerItem?: number | null; hppEstimate?: boolean }[];
   }[];
 };
 
@@ -74,9 +75,44 @@ function chunked<T>(list: T[], n: number): T[][] {
   return out;
 }
 
+/** HPP per pcs untuk SEMUA item koli terkirim, dihitung dengan mesin yang sama dengan Warehouse Penerimaan dan Laporan HPP (estimasi dari Master
+ *  Data Harga Maklon untuk qty yang belum diinvoice vendor; roll yang belum ditutup bertanda estimasi). Resi yang sudah dibongkar Warehouse pun ikut
+ *  (daftar penerimaan sengaja dikosongkan supaya tidak disaring), dihitung ulang dari data saat ini. Kunci: koli|warna|lengan|size|kind. Satu snapshot
+ *  penuh per pemanggilan, jadi panggil SEKALI untuk banyak resi. */
+export async function computeHppByKoliItem(): Promise<Map<string, { hpp: number; estimate: boolean }>> {
+  const snap = await getFlowSnapshot();
+  const groups = warehouseReceivableGroups(
+    snap.deliveryKolis,
+    snap.vendorInvoices,
+    snap.mrpDetails,
+    snap.staticMrps,
+    snap.productionBatches,
+    snap.productionResults,
+    snap.productionGroupMeta,
+    snap.invoices,
+    [],
+    snap.ekspedisiRates,
+    snap.itemSellingPrices,
+    snap.hargaMaklon
+  );
+  const acc = new Map<string, { qty: number; sum: number; estimate: boolean }>();
+  for (const g of groups) {
+    for (const it of g.items) {
+      if (it.kind === "REJECT" || !(it.hppPerItem > 0) || !(it.qty > 0)) continue;
+      const key = `${it.deliveryKoliId}|${it.warna}|${it.lengan}|${it.size}|${it.kind}`;
+      const a = acc.get(key) ?? { qty: 0, sum: 0, estimate: false };
+      a.qty += it.qty;
+      a.sum += it.qty * it.hppPerItem;
+      if (it.sementara) a.estimate = true;
+      acc.set(key, a);
+    }
+  }
+  return new Map(Array.from(acc, ([k, a]) => [k, { hpp: a.sum / a.qty, estimate: a.estimate }]));
+}
+
 /** Susun isi kiriman beberapa resi sekaligus dari data saat ini. Item Reject tidak ikut (sama seperti integrasi WMS: reject bukan barang jadi
  *  yang ditagihkan); resi tanpa item barang jadi dilewati (tidak ada di hasil). */
-async function buildResiPayloads(db: Db, resiGroupIds: string[]): Promise<Map<string, ResiPayload>> {
+async function buildResiPayloads(db: Db, resiGroupIds: string[], hppByItem?: Map<string, { hpp: number; estimate: boolean }>): Promise<Map<string, ResiPayload>> {
   const out = new Map<string, ResiPayload>();
   type Row = Record<string, unknown>;
   const koliRows: Row[] = [];
@@ -141,6 +177,7 @@ async function buildResiPayloads(db: Db, resiGroupIds: string[]): Promise<Map<st
           qty: Number(i.qty),
           kind: ((i.kind as string | null) ?? "FG") as string,
           age: (i.usia as string | null) ?? null,
+          ...hppFor(hppByItem, k.id as string, i),
         })),
       }))
       .filter((k) => k.items.length > 0);
@@ -167,8 +204,16 @@ async function buildResiPayloads(db: Db, resiGroupIds: string[]): Promise<Map<st
   return out;
 }
 
+function hppFor(map: Map<string, { hpp: number; estimate: boolean }> | undefined, koliId: string, i: Record<string, unknown>): { hppPerItem?: number | null; hppEstimate?: boolean } {
+  if (!map) return {};
+  const h = map.get(`${koliId}|${i.warna}|${i.lengan}|${i.size}|${(i.kind as string | null) ?? "FG"}`);
+  return h ? { hppPerItem: Math.round(h.hpp), hppEstimate: h.estimate } : { hppPerItem: null };
+}
+
 async function buildResiPayload(db: Db, resiGroupId: string): Promise<ResiPayload | null> {
-  return (await buildResiPayloads(db, [resiGroupId])).get(resiGroupId) ?? null;
+  // HPP hanya dihitung (dan ikut terkirim) kalau tujuannya Google Sheets; webhook lama tidak membawa HPP.
+  const hpp = sheetsConfig() ? await computeHppByKoliItem().catch(() => undefined) : undefined;
+  return (await buildResiPayloads(db, [resiGroupId], hpp)).get(resiGroupId) ?? null;
 }
 
 export type ResiFile = { fileName: string | null; dataUrl: string };
@@ -296,9 +341,10 @@ export async function enqueueAllShippedResis(): Promise<{ resis: number; already
   const already = new Set(queuedRows.map((r) => r.resi_group_id));
   const fresh = ids.filter((id) => !already.has(id));
 
+  const hpp = sheetsConfig() && fresh.length > 0 ? await computeHppByKoliItem().catch(() => undefined) : undefined;
   let queued = 0;
   for (const chunk of chunked(fresh, 40)) {
-    const payloads = await buildResiPayloads(db, chunk);
+    const payloads = await buildResiPayloads(db, chunk, hpp);
     const rows = chunk.filter((id) => payloads.has(id)).map((id) => ({ event: EVENT_RESI_CREATED, resi_group_id: id, payload: payloads.get(id) }));
     if (rows.length > 0) {
       const { error } = await db.from("wos_outbox").upsert(rows, { onConflict: "event,resi_group_id", ignoreDuplicates: true });
@@ -307,6 +353,27 @@ export async function enqueueAllShippedResis(): Promise<{ resis: number; already
     }
   }
   return { resis: ids.length, alreadyQueued: ids.length - fresh.length, queued, skipped: fresh.length - queued };
+}
+
+/** Hitung ulang HPP semua resi yang sudah pernah diantrekan (termasuk yang sudah terkirim), simpan ke antrean, dan tandai PENDING supaya
+ *  dikirim ulang dan menimpa kolom items dan hpp_total di sheet. Hanya bermakna untuk tujuan Google Sheets. */
+export async function refreshHppOfQueuedResis(): Promise<{ resis: number; updated: number }> {
+  if (!sheetsConfig()) throw new Error("Tujuan Google Sheets belum dikonfigurasi (env WOS_SHEETS_ID, GOOGLE_SA_EMAIL, GOOGLE_SA_PRIVATE_KEY).");
+  const db = supabaseServer();
+  const queued = await fetchAll<{ id: number; resi_group_id: string }>((a, b) => db.from("wos_outbox").select("id,resi_group_id").eq("event", EVENT_RESI_CREATED).order("id").range(a, b));
+  const hpp = await computeHppByKoliItem();
+  let updated = 0;
+  for (const chunk of chunked(queued, 40)) {
+    const payloads = await buildResiPayloads(db, chunk.map((q) => q.resi_group_id), hpp);
+    for (const q of chunk) {
+      const payload = payloads.get(q.resi_group_id);
+      if (!payload) continue;
+      const { error } = await db.from("wos_outbox").update({ payload, status: "PENDING", attempts: 0, last_error: null, last_http_status: null }).eq("id", q.id);
+      if (error) throw new Error(`Gagal memperbarui antrean: ${error.message}`);
+      updated++;
+    }
+  }
+  return { resis: queued.length, updated };
 }
 
 /** Ringkasan antrean untuk halaman Sysadmin. Tidak memuat rahasia apa pun. */

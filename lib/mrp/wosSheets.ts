@@ -32,23 +32,47 @@ export type SheetResi = {
     koliId: string;
     koliNo: string;
     mrpNo: string;
-    items: { color: string; sleeve: string; size: string; qty: number; kind: string; age: string | null; itemName?: string | null }[];
+    items: { color: string; sleeve: string; size: string; qty: number; kind: string; age: string | null; itemName?: string | null; hppPerItem?: number | null; hppEstimate?: boolean }[];
   }[];
 };
 
-/** "NAMA ITEM xQTY; NAMA ITEM xQTY": nama dari Master SKU (item_name); item yang sama dalam satu koli dijumlahkan. */
-export function itemsText(items: SheetResi["kolis"][number]["items"]): string {
-  const merged = new Map<string, { label: string; qty: number }>();
+type SheetItem = SheetResi["kolis"][number]["items"][number];
+
+/** "NAMA ITEM xQTY @HPP; NAMA ITEM xQTY @HPP": nama dari Master SKU (item_name); item yang sama dalam satu koli dijumlahkan (HPP = rata-rata
+ *  tertimbang qty). `@HPP` = HPP per pcs dalam rupiah (bilangan bulat); akhiran `~` = masih estimasi (roll belum ditutup atau invoice vendor
+ *  belum ada). Item tanpa HPP yang bisa ditelusuri tidak memuat `@`. Pola baca: /^(.*) x(\d+)(?: @(\d+)(~)?)?$/ per bagian yang dipisah "; ". */
+export function itemsText(items: SheetItem[]): string {
+  const merged = new Map<string, { label: string; qty: number; hppQty: number; hppSum: number; estimate: boolean }>();
   for (const it of items) {
     const name = it.itemName?.trim() || `${it.color} ${it.sleeve === "PENDEK" ? "PDK" : it.sleeve === "PANJANG" ? "PJG" : it.sleeve} ${it.size}`;
     const label = name + (it.kind === "REWORK" ? " (rework)" : "") + (it.age ? ` [${it.age}]` : "");
-    const m = merged.get(label) ?? { label, qty: 0 };
+    const m = merged.get(label) ?? { label, qty: 0, hppQty: 0, hppSum: 0, estimate: false };
     m.qty += it.qty;
+    if (it.hppPerItem != null && it.hppPerItem > 0) {
+      m.hppQty += it.qty;
+      m.hppSum += it.qty * it.hppPerItem;
+      if (it.hppEstimate) m.estimate = true;
+    } else {
+      m.estimate = true; // sebagian baris item ini tanpa HPP: rata-rata hanya dari baris yang punya, jadi tandai estimasi
+    }
     merged.set(label, m);
   }
   return Array.from(merged.values())
-    .map((m) => `${m.label} x${m.qty}`)
+    .map((m) => `${m.label} x${m.qty}` + (m.hppQty > 0 ? ` @${Math.round(m.hppSum / m.hppQty)}${m.estimate ? "~" : ""}` : ""))
     .join("; ");
+}
+
+/** Total HPP satu koli (rupiah, bulat): jumlah qty x HPP/pcs semua item yang HPP-nya ada; kosong kalau tidak ada satu pun. */
+export function koliHppTotal(items: SheetItem[]): string {
+  let total = 0;
+  let any = false;
+  for (const it of items) {
+    if (it.hppPerItem != null && it.hppPerItem > 0) {
+      total += it.qty * it.hppPerItem;
+      any = true;
+    }
+  }
+  return any ? String(Math.round(total)) : "";
 }
 
 /** Waktu WITA "yyyy-MM-dd HH:mm:ss" (sama dengan kolom waktu_server yang diisi Apps Script WOS). */
@@ -56,7 +80,7 @@ export function witaNow(d: Date = new Date()): string {
   return d.toLocaleString("sv-SE", { timeZone: "Asia/Makassar" });
 }
 
-/** Satu baris per koli, dikunci menurut nama kolom. hpp_total SENGAJA kosong (tab ini dipublikasikan ke web). */
+/** Satu baris per koli, dikunci menurut nama kolom. HPP (per item di `items`, total di `hpp_total`) hanya terisi kalau datanya dibawa payload. */
 export function buildSheetRows(p: SheetResi, nowText: string): Record<Header, string>[] {
   return p.kolis.map((k) => ({
     id: `${p.resi.resiGroupId}|${k.koliId}`,
@@ -71,7 +95,7 @@ export function buildSheetRows(p: SheetResi, nowText: string): Record<Header, st
     koli_erp: k.koliId,
     items: itemsText(k.items),
     qty: String(k.items.reduce((s, i) => s + i.qty, 0)),
-    hpp_total: "",
+    hpp_total: koliHppTotal(k.items),
     catatan: p.resi.note,
   }));
 }

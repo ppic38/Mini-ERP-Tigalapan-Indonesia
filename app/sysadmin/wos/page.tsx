@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AppShell } from "@/components/shell/app-shell";
 import { Button } from "@/components/ui/button";
-import { enqueueOldResisAction, getWosOutboxSummaryAction, resetWosOutboxAction, sendWosOutboxAction, type WosOutboxSummary } from "@/lib/mrp/wosActions";
+import { enqueueOldResisAction, getWosOutboxSummaryAction, refreshWosHppAction, resetWosOutboxAction, sendWosOutboxAction, type WosOutboxSummary } from "@/lib/mrp/wosActions";
 
 const DEST_LABEL: Record<WosOutboxSummary["destination"], string> = {
   SHEETS: "Google Sheets (tab ERP_INCOMING)",
@@ -76,6 +76,23 @@ export default function SysadminWosPage() {
     setBusy(false);
   }
 
+  // Hitung ulang HPP semua resi di antrean, lalu langsung kirim ulang (menimpa kolom items dan hpp_total di sheet).
+  async function refreshHpp() {
+    setBusy(true);
+    setMsg(null);
+    const res = await refreshWosHppAction();
+    if (!res.ok) {
+      setError(res.error);
+      setBusy(false);
+      return;
+    }
+    setError(null);
+    setMsg(`HPP ${res.data.updated} dari ${res.data.resis} resi dihitung ulang. Mengirim…`);
+    await load();
+    setBusy(false);
+    await sendAll();
+  }
+
   async function resetFailed() {
     setBusy(true);
     const res = await resetWosOutboxAction();
@@ -120,6 +137,9 @@ export default function SysadminWosPage() {
         </Button>
         <Button onClick={sendAll} disabled={busy || summary?.destination === "NONE" || waiting <= 0} variant="primary" size="md">
           2. Kirim antrean sekarang{waiting > 0 ? ` (${waiting})` : ""}
+        </Button>
+        <Button onClick={refreshHpp} disabled={busy || summary?.destination !== "SHEETS"} variant="accent" size="md">
+          Kirim ulang HPP semua resi
         </Button>
         {summary && summary.exhausted > 0 && (
           <Button onClick={resetFailed} disabled={busy} variant="danger" size="md">

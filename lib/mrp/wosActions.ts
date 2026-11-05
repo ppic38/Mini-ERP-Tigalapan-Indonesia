@@ -4,7 +4,7 @@ import { requireSession } from "../auth/session";
 import { supabaseServer } from "../supabase/server";
 import type { ActionResult } from "./action-result";
 import { nextReadableId } from "./repo/ids";
-import { enqueueAllShippedResis, processWosOutbox, resetExhaustedWosOutbox, wosOutboxSummary } from "./wosPush";
+import { enqueueAllShippedResis, processWosOutbox, refreshHppOfQueuedResis, resetExhaustedWosOutbox, wosOutboxSummary } from "./wosPush";
 
 /** Halaman Sysadmin "Kirim ke WOS" (2026-11-05): pantau antrean pengiriman resi ke WOS, kirim ulang resi lama, dan coba lagi yang gagal.
  *  Semua aksi hanya untuk Sysadmin; yang mengubah data (antrekan resi lama, setel ulang percobaan) dicatat di sysadmin_audit_log. */
@@ -54,6 +54,16 @@ export async function sendWosOutboxAction(limit = 40): Promise<ActionResult<{ se
     const res = await processWosOutbox(Math.min(Math.max(1, limit), 100));
     const summary = await wosOutboxSummary();
     return { ...res, remaining: summary.pending + summary.failed - summary.exhausted };
+  });
+}
+
+/** Hitung ulang HPP semua resi yang sudah di antrean dan tandai untuk dikirim ulang (menimpa kolom items dan hpp_total di sheet). */
+export async function refreshWosHppAction(): Promise<ActionResult<{ resis: number; updated: number }>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    const res = await refreshHppOfQueuedResis();
+    await audit("WOS_REFRESH_HPP", "Hitung ulang HPP resi di antrean WOS dan kirim ulang", res);
+    return res;
   });
 }
 
