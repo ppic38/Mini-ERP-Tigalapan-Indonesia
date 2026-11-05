@@ -8,6 +8,8 @@ import { MultiSelectFilter } from "@/components/mrp/multi-select-filter";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatDate, formatPcs } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import { getWosKoliStatusAction, type WosKoliStatusResult } from "@/lib/mrp/wosStatusActions";
+import { WOS_STATUS_LABEL, type WosStatusCode } from "@/lib/mrp/wosStatusMap";
 import { buildItemTracking, itemWithBreakdown, koliRowsForItem, lenganShort, type ItemTrackRow } from "@/lib/mrp/itemTracking";
 
 const vendorLabel = (id: string) => (id ? VENDOR_PRODUKSI[id]?.name ?? id : "Belum dialokasikan");
@@ -130,10 +132,40 @@ function ItemSearch({ items, query, onQuery, picked, onPick }: { items: ItemTrac
   );
 }
 
+const WOS_TONE: Record<WosStatusCode, string> = {
+  DALAM_PERJALANAN: "text-[#1D4ED8]",
+  TIBA: "text-[#B45309]",
+  DITERIMA: "text-[#047857]",
+  BERMASALAH: "text-[#B91C1C]",
+  UNKNOWN: "text-text-muted",
+};
+
 function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () => void }) {
   const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
   const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
   const koliRows = useMemo(() => koliRowsForItem(item, deliveryKolis, warehouseReceipts), [item, deliveryKolis, warehouseReceipts]);
+  // Status penerimaan gudang dari WOS (dibaca dari tab ERP_INCOMING, diisi WOS): koli yang sudah diterima di gudang WOS terlihat di sini.
+  const [wos, setWos] = useState<WosKoliStatusResult | null>(null);
+  const [wosError, setWosError] = useState<string | null>(null);
+  const [wosBusy, setWosBusy] = useState(false);
+  useEffect(() => {
+    void getWosKoliStatusAction().then((res) => {
+      if (res.ok) setWos(res.data);
+      else setWosError(res.error);
+    });
+  }, []);
+  async function refreshWos() {
+    setWosBusy(true);
+    const res = await getWosKoliStatusAction(true);
+    if (res.ok) {
+      setWos(res.data);
+      setWosError(null);
+    } else setWosError(res.error);
+    setWosBusy(false);
+  }
+  const wosOf = (koliId: string) => wos?.byKoli[koliId];
+  const wosReceivedQty = sum(koliRows.filter((k) => ["DITERIMA", "BERMASALAH"].includes(wosOf(k.koliId)?.code ?? "")).map((k) => k.qty));
+  const wosArrivedQty = sum(koliRows.filter((k) => wosOf(k.koliId)?.code === "TIBA").map((k) => k.qty));
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -205,7 +237,16 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
             </table>
           </div>
 
-          <div className="mt-5 font-sans text-[12px] font-semibold text-text-primary">Koli dan pengiriman item ini</div>
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+            <div className="font-sans text-[12px] font-semibold text-text-primary">Koli dan pengiriman item ini</div>
+            <button
+              onClick={() => void refreshWos()}
+              disabled={wosBusy}
+              className="rounded-md border border-[#CBD5DF] bg-white px-2.5 py-[4px] font-sans text-[11px] font-semibold text-action-primary disabled:opacity-50"
+            >
+              {wosBusy ? "Memuat…" : "Segarkan status WOS"}
+            </button>
+          </div>
           <div className="mt-2 overflow-x-auto rounded-md border border-[#E4E9EE]">
             <table className="w-full border-collapse font-sans text-[11.5px]">
               <thead className="bg-info-bg text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
@@ -216,6 +257,7 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
                   <th className="px-3 py-2 text-right">Qty item</th>
                   <th className="px-3 py-2 text-right">Berat (kg)</th>
                   <th className="px-3 py-2 text-left">Status</th>
+                  <th className="px-3 py-2 text-left">Status WOS</th>
                   <th className="px-3 py-2 text-left">Ekspedisi</th>
                   <th className="px-3 py-2 text-left">No. Resi</th>
                   <th className="px-3 py-2 text-left">Tgl kirim</th>
@@ -225,7 +267,7 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
               <tbody>
                 {koliRows.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-3 py-4 text-center text-text-muted">Belum ada koli yang memuat item ini.</td>
+                    <td colSpan={11} className="px-3 py-4 text-center text-text-muted">Belum ada koli yang memuat item ini.</td>
                   </tr>
                 )}
                 {koliRows.map((k) => (
@@ -237,6 +279,19 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
                     <td className={num}>{k.beratKoli ? k.beratKoli : "-"}</td>
                     <td className="px-3 py-2 font-semibold">
                       {k.receivedAt ? <span className="text-[#047857]">Diterima gudang</span> : k.deliveredAt ? <span className="text-[#1D4ED8]">Dalam perjalanan</span> : <span className="text-[#B45309]">Belum dikirim</span>}
+                    </td>
+                    <td className="px-3 py-2 font-semibold">
+                      {(() => {
+                        const w = wosOf(k.koliId);
+                        if (!w) return <span className="font-normal text-text-muted" title={!wos ? "Memuat status WOS" : !wos.configured ? "Integrasi WOS belum aktif" : !wos.hasStatusColumn ? "Tab ERP_INCOMING belum punya kolom status" : "Koli ini belum ada di sheet WOS"}>—</span>;
+                        const label = w.code === "UNKNOWN" ? w.raw || WOS_STATUS_LABEL.UNKNOWN : WOS_STATUS_LABEL[w.code];
+                        const tip = [w.raw ? `Isi sheet: ${w.raw}` : "", w.qtyDiterima != null ? `Diterima ${w.qtyDiterima} pcs` : "", w.diterimaPada ? `Pada ${w.diterimaPada}` : ""].filter(Boolean).join(" · ");
+                        return (
+                          <span className={WOS_TONE[w.code]} title={tip || undefined}>
+                            {label}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="px-3 py-2">{k.ekspedisi ?? "-"}</td>
                     <td className="px-3 py-2 font-mono">{k.noResi ?? "-"}</td>
@@ -250,12 +305,25 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
                   <tr>
                     <td className="px-3 py-2" colSpan={3}>Total di koli ({koliRows.length} koli)</td>
                     <td className={num}>{formatPcs(sum(koliRows.map((k) => k.qty)))}</td>
-                    <td colSpan={6} />
+                    <td colSpan={7} />
                   </tr>
                 </tfoot>
               )}
             </table>
           </div>
+          {wosError && <div className="mt-2 font-sans text-[11px] text-danger-fg">Status WOS gagal dimuat: {wosError}</div>}
+          {wos && !wos.configured && <div className="mt-2 font-sans text-[11px] text-text-muted">Status WOS belum aktif (integrasi Google Sheets belum dikonfigurasi).</div>}
+          {wos && wos.configured && !wos.hasStatusColumn && <div className="mt-2 font-sans text-[11px] text-text-muted">Tab ERP_INCOMING belum punya kolom status (status_wos atau Status) yang diisi WOS.</div>}
+          {wos && wos.hasStatusColumn && koliRows.length > 0 && (
+            <div className="mt-2 font-sans text-[11.5px] text-[#31414F]">
+              Diterima gudang WOS: <span className="font-mono font-semibold text-[#047857]">{formatPcs(wosReceivedQty)}</span> dari {formatPcs(sum(koliRows.map((k) => k.qty)))} pcs di koli
+              {wosArrivedQty > 0 && (
+                <>
+                  {" · "}tiba belum validasi: <span className="font-mono font-semibold text-[#B45309]">{formatPcs(wosArrivedQty)}</span> pcs
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

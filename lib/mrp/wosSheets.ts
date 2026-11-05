@@ -203,3 +203,11 @@ export async function writeResisToSheets(cfg: SheetsConfig, payloads: SheetResi[
 export function writeResiToSheets(cfg: SheetsConfig, p: SheetResi): Promise<{ added: number; updated: number }> {
   return writeResisToSheets(cfg, [p]);
 }
+
+/** Baca seluruh isi tab (baris judul + baris data) untuk ditampilkan atau diolah ERP, mis. status yang diisi WOS. */
+export async function readTabRows(cfg: SheetsConfig): Promise<{ headers: string[]; rows: string[][] }> {
+  const token = await accessToken(cfg);
+  const res = await sheetsApi<{ values?: string[][] }>(cfg, token, `values/${encodeURIComponent(`'${cfg.tab}'!A1:AZ`)}`);
+  const values = res.values ?? [];
+  return { headers: values[0] ?? [], rows: values.slice(1) };
+}
