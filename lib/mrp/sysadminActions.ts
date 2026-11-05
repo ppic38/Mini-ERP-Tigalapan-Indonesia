@@ -580,9 +580,15 @@ export async function sysadminRevertEkspedisiInvoiceAction(key: string, from: "P
     if (!reason.trim()) throw new Error("Alasan wajib diisi.");
     if (!/^[A-Za-z0-9_-]{1,80}$/.test(key)) throw new Error("Kunci resi tidak valid.");
     const db = supabaseServer();
-    const { data, error } = await db.from("delivery_kolis").select("id,mrp_id,vendor_produksi,resi_group_id,ekspedisi_invoice").or(`resi_group_id.eq.${key},id.eq.${key}`);
-    if (error) throw new Error(error.message);
-    const rows = (data ?? []).filter((r) => (r.resi_group_id ?? r.id) === key);
+    const cols = "id,mrp_id,vendor_produksi,resi_group_id,ekspedisi_invoice";
+    // Satu grup resi, ditambah (invoice gabungan) semua koli yang membawa groupKey ini.
+    const [base, merged] = await Promise.all([db.from("delivery_kolis").select(cols).or(`resi_group_id.eq.${key},id.eq.${key}`), db.from("delivery_kolis").select(cols).eq("ekspedisi_invoice->>groupKey", key)]);
+    if (base.error) throw new Error(base.error.message);
+    if (merged.error) throw new Error(merged.error.message);
+    const byId = new Map<string, NonNullable<typeof base.data>[number]>();
+    for (const r of base.data ?? []) if ((r.resi_group_id ?? r.id) === key) byId.set(r.id, r);
+    for (const r of merged.data ?? []) byId.set(r.id, r);
+    const rows = Array.from(byId.values());
     if (rows.length === 0) throw new Error("Resi tidak ditemukan.");
     const inv = rows[0].ekspedisi_invoice as { status: string; noResi: string; biaya: number } | null;
     if (!inv) throw new Error("Resi ini tidak punya invoice ekspedisi.");
@@ -837,7 +843,16 @@ export async function sysadminUndoKoliShipmentAction(koliId: string, reason: str
       .update({ delivered_at: null, berat_koli: null, ekspedisi: "", ekspedisi_note: null, ekspedisi_note_at: null, no_resi: null, resi_group_id: null, ...(eksInv ? { ekspedisi_invoice: null } : {}) })
       .in("id", ids);
     if (updErr) throw new Error(updErr.message);
-    if (eksInv) await db.from("attachment_files").delete().in("kind", ["EKSPEDISI_NOTA", "EKSPEDISI_BUKTI"]).eq("ref_id", resiKey);
+    if (eksInv) {
+      await db.from("attachment_files").delete().in("kind", ["EKSPEDISI_NOTA", "EKSPEDISI_BUKTI"]).eq("ref_id", resiKey);
+      // Invoice gabungan (beberapa pengiriman bernomor sama): angkanya tidak berlaku lagi setelah salah satu pengiriman dibatalkan, jadi koli pengiriman lain di invoice itu
+      // juga kembali "belum divalidasi" (HPP-nya kembali ke tarif master sampai divalidasi ulang).
+      const gk = (eksInv as { groupKey?: string }).groupKey;
+      if (gk) {
+        await db.from("delivery_kolis").update({ ekspedisi_invoice: null }).eq("ekspedisi_invoice->>groupKey", gk);
+        await db.from("attachment_files").delete().in("kind", ["EKSPEDISI_NOTA", "EKSPEDISI_BUKTI"]).eq("ref_id", gk);
+      }
+    }
     const resi = rows[0].no_resi ?? rows[0].resi_group_id ?? koliId;
     await writeAuditLog(
       "UNDO_KOLI_SHIPMENT",

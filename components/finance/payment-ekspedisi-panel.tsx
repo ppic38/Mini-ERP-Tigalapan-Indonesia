@@ -5,7 +5,7 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { MultiFileInput } from "@/components/mrp/multi-file-input";
-import { viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
+import { VendorPhotoLinks, kirimDateText } from "@/components/mrp/ekspedisi-photo-links";
 import { useMrpStore } from "@/lib/mrp/store";
 import { readProofAsDataUrl } from "@/lib/mrp/clientFiles";
 import { saveEkspedisiInvoiceFiles, viewEkspedisiInvoiceFiles, type AttachFile } from "@/lib/mrp/attachments";
@@ -79,11 +79,12 @@ export function PaymentEkspedisiPanel() {
 
   const common: ColumnDef<EkspedisiResiGroup>[] = [
     { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (g) => <SysadminActionsBar compact actions={ekspedisiInvoiceCorrections(g.key, g.invoice)} /> },
-    { key: "mrp", label: "No MRP", default: true, render: (g) => <span className="font-mono">{g.mrpId}</span> },
+    { key: "mrp", label: "No MRP", default: true, render: (g) => <span className="font-mono">{g.mrpIds.join(", ")}</span> },
     { key: "vendor", label: "Vendor", default: true, render: (g) => vendorName(g.vendorProduksi) },
     { key: "ekspedisi", label: "Ekspedisi", default: true, render: (g) => g.ekspedisi },
     { key: "koli", label: "No Koli", default: true, render: (g) => <span className="font-mono text-[11px]">{g.noKolis.join(", ")}</span> },
-    { key: "tgl", label: "Tgl Kirim", default: true, render: (g) => formatDate(g.tanggalKirim) },
+    { key: "tgl", label: "Tgl Kirim", default: true, render: (g) => <span className="whitespace-nowrap">{kirimDateText(g)}</span> },
+    { key: "jumlahKoli", label: "Jumlah Koli", default: true, align: "right", render: (g) => <span className="font-mono font-semibold">{g.koliIds.length}</span> },
     { key: "berat", label: "Berat Resi", default: false, align: "right", render: (g) => <span className="font-mono">{kg(g.beratResi)}</span> },
     { key: "noNota", label: "No Nota", default: true, render: (g) => <span className="font-mono text-[11px]">{g.invoice?.noNota ?? "—"}</span> },
     { key: "biaya", label: "Biaya Ekspedisi", default: true, align: "right", render: (g) => <span className="font-mono font-semibold">{formatRupiah(g.invoice?.biaya ?? 0)}</span> },
@@ -91,16 +92,7 @@ export function PaymentEkspedisiPanel() {
       key: "lampiranVendor",
       label: "Lampiran Vendor",
       default: false,
-      render: (g) =>
-        g.hasVendorPhoto ? (
-          <span onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => viewEkspedisiPhoto(g.firstKoliId)} className="font-sans text-[11px] font-semibold text-action-primary underline">
-              Lihat
-            </button>
-          </span>
-        ) : (
-          <span className="text-text-muted">—</span>
-        ),
+      render: (g) => <VendorPhotoLinks ids={g.photoKoliIds} />,
     },
     {
       key: "nota",
@@ -149,7 +141,7 @@ export function PaymentEkspedisiPanel() {
 
   const searchDef = {
     placeholder: "Cari no resi, no koli, no MRP, vendor…",
-    getText: (g: EkspedisiResiGroup) => [g.invoice?.noResi, g.invoice?.noNota, g.noKolis.join(" "), g.mrpId, vendorName(g.vendorProduksi), g.ekspedisi].filter(Boolean).join(" "),
+    getText: (g: EkspedisiResiGroup) => [g.invoice?.noResi, g.invoice?.noNota, g.noKolis.join(" "), g.mrpIds.join(" "), vendorName(g.vendorProduksi), g.ekspedisi].filter(Boolean).join(" "),
   };
   const firstCol = (g: EkspedisiResiGroup) => (
     <span className="flex flex-col">
@@ -158,7 +150,7 @@ export function PaymentEkspedisiPanel() {
     </span>
   );
   const filterFor = (rows: EkspedisiResiGroup[]) => [
-    { label: "No MRP", options: Array.from(new Set(rows.map((g) => g.mrpId))).sort().reverse(), test: (g: EkspedisiResiGroup, v: string) => g.mrpId === v },
+    { label: "No MRP", options: Array.from(new Set(rows.flatMap((g) => g.mrpIds))).sort().reverse(), test: (g: EkspedisiResiGroup, v: string) => g.mrpIds.includes(v) },
     { label: "Vendor", options: Array.from(new Set(rows.map((g) => vendorName(g.vendorProduksi)))).sort(), test: (g: EkspedisiResiGroup, v: string) => vendorName(g.vendorProduksi) === v },
     { label: "Ekspedisi", options: Array.from(new Set(rows.map((g) => g.ekspedisi))).sort(), test: (g: EkspedisiResiGroup, v: string) => g.ekspedisi === v },
   ];

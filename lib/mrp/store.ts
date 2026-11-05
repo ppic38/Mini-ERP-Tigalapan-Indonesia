@@ -440,7 +440,7 @@ type FlowActions = {
   /** Simpan (validasi) + unggah nota (+ ajukan kalau `submit`) dalam SATU alur dengan satu ambil-ulang data di akhir. `files` = nota yang dipilih (menggantikan nota lama).
    *  Mengembalikan `extraError` kalau biaya sudah tersimpan tetapi file nota ke-2 dan seterusnya (atau pengajuannya) gagal. */
   saveEkspedisiInvoice: (
-    input: { key: string; noResi: string; biaya: number; noNota?: string; catatan?: string; submit?: boolean },
+    input: { key: string; keys?: string[]; noResi: string; biaya: number; noNota?: string; catatan?: string; submit?: boolean },
     files?: { dataUrl: string; fileName: string }[]
   ) => Promise<{ extraError?: string }>;
   submitEkspedisiInvoice: (key: string) => Promise<void>;
@@ -1695,14 +1695,18 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     const previous = get().deliveryKolis;
     // Bila ada file ke-2 dst., pengajuan menunggu semua file terunggah (nota hanya boleh diganti selagi belum diajukan); selain itu diajukan di panggilan pertama.
     const submitInFirst = !!input.submit && files.length <= 1;
+    // Baris bisa menggabungkan beberapa grup resi vendor bernomor sama (`keys`); semua koli-nya mendapat invoice yang sama dengan groupKey = kunci utama.
+    const keySet = new Set(input.keys && input.keys.length > 0 ? input.keys : [input.key]);
+    const merging = keySet.size > 1;
     set({
       deliveryKolis: previous.map((k) =>
-        (k.resiGroupId ?? k.id) === input.key
+        keySet.has(k.resiGroupId ?? k.id) || k.ekspedisiInvoice?.groupKey === input.key
           ? {
               ...k,
               noResi: input.noResi.trim(),
               ekspedisiInvoice: {
                 ...(k.ekspedisiInvoice ?? { status: "DRAFT" as const, noResi: "" }),
+                groupKey: merging ? input.key : undefined,
                 status: submitInFirst ? "SUBMITTED" : "DRAFT",
                 noResi: input.noResi.trim(),
                 noResiAsli: k.ekspedisiInvoice?.noResiAsli ?? (k.noResi && k.noResi !== input.noResi.trim() ? k.noResi : undefined),
@@ -1740,7 +1744,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   },
   submitEkspedisiInvoice: async (key) => {
     const previous = get().deliveryKolis;
-    set({ deliveryKolis: previous.map((k) => ((k.resiGroupId ?? k.id) === key && k.ekspedisiInvoice ? { ...k, ekspedisiInvoice: { ...k.ekspedisiInvoice, status: "SUBMITTED" } } : k)) });
+    set({ deliveryKolis: previous.map((k) => ((k.resiGroupId ?? k.id) === key || k.ekspedisiInvoice?.groupKey === key) && k.ekspedisiInvoice ? { ...k, ekspedisiInvoice: { ...k.ekspedisiInvoice, status: "SUBMITTED" } } : k) });
     try {
       unwrapAction(await actions.submitEkspedisiInvoiceAction(key));
     } catch (err) {
@@ -1752,7 +1756,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   },
   withdrawEkspedisiInvoice: async (key) => {
     const previous = get().deliveryKolis;
-    set({ deliveryKolis: previous.map((k) => ((k.resiGroupId ?? k.id) === key && k.ekspedisiInvoice ? { ...k, ekspedisiInvoice: { ...k.ekspedisiInvoice, status: "DRAFT" } } : k)) });
+    set({ deliveryKolis: previous.map((k) => ((k.resiGroupId ?? k.id) === key || k.ekspedisiInvoice?.groupKey === key) && k.ekspedisiInvoice ? { ...k, ekspedisiInvoice: { ...k.ekspedisiInvoice, status: "DRAFT" } } : k) });
     try {
       unwrapAction(await actions.withdrawEkspedisiInvoiceAction(key));
     } catch (err) {
@@ -1767,7 +1771,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     const keySet = new Set(keys);
     set({
       deliveryKolis: previous.map((k) =>
-        keySet.has(k.resiGroupId ?? k.id) && k.ekspedisiInvoice && k.ekspedisiInvoice.status === "SUBMITTED"
+        (keySet.has(k.resiGroupId ?? k.id) || (!!k.ekspedisiInvoice?.groupKey && keySet.has(k.ekspedisiInvoice.groupKey))) && k.ekspedisiInvoice && k.ekspedisiInvoice.status === "SUBMITTED"
           ? { ...k, ekspedisiInvoice: { ...k.ekspedisiInvoice, status: "PAID", paidAt: new Date().toISOString(), buktiCount: 1 } }
           : k
       ),

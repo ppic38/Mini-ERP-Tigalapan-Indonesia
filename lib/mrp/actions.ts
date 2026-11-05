@@ -6076,17 +6076,49 @@ type EkspedisiGroupRow = {
   ekspedisi_invoice: EkspedisiInvoice | null;
 };
 
-/** Semua koli satu resi (kunci = resi_group_id, atau id koli untuk koli lama tanpa grup). Kunci divalidasi ketat karena masuk ke filter PostgREST. */
+const EKSPEDISI_ROW_COLUMNS = "id,mrp_id,vendor_produksi,ekspedisi,no_resi,berat_koli,delivered_at,resi_group_id,ekspedisi_invoice";
+const EKSPEDISI_KEY_RE = /^[A-Za-z0-9_-]{1,80}$/;
+
+/** Semua koli yang tercakup SATU invoice ekspedisi dengan kunci `key`: satu grup resi (resi_group_id, atau id koli untuk koli lama tanpa grup), ditambah -- untuk invoice
+ *  GABUNGAN -- semua koli yang membawa `ekspedisi_invoice.groupKey = key`. Kunci divalidasi ketat karena masuk ke filter PostgREST. */
 async function loadEkspedisiGroup(db: ReturnType<typeof supabaseServer>, key: string): Promise<EkspedisiGroupRow[]> {
-  if (!/^[A-Za-z0-9_-]{1,80}$/.test(key)) throw new Error("Kunci resi tidak valid.");
-  const { data, error } = await db
-    .from("delivery_kolis")
-    .select("id,mrp_id,vendor_produksi,ekspedisi,no_resi,berat_koli,delivered_at,resi_group_id,ekspedisi_invoice")
-    .or(`resi_group_id.eq.${key},id.eq.${key}`);
-  if (error) throw new Error(error.message.includes("ekspedisi_invoice") ? EKSPEDISI_COLUMN_MISSING : error.message);
-  const rows = ((data ?? []) as EkspedisiGroupRow[]).filter((r) => (r.resi_group_id ?? r.id) === key);
+  if (!EKSPEDISI_KEY_RE.test(key)) throw new Error("Kunci resi tidak valid.");
+  const [base, merged] = await Promise.all([
+    db.from("delivery_kolis").select(EKSPEDISI_ROW_COLUMNS).or(`resi_group_id.eq.${key},id.eq.${key}`),
+    db.from("delivery_kolis").select(EKSPEDISI_ROW_COLUMNS).eq("ekspedisi_invoice->>groupKey", key),
+  ]);
+  for (const res of [base, merged]) if (res.error) throw new Error(res.error.message.includes("ekspedisi_invoice") ? EKSPEDISI_COLUMN_MISSING : res.error.message);
+  const byId = new Map<string, EkspedisiGroupRow>();
+  for (const r of (base.data ?? []) as EkspedisiGroupRow[]) if ((r.resi_group_id ?? r.id) === key) byId.set(r.id, r);
+  for (const r of (merged.data ?? []) as EkspedisiGroupRow[]) byId.set(r.id, r);
+  const rows = Array.from(byId.values());
   if (rows.length === 0) throw new Error("Resi tidak ditemukan.");
+  // Kunci ini ternyata anggota invoice gabungan lain (tampilan di browser sudah usang): jangan menyentuh sebagian koli saja.
+  const other = rows.find((r) => r.ekspedisi_invoice?.groupKey && r.ekspedisi_invoice.groupKey !== key);
+  if (other) throw new Error(`Resi ini sudah digabung ke invoice ekspedisi lain (${other.ekspedisi_invoice?.noResi ?? other.ekspedisi_invoice?.groupKey}) -- muat ulang halaman.`);
   if (rows.some((r) => !r.delivered_at)) throw new Error("Resi ini belum dikirim (Delivery) oleh vendor.");
+  return rows;
+}
+
+/** Koli dari beberapa grup resi sekaligus (untuk menyimpan invoice GABUNGAN pengiriman bernomor resi sama), ditambah koli yang sudah membawa invoice gabungan dengan kunci utama `primaryKey`. */
+async function loadEkspedisiRows(db: ReturnType<typeof supabaseServer>, primaryKey: string, keys: string[]): Promise<EkspedisiGroupRow[]> {
+  const all = Array.from(new Set([primaryKey, ...keys]));
+  if (all.length > 40) throw new Error("Terlalu banyak pengiriman digabung sekaligus.");
+  const byId = new Map<string, EkspedisiGroupRow>();
+  for (const key of all) {
+    if (!EKSPEDISI_KEY_RE.test(key)) throw new Error("Kunci resi tidak valid.");
+  }
+  const baseFilter = all.map((k) => `resi_group_id.eq.${k},id.eq.${k}`).join(",");
+  const [base, merged] = await Promise.all([
+    db.from("delivery_kolis").select(EKSPEDISI_ROW_COLUMNS).or(baseFilter),
+    db.from("delivery_kolis").select(EKSPEDISI_ROW_COLUMNS).eq("ekspedisi_invoice->>groupKey", primaryKey),
+  ]);
+  for (const res of [base, merged]) if (res.error) throw new Error(res.error.message.includes("ekspedisi_invoice") ? EKSPEDISI_COLUMN_MISSING : res.error.message);
+  for (const r of (base.data ?? []) as EkspedisiGroupRow[]) if (all.includes(r.resi_group_id ?? r.id)) byId.set(r.id, r);
+  for (const r of (merged.data ?? []) as EkspedisiGroupRow[]) byId.set(r.id, r);
+  const rows = Array.from(byId.values());
+  if (rows.length === 0) throw new Error("Resi tidak ditemukan.");
+  if (rows.some((r) => !r.delivered_at)) throw new Error("Sebagian koli resi ini belum dikirim (Delivery) oleh vendor.");
   return rows;
 }
 
@@ -6114,7 +6146,10 @@ const rupiahText = (n: number) => "Rp " + Math.round(n).toLocaleString("id-ID");
  *  SATU panggilan untuk kasus umum: `nota` (file nota pertama, MENGGANTI nota lama) ikut disimpan, dan `submit` langsung mengajukan ke Finance. Server Action satu browser
  *  berjalan berurutan, jadi menggabungkan langkah-langkah ini menghindari antrean beberapa kali ambil-ulang data (dulu simpan, unggah, ajukan = 3 panggilan + 3 snapshot).
  *  File nota ke-2 dan seterusnya (jarang) menyusul lewat `addEkspedisiInvoiceFileAction`. */
-export async function saveEkspedisiInvoiceAction(input: { key: string; noResi: string; biaya: number; noNota?: string; catatan?: string; submit?: boolean }, nota?: AttachmentFileInput): Promise<ActionResult<void>> {
+export async function saveEkspedisiInvoiceAction(
+  input: { key: string; keys?: string[]; noResi: string; biaya: number; noNota?: string; catatan?: string; submit?: boolean },
+  nota?: AttachmentFileInput
+): Promise<ActionResult<void>> {
   return toActionResult(async () => {
     const actor = await requireInternalRoleWithActor("procurement");
     const noResi = (input.noResi ?? "").trim();
@@ -6126,11 +6161,17 @@ export async function saveEkspedisiInvoiceAction(input: { key: string; noResi: s
     const noNota = (input.noNota ?? "").trim().slice(0, 80);
     const catatan = (input.catatan ?? "").trim().slice(0, 500);
     const db = supabaseServer();
-    const rows = await loadEkspedisiGroup(db, input.key);
+    // `keys` = semua grup resi vendor yang digabung di baris ini (pengiriman bernomor resi sama); tanpa itu hanya satu grup (`key`).
+    const keys = Array.from(new Set(input.keys && input.keys.length > 0 ? input.keys : [input.key]));
+    const rows = await loadEkspedisiRows(db, input.key, keys);
     if (!isEkspedisiBerbiaya(rows[0].ekspedisi)) throw new Error("Pengiriman internal tidak punya biaya ekspedisi.");
-    const existing = rows[0].ekspedisi_invoice;
-    if (existing?.status === "SUBMITTED") throw new Error("Invoice ekspedisi ini sudah diajukan ke Finance -- Tarik kembali dulu kalau mau mengubahnya.");
-    if (existing?.status === "PAID") throw new Error("Invoice ekspedisi ini sudah dibayar Finance dan terkunci.");
+    if (rows.some((r) => r.vendor_produksi !== rows[0].vendor_produksi || r.ekspedisi !== rows[0].ekspedisi)) throw new Error("Pengiriman yang digabung harus dari vendor dan ekspedisi yang sama.");
+    const locked = rows.find((r) => r.ekspedisi_invoice && r.ekspedisi_invoice.status !== "DRAFT");
+    if (locked?.ekspedisi_invoice?.status === "SUBMITTED") throw new Error("Invoice ekspedisi ini sudah diajukan ke Finance -- Tarik kembali dulu kalau mau mengubahnya.");
+    if (locked?.ekspedisi_invoice?.status === "PAID") throw new Error("Invoice ekspedisi ini sudah dibayar Finance dan terkunci.");
+    // Invoice lama baris ini = milik kunci utama (invoice gabungan, atau invoice satu grup). Invoice tersimpan per pengiriman sebelum digabung ikut diganti.
+    const existing = rows.find((r) => r.ekspedisi_invoice && (r.ekspedisi_invoice.groupKey === input.key || (!r.ekspedisi_invoice.groupKey && (r.resi_group_id ?? r.id) === input.key)))?.ekspedisi_invoice ?? undefined;
+    const merging = new Set(rows.map((r) => r.resi_group_id ?? r.id)).size > 1;
     if (nota) checkEkspedisiFile(nota);
     const [{ data: rate }, existingNotaCount] = await Promise.all([
       db.from("ekspedisi_rates").select("price_per_kg").eq("nama", rows[0].ekspedisi).maybeSingle(),
@@ -6148,6 +6189,7 @@ export async function saveEkspedisiInvoiceAction(input: { key: string; noResi: s
     const noResiVendor = existing?.noResiAsli ?? rows[0].no_resi ?? "";
     const next: EkspedisiInvoice = {
       status: input.submit ? "SUBMITTED" : "DRAFT",
+      groupKey: merging ? input.key : undefined,
       noResi,
       noResiAsli: noResi !== noResiVendor ? noResiVendor : undefined,
       biaya,
@@ -6161,9 +6203,13 @@ export async function saveEkspedisiInvoiceAction(input: { key: string; noResi: s
       savedAt: nowIso(),
       ...(input.submit ? { submittedBy: actor.actorName, submittedAt: nowIso() } : {}),
     };
-    await writeEkspedisiInvoice(db, rows.map((r) => r.id), next, noResi !== (rows[0].no_resi ?? "") ? { no_resi: noResi } : undefined);
+    await writeEkspedisiInvoice(db, rows.map((r) => r.id), next, rows.some((r) => (r.no_resi ?? "") !== noResi) ? { no_resi: noResi } : undefined);
+    // Pengiriman yang digabung: nota/bukti yang tersimpan di kunci grup lain (dari validasi terpisah sebelumnya) dibuang; yang berlaku hanya di kunci utama.
+    const otherKeys = keys.filter((k) => k !== input.key);
+    if (merging && otherKeys.length > 0) await db.from("attachment_files").delete().in("kind", [ekspedisiFileKind("NOTA"), ekspedisiFileKind("BUKTI")]).in("ref_id", otherKeys);
     const resiNote = next.noResiAsli ? ` (no resi vendor ${next.noResiAsli} diubah)` : "";
-    await logInternalAction(actor, `${input.submit ? "Validasi dan ajukan" : "Validasi"} invoice ekspedisi resi ${noResi}: ${rupiahText(biaya)}${resiNote}`, "delivery_kolis", input.key);
+    const mergeNote = merging ? ` [gabungan ${keys.length} pengiriman, ${rows.length} koli]` : "";
+    await logInternalAction(actor, `${input.submit ? "Validasi dan ajukan" : "Validasi"} invoice ekspedisi resi ${noResi}: ${rupiahText(biaya)}${resiNote}${mergeNote}`, "delivery_kolis", input.key);
     if (input.submit) await insertNotification(notif(`Invoice ekspedisi resi ${noResi} (${rupiahText(biaya)}) menunggu pembayaran Finance`, ["finance"]));
   });
 }
@@ -6479,6 +6525,7 @@ async function resetMrpCore(mrpId: string): Promise<void> {
   const koliIdsForThisMrp = (koliRowsForThisMrp ?? []).map((r) => r.id);
   // Invoice Ekspedisi (migration 0088): yang sudah diajukan/dibayar tidak boleh ikut hilang; yang masih tervalidasi dibersihkan filenya. Kolom belum ada = dilewati.
   let ekspedisiResiKeys: string[] = [];
+  let ekspedisiMergedKeys: string[] = [];
   if (koliIdsForThisMrp.length > 0) {
     const { data: eksRows, error: eksErr } = await db.from("delivery_kolis").select("id,resi_group_id,ekspedisi_invoice").in("id", koliIdsForThisMrp);
     if (!eksErr) {
@@ -6486,7 +6533,11 @@ async function resetMrpCore(mrpId: string): Promise<void> {
       if (locked) {
         throw new Error(`Tidak bisa reset MRP ${mrpId} -- invoice ekspedisi resi ${(locked.ekspedisi_invoice as EkspedisiInvoice).noResi} sudah diajukan/dibayar. Tarik kembali atau koreksi dulu lewat Procurement/Sysadmin.`);
       }
-      ekspedisiResiKeys = Array.from(new Set((eksRows ?? []).filter((r) => r.ekspedisi_invoice).map((r) => (r.resi_group_id ?? r.id) as string)));
+      ekspedisiResiKeys = Array.from(
+        new Set((eksRows ?? []).filter((r) => r.ekspedisi_invoice).flatMap((r) => [(r.resi_group_id ?? r.id) as string, (r.ekspedisi_invoice as EkspedisiInvoice).groupKey].filter((k): k is string => !!k)))
+      );
+      // Invoice gabungan yang masih tervalidasi dan juga mencakup koli MRP lain: angkanya tidak berlaku lagi setelah koli MRP ini dihapus, jadi koli lain itu kembali belum divalidasi.
+      ekspedisiMergedKeys = Array.from(new Set((eksRows ?? []).map((r) => (r.ekspedisi_invoice as EkspedisiInvoice | null)?.groupKey).filter((k): k is string => !!k)));
     }
   }
   let warehouseReceiptIds: string[] = [];
@@ -6558,6 +6609,7 @@ async function resetMrpCore(mrpId: string): Promise<void> {
 
   if (ekspedisiResiKeys.length > 0) {
     try {
+      for (const gk of ekspedisiMergedKeys) await db.from("delivery_kolis").update({ ekspedisi_invoice: null }).eq("ekspedisi_invoice->>groupKey", gk);
       await db.from("attachment_files").delete().in("kind", ["EKSPEDISI_NOTA", "EKSPEDISI_BUKTI"]).in("ref_id", ekspedisiResiKeys);
     } catch {
       // diabaikan dengan sengaja (best-effort)

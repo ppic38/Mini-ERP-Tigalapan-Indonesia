@@ -556,6 +556,10 @@ export type EkspedisiInvoiceStatus = "DRAFT" | "SUBMITTED" | "PAID";
 
 export type EkspedisiInvoice = {
   status: EkspedisiInvoiceStatus;
+  /** Terisi kalau invoice ini MENGGABUNGKAN lebih dari satu pengiriman (grup resi) vendor yang bernomor resi sama (satu resi fisik yang dicatat vendor beberapa kali).
+   *  Nilainya kunci utama invoice (dipakai file nota/bukti dan semua aksi) dan IDENTIK di semua koli yang tercakup; biaya dibagi ke semua koli itu menurut berat.
+   *  Kosong = invoice satu grup resi (kuncinya `resiGroupId ?? id koli`). */
+  groupKey?: string;
   /** No resi setelah disesuaikan Procurement (sama dengan `DeliveryKoli.noResi` setelah disimpan). */
   noResi: string;
   /** No resi yang diisi vendor, hanya terisi kalau Procurement mengubahnya. */

@@ -5,7 +5,7 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { MultiFileInput } from "@/components/mrp/multi-file-input";
-import { viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
+import { VendorPhotoLinks, kirimDateText } from "@/components/mrp/ekspedisi-photo-links";
 import { useMrpStore } from "@/lib/mrp/store";
 import { readProofAsDataUrl } from "@/lib/mrp/clientFiles";
 import { viewEkspedisiInvoiceFiles, type AttachFile } from "@/lib/mrp/attachments";
@@ -63,7 +63,7 @@ function EkspedisiInvoiceModal({ group, onClose }: { group: EkspedisiResiGroup; 
     setError("");
     try {
       // Satu alur: simpan + unggah nota + (ajukan), satu kali ambil-ulang data di akhir (sebelumnya tiga langkah dengan tiga kali ambil-ulang, sehingga lama).
-      const res = await saveEkspedisiInvoice({ key: group.key, noResi: noResi.trim(), biaya, noNota: noNota.trim(), catatan: catatan.trim(), submit: submitAfter }, files);
+      const res = await saveEkspedisiInvoice({ key: group.key, keys: group.keys, noResi: noResi.trim(), biaya, noNota: noNota.trim(), catatan: catatan.trim(), submit: submitAfter }, files);
       if (res.extraError) {
         setError("Biaya tersimpan, tetapi langkah berikutnya gagal: " + res.extraError);
         return;
@@ -88,8 +88,19 @@ function EkspedisiInvoiceModal({ group, onClose }: { group: EkspedisiResiGroup; 
 
         <div className="flex flex-col gap-4 overflow-y-auto px-6 py-4">
           <div className="grid grid-cols-2 gap-x-6 gap-y-2 rounded-md border border-[#E4E9EE] bg-[#FAFBFC] p-3 font-sans text-[11.5px] text-[#31414F]">
+            {group.keys.length > 1 && (
+              <div className="col-span-2 rounded-md border border-[#BFD7EE] bg-info-bg px-3 py-2 font-sans text-[11.5px] text-info-fg">
+                <span className="font-semibold">Gabungan {group.keys.length} pengiriman vendor</span> dengan no resi yang sama, total <span className="font-mono font-semibold">{group.koliIds.length} koli</span> dan{" "}
+                <span className="font-mono font-semibold">{kg(group.beratResi)}</span>. Cocokkan dengan jumlah koli dan berat di nota ekspedisi; satu nota ini divalidasi sebagai satu data.
+              </div>
+            )}
+            {group.staleBiaya != null && (
+              <div className="col-span-2 rounded-md border border-[#F0DFC2] bg-warning-bg px-3 py-2 font-sans text-[11.5px] text-warning-fg">
+                Sebagian pengiriman ini sudah divalidasi terpisah sebelumnya (total <span className="font-mono font-semibold">{formatRupiah(group.staleBiaya)}</span>). Menyimpan di sini menggantinya dengan satu invoice gabungan.
+              </div>
+            )}
             <div>
-              MRP: <span className="font-mono font-semibold">{group.mrpId}</span>
+              MRP: <span className="font-mono font-semibold">{group.mrpIds.join(", ")}</span>
             </div>
             <div>
               Vendor: <span className="font-semibold">{vendorName(group.vendorProduksi)}</span>
@@ -98,7 +109,7 @@ function EkspedisiInvoiceModal({ group, onClose }: { group: EkspedisiResiGroup; 
               Ekspedisi: <span className="font-semibold">{group.ekspedisi}</span>
             </div>
             <div>
-              Tgl kirim: <span className="font-mono">{formatDate(group.tanggalKirim)}</span>
+              Tgl kirim: <span className="font-mono">{kirimDateText(group)}</span>
             </div>
             <div className="col-span-2">
               No koli ({group.koliIds.length} koli): <span className="font-mono">{group.noKolis.join(", ")}</span>
@@ -107,14 +118,7 @@ function EkspedisiInvoiceModal({ group, onClose }: { group: EkspedisiResiGroup; 
               No resi dari vendor: <span className="font-mono font-semibold">{vendorNoResi || "—"}</span>
             </div>
             <div>
-              Lampiran vendor:{" "}
-              {group.hasVendorPhoto ? (
-                <button onClick={() => viewEkspedisiPhoto(group.firstKoliId)} className="font-semibold text-action-primary underline">
-                  Lihat / Download
-                </button>
-              ) : (
-                <span className="text-text-muted">—</span>
-              )}
+              Lampiran vendor: <VendorPhotoLinks ids={group.photoKoliIds} className="font-semibold text-action-primary underline" />
             </div>
             <div>
               Berat resi: <span className="font-mono font-semibold">{kg(group.beratResi)}</span>
@@ -277,13 +281,13 @@ export function EkspedisiInvoicePanel() {
 
   const columns: ColumnDef<EkspedisiResiGroup>[] = [
     { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (g) => <SysadminActionsBar compact actions={ekspedisiInvoiceCorrections(g.key, g.invoice)} /> },
-    { key: "mrp", label: "No MRP", default: true, render: (g) => <span className="font-mono">{g.mrpId}</span> },
+    { key: "mrp", label: "No MRP", default: true, render: (g) => <span className="font-mono">{g.mrpIds.join(", ")}</span> },
     { key: "vendor", label: "Vendor", default: true, render: (g) => vendorName(g.vendorProduksi) },
     { key: "ekspedisi", label: "Ekspedisi", default: true, render: (g) => g.ekspedisi },
     // Daftar nomor koli disembunyikan secara default (owner 2026-11-05): nomornya terlihat saat baris dibuka (klik nomor untuk melihat isinya), atau tampilkan lewat menu Kolom.
     { key: "koli", label: "No Koli", default: false, render: (g) => <span className="font-mono text-[11px]">{g.noKolis.join(", ")}</span> },
     { key: "jumlahKoli", label: "Jumlah Koli", default: true, align: "right", render: (g) => <span className="font-mono font-semibold">{g.koliIds.length}</span> },
-    { key: "tgl", label: "Tgl Kirim", default: true, render: (g) => formatDate(g.tanggalKirim) },
+    { key: "tgl", label: "Tgl Kirim", default: true, render: (g) => <span className="whitespace-nowrap">{kirimDateText(g)}</span> },
     { key: "berat", label: "Berat Resi", default: true, align: "right", render: (g) => <span className="font-mono">{kg(g.beratResi)}</span> },
     {
       key: "estimasi",
@@ -312,16 +316,7 @@ export function EkspedisiInvoicePanel() {
       key: "lampiranVendor",
       label: "Lampiran Vendor",
       default: true,
-      render: (g) =>
-        g.hasVendorPhoto ? (
-          <span onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => viewEkspedisiPhoto(g.firstKoliId)} className="font-sans text-[11px] font-semibold text-action-primary underline">
-              Lihat
-            </button>
-          </span>
-        ) : (
-          <span className="text-text-muted">—</span>
-        ),
+      render: (g) => <VendorPhotoLinks ids={g.photoKoliIds} />,
     },
     {
       key: "nota",
@@ -386,9 +381,9 @@ export function EkspedisiInvoicePanel() {
         columns={columns}
         rows={groups}
         keyOf={(g) => g.key}
-        search={{ placeholder: "Cari no resi, no koli, no MRP, vendor…", getText: (g) => [g.noResi, g.invoice?.noResi, g.invoice?.noNota, g.noKolis.join(" "), g.mrpId, vendorName(g.vendorProduksi), g.ekspedisi].filter(Boolean).join(" ") }}
+        search={{ placeholder: "Cari no resi, no koli, no MRP, vendor…", getText: (g) => [g.noResi, g.invoice?.noResi, g.invoice?.noNota, g.noKolis.join(" "), g.mrpIds.join(" "), vendorName(g.vendorProduksi), g.ekspedisi].filter(Boolean).join(" ") }}
         filterDefs={[
-          { label: "No MRP", options: Array.from(new Set(groups.map((g) => g.mrpId))).sort().reverse(), test: (g, v) => g.mrpId === v },
+          { label: "No MRP", options: Array.from(new Set(groups.flatMap((g) => g.mrpIds))).sort().reverse(), test: (g, v) => g.mrpIds.includes(v) },
           { label: "Vendor", options: Array.from(new Set(groups.map((g) => vendorName(g.vendorProduksi)))).sort(), test: (g, v) => vendorName(g.vendorProduksi) === v },
           { label: "Ekspedisi", options: Array.from(new Set(groups.map((g) => g.ekspedisi))).sort(), test: (g, v) => g.ekspedisi === v },
           // No resi yang tampil di tabel (sudah termasuk penyesuaian Procurement). Satu nomor resi bisa dipakai beberapa pengiriman, jadi satu pilihan bisa memunculkan beberapa baris.
@@ -400,6 +395,7 @@ export function EkspedisiInvoicePanel() {
           <span className="flex flex-col">
             <span className="font-mono font-medium">{g.invoice?.noResi ?? g.noResi}</span>
             {g.invoice?.noResiAsli && <span className="font-sans text-[10px] text-warning-fg">diubah dari {g.invoice.noResiAsli}</span>}
+            {g.keys.length > 1 && <span className="font-sans text-[10px] font-medium text-info-fg">gabungan {g.keys.length} pengiriman</span>}
           </span>
         )}
         renderExpanded={(g) => <ResiKoliDetail kolis={g.kolis} />}
