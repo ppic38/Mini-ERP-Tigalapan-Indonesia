@@ -155,13 +155,26 @@ function EkspedisiInvoiceModal({ group, onClose }: { group: EkspedisiResiGroup; 
             </label>
             <label className="col-span-2 flex flex-col gap-1 font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">
               Biaya ekspedisi aktual, total resi ini (Rp)
-              <input
-                value={biayaText ? Number(biayaText.replace(/[^0-9]/g, "")).toLocaleString("id-ID") : ""}
-                onChange={(e) => setBiayaText(e.target.value.replace(/[^0-9]/g, ""))}
-                inputMode="numeric"
-                placeholder="0"
-                className="rounded-md border border-[#DDE4EB] px-3 py-2 font-mono text-[14px] font-semibold normal-case tracking-normal text-text-primary"
-              />
+              <span className="flex items-stretch gap-2">
+                <input
+                  value={biayaText ? Number(biayaText.replace(/[^0-9]/g, "")).toLocaleString("id-ID") : ""}
+                  onChange={(e) => setBiayaText(e.target.value.replace(/[^0-9]/g, ""))}
+                  inputMode="numeric"
+                  placeholder="0"
+                  className="min-w-0 flex-1 rounded-md border border-[#DDE4EB] px-3 py-2 font-mono text-[14px] font-semibold normal-case tracking-normal text-text-primary"
+                />
+                {group.estimasiMaster > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setBiayaText(String(Math.round(group.estimasiMaster)))}
+                    disabled={biaya === Math.round(group.estimasiMaster)}
+                    title="Isi biaya dengan estimasi tarif master x berat resi, kalau nota ekspedisi sesuai tarif master"
+                    className="flex-none rounded-md border border-action-primary bg-white px-3 font-sans text-[11.5px] font-semibold normal-case tracking-normal text-action-primary hover:bg-info-bg disabled:cursor-default disabled:border-[#CBD5DF] disabled:bg-[#F2F5F8] disabled:text-success-fg"
+                  >
+                    {biaya === Math.round(group.estimasiMaster) ? "✓ Sesuai estimasi master" : `Valid sesuai master (${formatRupiah(group.estimasiMaster)})`}
+                  </button>
+                )}
+              </span>
               <span className="font-sans text-[11px] font-normal normal-case tracking-normal text-text-muted">
                 {perKg > 0 ? (
                   <>
