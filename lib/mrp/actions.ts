@@ -836,6 +836,7 @@ function mapMaterialPoRow(p: any, colorRows: any[], invoicedRows: any[]): Materi
     entity: p.entity ?? "",
     status: p.status,
     approved: p.approved,
+    earlyRelease: p.early_release ? true : undefined,
     daysSincePO: p.days_since_po,
     approvalLevel: p.approval_level ?? undefined,
     approvalLog: (p.approval_log ?? []) as PoApprovalEntry[],
@@ -1146,6 +1147,8 @@ async function bookInvoiceImpl(poId: string, input: BookInvoiceInput): Promise<v
   const db = supabaseServer();
   const { data: po, error: poErr } = await db.from("material_pos").select("*").eq("id", poId).single();
   if (poErr || !po) throw new Error("PO material tidak ditemukan.");
+  // Paying Voucher hanya untuk PO yang sudah disetujui, kecuali PO bertanda dispensasi Sysadmin (migration 0090: bahan sudah ada di vendor).
+  if (!po.approved && !po.early_release) throw new Error(`PO ${poId} belum disetujui, belum bisa dibuatkan Paying Voucher.`);
 
   // Pengaman jatah PO (owner 2026-10-20): jumlah roll yang ditagihkan per warna·LENGAN tidak boleh melebihi sisa
   // jatah PO. Kasus nyata (W38_MKS, BURGUNDY): dua invoice dibukukan berurutan memakai sisa jatah yang SAMA (data
@@ -1678,9 +1681,9 @@ export async function setInvoicesTxnCreatedAction(invoiceIds: string[], created:
     const actor = await requireInternalRoleWithActor("finance");
     if (invoiceIds.length === 0) return { ok: true, data: undefined };
     const db = supabaseServer();
-    const { data: rows, error: selErr } = await db.from("raw_material_invoices").select("id,status,txn_created_at,no_invoice_vendor").in("id", invoiceIds);
+    const { data: rows, error: selErr } = await db.from("raw_material_invoices").select("id,status,txn_created_at,no_invoice_vendor,early_release,paid_at").in("id", invoiceIds);
     if (selErr) throw new Error(selErr.message.includes("txn_created") ? "Jalankan migration 0071 (kolom txn_created_at/txn_created_by) di Supabase dulu." : selErr.message);
-    const open = (rows ?? []).filter((r) => r.status === "INVOICED");
+    const open = (rows ?? []).filter((r) => r.status === "INVOICED" || (!!r.early_release && !r.paid_at));
     const targets = created ? open.filter((r) => !r.txn_created_at) : open.filter((r) => !!r.txn_created_at);
     if (targets.length === 0) return { ok: true, data: undefined };
     const patch = created ? { txn_created_at: nowIso(), txn_created_by: actor.actorName } : { txn_created_at: null, txn_created_by: null };
@@ -1710,13 +1713,22 @@ export async function setInvoicesPaidAction(
   // lagi) supaya tidak ada celah invoice sempat PAID tanpa bukti walau cuma sesaat.
   if (paid && !proof?.dataUrl) throw new Error("Bukti pembayaran (PDF/JPG/PNG) wajib diupload sebelum invoice bisa ditandai lunas.");
   const db = supabaseServer();
-  const { data: invoices } = await db.from("raw_material_invoices").select("id,status,po_id,total_biaya,supplier,entity,kode_transaksi").in("id", invoiceIds);
+  const { data: invoices } = await db.from("raw_material_invoices").select("id,status,po_id,total_biaya,supplier,entity,kode_transaksi,early_release,paid_at").in("id", invoiceIds);
   const uploadedAt = nowIso();
+  // "Terima lebih awal" (migration 0089): invoice yang dimajukan Sysadmin ke DELIVERY sebelum dibayar tetap bisa dibayar; statusnya TIDAK mundur ke
+  // INVOICED/PAID, cuma tanggal bayar + bukti yang terisi (belum dibayar = early_release && !paid_at).
+  const isEarlyUnpaid = (i: { status: string; early_release?: boolean | null; paid_at?: string | null }) => !!i.early_release && !i.paid_at && i.status !== "INVOICED";
 
   // Revisi 2026-10-17 (owner: nota sementara vs final): Finance boleh mengisi "Nominal ditransfer". Kurang dari tagihan = ditolak;
   // lebih = selisihnya dicatat sebagai saldo deposit (CREDIT) supplier itu setelah invoice ditandai lunas. Semua pemeriksaan
   // dilakukan SEBELUM ada invoice yang diubah, supaya penolakan tidak meninggalkan data setengah jalan.
-  const payable = paid ? (invoices ?? []).filter((i) => i.status === "INVOICED") : [];
+  const payable = paid ? (invoices ?? []).filter((i) => i.status === "INVOICED" || isEarlyUnpaid(i)) : [];
+  // Invoice dari PO yang belum disetujui (dispensasi migration 0090) belum boleh dibayar: approval PO tetap berjalan normal dulu.
+  if (payable.length > 0) {
+    const { data: poRows } = await db.from("material_pos").select("id,approved").in("id", Array.from(new Set(payable.map((i) => i.po_id))));
+    const unapproved = (poRows ?? []).filter((p) => !p.approved).map((p) => p.id);
+    if (unapproved.length > 0) throw new Error(`Invoice dari PO ${unapproved.join(", ")} belum bisa dibayar: PO-nya belum disetujui penuh.`);
+  }
   let overpay = 0;
   if (paid && payable.length > 0 && extra?.transferAmount !== undefined) {
     const { data: debitRows, error: debitErr } = await db.from("vendor_deposits").select("amount").eq("kind", "DEBIT").in("source_invoice_id", payable.map((i) => i.id));
@@ -1742,8 +1754,8 @@ export async function setInvoicesPaidAction(
   }
 
   for (const inv of invoices ?? []) {
-    if (paid && inv.status === "INVOICED") {
-      await db.from("raw_material_invoices").update({ status: "PAID", paid_at: today() }).eq("id", inv.id);
+    if (paid && (inv.status === "INVOICED" || isEarlyUnpaid(inv))) {
+      await db.from("raw_material_invoices").update(inv.status === "INVOICED" ? { status: "PAID", paid_at: today() } : { paid_at: today() }).eq("id", inv.id);
       // PIC pembayaran (migration 0082): best-effort, terpisah dari status PAID.
       await stampActor(db, "raw_material_invoices", [inv.id], { paid_by: actor.actorName });
       if (proof) {
@@ -2471,6 +2483,9 @@ export async function setMaterialPoEntityAction(poId: string, entitas: string): 
   const { error } = await db.from("material_pos").update({ entity: entitas }).eq("id", poId);
   if (error) throw new Error(error.message);
   await db.from("material_po_color_breakdown").update({ entitas }).eq("material_po_id", poId);
+  // Invoice yang dibuat sebelum entitas PO diisi (dispensasi migration 0090, entitasnya disalin kosong) ikut disamakan. Untuk PO biasa tidak ada efeknya
+  // (entitas invoice sudah sama dengan entitas PO).
+  await db.from("raw_material_invoices").update({ entity: entitas }).eq("po_id", poId);
 }
 
 export async function setMaterialPoColorEntityAction(poId: string, warna: string, lengan: Lengan, entitas: string): Promise<void> {
@@ -4170,10 +4185,11 @@ export async function startProductionColorsAction(poId: string, colors: { warna:
   try {
     const actor = await requireVendorSessionWithActor();
     const db = supabaseServer();
-    const { data: po } = await db.from("maklon_pos").select("id,status,mrp_id,vendor_produksi,approved,closed_at").eq("id", poId).maybeSingle();
+    const { data: po } = await db.from("maklon_pos").select("id,status,mrp_id,vendor_produksi,approved,closed_at,early_release").eq("id", poId).maybeSingle();
     if (!po) throw new Error("PO Produksi tidak ditemukan.");
     if (po.vendor_produksi !== actor.vendorId) throw new Error("PO Produksi ini bukan milik vendor Anda.");
-    if (!po.approved) throw new Error("PO Produksi ini belum disetujui.");
+    // Dispensasi Sysadmin (migration 0090): bahan sudah ada di vendor walau approval PO belum selesai.
+    if (!po.approved && !po.early_release) throw new Error("PO Produksi ini belum disetujui.");
     if (po.closed_at) throw new Error("PO Produksi ini sudah ditutup.");
     const waiting = po.status === "FULL_WAITING_MATERIAL" || po.status === "PARTIAL_WAITING_MATERIAL";
     if (!waiting && po.status !== "PRODUCTION") throw new Error("PO Produksi ini sudah tidak dalam tahap produksi.");
@@ -8015,6 +8031,19 @@ async function finalizeMaterialPo(db: SupabaseClient, id: string): Promise<void>
   const po = await fetchOneMaterialPo(db, id);
   if (!po) return;
   const entitasOrder = Array.from(new Set(po.colorBreakdown.map((c) => c.entitas ?? po.entity)));
+  // PO yang sudah punya invoice (dispensasi "terima lebih awal", migration 0090) TIDAK boleh dipecah per entitas: pemecahan menghapus baris PO
+  // lalu membuatnya ulang, dan invoice terhubung ke PO dengan ON DELETE CASCADE -- invoice, roll, dan receiving vendor ikut terhapus. Dalam kasus itu
+  // PO cukup ditandai approved apa adanya dan entitas invoice disamakan dengan entitas PO.
+  const { count: invoiceCount } = await db.from("raw_material_invoices").select("id", { count: "exact", head: true }).eq("po_id", id);
+  if ((invoiceCount ?? 0) > 0) {
+    await db.from("material_pos").update({ approved: true }).eq("id", id);
+    if (entitasOrder.length > 1) {
+      await insertNotification(notif(`PO ${id} (${po.mrpId}) disetujui TANPA dipecah per entitas karena sudah punya invoice (terima lebih awal) — entitas per warna: ${entitasOrder.join(", ")}.`, ["procurement", "finance"]));
+    }
+    if (po.entity) await db.from("raw_material_invoices").update({ entity: po.entity }).eq("po_id", id);
+    await checkPoApproved(po.mrpId);
+    return;
+  }
   const newIds = await Promise.all(entitasOrder.slice(1).map((entitas) => nextPoDisplayId("material_pos", "PO-SUP", [po.mrpId, po.vendorProduksi, po.supplier, entitas])));
   const parts = splitMaterialPoByEntitas(po, newIds).map((p) => ({ ...p, approved: true }));
   await writeMaterialPoSplit(db, id, parts);

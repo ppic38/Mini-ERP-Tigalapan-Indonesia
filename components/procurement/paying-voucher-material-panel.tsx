@@ -5,7 +5,7 @@ import { ClosePoReasonModal } from "@/components/mrp/close-po-reason-modal";
 import { PayingVoucherWizard } from "@/components/mrp/paying-voucher-wizard";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
-import { formatDateTime, formatRupiah, invoiceBadge, materialSupplierNamesForWarna } from "@/lib/mrp/derive";
+import { formatDateTime, formatRupiah, invoiceAwaitingPayment, invoiceBadge, materialSupplierNamesForWarna } from "@/lib/mrp/derive";
 import { useMrpStore } from "@/lib/mrp/store";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { MaterialPO, RawMaterialInvoice } from "@/lib/mrp/types";
@@ -74,7 +74,7 @@ export function PayingVoucherMaterialPanel() {
   const [expandedSupplierRiwayat, setExpandedSupplierRiwayat] = useState<string | null>(null);
   const [expandedInvoiceRiwayat, setExpandedInvoiceRiwayat] = useState<string | null>(null);
 
-  const openPOs = materialPOs.filter((po) => po.status !== "CANCELLED" && po.approved && po.invoicedRolls < po.rollCount);
+  const openPOs = materialPOs.filter((po) => po.status !== "CANCELLED" && (po.approved || po.earlyRelease) && po.invoicedRolls < po.rollCount);
 
   const belumMrpSummaries = (() => {
     const map = new Map<string, MaterialPO[]>();
@@ -553,7 +553,14 @@ export function PayingVoucherMaterialPanel() {
                                           </td>
                                           <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(inv.totalBiaya)}</td>
                                           <td className="px-3 py-[10px]">
-                                            <StatusPill tone={badge.tone}>{badge.label}</StatusPill>
+                                            <div className="flex flex-col items-start gap-1">
+                                              <StatusPill tone={badge.tone}>{badge.label}</StatusPill>
+                                              {inv.status !== "INVOICED" && invoiceAwaitingPayment(inv) && (
+                                                <span title="Material sudah diterima vendor lebih awal (dispensasi Sysadmin), tagihan belum dibayar Finance">
+                                                  <StatusPill tone="warning">TERIMA AWAL · BELUM DIBAYAR</StatusPill>
+                                                </span>
+                                              )}
+                                            </div>
                                           </td>
                                           <td className="px-3 py-[10px]">
                                             {inv.buktiPvAvailable ? (

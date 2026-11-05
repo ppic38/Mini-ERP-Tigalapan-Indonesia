@@ -8,7 +8,7 @@ import { INTERNAL_ACCOUNTS, type InternalRole } from "../internal-auth";
 import { nextReadableId } from "./repo/ids";
 import { readPasswordCopy, savePasswordCopy } from "../auth/password-vault";
 import type { AduanPolaRow, Lengan, NotificationAudience } from "./types";
-import { reassignAduanRowsVendor, resiGroupInvoiceLines, weightVariance } from "./derive";
+import { localDateString, reassignAduanRowsVendor, resiGroupInvoiceLines, weightVariance } from "./derive";
 import { getFlowSnapshot } from "./repo/snapshot";
 import { loadWeightTolerancePct } from "./weightToleranceServer";
 import { assertRollCodesUnique } from "./rollCodeServer";
@@ -471,7 +471,7 @@ export async function sysadminRevertInvoiceDeliveryAction(invoiceIds: string[], 
     if (!reason.trim()) throw new Error("Alasan wajib diisi.");
     if (invoiceIds.length === 0) throw new Error("Pilih minimal 1 batch.");
     const db = supabaseServer();
-    const { data: rows, error } = await db.from("raw_material_invoices").select("id,status,delivered_at,po_id,mrp_id,destination_vendor").in("id", invoiceIds);
+    const { data: rows, error } = await db.from("raw_material_invoices").select("id,status,delivered_at,po_id,mrp_id,destination_vendor,early_release,paid_at").in("id", invoiceIds);
     if (error) throw new Error(error.message);
     let reverted = 0;
     let skipped = 0;
@@ -480,16 +480,175 @@ export async function sysadminRevertInvoiceDeliveryAction(invoiceIds: string[], 
         skipped++;
         continue;
       }
-      const { error: updErr } = await db.from("raw_material_invoices").update({ status: "PAID", delivered_at: null }).eq("id", r.id);
+      // Batch "terima lebih awal" yang belum dibayar kembali ke INVOICED (bukan PAID -- memang belum dibayar) dan dispensasinya dicabut.
+      const unpaidEarly = !!r.early_release && !r.paid_at;
+      const nextStatus = unpaidEarly ? "INVOICED" : "PAID";
+      const { error: updErr } = await db
+        .from("raw_material_invoices")
+        .update(unpaidEarly ? { status: nextStatus, delivered_at: null, early_release: false } : { status: nextStatus, delivered_at: null })
+        .eq("id", r.id);
       if (updErr) throw new Error(`Gagal mengembalikan ${r.id}: ${updErr.message}`);
-      await writeAuditLog("REVERT_INVOICE_DELIVERY", "raw_material_invoices", r.id, reason.trim(), { status: r.status, deliveredAt: r.delivered_at }, { status: "PAID", deliveredAt: null });
-      await notifyAffected(`Status Delivery batch ${r.id} (PO ${r.po_id}, ${r.mrp_id}) dikembalikan ke Paid oleh Sysadmin — alasan: ${reason.trim()}. Silakan set Delivery ulang bila sudah benar.`, ["procurement"]);
+      await writeAuditLog("REVERT_INVOICE_DELIVERY", "raw_material_invoices", r.id, reason.trim(), { status: r.status, deliveredAt: r.delivered_at, earlyRelease: !!r.early_release }, { status: nextStatus, deliveredAt: null });
+      await notifyAffected(
+        unpaidEarly
+          ? `Batch ${r.id} (PO ${r.po_id}, ${r.mrp_id}) dikembalikan ke Invoiced oleh Sysadmin (dispensasi terima lebih awal dicabut) — alasan: ${reason.trim()}.`
+          : `Status Delivery batch ${r.id} (PO ${r.po_id}, ${r.mrp_id}) dikembalikan ke Paid oleh Sysadmin — alasan: ${reason.trim()}. Silakan set Delivery ulang bila sudah benar.`,
+        unpaidEarly ? ["procurement", "finance"] : ["procurement"]
+      );
       if (r.destination_vendor) {
         await notifyAffected(`Batch material ${r.id} (PO ${r.po_id}) belum jadi dikirim — status Delivery dibatalkan Sysadmin (alasan: ${reason.trim()}). Batch hilang dari Good Receive sampai dikirim ulang.`, ["vendorMaklon"], r.destination_vendor);
       }
       reverted++;
     }
     return { reverted, skipped };
+  });
+}
+
+// =========================================================================
+// "Terima lebih awal" (owner 2026-11-05, migration 0089): bahan sudah fisik ada di vendor tetapi baru diproses di ERP, jadi vendor harus
+// bisa Good Receive & input produksi walau invoice material belum dibayar. Sysadmin memajukan invoice terpilih dari INVOICED langsung ke
+// DELIVERY dan menandainya `early_release`. Pembayaran Finance dan lampiran Procurement tetap bisa diisi setelahnya (belum dibayar =
+// early_release && paid_at kosong, lihat invoiceAwaitingPayment di derive.ts).
+// =========================================================================
+
+/** Dispensasi PO (migration 0090): PO Material bertanda boleh dibuatkan Paying Voucher dan PO Produksi bertanda boleh "Mulai Produksi" oleh vendor
+ *  walau approval PO belum selesai (bahan sudah ada di vendor). Approval PO tetap berjalan normal; Finance baru bisa membayar invoice-nya setelah PO Material approved. */
+export type SysadminPoReleaseRow = {
+  type: "MATERIAL" | "MAKLON";
+  id: string;
+  vendorProduksi: string;
+  supplier: string;
+  amount: number;
+  status: string;
+  approved: boolean;
+  earlyRelease: boolean;
+};
+
+export async function findPosForEarlyReleaseAction(mrpId: string): Promise<ActionResult<SysadminPoReleaseRow[]>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    const db = supabaseServer();
+    const [mat, mak] = await Promise.all([
+      db.from("material_pos").select("id,vendor_produksi,supplier,amount,status,approved,early_release").eq("mrp_id", mrpId.trim()).neq("status", "CANCELLED").order("id"),
+      db.from("maklon_pos").select("id,vendor_produksi,amount,status,approved,early_release,closed_at").eq("mrp_id", mrpId.trim()).order("id"),
+    ]);
+    if (mat.error) throw new Error(mat.error.message.includes("early_release") ? "Jalankan migration 0090 (kolom early_release di material_pos/maklon_pos) di Supabase dulu." : mat.error.message);
+    if (mak.error) throw new Error(mak.error.message.includes("early_release") ? "Jalankan migration 0090 (kolom early_release di material_pos/maklon_pos) di Supabase dulu." : mak.error.message);
+    return [
+      ...(mat.data ?? []).map((p) => ({ type: "MATERIAL" as const, id: p.id, vendorProduksi: p.vendor_produksi, supplier: p.supplier ?? "", amount: Number(p.amount ?? 0), status: p.status, approved: !!p.approved, earlyRelease: !!p.early_release })),
+      ...(mak.data ?? []).filter((p) => !p.closed_at).map((p) => ({ type: "MAKLON" as const, id: p.id, vendorProduksi: p.vendor_produksi, supplier: "", amount: Number(p.amount ?? 0), status: p.status, approved: !!p.approved, earlyRelease: !!p.early_release })),
+    ];
+  });
+}
+
+/** Pasang / cabut dispensasi di PO terpilih. Memasang hanya untuk PO yang belum approved (yang sudah approved tidak perlu dispensasi). */
+export async function sysadminSetPoEarlyReleaseAction(items: { type: "MATERIAL" | "MAKLON"; id: string }[], enable: boolean, reason: string): Promise<ActionResult<{ changed: number; skipped: number }>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    if (items.length === 0) throw new Error("Pilih minimal 1 PO.");
+    const db = supabaseServer();
+    let changed = 0;
+    let skipped = 0;
+    for (const it of items) {
+      const table = it.type === "MATERIAL" ? "material_pos" : "maklon_pos";
+      const { data: po, error } = await db.from(table).select("id,mrp_id,vendor_produksi,approved,early_release").eq("id", it.id).maybeSingle();
+      if (error) throw new Error(error.message.includes("early_release") ? "Jalankan migration 0090 (kolom early_release di material_pos/maklon_pos) di Supabase dulu." : error.message);
+      if (!po || (enable && (po.approved || po.early_release)) || (!enable && !po.early_release)) {
+        skipped++;
+        continue;
+      }
+      const { error: updErr } = await db.from(table).update({ early_release: enable }).eq("id", it.id);
+      if (updErr) throw new Error(`Gagal memproses ${it.id}: ${updErr.message}`);
+      await writeAuditLog(enable ? "PO_EARLY_RELEASE_ON" : "PO_EARLY_RELEASE_OFF", table, it.id, reason.trim(), { earlyRelease: !!po.early_release }, { earlyRelease: enable });
+      changed++;
+      await notifyAffected(
+        enable
+          ? `PO ${it.id} (${po.mrp_id}) diberi dispensasi Sysadmin: ${it.type === "MATERIAL" ? "boleh dibuatkan Paying Voucher" : "vendor boleh Mulai Produksi"} sebelum approval PO selesai — alasan: ${reason.trim()}. Approval PO tetap berjalan normal.`
+          : `Dispensasi PO ${it.id} (${po.mrp_id}) dicabut Sysadmin — alasan: ${reason.trim()}.`,
+        ["procurement", "finance"]
+      );
+    }
+    return { changed, skipped };
+  });
+}
+
+export type SysadminMrpInvoiceRow = {
+  id: string;
+  poId: string;
+  kodeTransaksi: string;
+  supplier: string;
+  destinationVendor: string;
+  status: string;
+  totalBiaya: number;
+  earlyRelease: boolean;
+  paidAt: string | null;
+  /** true = masih INVOICED dan punya vendor tujuan, bisa diberi dispensasi. */
+  releasable: boolean;
+};
+
+/** Semua batch PV material untuk 1 No MRP (lintas PO/supplier/vendor) -- dipakai bagian "Terima Lebih Awal" di halaman Kembalikan Data. */
+export async function findMaterialInvoicesForMrpAction(mrpId: string): Promise<ActionResult<SysadminMrpInvoiceRow[]>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    const { data, error } = await supabaseServer()
+      .from("raw_material_invoices")
+      .select("id,po_id,kode_transaksi,supplier,destination_vendor,status,total_biaya,early_release,paid_at")
+      .eq("mrp_id", mrpId.trim())
+      .order("booked_at");
+    if (error) throw new Error(error.message.includes("early_release") ? "Jalankan migration 0089 (kolom early_release) di Supabase dulu." : error.message);
+    return (data ?? []).map((r) => ({
+      id: r.id,
+      poId: r.po_id,
+      kodeTransaksi: r.kode_transaksi ?? "",
+      supplier: r.supplier ?? "",
+      destinationVendor: r.destination_vendor ?? "",
+      status: r.status,
+      totalBiaya: Number(r.total_biaya ?? 0),
+      earlyRelease: !!r.early_release,
+      paidAt: r.paid_at ?? null,
+      releasable: r.status === "INVOICED" && !!r.destination_vendor,
+    }));
+  });
+}
+
+/** Majukan batch INVOICED ke DELIVERY sebelum dibayar (dispensasi). Batch yang bukan INVOICED dilewati (jaring pengaman kedua; UI sudah menyaring). */
+export async function sysadminReleaseInvoicesEarlyAction(invoiceIds: string[], reason: string): Promise<ActionResult<{ released: number; skipped: number }>> {
+  return toActionResult(async () => {
+    await requireSysadmin();
+    if (!reason.trim()) throw new Error("Alasan wajib diisi.");
+    if (invoiceIds.length === 0) throw new Error("Pilih minimal 1 batch.");
+    const db = supabaseServer();
+    const { data: rows, error } = await db.from("raw_material_invoices").select("id,status,po_id,mrp_id,destination_vendor,supplier,total_biaya").in("id", invoiceIds);
+    if (error) throw new Error(error.message);
+    const deliveredAt = localDateString(new Date());
+    let released = 0;
+    let skipped = 0;
+    const vendorsByMrp = new Map<string, Set<string>>();
+    for (const r of rows ?? []) {
+      if (r.status !== "INVOICED" || !r.destination_vendor) {
+        skipped++;
+        continue;
+      }
+      const { error: updErr } = await db
+        .from("raw_material_invoices")
+        .update({ status: "DELIVERY", delivered_at: deliveredAt, early_release: true })
+        .eq("id", r.id)
+        .eq("status", "INVOICED");
+      if (updErr) throw new Error(updErr.message.includes("early_release") ? "Jalankan migration 0089 (kolom early_release) di Supabase dulu." : `Gagal memproses ${r.id}: ${updErr.message}`);
+      await writeAuditLog("RELEASE_INVOICE_EARLY", "raw_material_invoices", r.id, reason.trim(), { status: r.status }, { status: "DELIVERY", deliveredAt, earlyRelease: true, unpaid: true });
+      const set = vendorsByMrp.get(r.mrp_id) ?? new Set<string>();
+      set.add(r.destination_vendor);
+      vendorsByMrp.set(r.mrp_id, set);
+      released++;
+    }
+    for (const [mrpId, vendors] of vendorsByMrp) {
+      await notifyAffected(`Sysadmin mengizinkan material ${mrpId} diterima lebih awal (invoice belum dibayar) — alasan: ${reason.trim()}. Finance tetap perlu membayar invoicenya; Procurement lengkapi lampiran.`, ["finance", "procurement"]);
+      for (const vendorId of vendors) {
+        await notifyAffected(`Material ${mrpId} sudah bisa Anda terima di Good Receive dan diproduksi.`, ["vendorMaklon"], vendorId);
+      }
+    }
+    return { released, skipped };
   });
 }
 

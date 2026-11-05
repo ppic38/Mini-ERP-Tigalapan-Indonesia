@@ -12,6 +12,7 @@ import {
   formatDateTime,
   formatDecimal,
   formatRupiah,
+  invoiceAwaitingPayment,
   invoiceBadge,
   outstandingAmountForInvoice,
   vendorDepositBalance,
@@ -82,6 +83,7 @@ export function PaymentPanel() {
 
   const invoices = useMrpStore((s) => s.invoices);
   const setInvoicesPaid = useMrpStore((s) => s.setInvoicesPaid);
+  const materialPOs = useMrpStore((s) => s.materialPOs);
   const setInvoicesTxnCreated = useMrpStore((s) => s.setInvoicesTxnCreated);
   const sysadminView = useSysadminMode();
   const setInvoicePaymentProof = useMrpStore((s) => s.setInvoicePaymentProof);
@@ -135,7 +137,8 @@ export function PaymentPanel() {
 
   if (!mounted) return null;
 
-  const readyInvoices = invoices.filter((i) => i.status === "INVOICED" && !isSyntheticSupplier(i.supplier));
+  // Termasuk invoice "terima lebih awal" (dimajukan Sysadmin ke DELIVERY dst sebelum dibayar, migration 0089) selama belum dibayar.
+  const readyInvoices = invoices.filter((i) => invoiceAwaitingPayment(i) && !isSyntheticSupplier(i.supplier));
   const readyMrpIds = Array.from(new Set(readyInvoices.map((i) => i.mrpId))).sort((a, b) => b.localeCompare(a, "id-ID"));
   // Dihitung langsung saat render (bukan lewat useEffect, sama pola dengan po-maklon-panel.tsx) --
   // begitu MRP terpilih sudah tidak ada lagi invoice siap-bayarnya (semua sudah dibayar), otomatis
@@ -145,7 +148,7 @@ export function PaymentPanel() {
 
   // Riwayat (bagian bawah) -- SEMUA invoice yang statusnya sudah lewat INVOICED (siap-bayar sudah
   // ditangani di bagian atas), dikelompokkan MRP -> Supplier untuk tabel pohon status/histori.
-  const historyInvoices = invoices.filter((i) => i.status !== "INVOICED" && !isSyntheticSupplier(i.supplier));
+  const historyInvoices = invoices.filter((i) => !invoiceAwaitingPayment(i) && !isSyntheticSupplier(i.supplier));
   const historyHierarchy = (() => {
     const byMrp = new Map<string, Map<string, RawMaterialInvoice[]>>();
     for (const i of historyInvoices) {
@@ -173,7 +176,12 @@ export function PaymentPanel() {
   }
 
   const selectedList = invoices.filter((i) => selected.has(i.id));
-  const selectableToPay = selectedList.filter((i) => i.status === "INVOICED");
+  // Invoice dari PO Material yang belum disetujui (dispensasi Sysadmin, migration 0090) belum bisa dibayar sampai PO-nya approved.
+  const poNotApproved = (i: RawMaterialInvoice) => {
+    const po = materialPOs.find((p) => p.id === i.poId);
+    return !!po && !po.approved;
+  };
+  const selectableToPay = selectedList.filter((i) => invoiceAwaitingPayment(i) && !poNotApproved(i));
   const selectableToUnpay = selectedList.filter((i) => i.status === "PAID");
   // Saldo deposit cuma relevan kalau SEMUA invoice yang mau dibayar berasal dari supplier yang
   // SAMA (ledger-nya per supplier, lihat vendor_deposits) -- kalau campur, sembunyikan kotaknya
@@ -377,6 +385,16 @@ export function PaymentPanel() {
         return (
           <div className="flex flex-col items-start gap-1">
             <StatusPill tone={invoiceBadge(i.status).tone}>{invoiceBadge(i.status).label}</StatusPill>
+            {i.status !== "INVOICED" && invoiceAwaitingPayment(i) && (
+              <span title="Material sudah diterima vendor lebih awal (dispensasi Sysadmin), tagihan belum dibayar">
+                <StatusPill tone="warning">TERIMA AWAL · BELUM DIBAYAR</StatusPill>
+              </span>
+            )}
+            {invoiceAwaitingPayment(i) && poNotApproved(i) && (
+              <span title="PO Material belum disetujui penuh; invoice dibuat lebih awal (dispensasi Sysadmin). Baru bisa dibayar setelah PO approved.">
+                <StatusPill tone="danger">MENUNGGU APPROVAL PO</StatusPill>
+              </span>
+            )}
             {isDeposit && <StatusPill tone="success">Deposit +{formatRupiah(-selisih)}</StatusPill>}
           </div>
         );
@@ -389,7 +407,7 @@ export function PaymentPanel() {
       label: "Transaksi",
       default: true,
       render: (i) => {
-        if (i.status !== "INVOICED") return <span className="text-text-muted">—</span>;
+        if (!invoiceAwaitingPayment(i)) return <span className="text-text-muted">—</span>;
         const done = !!i.txnCreatedAt;
         const info = done ? `Transaksi dibuat${i.txnCreatedBy ? ` oleh ${i.txnCreatedBy}` : ""}${i.txnCreatedAt ? ` pada ${formatDate(i.txnCreatedAt.slice(0, 10))}` : ""}` : "Belum ditandai -- klik kalau transaksi sudah dibuat";
         return (
@@ -722,7 +740,7 @@ export function PaymentPanel() {
           // tidak ikut membuka detail baris -- stopPropagation supaya klik ke <tr> (expand) tidak terpicu.
           firstColumnRender={(i) => (
             <span onClick={(e) => e.stopPropagation()}>
-              <Checkbox checked={selected.has(i.id)} onChange={() => toggle(i.id)} />
+              <Checkbox checked={selected.has(i.id)} onChange={() => toggle(i.id)} disabled={poNotApproved(i)} title={poNotApproved(i) ? "PO Material belum disetujui penuh -- belum bisa dibayar" : undefined} />
             </span>
           )}
           filterDefs={[

@@ -5,7 +5,7 @@ import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { StatusPill } from "@/components/ui/status-pill";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatRupiah, isSyntheticSupplier, localDateString, vendorInvoiceFinalAmount } from "@/lib/mrp/derive";
+import { formatRupiah, invoiceAwaitingPayment, isSyntheticSupplier, localDateString, vendorInvoiceFinalAmount } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { poApprovalState } from "@/lib/mrp/poApproval";
 
@@ -24,7 +24,7 @@ export default function FinanceDashboardPage() {
 
     // Invoice/PO bahan hasil Migrasi Data Awal bukan tagihan supplier -- tidak ikut angka Finance.
     const financeInvoices = invoices.filter((i) => !isSyntheticSupplier(i.supplier));
-    const materialAwaitingPayment = financeInvoices.filter((i) => i.status === "INVOICED");
+    const materialAwaitingPayment = financeInvoices.filter(invoiceAwaitingPayment);
     const materialAwaitingAmount = materialAwaitingPayment.reduce((s, i) => s + i.totalBiaya, 0);
 
     const vendorAwaitingPayment = vendorInvoices.filter((i) => i.status === "APPROVED");
@@ -35,7 +35,7 @@ export default function FinanceDashboardPage() {
     const maklonPendingApproval = maklonPOs.filter((p) => !p.approved && poApprovalState(p).pendingRoles.includes("finance"));
 
     const totalPaid =
-      financeInvoices.filter((i) => i.status === "PAID" || i.status === "DELIVERY" || i.status === "RECEIVING" || i.status === "PRODUCTION_DONE" || i.status === "WAITING_PRODUCTION").reduce((s, i) => s + i.totalBiaya, 0) +
+      financeInvoices.filter((i) => !invoiceAwaitingPayment(i)).filter((i) => i.status === "PAID" || i.status === "DELIVERY" || i.status === "RECEIVING" || i.status === "PRODUCTION_DONE" || i.status === "WAITING_PRODUCTION").reduce((s, i) => s + i.totalBiaya, 0) +
       vendorInvoices.filter((i) => i.status === "PAID").reduce((s, i) => s + vendorInvoiceFinalAmount(i), 0);
 
     let overdue = 0;

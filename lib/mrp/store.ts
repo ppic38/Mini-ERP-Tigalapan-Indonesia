@@ -29,7 +29,7 @@ import type {
 } from "./types";
 import type { ParsedMrpImport } from "./parseImport";
 import type { EkspedisiRateRow, EntitasRow, HargaFobRow, HargaKainPksRow, HargaKainRow, HargaKerahMansetRow, HargaMaklonRow, HargaRibRow, ItemSellingPriceRow, KerahMansetSettingRow, MaterialSupplierRow, SupplierRow, VendorProduksiMasterRow, WarnaAliasRow } from "./masterData";
-import { DEFAULT_WEIGHT_TOLERANCE_PCT, localDateString, setWarnaAliasesForPricing, setWeightTolerancePct } from "./derive";
+import { DEFAULT_WEIGHT_TOLERANCE_PCT, invoiceAwaitingPayment, localDateString, setWarnaAliasesForPricing, setWeightTolerancePct } from "./derive";
 
 /** Pesan gagal aksi (dulu window.alert) -- dialog buatan sendiri, tidak memblokir alur kode. */
 function notifyError(message: string): void {
@@ -1119,7 +1119,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     const nowIsoStr = new Date().toISOString();
     set({
       invoices: previous.map((i) => {
-        if (!idSet.has(i.id) || i.status !== "INVOICED") return i;
+        if (!idSet.has(i.id) || !invoiceAwaitingPayment(i)) return i;
         if (created) return i.txnCreatedAt ? i : { ...i, txnCreatedAt: nowIsoStr, txnCreatedBy: "Anda" };
         return { ...i, txnCreatedAt: undefined, txnCreatedBy: undefined };
       }),
@@ -1140,6 +1140,8 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     set({
       invoices: previous.map((i) => {
         if (!idSet.has(i.id)) return i;
+        // Invoice "terima lebih awal" yang belum dibayar: cuma tanggal bayar + bukti yang terisi, status (DELIVERY dst) tidak mundur.
+        if (paid && i.status !== "INVOICED" && invoiceAwaitingPayment(i)) return { ...i, paidAt: now, buktiBayarAt: proof ? now : i.buktiBayarAt, buktiBayarFileName: proof?.fileName ?? i.buktiBayarFileName, supportFileName: extra?.support ? (extra.support.fileName ?? "dokumen-pendukung") : i.supportFileName };
         if (paid && i.status === "INVOICED") return { ...i, status: "PAID", paidAt: now, buktiBayarAt: proof ? now : i.buktiBayarAt, buktiBayarFileName: proof?.fileName ?? i.buktiBayarFileName, supportFileName: extra?.support ? (extra.support.fileName ?? "dokumen-pendukung") : i.supportFileName };
         if (!paid && i.status === "PAID") return { ...i, status: "INVOICED", paidAt: undefined };
         return i;

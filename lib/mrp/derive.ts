@@ -1502,6 +1502,12 @@ export function maklonMaterialStageBadge(
   return { label: "MENUNGGU INVOICE MATERIAL", tone: "warning" };
 }
 
+/** Invoice material yang MENUNGGU PEMBAYARAN: berstatus INVOICED, atau sudah dimajukan Sysadmin ke DELIVERY sebelum dibayar ("terima lebih awal",
+ *  migration 0089) dan belum punya tanggal bayar. Satu-satunya definisi "belum dibayar" untuk Finance (antrean bayar, badge, dashboard). */
+export function invoiceAwaitingPayment(i: Pick<RawMaterialInvoice, "status" | "earlyRelease" | "paidAt">): boolean {
+  return i.status === "INVOICED" || (!!i.earlyRelease && !i.paidAt);
+}
+
 export function invoiceBadge(status: RawMaterialInvoice["status"]) {
   const map: Record<
     RawMaterialInvoice["status"],
@@ -3632,7 +3638,7 @@ export function mrpProgressRows(
 
         const invoicesForMrpVendor = invoices.filter((i) => i.mrpId === mrpId && i.destinationVendor === vendorProduksi);
         const paidMaterial = invoicesForMrpVendor
-          .filter((i) => PAID_OR_LATER.includes(i.status))
+          .filter((i) => PAID_OR_LATER.includes(i.status) && !invoiceAwaitingPayment(i))
           .reduce((s, i) => s + i.colorEntries.filter((c) => c.warna === warna && c.lengan === lengan).reduce((a, c) => a + c.rolls.length, 0), 0);
 
         const rcvMaterial = receivedRollCountForColor(mrpId, vendorProduksi, warna, lengan, invoices);

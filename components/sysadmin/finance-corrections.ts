@@ -1,5 +1,5 @@
 import type { CorrectionAction } from "@/components/sysadmin/correction-dialog";
-import { formatRupiah } from "@/lib/mrp/derive";
+import { formatRupiah, invoiceAwaitingPayment } from "@/lib/mrp/derive";
 import type { EkspedisiInvoice, MaklonInvoice, MaklonPO, RawMaterialInvoice, VendorDepositEntry, VendorInvoice } from "@/lib/mrp/types";
 import {
   sysadminDeleteDepositEntryAction,
@@ -17,7 +17,7 @@ import {
  *  Sysadmin sadar memilih (tidak ada checkbox tersembunyi). Invoice yang belum dibayar tidak
  *  mendapat tombol sama sekali. */
 export function materialInvoicePaymentCorrections(inv: RawMaterialInvoice, vendorDeposits: VendorDepositEntry[]): CorrectionAction[] {
-  if (inv.status === "INVOICED" || inv.status === "WAITING_INVOICE") return [];
+  if (inv.status === "INVOICED" || inv.status === "WAITING_INVOICE" || invoiceAwaitingPayment(inv)) return [];
   let block: string | undefined;
   if (inv.sourceClaimId) block = "PV pengganti klaim — pembayarannya terikat ledger deposit klaim";
   else if (inv.status !== "PAID") block = `Sudah berstatus ${inv.status} — kembalikan langkah setelahnya dulu (mis. Kembalikan Delivery di Material Tracking)`;

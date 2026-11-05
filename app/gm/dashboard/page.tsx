@@ -5,7 +5,7 @@ import Link from "next/link";
 import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatRupiah, isSyntheticSupplier, vendorInvoiceFinalAmount } from "@/lib/mrp/derive";
+import { formatRupiah, invoiceAwaitingPayment, isSyntheticSupplier, vendorInvoiceFinalAmount } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { APPROVAL_LEVEL_TABLE, poApprovalState } from "@/lib/mrp/poApproval";
 
@@ -34,7 +34,7 @@ export default function GmDashboardPage() {
       const rows = inFlight.filter((p) => p.state.level === l.level);
       return { label: l.label, approver: l.approver, count: rows.length, amount: rows.reduce((s, p) => s + p.amount, 0) };
     });
-    const awaitingInvoices = invoices.filter((i) => i.status === "INVOICED" && !isSyntheticSupplier(i.supplier));
+    const awaitingInvoices = invoices.filter((i) => invoiceAwaitingPayment(i) && !isSyntheticSupplier(i.supplier));
     const awaitingVendorInv = vendorInvoices.filter((i) => i.status === "APPROVED");
     return {
       mine,

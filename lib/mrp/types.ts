@@ -121,6 +121,8 @@ export type MaterialPO = {
   entity: string;
   status: MaterialPoStatus;
   approved: boolean;
+  /** Migration 0090: dispensasi Sysadmin -- boleh dibuatkan Paying Voucher walau PO belum approved (bahan sudah ada di vendor). */
+  earlyRelease?: boolean;
   daysSincePO: number;
   /** Matriks Approval PO (migration 0055, lib/mrp/poApproval.ts). Kosong = PO lama (alur 1 approval Finance). */
   approvalLevel?: number;
@@ -147,6 +149,8 @@ export type MaklonPO = {
   entity: string;
   status: MaklonPoStatus;
   approved: boolean;
+  /** Migration 0090: dispensasi Sysadmin -- vendor boleh Mulai Produksi walau PO Produksi belum approved. */
+  earlyRelease?: boolean;
   /** Matriks Approval PO (migration 0055, lib/mrp/poApproval.ts). Kosong = PO lama (alur 1 approval Finance). */
   approvalLevel?: number;
   approvalLog?: PoApprovalEntry[];
@@ -345,6 +349,9 @@ export type RawMaterialInvoice = {
    */
   sourceClaimId?: string;
   paidAt?: string;
+  /** Migration 0089: invoice ini dimajukan Sysadmin ke DELIVERY SEBELUM dibayar ("terima lebih awal", bahan sudah ada di vendor).
+   *  Belum dibayar selama `earlyRelease` && !paidAt; status invoice tidak lagi menunjukkan itu, jadi pakai `invoiceAwaitingPayment`. */
+  earlyRelease?: boolean;
   /** Migration 0082: PIC Finance yang memproses pembayaran. */
   paidBy?: string;
   /** Penanda Finance "transaksi sudah dibuat" (migration 0071) -- status invoice tidak berubah. */

@@ -5,6 +5,7 @@ import {
   cutWarnaLenganGroups,
   cuttingSizesForGroup,
   invoiceableMrpIds,
+  invoiceAwaitingPayment,
   vendorInvoicePaymentStatus,
   invoiceFullyArrived,
   onlyVendor,
@@ -87,7 +88,7 @@ export function countPoApprovalTotal(materialPOs: MaterialPO[], maklonPOs: Maklo
 }
 
 export function countPaymentMaterialReady(invoices: RawMaterialInvoice[]): number {
-  return invoices.filter((i) => i.status === "INVOICED").length;
+  return invoices.filter(invoiceAwaitingPayment).length;
 }
 
 export function countPaymentMaklonReady(vendorInvoices: VendorInvoice[]): number {
@@ -126,7 +127,7 @@ export function countMrpAwaitingScmApproval(mrpDetails: { ppicApproval: string }
 /** PO material yang sudah disetujui Finance tapi masih ada sisa roll belum diinvoice —
  *  konsisten dengan `openPOs` di halaman Paying Voucher (Invoice). */
 export function countMaterialPOsAwaitingInvoice(materialPOs: MaterialPO[]): number {
-  return materialPOs.filter((po) => po.status !== "CANCELLED" && po.approved && po.invoicedRolls < po.rollCount).length;
+  return materialPOs.filter((po) => po.status !== "CANCELLED" && (po.approved || po.earlyRelease) && po.invoicedRolls < po.rollCount).length;
 }
 
 /** Invoice vendor produksi yang baru disubmit vendor, menunggu direview Procurement. */
