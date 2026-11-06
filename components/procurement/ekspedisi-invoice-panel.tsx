@@ -15,6 +15,8 @@ import { formatDate, formatRupiah } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { ResiKoliDetail } from "@/components/mrp/resi-koli-detail";
 import { exportKoliResiExcel } from "@/lib/mrp/exportKoliResiExcel";
+import { EkspedisiKoliDownloadDialog } from "@/components/procurement/ekspedisi-koli-download-dialog";
+import { Button } from "@/components/ui/button";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { ekspedisiInvoiceCorrections } from "@/components/sysadmin/finance-corrections";
 
@@ -273,16 +275,14 @@ export function EkspedisiInvoicePanel() {
   const withdrawEkspedisiInvoice = useMrpStore((s) => s.withdrawEkspedisiInvoice);
   const groups = useMemo(() => ekspedisiResiGroups(deliveryKolis, ekspedisiRates), [deliveryKolis, ekspedisiRates]);
   const [editKey, setEditKey] = useState<string | null>(null);
+  const [downloadOpen, setDownloadOpen] = useState(false);
 
   /** Unduh Excel rincian koli satu resi: satu sheet berisi semua koli, satu baris per koli dan size (bisa difilter). */
   async function downloadKoliExcel(g: EkspedisiResiGroup) {
     const noResi = g.invoice?.noResi ?? g.noResi;
     try {
       const safe = (noResi || "resi").replace(/[^\w.-]+/g, "_");
-      await exportKoliResiExcel(
-        { noResi, ekspedisi: g.ekspedisi, vendorName: vendorName(g.vendorProduksi), mrpIds: g.mrpIds, kolis: g.kolis },
-        `Rincian-Koli-Resi-${safe}.xlsx`
-      );
+      await exportKoliResiExcel({ resis: [{ noResi, ekspedisi: g.ekspedisi, vendorName: vendorName(g.vendorProduksi), kolis: g.kolis }] }, `Rincian-Koli-Resi-${safe}.xlsx`);
     } catch (e) {
       await alertDialog({ title: "Gagal membuat Excel", message: e instanceof Error ? e.message : "Terjadi kesalahan saat membuat file Excel.", tone: "danger" });
     }
@@ -423,6 +423,11 @@ export function EkspedisiInvoicePanel() {
       )}
       <DataTable
         title="Invoice ekspedisi per resi"
+        headerActions={
+          <Button onClick={() => setDownloadOpen(true)} variant="ghost" size="md" disabled={groups.length === 0} title="Unduh Excel rincian koli: pilih MRP, vendor, dan resi, satu file">
+            Download Excel
+          </Button>
+        }
         columns={columns}
         rows={groups}
         keyOf={(g) => g.key}
@@ -452,6 +457,7 @@ export function EkspedisiInvoicePanel() {
         emptyText="Belum ada resi yang dikirim vendor."
       />
       {editing && <EkspedisiInvoiceModal group={editing} onClose={() => setEditKey(null)} />}
+      {downloadOpen && <EkspedisiKoliDownloadDialog groups={groups} onClose={() => setDownloadOpen(false)} />}
     </>
   );
 }
