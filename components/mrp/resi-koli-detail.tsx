@@ -42,7 +42,7 @@ function KoliItemsPopup({ koli, onClose }: { koli: DeliveryKoli; onClose: () => 
 }
 
 /** Rincian koli satu resi (isi baris yang dibuka di tabel Invoice Ekspedisi). Tiap nomor koli bisa diklik untuk melihat item di dalamnya. */
-export function ResiKoliDetail({ kolis }: { kolis: DeliveryKoli[] }) {
+export function ResiKoliDetail({ kolis, onExport }: { kolis: DeliveryKoli[]; onExport?: () => void | Promise<void> }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const open = openId ? kolis.find((k) => k.id === openId) : undefined;
   const totalQty = kolis.reduce((s, k) => s + k.items.reduce((a, it) => a + it.qty, 0), 0);
@@ -51,7 +51,18 @@ export function ResiKoliDetail({ kolis }: { kolis: DeliveryKoli[] }) {
     <div className="overflow-hidden rounded-md border border-[#E4E9EE] bg-white">
       <div className="flex items-center justify-between border-b border-[#E4E9EE] bg-[#F2F5F8] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
         <span>Rincian koli ({kolis.length} koli)</span>
-        <span className="normal-case tracking-normal">Klik nomor koli untuk melihat isinya</span>
+        <span className="flex items-center gap-3 normal-case tracking-normal">
+          Klik nomor koli untuk melihat isinya
+          {onExport && (
+            <button
+              onClick={() => void onExport()}
+              className="rounded-md border border-[#CBD5DF] bg-white px-2.5 py-[3px] font-sans text-[11px] font-semibold text-action-primary hover:bg-[#F2F5F8]"
+              title="Unduh Excel: satu sheet per koli berisi item dan qty-nya"
+            >
+              Unduh Excel
+            </button>
+          )}
+        </span>
       </div>
       <div className="grid grid-cols-[110px_110px_90px_1fr] gap-x-3 border-b border-[#E4E9EE] bg-[#FAFBFC] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
         <span>No Koli</span>

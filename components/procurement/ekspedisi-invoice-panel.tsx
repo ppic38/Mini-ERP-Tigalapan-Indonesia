@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { StatusPill } from "@/components/ui/status-pill";
-import { confirmDialog } from "@/components/ui/confirm-dialog";
+import { alertDialog, confirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { MultiFileInput } from "@/components/mrp/multi-file-input";
 import { VendorPhotoLinks, VendorPhotoSummary, kirimDateText } from "@/components/mrp/ekspedisi-photo-links";
@@ -14,6 +14,7 @@ import type { DeliveryKoli } from "@/lib/mrp/types";
 import { formatDate, formatRupiah } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { ResiKoliDetail } from "@/components/mrp/resi-koli-detail";
+import { exportKoliResiExcel } from "@/lib/mrp/exportKoliResiExcel";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { ekspedisiInvoiceCorrections } from "@/components/sysadmin/finance-corrections";
 
@@ -270,8 +271,23 @@ export function EkspedisiInvoicePanel() {
   const ekspedisiRates = useMrpStore((s) => s.ekspedisiRates);
   const submitEkspedisiInvoice = useMrpStore((s) => s.submitEkspedisiInvoice);
   const withdrawEkspedisiInvoice = useMrpStore((s) => s.withdrawEkspedisiInvoice);
+  const productionBatches = useMrpStore((s) => s.productionBatches);
   const groups = useMemo(() => ekspedisiResiGroups(deliveryKolis, ekspedisiRates), [deliveryKolis, ekspedisiRates]);
   const [editKey, setEditKey] = useState<string | null>(null);
+
+  /** Unduh Excel rincian koli satu resi: sheet "Ringkasan" + satu sheet per koli (item, size, code roll asal, qty). */
+  async function downloadKoliExcel(g: EkspedisiResiGroup) {
+    const noResi = g.invoice?.noResi ?? g.noResi;
+    try {
+      const safe = (noResi || "resi").replace(/[^\w.-]+/g, "_");
+      await exportKoliResiExcel(
+        { noResi, ekspedisi: g.ekspedisi, vendorName: vendorName(g.vendorProduksi), mrpIds: g.mrpIds, kolis: g.kolis, batches: productionBatches },
+        `Rincian-Koli-Resi-${safe}.xlsx`
+      );
+    } catch (e) {
+      await alertDialog({ title: "Gagal membuat Excel", message: e instanceof Error ? e.message : "Terjadi kesalahan saat membuat file Excel.", tone: "danger" });
+    }
+  }
   const editing = editKey ? groups.find((g) => g.key === editKey) : undefined;
 
   const toProcess = groups.filter((g) => !g.invoice || g.invoice.status === "DRAFT").length;
@@ -369,6 +385,9 @@ export function EkspedisiInvoicePanel() {
         const s = g.invoice?.status;
         return (
           <span onClick={(e) => e.stopPropagation()} className="flex items-center gap-2">
+            <button onClick={() => void downloadKoliExcel(g)} className="font-sans text-[11px] font-semibold text-action-primary underline" title="Unduh Excel rincian koli (satu sheet per koli)">
+              Excel
+            </button>
             {s !== "SUBMITTED" && s !== "PAID" && (
               <button onClick={() => setEditKey(g.key)} className="font-sans text-[11px] font-semibold text-action-primary underline">
                 {s ? "Ubah" : "Validasi"}
@@ -428,7 +447,7 @@ export function EkspedisiInvoicePanel() {
         renderExpanded={(g) => (
           <div className="flex flex-col gap-2">
             {g.keys.length > 1 && <GabunganPengirimanList g={g} />}
-            <ResiKoliDetail kolis={g.kolis} />
+            <ResiKoliDetail kolis={g.kolis} onExport={() => downloadKoliExcel(g)} />
           </div>
         )}
         emptyText="Belum ada resi yang dikirim vendor."
