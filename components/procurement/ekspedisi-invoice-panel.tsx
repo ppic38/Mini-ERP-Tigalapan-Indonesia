@@ -271,17 +271,16 @@ export function EkspedisiInvoicePanel() {
   const ekspedisiRates = useMrpStore((s) => s.ekspedisiRates);
   const submitEkspedisiInvoice = useMrpStore((s) => s.submitEkspedisiInvoice);
   const withdrawEkspedisiInvoice = useMrpStore((s) => s.withdrawEkspedisiInvoice);
-  const productionBatches = useMrpStore((s) => s.productionBatches);
   const groups = useMemo(() => ekspedisiResiGroups(deliveryKolis, ekspedisiRates), [deliveryKolis, ekspedisiRates]);
   const [editKey, setEditKey] = useState<string | null>(null);
 
-  /** Unduh Excel rincian koli satu resi: sheet "Ringkasan" + satu sheet per koli (item, size, code roll asal, qty). */
+  /** Unduh Excel rincian koli satu resi: satu sheet berisi semua koli, satu baris per koli dan size (bisa difilter). */
   async function downloadKoliExcel(g: EkspedisiResiGroup) {
     const noResi = g.invoice?.noResi ?? g.noResi;
     try {
       const safe = (noResi || "resi").replace(/[^\w.-]+/g, "_");
       await exportKoliResiExcel(
-        { noResi, ekspedisi: g.ekspedisi, vendorName: vendorName(g.vendorProduksi), mrpIds: g.mrpIds, kolis: g.kolis, batches: productionBatches },
+        { noResi, ekspedisi: g.ekspedisi, vendorName: vendorName(g.vendorProduksi), mrpIds: g.mrpIds, kolis: g.kolis },
         `Rincian-Koli-Resi-${safe}.xlsx`
       );
     } catch (e) {
@@ -385,7 +384,7 @@ export function EkspedisiInvoicePanel() {
         const s = g.invoice?.status;
         return (
           <span onClick={(e) => e.stopPropagation()} className="flex items-center gap-2">
-            <button onClick={() => void downloadKoliExcel(g)} className="font-sans text-[11px] font-semibold text-action-primary underline" title="Unduh Excel rincian koli (satu sheet per koli)">
+            <button onClick={() => void downloadKoliExcel(g)} className="font-sans text-[11px] font-semibold text-action-primary underline" title="Unduh Excel rincian koli (satu sheet, semua koli)">
               Excel
             </button>
             {s !== "SUBMITTED" && s !== "PAID" && (

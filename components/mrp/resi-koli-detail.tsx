@@ -57,7 +57,7 @@ export function ResiKoliDetail({ kolis, onExport }: { kolis: DeliveryKoli[]; onE
             <button
               onClick={() => void onExport()}
               className="rounded-md border border-[#CBD5DF] bg-white px-2.5 py-[3px] font-sans text-[11px] font-semibold text-action-primary hover:bg-[#F2F5F8]"
-              title="Unduh Excel: satu sheet per koli berisi item dan qty-nya"
+              title="Unduh Excel: satu sheet berisi semua koli, item, dan qty-nya"
             >
               Unduh Excel
             </button>
