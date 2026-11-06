@@ -5,11 +5,12 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { MultiFileInput } from "@/components/mrp/multi-file-input";
-import { VendorPhotoLinks, kirimDateText } from "@/components/mrp/ekspedisi-photo-links";
+import { VendorPhotoLinks, VendorPhotoSummary, kirimDateText } from "@/components/mrp/ekspedisi-photo-links";
 import { useMrpStore } from "@/lib/mrp/store";
 import { readProofAsDataUrl } from "@/lib/mrp/clientFiles";
 import { viewEkspedisiInvoiceFiles, type AttachFile } from "@/lib/mrp/attachments";
-import { ekspedisiInvoiceBadge, ekspedisiResiGroups, type EkspedisiResiGroup } from "@/lib/mrp/ekspedisiInvoice";
+import { ekspedisiBaseKey, ekspedisiInvoiceBadge, ekspedisiResiGroups, type EkspedisiResiGroup } from "@/lib/mrp/ekspedisiInvoice";
+import type { DeliveryKoli } from "@/lib/mrp/types";
 import { formatDate, formatRupiah } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { ResiKoliDetail } from "@/components/mrp/resi-koli-detail";
@@ -238,6 +239,30 @@ function EkspedisiInvoiceModal({ group, onClose }: { group: EkspedisiResiGroup; 
   );
 }
 
+/** Rincian pengiriman yang digabung dalam satu baris resi (nomor resi sama dipakai beberapa pengiriman vendor). Dulu berupa teks biru "gabungan N pengiriman"
+ *  di bawah nomor resi; sekarang hanya tampil saat baris dibuka (owner 2026-11-06). */
+function GabunganPengirimanList({ g }: { g: EkspedisiResiGroup }) {
+  const byShipment = new Map<string, DeliveryKoli[]>();
+  for (const k of g.kolis) {
+    const key = ekspedisiBaseKey(k);
+    byShipment.set(key, [...(byShipment.get(key) ?? []), k]);
+  }
+  const rows = Array.from(byShipment.values()).sort((a, b) => (a[0].deliveredAt ?? "").localeCompare(b[0].deliveredAt ?? ""));
+  return (
+    <div className="overflow-hidden rounded-md border border-[#E4E9EE] bg-white">
+      <div className="border-b border-[#E4E9EE] bg-[#F2F5F8] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Gabungan {rows.length} pengiriman</div>
+      {rows.map((ks, i) => (
+        <div key={ekspedisiBaseKey(ks[0])} className="flex items-center gap-x-4 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F] last:border-b-0">
+          <span className="w-[100px] flex-none font-semibold">Pengiriman {i + 1}</span>
+          <span className="w-[110px] flex-none">kirim {formatDate(ks[0].deliveredAt)}</span>
+          <span className="min-w-0 flex-1 font-mono text-[11px]">koli {ks.map((k) => k.noKoli || k.id).join(", ")}</span>
+          <span className="flex-none font-mono">{ks.length} koli</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Panel "Invoice Ekspedisi" di Paying Voucher (Invoice), Procurement. Satu baris per resi yang sudah terkirim: Procurement mencocokkan nota ekspedisi dengan
  *  lampiran vendor, menyesuaikan no resi dan biaya aktual, lalu mengajukannya ke Finance. Biaya tervalidasi dipakai sebagai ongkir HPP resi itu (derive.ts). */
 export function EkspedisiInvoicePanel() {
@@ -287,12 +312,13 @@ export function EkspedisiInvoicePanel() {
     // Daftar nomor koli disembunyikan secara default (owner 2026-11-05): nomornya terlihat saat baris dibuka (klik nomor untuk melihat isinya), atau tampilkan lewat menu Kolom.
     { key: "koli", label: "No Koli", default: false, render: (g) => <span className="font-mono text-[11px]">{g.noKolis.join(", ")}</span> },
     { key: "jumlahKoli", label: "Jumlah Koli", default: true, align: "right", render: (g) => <span className="font-mono font-semibold">{g.koliIds.length}</span> },
-    { key: "tgl", label: "Tgl Kirim", default: true, render: (g) => <span className="whitespace-nowrap">{kirimDateText(g)}</span> },
+    // Tgl Kirim dan Estimasi Master disembunyikan secara bawaan (owner 2026-11-06); tetap ada di menu Kolom, dan tanggal per pengiriman terlihat saat baris dibuka.
+    { key: "tgl", label: "Tgl Kirim", default: false, render: (g) => <span className="whitespace-nowrap">{kirimDateText(g)}</span> },
     { key: "berat", label: "Berat Resi", default: true, align: "right", render: (g) => <span className="font-mono">{kg(g.beratResi)}</span> },
     {
       key: "estimasi",
       label: "Estimasi Master",
-      default: true,
+      default: false,
       align: "right",
       render: (g) => <span className="font-mono">{g.estimasiMaster > 0 ? formatRupiah(g.estimasiMaster) : "—"}</span>,
     },
@@ -301,22 +327,23 @@ export function EkspedisiInvoicePanel() {
       label: "Biaya Aktual",
       default: true,
       align: "right",
-      render: (g) => {
-        if (!g.invoice) return <span className="text-text-muted">—</span>;
-        const d = diffText(g.invoice.biaya, g.estimasiMaster);
-        return (
-          <>
-            <div className="font-mono font-semibold">{formatRupiah(g.invoice.biaya)}</div>
-            {d && <div className={"font-mono text-[10px] " + d.tone}>{d.text}</div>}
-          </>
-        );
-      },
+      // Selisih terhadap estimasi master (teks merah "+Rp ... (+x%)") dihapus dari sel ini (owner 2026-11-06); selisihnya tetap terlihat di dialog Validasi/Ubah.
+      render: (g) => (g.invoice ? <div className="font-mono font-semibold">{formatRupiah(g.invoice.biaya)}</div> : <span className="text-text-muted">—</span>),
     },
     {
       key: "lampiranVendor",
       label: "Lampiran Vendor",
       default: true,
-      render: (g) => <VendorPhotoLinks ids={g.photoKoliIds} />,
+      // Satu tombol saja; lampiran lengkap (kalau lebih dari satu pengiriman) dibuka lewat daftar kecil saat diklik.
+      render: (g) => (
+        <VendorPhotoSummary
+          ids={g.photoKoliIds}
+          labelOf={(id, i) => {
+            const k = g.kolis.find((x) => x.id === id);
+            return `Pengiriman ${i + 1} · koli ${k?.noKoli || id} · kirim ${formatDate(k?.deliveredAt)}`;
+          }}
+        />
+      ),
     },
     {
       key: "nota",
@@ -395,10 +422,15 @@ export function EkspedisiInvoicePanel() {
           <span className="flex flex-col">
             <span className="font-mono font-medium">{g.invoice?.noResi ?? g.noResi}</span>
             {g.invoice?.noResiAsli && <span className="font-sans text-[10px] text-warning-fg">diubah dari {g.invoice.noResiAsli}</span>}
-            {g.keys.length > 1 && <span className="font-sans text-[10px] font-medium text-info-fg">gabungan {g.keys.length} pengiriman</span>}
           </span>
         )}
-        renderExpanded={(g) => <ResiKoliDetail kolis={g.kolis} />}
+        // Daftar "gabungan N pengiriman" dipindah ke sini: tampil hanya saat baris dibuka (dulu teks biru di bawah nomor resi).
+        renderExpanded={(g) => (
+          <div className="flex flex-col gap-2">
+            {g.keys.length > 1 && <GabunganPengirimanList g={g} />}
+            <ResiKoliDetail kolis={g.kolis} />
+          </div>
+        )}
         emptyText="Belum ada resi yang dikirim vendor."
       />
       {editing && <EkspedisiInvoiceModal group={editing} onClose={() => setEditKey(null)} />}
