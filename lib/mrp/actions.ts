@@ -27,6 +27,17 @@ async function toActionResult<T>(fn: () => Promise<T>): Promise<ActionResult<T>>
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
+/** Seperti toActionResult, tapi galat sesi/hak akses ("Unauthorized"/"Forbidden") dilempar ulang apa adanya supaya guardAction di store.ts
+ *  tetap mengarahkan ke login ulang seperti sebelumnya; galat lain (aturan bisnis, database) dikembalikan sebagai nilai supaya pesannya sampai ke vendor. */
+async function toActionResultKeepAuth<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
+  try {
+    return { ok: true, data: await fn() };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.startsWith("Unauthorized") || message.startsWith("Forbidden")) throw err;
+    return { ok: false, error: message };
+  }
+}
 import { requireSession, requireInternalRole, requireAnyInternalRole, internalActorForRole } from "../auth/session";
 import { internalAccountFor, type InternalRole } from "../internal-auth";
 import { supabaseServer } from "../supabase/server";
@@ -2996,12 +3007,18 @@ export async function unresolveProductionYieldAction(batchId: string): Promise<v
   await supabaseServer().from("production_yield_resolutions").delete().eq("production_batch_id", batchId);
 }
 
-export async function updateDeliveryKoliAction(koliId: string, patch: { ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }): Promise<void> {
+export async function updateDeliveryKoliAction(koliId: string, patch: { ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }): Promise<ActionResult<void>> {
+  return toActionResultKeepAuth(() => updateDeliveryKoliImpl(koliId, patch));
+}
+
+async function updateDeliveryKoliImpl(koliId: string, patch: { ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }): Promise<void> {
   const vendorId = await requireVendorSession();
   const db = supabaseServer();
-  const { data: koli } = await db.from("delivery_kolis").select("delivered_at,mrp_id,vendor_produksi").eq("id", koliId).maybeSingle();
+  const { data: koli } = await db.from("delivery_kolis").select("delivered_at,mrp_id,vendor_produksi,ekspedisi,no_koli").eq("id", koliId).maybeSingle();
   if (!koli || koli.delivered_at) return;
   assertSameVendor(vendorId, koli.vendor_produksi, "Koli ini");
+  // Isi koli SEBELUM diedit -- dipulihkan kalau pemeriksaan sesudah simpan (di bawah) menemukan bentrok antar-roll.
+  const { data: prevItems } = await db.from("delivery_koli_items").select("warna,lengan,size,qty,kind,usia,source_batch_id").eq("delivery_koli_id", koliId);
   // `excludeKoliId: koliId` -- sisa roll dihitung TANPA menganggap qty koli ini sendiri (versi
   // LAMA sebelum edit) sebagai "sudah terpakai", supaya qty yang sudah ada di koli ini bisa
   // dipertahankan/diedit bebas (bukan cuma bisa berkurang).
@@ -3019,6 +3036,14 @@ export async function updateDeliveryKoliAction(koliId: string, patch: { ekspedis
       .from("delivery_koli_items")
       .insert(items.map((it) => ({ delivery_koli_id: koliId, warna: it.warna, lengan: it.lengan, size: it.size, qty: it.qty, kind: it.kind, usia: it.usia ?? null, source_batch_id: it.sourceBatchId ?? null })));
     if (itemsErr) throw new Error(itemsErr.message);
+    // Pemeriksaan sesudah simpan: dua penyimpanan koli yang berjalan hampir bersamaan bisa sama-sama lolos dari clamp di atas.
+    const overbooked = await findKoliRollOverbooking(db, items);
+    if (overbooked.length > 0) {
+      await db.from("delivery_koli_items").delete().eq("delivery_koli_id", koliId);
+      if ((prevItems ?? []).length > 0) await db.from("delivery_koli_items").insert((prevItems ?? []).map((it) => ({ ...it, delivery_koli_id: koliId })));
+      await db.from("delivery_kolis").update({ ekspedisi: koli.ekspedisi, no_koli: koli.no_koli }).eq("id", koliId);
+      throw new Error(koliOverbookMessage(overbooked));
+    }
   }
 }
 
@@ -5457,7 +5482,57 @@ function assertNoKoliNumeric(noKoli: string): void {
   if (!/^\d+$/.test(noKoli.trim())) throw new Error("Nomor koli hanya boleh berisi angka (mis. 001).");
 }
 
-export async function createDeliveryKoliAction(input: { mrpId: string; vendorProduksi: string; ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }): Promise<DeliveryKoli> {
+/** Pemeriksaan SESUDAH simpan koli (owner 2026-11-06, kasus W40 PUTIH BLUISH 2XL: dua koli tersimpan berurutan memakai asal roll yang sama, 230 pcs
+ *  tercatat dua kali): clamp di clampDeliveryItemsBySourceBatch membaca data lalu menulis tanpa kunci, jadi dua penyimpanan yang berjalan hampir
+ *  bersamaan (atau pembacaan yang basi) sama-sama lolos. Di sini DIBACA LANGSUNG dari database (bukan snapshot) tepat setelah insert: untuk tiap
+ *  roll+size yang disentuh koli ini, total qty di SEMUA koli tidak boleh melebihi Finish Good roll itu. Roll yang terkirim lewat koli lama
+ *  (level-koli) dilewati. Kembalian = daftar keterangan pelanggaran (kosong = aman). Kalau pembacaan gagal, pemeriksaan dilewati (tidak
+ *  memblokir vendor karena gangguan sesaat). */
+async function findKoliRollOverbooking(db: SupabaseClient, items: DeliveryKoliItem[]): Promise<string[]> {
+  const touched = new Set<string>();
+  for (const it of items) if (it.sourceBatchId && it.qty > 0) touched.add(`${it.sourceBatchId}|${it.size}`);
+  if (touched.size === 0) return [];
+  const batchIds = Array.from(new Set(Array.from(touched, (k) => k.split("|")[0])));
+  const [fgRes, shipRes, rollRes, legacyRes] = await Promise.all([
+    db.from("production_batch_fg_sizes").select("production_batch_id,size,qty").in("production_batch_id", batchIds),
+    db.from("delivery_koli_items").select("source_batch_id,size,qty").in("source_batch_id", batchIds),
+    db.from("production_batches").select("id,code_roll").in("id", batchIds),
+    db.from("delivery_koli_batches").select("production_batch_id").in("production_batch_id", batchIds),
+  ]);
+  if (fgRes.error || shipRes.error || rollRes.error || legacyRes.error) {
+    console.warn("findKoliRollOverbooking: pembacaan gagal, pemeriksaan dilewati —", fgRes.error?.message ?? shipRes.error?.message ?? rollRes.error?.message ?? legacyRes.error?.message);
+    return [];
+  }
+  const legacy = new Set((legacyRes.data ?? []).map((r) => r.production_batch_id as string));
+  const codeById = new Map((rollRes.data ?? []).map((r) => [r.id as string, (r.code_roll as string | null) ?? (r.id as string)]));
+  const fg = new Map<string, number>();
+  for (const r of fgRes.data ?? []) fg.set(`${r.production_batch_id}|${r.size}`, (fg.get(`${r.production_batch_id}|${r.size}`) ?? 0) + Number(r.qty));
+  const shipped = new Map<string, number>();
+  for (const r of shipRes.data ?? []) shipped.set(`${r.source_batch_id}|${r.size}`, (shipped.get(`${r.source_batch_id}|${r.size}`) ?? 0) + Number(r.qty));
+  const problems: string[] = [];
+  for (const key of touched) {
+    const [batchId, size] = key.split("|");
+    if (legacy.has(batchId)) continue;
+    const have = fg.get(key) ?? 0;
+    const used = shipped.get(key) ?? 0;
+    if (used > have) problems.push(`roll ${codeById.get(batchId) ?? batchId} size ${size}: tercatat ${used} pcs di koli, padahal Finish Good roll ini ${have} pcs`);
+  }
+  return problems;
+}
+
+function koliOverbookMessage(problems: string[]): string {
+  return (
+    "Koli tidak disimpan karena bentrok dengan koli lain yang baru saja disimpan (" +
+    problems.join("; ") +
+    "). Isi koli sudah dikembalikan seperti semula. Muat ulang halaman (Ctrl+Shift+R), lalu isi koli lagi."
+  );
+}
+
+export async function createDeliveryKoliAction(input: { mrpId: string; vendorProduksi: string; ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }): Promise<ActionResult<DeliveryKoli>> {
+  return toActionResultKeepAuth(() => createDeliveryKoliImpl(input));
+}
+
+async function createDeliveryKoliImpl(input: { mrpId: string; vendorProduksi: string; ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }): Promise<DeliveryKoli> {
   assertNoKoliNumeric(input.noKoli);
   const actor = await requireVendorSessionWithActor();
   assertSameVendor(actor.vendorId, input.vendorProduksi, "Koli ini");
@@ -5480,6 +5555,13 @@ export async function createDeliveryKoliAction(input: { mrpId: string; vendorPro
       .from("delivery_koli_items")
       .insert(items.map((it) => ({ delivery_koli_id: id, warna: it.warna, lengan: it.lengan, size: it.size, qty: it.qty, kind: it.kind, usia: it.usia ?? null, source_batch_id: it.sourceBatchId ?? null })));
     if (itemsErr) throw new Error(itemsErr.message);
+    // Pemeriksaan sesudah simpan (lihat findKoliRollOverbooking): bentrok antar-roll -> koli dibatalkan seluruhnya.
+    const overbooked = await findKoliRollOverbooking(db, items);
+    if (overbooked.length > 0) {
+      await db.from("delivery_koli_items").delete().eq("delivery_koli_id", id);
+      await db.from("delivery_kolis").delete().eq("id", id);
+      throw new Error(koliOverbookMessage(overbooked));
+    }
   }
   await stampActor(db, "delivery_kolis", [id], { created_by: actor.actorLabel });
   await logVendorAction(actor, `Buat koli ${input.noKoli} (${items.length} item)`, "delivery_kolis", id);
@@ -5506,10 +5588,22 @@ export async function setKoliEkspedisiResiGroupAction(
   note: string,
   noResi: string,
   photo: { dataUrl: string; fileName?: string },
+  beratByKoli: Record<string, number> = {}
+): Promise<ActionResult<void>> {
+  // Dikembalikan sebagai nilai (bukan dilempar) supaya pesan "No resi sudah ada" sampai ke vendor di production.
+  return toActionResultKeepAuth(() => setKoliEkspedisiResiGroupImpl(koliIds, ekspedisi, note, noResi, photo, beratByKoli));
+}
+
+async function setKoliEkspedisiResiGroupImpl(
+  koliIds: string[],
+  ekspedisi: string,
+  note: string,
+  noResi: string,
+  photo: { dataUrl: string; fileName?: string },
   // Revisi 2026-09-19 (owner: "flow di ekspedisi harus timbang dulu baru keluar resinya"): berat
   // TIAP koli sekarang diinput di dialog ini (dulu di tabel "Sudah ada ekspedisi" sebelum Delivery)
   // dan disimpan bareng ekspedisi+resi. Wajib > 0 untuk SEMUA koli yang diproses.
-  beratByKoli: Record<string, number> = {}
+  beratByKoli: Record<string, number>
 ): Promise<void> {
   const actor = await requireVendorSessionWithActor();
   const vendorId = actor.vendorId;
@@ -5529,6 +5623,23 @@ export async function setKoliEkspedisiResiGroupAction(
   const validRows = (rows ?? []).filter((r) => r.vendor_produksi === vendorId && !r.delivered_at);
   const validIds = validRows.map((r) => r.id);
   if (validIds.length === 0) return;
+
+  // Owner 2026-11-06: satu nomor resi hanya boleh dipakai SATU kali -- ditolak kalau sudah ada di koli lain (huruf besar/kecil dan spasi di
+  // ujung tidak dibedakan). Semua koli yang memang satu resi harus dipilih bersamaan lalu di-set sekali. Dicek lintas SEMUA vendor (resi
+  // dari ekspedisi unik), tapi rincian koli hanya disebut kalau milik vendor ini sendiri.
+  const resiWanted = noResi.trim();
+  const likePattern = resiWanted.replace(/[\\%_]/g, (c) => "\\" + c);
+  const { data: dupRows, error: dupErr } = await db.from("delivery_kolis").select("id,vendor_produksi,no_koli,mrp_id").ilike("no_resi", likePattern).limit(20);
+  if (dupErr) throw new Error(`Gagal memeriksa nomor resi: ${dupErr.message}`);
+  const clash = (dupRows ?? []).filter((r) => !validIds.includes(r.id));
+  if (clash.length > 0) {
+    const own = clash.filter((r) => r.vendor_produksi === vendorId);
+    throw new Error(
+      own.length > 0
+        ? `No resi "${resiWanted}" sudah dipakai untuk koli ${own.map((r) => `${r.no_koli ?? r.id} (MRP ${r.mrp_id})`).join(", ")}. Nomor resi tidak boleh sama. Kalau beberapa koli dikirim dengan satu resi, centang semua koli itu lalu isi resi satu kali saja.`
+        : `No resi "${resiWanted}" sudah terdaftar di sistem. Nomor resi tidak boleh sama, periksa kembali nomor dari ekspedisi.`
+    );
+  }
 
   const resiGroupId = await nextReadableId("RESI");
   const notedAt = nowIso();

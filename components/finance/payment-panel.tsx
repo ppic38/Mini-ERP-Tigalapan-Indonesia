@@ -344,14 +344,14 @@ export function PaymentPanel() {
     {
       key: "poReferenceLama",
       label: "PO Reference",
-      default: true,
+      default: false, // Revisi 2026-11-06 (owner): kolom khusus PV pengganti klaim, disembunyikan secara bawaan (tetap ada di toggle "Kolom").
       render: (i) => (i.sourceClaimId ? <span className="font-mono">{claimKeySourceInvoiceId(i.sourceClaimId)}</span> : <span className="font-sans text-[11px] text-text-muted">—</span>),
     },
     { key: "nilai", label: "Harga", default: true, align: "right", render: (i) => formatRupiah(i.totalBiaya) },
     {
       key: "pembayaranSebelumnya",
       label: "Pembayaran Sebelumnya",
-      default: true,
+      default: false, // Revisi 2026-11-06 (owner): lihat catatan "PO Reference".
       align: "right",
       render: (i) =>
         i.sourceClaimId ? <span className="font-mono">{formatRupiah(vendorDepositCreditForClaim(i.sourceClaimId, vendorDeposits))}</span> : <span className="font-sans text-[11px] text-text-muted">—</span>,
@@ -359,7 +359,7 @@ export function PaymentPanel() {
     {
       key: "selisihKlaim",
       label: "Selisih",
-      default: true,
+      default: false, // Revisi 2026-11-06 (owner): lihat catatan "PO Reference".
       align: "right",
       render: (i) => {
         if (!i.sourceClaimId) return <span className="font-sans text-[11px] text-text-muted">—</span>;
@@ -538,6 +538,9 @@ export function PaymentPanel() {
     // PIC Finance yang memproses pembayaran (migration 0082); kosong untuk invoice yang belum dibayar.
     { key: "paidBy", label: "PIC Pembayaran", default: true, render: (i) => <span className="font-sans text-[11px]">{i.status === "PAID" || i.paidAt ? i.paidBy ?? "-" : "—"}</span> },
   ];
+  // Tabel "Invoice siap dibayar" belum ada yang dibayar, jadi PIC Pembayaran selalu kosong di sana -- disembunyikan secara bawaan (owner 2026-11-06).
+  // Tabel riwayat tetap menampilkannya. Keduanya masih bisa diubah lewat tombol "Kolom".
+  const readyColumns: ColumnDef<RawMaterialInvoice>[] = columns.map((c) => (c.key === "paidBy" ? { ...c, default: false } : c));
 
   // Item revisi 2026-09-06: klik baris untuk lihat detail material (rincian per warna + add buy)
   // DAN detail maklon (biaya PO Produksi terkait) sekaligus -- diekstrak jadi fungsi biasa (dulu
@@ -732,7 +735,7 @@ export function PaymentPanel() {
       {effectiveMrpId && (
         <DataTable
           title={`Invoice siap dibayar — ${effectiveMrpId}`}
-          columns={columns}
+          columns={readyColumns}
           rows={scopedReadyInvoices}
           keyOf={(i) => i.id}
           firstColumnLabel=""

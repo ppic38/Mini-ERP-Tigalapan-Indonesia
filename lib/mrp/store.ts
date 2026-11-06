@@ -1530,7 +1530,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     set({ deliveryKolis: [...get().deliveryKolis, { id: tmpId, ...input, createdAt: localDateString(new Date()) }] });
     let created;
     try {
-      created = await actions.createDeliveryKoliAction(input);
+      created = unwrapAction(await actions.createDeliveryKoliAction(input));
     } catch (err) {
       set({ deliveryKolis: get().deliveryKolis.filter((k) => k.id !== tmpId) });
       notifyError("Gagal menyimpan koli -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
@@ -1543,7 +1543,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // TIDAK dibuat optimistic -- foto lampiran belum tentu valid (divalidasi server) & melibatkan
   // upload, pola sama seperti submitCuttingDefectClaim (bukan skalar sederhana).
   setKoliEkspedisiResiGroup: async (koliIds, ekspedisi, note, noResi, photo, beratByKoli) => {
-    await actions.setKoliEkspedisiResiGroupAction(koliIds, ekspedisi, note, noResi, photo, beratByKoli);
+    unwrapAction(await actions.setKoliEkspedisiResiGroupAction(koliIds, ekspedisi, note, noResi, photo, beratByKoli));
     // Patch lokal SETELAH server sukses (foto/berat sudah tervalidasi di server): koli langsung
     // pindah ke Riwayat Pengiriman tanpa menunggu snapshot penuh. resiGroupId sementara dipakai
     // bersama supaya koli sesama resi tetap 1 grup di layar; diganti nilai asli saat refresh.
@@ -2532,7 +2532,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       deliveryKolis: previous.map((k) => (k.id === koliId && !k.deliveredAt ? { ...k, ekspedisi: patch.ekspedisi, noKoli: patch.noKoli, items: patch.items } : k)),
     });
     try {
-      await actions.updateDeliveryKoliAction(koliId, patch);
+      unwrapAction(await actions.updateDeliveryKoliAction(koliId, patch));
     } catch (err) {
       set({ deliveryKolis: previous });
       notifyError("Gagal menyimpan koli -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));

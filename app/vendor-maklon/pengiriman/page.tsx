@@ -581,9 +581,12 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   const [ekspedisiFiles, setEkspedisiFiles] = useState<AttachFile[]>([]);
   const [ekspedisiSubmitting, setEkspedisiSubmitting] = useState(false);
   const [ekspedisiError, setEkspedisiError] = useState<string | null>(null);
+  // Nomor resi yang sudah pernah memunculkan popup "sudah ada" (huruf kecil) -- supaya popup tidak berulang untuk nomor yang sama.
+  const [resiWarned, setResiWarned] = useState("");
 
   function openEkspedisiDialog(koliIds: string[]) {
     if (koliIds.length === 0) return;
+    setResiWarned("");
     setEkspedisiDialogKoliIds(koliIds);
     setDialogWeights(Object.fromEntries(koliIds.map((id) => [id, deliveryKolis.find((k) => k.id === id)?.beratKoli ?? 0])));
     setEkspedisiDraft("");
@@ -611,9 +614,29 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
       return { error: e instanceof Error ? e.message : "Gagal memproses foto." };
     }
   }
+  // Owner 2026-11-06: satu nomor resi hanya boleh dipakai satu kali. Koli milik vendor ini (yang tampak di layar) yang sudah memakai nomor yang
+  // sama (huruf besar/kecil tidak dibedakan) di luar koli yang sedang diproses; resi milik vendor lain dicek server saat simpan.
+  const resiDupKoli = (() => {
+    const v = noResiDraft.trim().toLowerCase();
+    if (!v || !ekspedisiDialogKoliIds) return null;
+    return deliveryKolis.find((k) => k.vendorProduksi === vendorId && !ekspedisiDialogKoliIds.includes(k.id) && (k.noResi ?? "").trim().toLowerCase() === v) ?? null;
+  })();
+  function resiDupMessage(k: { noKoli?: string; id: string; mrpId: string }): string {
+    return `No resi "${noResiDraft.trim()}" sudah dipakai untuk koli ${k.noKoli ?? k.id} (MRP ${k.mrpId}). Nomor resi tidak boleh sama. Kalau beberapa koli dikirim dengan satu resi, centang semua koli itu lalu isi resi satu kali saja.`;
+  }
+  async function warnDuplicateResi() {
+    const key = noResiDraft.trim().toLowerCase();
+    if (!resiDupKoli || resiWarned === key) return;
+    setResiWarned(key);
+    await alertDialog({ title: "No resi sudah ada", message: resiDupMessage(resiDupKoli), tone: "danger" });
+  }
   async function submitEkspedisi() {
     if (!ekspedisiDialogKoliIds || !ekspedisiDraft || !noResiDraft.trim() || ekspedisiFiles.length === 0 || ekspedisiSubmitting) return;
     if (ekspedisiDialogKoliIds.some((id) => !((dialogWeights[id] ?? 0) > 0))) return;
+    if (resiDupKoli) {
+      await alertDialog({ title: "No resi sudah ada", message: resiDupMessage(resiDupKoli), tone: "danger" });
+      return;
+    }
     setEkspedisiSubmitting(true);
     setEkspedisiError(null);
     try {
@@ -624,7 +647,10 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
       setSelectedForEkspedisi(new Set());
       closeEkspedisiDialog();
     } catch (e) {
-      setEkspedisiError(e instanceof Error ? e.message : "Gagal menyimpan ekspedisi.");
+      const msg = e instanceof Error ? e.message : "Gagal menyimpan ekspedisi.";
+      setEkspedisiError(msg);
+      // Pemeriksaan server (termasuk resi milik vendor lain): tampilkan sebagai popup, bukan hanya teks kecil di dialog.
+      if (msg.startsWith("No resi ")) await alertDialog({ title: "No resi sudah ada", message: msg, tone: "danger" });
     } finally {
       setEkspedisiSubmitting(false);
     }
@@ -1413,7 +1439,19 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                   <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted max-md:mt-0">
                     No Resi<span className="max-md:hidden"> (wajib)</span>
                   </div>
-                  <input value={noResiDraft} onChange={(e) => setNoResiDraft(e.target.value)} placeholder="Contoh: JX1234567890" className="input mt-1 w-full" />
+                  <input
+                    value={noResiDraft}
+                    onChange={(e) => setNoResiDraft(e.target.value)}
+                    onBlur={warnDuplicateResi}
+                    placeholder="Contoh: JX1234567890"
+                    className={"input mt-1 w-full" + (resiDupKoli ? " border-danger-fg" : "")}
+                    aria-invalid={resiDupKoli ? true : undefined}
+                  />
+                  {resiDupKoli && (
+                    <div className="mt-1 font-sans text-[10.5px] text-danger-fg">
+                      No resi ini sudah dipakai untuk koli {resiDupKoli.noKoli ?? resiDupKoli.id} (MRP {resiDupKoli.mrpId}). Nomor resi tidak boleh sama.
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="mt-3 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
@@ -1478,6 +1516,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                 disabled={
                   !ekspedisiDraft ||
                   !noResiDraft.trim() ||
+                  !!resiDupKoli ||
                   ekspedisiFiles.length === 0 ||
                   ekspedisiSubmitting ||
                   ekspedisiDialogKoliIds.some((id) => !((dialogWeights[id] ?? 0) > 0))
