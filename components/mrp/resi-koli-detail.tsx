@@ -52,7 +52,7 @@ export function ResiKoliDetail({ kolis, onExport }: { kolis: DeliveryKoli[]; onE
       <div className="flex items-center justify-between border-b border-[#E4E9EE] bg-[#F2F5F8] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
         <span>Rincian koli ({kolis.length} koli)</span>
         <span className="flex items-center gap-3 normal-case tracking-normal">
-          Klik nomor koli untuk melihat isinya
+          Klik baris koli untuk melihat isinya
           {onExport && (
             <button
               onClick={() => void onExport()}
@@ -71,13 +71,18 @@ export function ResiKoliDetail({ kolis, onExport }: { kolis: DeliveryKoli[]; onE
         <span>Isi</span>
       </div>
       {kolis.map((k) => (
-        <div key={k.id} className="grid grid-cols-[110px_110px_90px_1fr] items-center gap-x-3 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F] last:border-b-0">
-          <button onClick={() => setOpenId(k.id)} className="text-left font-mono font-semibold text-action-primary underline">
+        <div
+          key={k.id}
+          onClick={() => setOpenId(k.id)}
+          title="Klik untuk melihat item dan qty koli ini"
+          className="grid cursor-pointer grid-cols-[110px_110px_90px_1fr] items-center gap-x-3 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F] last:border-b-0 hover:bg-[#EEF4FF]"
+        >
+          <button onClick={(e) => { e.stopPropagation(); setOpenId(k.id); }} className="text-left font-mono font-semibold text-action-primary underline">
             {k.noKoli || k.id}
           </button>
           <span className="text-right font-mono">{k.beratKoli ? kg(k.beratKoli) : "—"}</span>
           <span className="text-right font-mono font-semibold">{k.items.reduce((s, it) => s + it.qty, 0)} pcs</span>
-          <span className="text-text-muted">{summarizeItems(k.items)}</span>
+          <span className="text-text-muted">{summarizeItems(k.items)} · lihat rincian</span>
         </div>
       ))}
       <div className="grid grid-cols-[110px_110px_90px_1fr] gap-x-3 border-t border-[#E4E9EE] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[11.5px] font-semibold text-[#31414F]">
