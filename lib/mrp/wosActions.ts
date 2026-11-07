@@ -33,16 +33,17 @@ export type WosOutboxSummary = Awaited<ReturnType<typeof wosOutboxSummary>>;
 export async function getWosOutboxSummaryAction(): Promise<ActionResult<WosOutboxSummary>> {
   return toActionResult(async () => {
     await requireSysadmin();
-    return wosOutboxSummary();
+    return wosOutboxSummary(true);
   });
 }
 
-/** Masukkan semua resi lama yang sudah terkirim ke antrean (yang sudah pernah diantrekan dilewati). Belum mengirim apa pun. */
-export async function enqueueOldResisAction(): Promise<ActionResult<{ resis: number; alreadyQueued: number; queued: number; skipped: number }>> {
+/** Masukkan resi yang sudah tervalidasi ongkirnya (dan belum pernah diantrekan) ke antrean; yang sudah pernah diantrekan dilewati, yang belum tervalidasi
+ *  dihitung di `awaitingValidation`. Belum mengirim apa pun. */
+export async function enqueueOldResisAction(): Promise<ActionResult<{ resis: number; alreadyQueued: number; queued: number; skipped: number; awaitingValidation: number }>> {
   return toActionResult(async () => {
     await requireSysadmin();
     const res = await enqueueAllShippedResis();
-    await audit("WOS_ENQUEUE_OLD_RESIS", "Antrekan resi lama untuk dikirim ke WOS", res);
+    await audit("WOS_ENQUEUE_OLD_RESIS", "Antrekan resi tervalidasi yang belum terkirim ke WOS", res);
     return res;
   });
 }

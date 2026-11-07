@@ -42,7 +42,7 @@ import { requireSession, requireInternalRole, requireAnyInternalRole, internalAc
 import { internalAccountFor, type InternalRole } from "../internal-auth";
 import { supabaseServer } from "../supabase/server";
 import { after } from "next/server";
-import { notifyWosResiCreated } from "./wosPush";
+import { notifyWosResisReady } from "./wosPush";
 import { nextReadableId, nextPoDisplayId } from "./repo/ids";
 import { getFlowSnapshot, getFlowSnapshotWithMeta } from "./repo/snapshot";
 import { scopeStateToVendor, stripVendorActorNames } from "./vendorScope";
@@ -5665,9 +5665,10 @@ async function setKoliEkspedisiResiGroupImpl(
   const noKoliLabel = validRows.map((r) => r.no_koli ?? r.id).join(", ");
   await insertNotification(notif(`Koli ${noKoliLabel} dari ${VENDOR_PRODUKSI[vendorId]?.name ?? vendorId} sedang dikirim`, ["warehouse"]));
   await logVendorAction(actor, `Set ekspedisi & resi ${noResi.trim()} untuk koli ${noKoliLabel}`, "delivery_kolis", validIds.join(","));
-  // Integrasi WOS (2026-10-28): dorong data resi ke Warehouse Operation System partner. Setelah respons selesai (tidak menahan vendor)
-  // dan BEST-EFFORT -- kegagalan tidak pernah menggagalkan aksi ini. Mati kalau env WOS_WEBHOOK_URL belum diisi.
-  after(() => notifyWosResiCreated(resiGroupId));
+  // Integrasi WOS (2026-10-28, diubah 2026-11-06): resi berekspedisi berbiaya TIDAK dikirim di sini -- baru dikirim setelah Procurement memvalidasi Invoice
+  // Ekspedisi-nya (saveEkspedisiInvoiceAction). Di sini hanya pengiriman internal (tanpa biaya ekspedisi) yang lolos dan langsung dikirim. Setelah respons selesai
+  // (tidak menahan vendor) dan BEST-EFFORT -- kegagalan tidak pernah menggagalkan aksi ini. Mati kalau env WOS belum diisi.
+  after(() => notifyWosResisReady([resiGroupId], { waitForPhotos: true }));
 }
 
 /** Ambil BYTE foto lampiran ekspedisi 1 koli on-demand -- `delivery_koli_ekspedisi_photos` sengaja
@@ -6318,6 +6319,10 @@ export async function saveEkspedisiInvoiceAction(
     const mergeNote = merging ? ` [gabungan ${keys.length} pengiriman, ${rows.length} koli]` : "";
     await logInternalAction(actor, `${input.submit ? "Validasi dan ajukan" : "Validasi"} invoice ekspedisi resi ${noResi}: ${rupiahText(biaya)}${resiNote}${mergeNote}`, "delivery_kolis", input.key);
     if (input.submit) await insertNotification(notif(`Invoice ekspedisi resi ${noResi} (${rupiahText(biaya)}) menunggu pembayaran Finance`, ["finance"]));
+    // Integrasi WOS (2026-11-06): resi yang ongkirnya baru tervalidasi -- termasuk semua pengiriman yang digabung dalam invoice ini -- dikirim ke tab ERP_INCOMING
+    // sekarang; resi yang sudah pernah terkirim (atau sudah antre) dilewati. Setelah respons selesai dan BEST-EFFORT.
+    const resiToSend = rows.map((r) => r.resi_group_id ?? "").filter(Boolean);
+    after(() => notifyWosResisReady(resiToSend));
   });
 }
 

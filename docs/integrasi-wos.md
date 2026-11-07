@@ -11,6 +11,14 @@ Dokumen untuk tim WOS. ERP **mengirim (POST)** data resi ke WOS setiap kali vend
 > **Jalur Google Sheets (2026-11-05):** selain webhook, ERP bisa menulis langsung ke tab `ERP_INCOMING` di spreadsheet WOS lewat akun layanan Google
 > (env `WOS_SHEETS_ID`, `GOOGLE_SA_EMAIL`, `GOOGLE_SA_PRIVATE_KEY`). Kalau env itu lengkap, jalur ini dipakai dan webhook tidak. Lihat MIGRASI.md.
 
+> **Format tab Google Sheets (2026-11-06):** satu baris = satu ITEM di satu koli (kolom `id, waktu_server, tanggal, resi_group, resi, ekspedisi, vendor, mrp, no_koli, koli_erp,
+> item, qty, hpp_per_item, hpp_total, hpp_estimasi`), tanpa kolom catatan; bukan satu baris per koli seperti sebelumnya. Lihat MIGRASI.md.
+
+> **Kapan resi dikirim (2026-11-06):** bukan saat vendor menerbitkan resi, melainkan setelah **Procurement memvalidasi biaya ekspedisi resi itu** (Invoice Ekspedisi:
+> tervalidasi, diajukan, atau lunas), supaya HPP dan ongkir yang sampai ke WOS sudah pasti. Resi susulan yang divalidasi belakangan dikirim sebagai baris baru; resi yang
+> sudah pernah dikirim tidak dikirim ulang. Pengiriman internal (tanpa biaya ekspedisi) tetap dikirim saat vendor menerbitkan resi. Kalimat "setiap kali vendor menerbitkan
+> resi" di atas mengacu perilaku awal.
+
 ## Gambaran singkat
 
 1. Vendor menerbitkan resi di ERP.

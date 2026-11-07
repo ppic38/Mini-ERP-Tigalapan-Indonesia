@@ -3,10 +3,15 @@ import { compareNoKoli, warehouseReceivableGroups } from "./derive";
 import { getFlowSnapshot } from "./repo/snapshot";
 import { fileLinkSignature, signWebhook } from "./wosSign";
 import { sheetsConfig, writeResisToSheets, type SheetResi } from "./wosSheets";
+import { resiGateMap, type GateKoliRow } from "./wosGate";
 
-/** Integrasi dorong (webhook) ke Warehouse Operation System (WOS) partner -- owner 2026-10-28.
- *  Begitu vendor selesai "Set Ekspedisi & Resi" (setKoliEkspedisiResiGroupAction), ERP mengirim satu kejadian
- *  `resi.created` berisi No. MRP, nama vendor, nomor resi, koli beserta itemnya, dan tautan lampiran resi.
+/** Integrasi dorong (webhook / Google Sheets) ke Warehouse Operation System (WOS) partner -- owner 2026-10-28.
+ *  Sejak 2026-11-06 resi baru dikirim SETELAH Procurement memvalidasi biaya ekspedisinya (Invoice Ekspedisi; lihat wosGate.ts), bukan saat vendor
+ *  menerbitkan resi: `saveEkspedisiInvoiceAction` memanggil `notifyWosResisReady` untuk semua resi yang baru tervalidasi (resi susulan ikut otomatis),
+ *  dan pengiriman internal tanpa biaya ekspedisi langsung dikirim saat vendor selesai "Set Ekspedisi & Resi" (setKoliEkspedisiResiGroupAction).
+ *  Catatan resi mana yang SUDAH dikirim = tabel `wos_outbox` (satu baris per resi per kejadian, kunci unik): resi yang sudah ada di sana TIDAK
+ *  diantrekan lagi, jadi tidak ada unggahan ganda.
+ *  Kejadian `resi.created` berisi No. MRP, nama vendor, nomor resi, koli beserta itemnya, dan tautan lampiran resi.
  *  Kiriman ditulis dulu ke antrean `wos_outbox` (migration 0081), baru dikirim; yang gagal dicoba ulang
  *  (`processWosOutbox`, dipanggil dari rute /api/wos/retry dan tiap ada resi baru). Seluruh jalur ini BEST-EFFORT:
  *  kegagalan di sini tidak pernah menggagalkan aksi vendor. Mati total kalau env belum diisi:
@@ -56,12 +61,14 @@ type ResiPayload = {
   }[];
 };
 
-/** Ambil SEMUA baris query berhalaman (PostgREST membatasi 1000 baris per permintaan; pemotongan diam-diam bikin data resi hilang). */
-async function fetchAll<T>(page: (from: number, to: number) => PromiseLike<{ data: T[] | null }>): Promise<T[]> {
+/** Ambil SEMUA baris query berhalaman (PostgREST membatasi 1000 baris per permintaan; pemotongan diam-diam bikin data resi hilang).
+ *  Galat database dilempar (dulu ditelan, sehingga kolom yang belum ada tampak seperti "tidak ada data"). */
+async function fetchAll<T>(page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error?: { message: string } | null }>): Promise<T[]> {
   const out: T[] = [];
   const size = 1000;
   for (let from = 0; ; from += size) {
-    const { data } = await page(from, from + size - 1);
+    const { data, error } = await page(from, from + size - 1);
+    if (error) throw new Error(`Gagal membaca data resi: ${error.message}`);
     const rows = data ?? [];
     out.push(...rows);
     if (rows.length < size) break;
@@ -73,6 +80,23 @@ function chunked<T>(list: T[], n: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < list.length; i += n) out.push(list.slice(i, i + n));
   return out;
+}
+
+/** Gerbang (valid = ongkir tervalidasi Procurement, atau pengiriman internal) untuk resi-resi tertentu. Resi yang tidak ditemukan tidak ada di hasil. */
+async function loadResiGates(db: Db, resiGroupIds: string[]): Promise<Map<string, boolean>> {
+  const rows: GateKoliRow[] = [];
+  for (const ids of chunked(resiGroupIds, 40)) {
+    rows.push(...(await fetchAll<GateKoliRow & { id: string }>((a, b) => db.from("delivery_kolis").select("id,resi_group_id,ekspedisi,ekspedisi_invoice").in("resi_group_id", ids).order("id").range(a, b))));
+  }
+  return resiGateMap(rows);
+}
+
+/** Gerbang untuk SEMUA resi yang sudah terkirim (delivered_at terisi, punya grup resi). Dipakai antrekan resi lama dan ringkasan halaman Sysadmin. */
+async function loadShippedResiGates(db: Db): Promise<Map<string, boolean>> {
+  const rows = await fetchAll<GateKoliRow & { id: string }>((a, b) =>
+    db.from("delivery_kolis").select("id,resi_group_id,ekspedisi,ekspedisi_invoice").not("delivered_at", "is", null).not("resi_group_id", "is", null).order("id").range(a, b)
+  );
+  return resiGateMap(rows);
 }
 
 /** HPP per pcs untuk SEMUA item koli terkirim, dihitung dengan mesin yang sama dengan Warehouse Penerimaan dan Laporan HPP (estimasi dari Master
@@ -210,12 +234,6 @@ function hppFor(map: Map<string, { hpp: number; estimate: boolean }> | undefined
   return h ? { hppPerItem: Math.round(h.hpp), hppEstimate: h.estimate } : { hppPerItem: null };
 }
 
-async function buildResiPayload(db: Db, resiGroupId: string): Promise<ResiPayload | null> {
-  // HPP hanya dihitung (dan ikut terkirim) kalau tujuannya Google Sheets; webhook lama tidak membawa HPP.
-  const hpp = sheetsConfig() ? await computeHppByKoliItem().catch(() => undefined) : undefined;
-  return (await buildResiPayloads(db, [resiGroupId], hpp)).get(resiGroupId) ?? null;
-}
-
 export type ResiFile = { fileName: string | null; dataUrl: string };
 
 /** Semua file lampiran satu resi: foto utama (tabel lama, satu salinan per koli) + file tambahan (migration 0080). */
@@ -328,22 +346,22 @@ export async function processWosOutbox(limit = 10): Promise<{ sent: number; fail
   return { sent, failed };
 }
 
-/** Antrekan SEMUA resi lama yang sudah terkirim (delivered_at terisi, punya grup resi) dan belum pernah masuk antrean -- untuk kirim ulang ke WOS
- *  setelah integrasi dinyalakan. Idempoten: yang sudah ada di antrean dilewati. Resi tanpa grup (data sebelum migration 0026) dan resi yang
- *  isinya hanya reject tidak ikut. */
-export async function enqueueAllShippedResis(): Promise<{ resis: number; alreadyQueued: number; queued: number; skipped: number }> {
+/** Antrekan resi lama yang sudah terkirim (delivered_at terisi, punya grup resi), BELUM pernah masuk antrean, dan SUDAH tervalidasi ongkirnya oleh Procurement
+ *  (atau pengiriman internal) -- untuk menyusulkan ke WOS resi yang baru lolos gerbang atau yang terlewat. Idempoten: yang sudah ada di antrean (terkirim atau
+ *  belum) dilewati, jadi tidak pernah ada unggahan ganda. Resi yang belum tervalidasi dihitung di `awaitingValidation` dan tidak diantrekan; resi tanpa grup
+ *  (data sebelum migration 0026) dan resi yang isinya hanya reject tidak ikut. */
+export async function enqueueAllShippedResis(): Promise<{ resis: number; alreadyQueued: number; queued: number; skipped: number; awaitingValidation: number }> {
   const db = supabaseServer();
-  const kolis = await fetchAll<{ id: string; resi_group_id: string }>((a, b) =>
-    db.from("delivery_kolis").select("id,resi_group_id").not("delivered_at", "is", null).not("resi_group_id", "is", null).order("id").range(a, b)
-  );
-  const ids = Array.from(new Set(kolis.map((k) => k.resi_group_id))).sort();
+  const gates = await loadShippedResiGates(db);
+  const ids = Array.from(gates.keys()).sort();
   const queuedRows = await fetchAll<{ id: number; resi_group_id: string }>((a, b) => db.from("wos_outbox").select("id,resi_group_id").eq("event", EVENT_RESI_CREATED).order("id").range(a, b));
   const already = new Set(queuedRows.map((r) => r.resi_group_id));
   const fresh = ids.filter((id) => !already.has(id));
+  const ready = fresh.filter((id) => gates.get(id) === true);
 
-  const hpp = sheetsConfig() && fresh.length > 0 ? await computeHppByKoliItem().catch(() => undefined) : undefined;
+  const hpp = sheetsConfig() && ready.length > 0 ? await computeHppByKoliItem().catch(() => undefined) : undefined;
   let queued = 0;
-  for (const chunk of chunked(fresh, 40)) {
+  for (const chunk of chunked(ready, 40)) {
     const payloads = await buildResiPayloads(db, chunk, hpp);
     const rows = chunk.filter((id) => payloads.has(id)).map((id) => ({ event: EVENT_RESI_CREATED, resi_group_id: id, payload: payloads.get(id) }));
     if (rows.length > 0) {
@@ -352,7 +370,7 @@ export async function enqueueAllShippedResis(): Promise<{ resis: number; already
       queued += rows.length;
     }
   }
-  return { resis: ids.length, alreadyQueued: ids.length - fresh.length, queued, skipped: fresh.length - queued };
+  return { resis: ids.length, alreadyQueued: ids.length - fresh.length, queued, skipped: ready.length - queued, awaitingValidation: fresh.length - ready.length };
 }
 
 /** Hitung ulang HPP semua resi yang sudah pernah diantrekan (termasuk yang sudah terkirim), simpan ke antrean, dan tandai PENDING supaya
@@ -376,13 +394,18 @@ export async function refreshHppOfQueuedResis(): Promise<{ resis: number; update
   return { resis: queued.length, updated };
 }
 
-/** Ringkasan antrean untuk halaman Sysadmin. Tidak memuat rahasia apa pun. */
-export async function wosOutboxSummary(): Promise<{
+/** Ringkasan antrean untuk halaman Sysadmin. Tidak memuat rahasia apa pun. `withGates` menambah hitungan resi yang belum masuk antrean
+ *  (menunggu validasi ongkir Procurement vs sudah tervalidasi tapi belum diantrekan); butuh membaca semua koli terkirim, jadi hanya diminta saat halaman dibuka. */
+export async function wosOutboxSummary(withGates = false): Promise<{
   destination: "SHEETS" | "WEBHOOK" | "NONE";
   pending: number;
   sent: number;
   failed: number;
   exhausted: number;
+  /** Resi terkirim vendor yang BELUM masuk antrean karena ongkirnya belum divalidasi Procurement (null kalau tidak diminta). */
+  awaitingValidation: number | null;
+  /** Resi yang sudah tervalidasi tetapi belum masuk antrean (biasanya 0; tekan "Antrekan" untuk menyusulkan). */
+  readyNotQueued: number | null;
   recentErrors: { resiGroupId: string; attempts: number; error: string; at: string | null }[];
 }> {
   const db = supabaseServer();
@@ -390,12 +413,27 @@ export async function wosOutboxSummary(): Promise<{
     db.from("wos_outbox").select("id,resi_group_id,status,attempts,last_error,last_attempt_at").order("id").range(a, b)
   );
   const count = (st: string) => rows.filter((r) => r.status === st).length;
+  let awaitingValidation: number | null = null;
+  let readyNotQueued: number | null = null;
+  if (withGates) {
+    const gates = await loadShippedResiGates(db);
+    const queued = new Set(rows.map((r) => r.resi_group_id));
+    awaitingValidation = 0;
+    readyNotQueued = 0;
+    for (const [id, ok] of gates) {
+      if (queued.has(id)) continue;
+      if (ok) readyNotQueued++;
+      else awaitingValidation++;
+    }
+  }
   return {
     destination: sheetsConfig() ? "SHEETS" : wosConfig() ? "WEBHOOK" : "NONE",
     pending: count("PENDING"),
     sent: count("SENT"),
     failed: count("FAILED"),
     exhausted: rows.filter((r) => r.status !== "SENT" && r.attempts >= MAX_ATTEMPTS).length,
+    awaitingValidation,
+    readyNotQueued,
     recentErrors: rows
       .filter((r) => r.status === "FAILED" && r.last_error)
       .slice(-5)
@@ -412,25 +450,46 @@ export async function resetExhaustedWosOutbox(): Promise<number> {
   return data?.length ?? 0;
 }
 
-/** Dipanggil setelah vendor selesai Set Ekspedisi & Resi: catat ke antrean lalu coba kirim. Tidak pernah melempar error. */
-export async function notifyWosResiCreated(resiGroupId: string): Promise<void> {
+/** Dipanggil (a) setelah Procurement memvalidasi Invoice Ekspedisi -- untuk SEMUA resi yang tercakup (resi susulan ikut otomatis), dan (b) setelah vendor
+ *  selesai Set Ekspedisi & Resi -- yang di sini hanya meloloskan pengiriman internal (tanpa biaya ekspedisi). Hanya resi yang LOLOS gerbang dan BELUM pernah masuk
+ *  antrean yang diantrekan lalu dikirim; yang sudah terkirim (atau sudah antre) dilewati, jadi tidak ada unggahan ganda. Tidak pernah melempar error.
+ *  `waitForPhotos`: tunda sebentar sebelum kirim lewat webhook supaya foto resi ke-2 dst. (disimpan klien sesudah aksi utama) ikut terbaca; hanya relevan di jalur (b). */
+export async function notifyWosResisReady(resiGroupIds: string[], opts: { waitForPhotos?: boolean } = {}): Promise<void> {
   try {
     const viaSheets = !!sheetsConfig();
     if (!viaSheets && !wosConfig()) return;
+    const ids = Array.from(new Set(resiGroupIds.filter(Boolean)));
+    if (ids.length === 0) return;
     const db = supabaseServer();
-    const payload = await buildResiPayload(db, resiGroupId);
-    if (!payload) return;
-    // Antrekan DULU (kalau proses ini terputus, cron harian tetap mengirimnya), baru tunda sebentar dan kirim.
-    const { error } = await db.from("wos_outbox").insert({ event: EVENT_RESI_CREATED, resi_group_id: resiGroupId, payload });
-    // 23505 = sudah pernah diantrekan (aksi terpanggil dua kali): cukup lanjut memproses antrean.
-    if (error && error.code !== "23505") {
+
+    const queued = new Set<string>();
+    for (const chunk of chunked(ids, 40)) {
+      const rows = await fetchAll<{ id: number; resi_group_id: string }>((a, b) =>
+        db.from("wos_outbox").select("id,resi_group_id").eq("event", EVENT_RESI_CREATED).in("resi_group_id", chunk).order("id").range(a, b)
+      );
+      for (const r of rows) queued.add(r.resi_group_id);
+    }
+    const fresh = ids.filter((id) => !queued.has(id));
+    if (fresh.length === 0) return;
+
+    const gates = await loadResiGates(db, fresh);
+    const ready = fresh.filter((id) => gates.get(id) === true);
+    if (ready.length === 0) return;
+
+    // HPP hanya dihitung (dan ikut terkirim) kalau tujuannya Google Sheets; satu snapshot untuk semua resi yang siap.
+    const hpp = viaSheets ? await computeHppByKoliItem().catch(() => undefined) : undefined;
+    const payloads = await buildResiPayloads(db, ready, hpp);
+    const rows = ready.filter((id) => payloads.has(id)).map((id) => ({ event: EVENT_RESI_CREATED, resi_group_id: id, payload: payloads.get(id) }));
+    if (rows.length === 0) return;
+    // Antrekan DULU (kalau proses ini terputus, cron harian tetap mengirimnya). ignoreDuplicates: dua pemicu bersamaan tidak membuat baris ganda.
+    const { error } = await db.from("wos_outbox").upsert(rows, { onConflict: "event,resi_group_id", ignoreDuplicates: true });
+    if (error) {
       console.error("[wos] gagal menulis antrean:", error.message);
       return;
     }
-    // Jeda hanya untuk webhook (menunggu foto ke-2 dst. tersimpan); Sheets tidak memuat lampiran.
-    if (!viaSheets) await new Promise((r) => setTimeout(r, EXTRA_FILES_GRACE_MS));
+    if (!viaSheets && opts.waitForPhotos) await new Promise((r) => setTimeout(r, EXTRA_FILES_GRACE_MS));
     await processWosOutbox();
   } catch (e) {
-    console.error("[wos] notifyWosResiCreated:", e instanceof Error ? e.message : e);
+    console.error("[wos] notifyWosResisReady:", e instanceof Error ? e.message : e);
   }
 }

@@ -46,7 +46,9 @@ export default function SysadminWosPage() {
     else {
       setError(null);
       const r = res.data;
-      setMsg(`${r.queued} resi lama dimasukkan ke antrean (${r.alreadyQueued} sudah ada di antrean, ${r.skipped} dilewati karena tanpa isi barang jadi). Tekan "Kirim antrean" untuk mengirimnya.`);
+      setMsg(
+        `${r.queued} resi tervalidasi dimasukkan ke antrean (${r.alreadyQueued} sudah pernah diantrekan atau terkirim, ${r.awaitingValidation} belum tervalidasi ongkirnya oleh Procurement sehingga belum dikirim, ${r.skipped} dilewati karena tanpa isi barang jadi).${r.queued > 0 ? ' Tekan "Kirim antrean" untuk mengirimnya.' : ""}`
+      );
     }
     await load();
     setBusy(false);
@@ -133,7 +135,7 @@ export default function SysadminWosPage() {
 
       <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-surface-card px-4 py-3">
         <Button onClick={enqueueOld} disabled={busy || summary?.destination === "NONE"} variant="ghost" size="md">
-          1. Antrekan semua resi lama
+          1. Antrekan resi tervalidasi
         </Button>
         <Button onClick={sendAll} disabled={busy || summary?.destination === "NONE" || waiting <= 0} variant="primary" size="md">
           2. Kirim antrean sekarang{waiting > 0 ? ` (${waiting})` : ""}
@@ -149,8 +151,21 @@ export default function SysadminWosPage() {
         <Button onClick={() => void load()} disabled={busy} variant="muted" size="md">
           Muat ulang
         </Button>
-        <span className="font-sans text-[11px] text-text-muted">Langkah 1 hanya memasukkan resi lama ke antrean (aman dijalankan berulang); langkah 2 yang mengirim.</span>
+        <span className="font-sans text-[11px] text-text-muted">
+          Resi dikirim otomatis begitu Procurement memvalidasi ongkirnya (resi susulan ikut sendiri). Langkah 1 hanya menyusulkan resi tervalidasi yang belum masuk antrean (aman dijalankan berulang, yang sudah terkirim tidak dikirim lagi); langkah 2 yang mengirim.
+        </span>
       </div>
+
+      {summary && summary.awaitingValidation !== null && (
+        <div className="mb-4 rounded-lg border border-border-subtle bg-surface-card px-4 py-3 font-sans text-xs text-[#31414F]">
+          <span className="font-semibold">{summary.awaitingValidation}</span> resi sudah dikirim vendor tetapi ongkirnya belum divalidasi Procurement, jadi belum dikirim ke WOS.
+          {summary.readyNotQueued !== null && summary.readyNotQueued > 0 && (
+            <span className="ml-1 text-warning-fg">
+              {summary.readyNotQueued} resi sudah tervalidasi tetapi belum masuk antrean: tekan &quot;1. Antrekan resi tervalidasi&quot;.
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
         <div className="border-b border-border-subtle bg-[#F7F9FB] px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Galat terakhir</div>

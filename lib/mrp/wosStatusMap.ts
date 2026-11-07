@@ -37,6 +37,17 @@ export function mapWosStatus(raw: string): WosStatusCode {
 
 const STATUS_HEADERS = ["status_wos", "status"];
 
+/** Sejak 2026-11-06 satu koli punya beberapa baris (satu per item). Status koli = baris yang paling "belum selesai": bermasalah paling atas, lalu status tak dikenal,
+ *  lalu dalam perjalanan, tiba, dan diterima -- koli baru tampil Diterima kalau SEMUA barisnya diterima. `qty_diterima` dijumlahkan, tanggal diterima = yang terbaru. */
+const MERGE_PRIORITY: Record<WosStatusCode, number> = { BERMASALAH: 4, UNKNOWN: 3, DALAM_PERJALANAN: 2, TIBA: 1, DITERIMA: 0 };
+
+function mergeKoliStatus(a: WosKoliStatus, b: WosKoliStatus): WosKoliStatus {
+  const top = MERGE_PRIORITY[b.code] > MERGE_PRIORITY[a.code] ? b : a;
+  const qty = a.qtyDiterima == null && b.qtyDiterima == null ? null : (a.qtyDiterima ?? 0) + (b.qtyDiterima ?? 0);
+  const dates = [a.diterimaPada, b.diterimaPada].filter((d): d is string => !!d).sort();
+  return { code: top.code, raw: top.raw, qtyDiterima: qty, diterimaPada: dates.length > 0 ? dates[dates.length - 1] : null };
+}
+
 /** Ubah isi tab (baris judul + baris data) menjadi peta id koli ERP -> status. `hasStatusColumn` false kalau tab belum punya kolom status. */
 export function parseWosStatusRows(headers: string[], rows: string[][]): { hasStatusColumn: boolean; byKoli: Record<string, WosKoliStatus> } {
   const idx = (names: string[]) => headers.findIndex((h) => names.includes(h.trim().toLowerCase()));
@@ -51,12 +62,13 @@ export function parseWosStatusRows(headers: string[], rows: string[][]): { hasSt
     if (!koli) continue;
     const raw = (r[iStatus] ?? "").trim();
     const q = iQty >= 0 ? Number((r[iQty] ?? "").replace(/[^\d.-]/g, "")) : NaN;
-    byKoli[koli] = {
+    const next: WosKoliStatus = {
       code: mapWosStatus(raw),
       raw,
       qtyDiterima: Number.isFinite(q) && (r[iQty] ?? "").trim() !== "" ? q : null,
       diterimaPada: iDate >= 0 && (r[iDate] ?? "").trim() ? (r[iDate] ?? "").trim() : null,
     };
+    byKoli[koli] = byKoli[koli] ? mergeKoliStatus(byKoli[koli], next) : next;
   }
   return { hasStatusColumn: true, byKoli };
 }
