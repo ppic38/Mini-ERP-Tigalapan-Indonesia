@@ -1,21 +1,46 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import * as XLSX from "xlsx";
 import { Button } from "@/components/ui/button";
+import { alertDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { MultiSelectFilter } from "@/components/mrp/multi-select-filter";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatDate, formatPcs } from "@/lib/mrp/derive";
+import { formatDate, formatPcs, localDateString } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { getWosKoliStatusAction, type WosKoliStatusResult } from "@/lib/mrp/wosStatusActions";
 import { WOS_STATUS_LABEL, type WosStatusCode } from "@/lib/mrp/wosStatusMap";
-import { buildItemTracking, itemWithBreakdown, koliRowsForItem, lenganShort, type ItemTrackRow } from "@/lib/mrp/itemTracking";
+import { buildItemTracking, itemWithBreakdown, koliRowsForItem, lenganShort, type GrState, type ItemMrpVendorRow, type ItemTrackRow } from "@/lib/mrp/itemTracking";
+import { exportTrackingExcel } from "@/lib/mrp/exportTrackingExcel";
 
 const vendorLabel = (id: string) => (id ? VENDOR_PRODUKSI[id]?.name ?? id : "Belum dialokasikan");
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 const selectCls = "rounded-md border border-border-subtle bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-medium text-[#31414F]";
 const num = "px-3 py-2 text-right font-mono";
+const GR_LABEL: Record<GrState, string> = { YES: "Yes", NO: "No", SEBAGIAN: "Sebagian" };
+const GR_TONE: Record<GrState, string> = { YES: "bg-[#DCFCE7] text-[#15803D]", NO: "bg-[#FEE2E2] text-[#B91C1C]", SEBAGIAN: "bg-[#FEF3C7] text-[#B45309]" };
+
+/** Penanda Good Receive: Yes hijau, No merah (Sebagian kuning, hanya untuk item yang sebagian MRP-nya sudah dan sebagian belum). */
+function GrBadge({ state, title }: { state: GrState; title?: string }) {
+  return (
+    <span title={title} className={"inline-block rounded-full px-2.5 py-[2px] font-sans text-[11px] font-bold " + GR_TONE[state]}>
+      {GR_LABEL[state]}
+    </span>
+  );
+}
+
+const cellGrTitle = (b: ItemMrpVendorRow) => (b.grTotal > 0 ? `${b.grArrived} dari ${b.grTotal} roll sudah diterima vendor` : b.gr ? "Sudah cutting" : "Belum ada roll diterima vendor");
+const dateText = (iso?: string) => (iso ? formatDate(iso) : "-");
+/** Tanggal estimasi; merah kalau sudah lewat dari hari ini tetapi qty-nya masih menunggu tahap itu. */
+function EstDate({ iso, today }: { iso?: string; today: string }) {
+  if (!iso) return <span className="text-text-muted">-</span>;
+  return <span className={iso < today ? "font-semibold text-[#B91C1C]" : ""} title={iso < today ? "Sudah lewat dari estimasi" : undefined}>{formatDate(iso)}</span>;
+}
+function shipRange(dates: string[]) {
+  if (dates.length === 0) return "-";
+  if (dates.length === 1) return formatDate(dates[0]);
+  return `${formatDate(dates[0])} – ${formatDate(dates[dates.length - 1])} (${dates.length}×)`;
+}
 
 function Stat({ label, value, sub }: { label: string; value: number; sub?: string }) {
   return (
@@ -28,23 +53,23 @@ function Stat({ label, value, sub }: { label: string; value: number; sub?: strin
   );
 }
 
-/** Ringkasan tahapan satu set item: tujuh kartu berurutan dari rencana sampai diterima gudang (kartu dengan garis aksen di atas). */
+/** Ringkasan tahapan satu set item: tujuh kartu berurutan dari rencana sampai diterima DC (kartu dengan garis aksen di atas). Angka kartu = qty POSISI SAAT INI:
+ *  barang hanya dihitung di satu tahap (cutting 100 dan FG 90 = 10 di Cutting + 90 di Finish Good); angka kumulatifnya ada di keterangan kartu. */
 function StageCards({ rows }: { rows: ItemTrackRow[] }) {
-  const t = (k: "target" | "cutting" | "fg" | "reject" | "diKoli" | "dikirim" | "diterima") => sum(rows.map((r) => r[k]));
+  const t = (k: "target" | "cutting" | "fg" | "reject" | "diKoli" | "dikirim" | "diterima" | "belumCutting" | "cuttingWip" | "fgWip" | "perjalanan" | "tibaDc") => sum(rows.map((r) => r[k]));
   const mrps = new Set(rows.flatMap((r) => r.mrpIds)).size;
-  const pctOf = (n: number) => (t("target") > 0 ? Math.round((n / t("target")) * 100) : 0);
   return (
     <div className="flex flex-col gap-3">
       <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
         <Stat label="Target MRP" value={t("target")} sub={`pcs · ${rows.length} item · ${mrps} MRP`} />
-        <Stat label="Sudah dicutting" value={t("cutting")} sub={`pcs · ${pctOf(t("cutting"))}% dari target`} />
-        <Stat label="Finish Good" value={t("fg")} sub={`pcs · ${pctOf(t("fg"))}% dari target`} />
+        <Stat label="Di cutting" value={t("cuttingWip")} sub={`pcs · belum cutting: ${formatPcs(t("belumCutting"))} · total dicutting: ${formatPcs(t("cutting"))}`} />
+        <Stat label="Finish Good" value={t("fgWip")} sub={`pcs · belum masuk koli · total FG: ${formatPcs(t("fg"))}`} />
         <Stat label="Reject" value={t("reject")} />
       </div>
       <div className="grid grid-cols-3 gap-3 max-lg:grid-cols-1">
         <Stat label="Masuk koli, belum dikirim" value={t("diKoli")} />
-        <Stat label="Dikirim vendor" value={t("dikirim")} sub={`pcs · FG belum dikirim: ${formatPcs(Math.max(0, t("fg") - t("dikirim") - t("diKoli")))}`} />
-        <Stat label="Diterima gudang" value={t("diterima")} sub={`pcs · dalam perjalanan: ${formatPcs(Math.max(0, t("dikirim") - t("diterima")))}`} />
+        <Stat label="Dikirim, belum tiba" value={t("perjalanan")} sub={`pcs · total dikirim vendor: ${formatPcs(t("dikirim"))}`} />
+        <Stat label="Diterima DC" value={t("diterima")} sub={t("tibaDc") > 0 ? `pcs · tiba, belum validasi: ${formatPcs(t("tibaDc"))}` : "pcs"} />
       </div>
     </div>
   );
@@ -163,6 +188,7 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
     } else setWosError(res.error);
     setWosBusy(false);
   }
+  const today = localDateString(new Date());
   const wosOf = (koliId: string) => wos?.byKoli[koliId];
   const wosReceivedQty = sum(koliRows.filter((k) => ["DITERIMA", "BERMASALAH"].includes(wosOf(k.koliId)?.code ?? "")).map((k) => k.qty));
   const wosArrivedQty = sum(koliRows.filter((k) => wosOf(k.koliId)?.code === "TIBA").map((k) => k.qty));
@@ -190,6 +216,9 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
         <div className="flex-1 overflow-y-auto px-5 py-4">
           <StageCards rows={[item]} />
           <div className="mt-4 font-sans text-[12px] font-semibold text-text-primary">Rincian per MRP dan vendor</div>
+          <div className="mt-1 font-sans text-[10.5px] text-text-muted">
+            Qty per posisi saat ini (tidak tumpang tindih). Tanggal GR dan Cutting aktual; Est. Tiba = tanggal kirim + lead time ke DC (merah = sudah lewat).
+          </div>
           <div className="mt-2 overflow-x-auto rounded-md border border-[#E4E9EE]">
             <table className="w-full border-collapse font-sans text-[11.5px]">
               <thead className="bg-info-bg text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
@@ -198,12 +227,17 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
                   <th className="px-3 py-2 text-left">Vendor</th>
                   <th className="px-3 py-2 text-left">Kategori</th>
                   <th className="px-3 py-2 text-right">Target</th>
+                  <th className="px-3 py-2 text-right">Belum cutting</th>
+                  <th className="px-3 py-2 text-left">Good Receive</th>
+                  <th className="px-3 py-2 text-left">Tgl GR</th>
                   <th className="px-3 py-2 text-right">Cutting</th>
+                  <th className="px-3 py-2 text-left">Tgl cutting</th>
                   <th className="px-3 py-2 text-right">FG</th>
                   <th className="px-3 py-2 text-right">Reject</th>
                   <th className="px-3 py-2 text-right">Di koli</th>
                   <th className="px-3 py-2 text-right">Dikirim</th>
-                  <th className="px-3 py-2 text-right">Diterima gudang</th>
+                  <th className="px-3 py-2 text-left">Est. tiba</th>
+                  <th className="px-3 py-2 text-right">Diterima DC</th>
                 </tr>
               </thead>
               <tbody>
@@ -213,11 +247,20 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
                     <td className={"px-3 py-2 " + (b.vendorProduksi ? "" : "text-text-muted")}>{vendorLabel(b.vendorProduksi)}</td>
                     <td className="px-3 py-2 text-text-muted">{b.kategori || "-"}</td>
                     <td className={num}>{formatPcs(b.alokasi)}</td>
-                    <td className={num}>{formatPcs(b.cutting)}</td>
-                    <td className={num}>{formatPcs(b.fg)}</td>
+                    <td className={num}>{formatPcs(b.belumCutting)}</td>
+                    <td className="px-3 py-2">
+                      <GrBadge state={b.gr ? "YES" : "NO"} title={cellGrTitle(b)} />
+                    </td>
+                    <td className="px-3 py-2">{dateText(b.grAt)}</td>
+                    <td className={num}>{formatPcs(b.cuttingWip)}</td>
+                    <td className="px-3 py-2">{dateText(b.cuttingAt)}</td>
+                    <td className={num}>{formatPcs(b.fgWip)}</td>
                     <td className={num}>{formatPcs(b.reject)}</td>
                     <td className={num}>{formatPcs(b.diKoli)}</td>
-                    <td className={num}>{formatPcs(b.dikirim)}</td>
+                    <td className={num}>{formatPcs(b.perjalanan)}</td>
+                    <td className="px-3 py-2">
+                      <EstDate iso={b.estTiba} today={today} />
+                    </td>
                     <td className={num}>{formatPcs(b.diterima)}</td>
                   </tr>
                 ))}
@@ -226,11 +269,15 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
                 <tr>
                   <td className="px-3 py-2" colSpan={3}>Total</td>
                   <td className={num}>{formatPcs(item.target)}</td>
-                  <td className={num}>{formatPcs(item.cutting)}</td>
-                  <td className={num}>{formatPcs(item.fg)}</td>
+                  <td className={num}>{formatPcs(item.belumCutting)}</td>
+                  <td colSpan={2} />
+                  <td className={num}>{formatPcs(item.cuttingWip)}</td>
+                  <td />
+                  <td className={num}>{formatPcs(item.fgWip)}</td>
                   <td className={num}>{formatPcs(item.reject)}</td>
                   <td className={num}>{formatPcs(item.diKoli)}</td>
-                  <td className={num}>{formatPcs(item.dikirim)}</td>
+                  <td className={num}>{formatPcs(item.perjalanan)}</td>
+                  <td />
                   <td className={num}>{formatPcs(item.diterima)}</td>
                 </tr>
               </tfoot>
@@ -337,6 +384,7 @@ export function ItemTrackingView() {
   const productionResults = useMrpStore((s) => s.productionResults);
   const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
   const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
+  const invoices = useMrpStore((s) => s.invoices);
 
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
@@ -346,15 +394,36 @@ export function ItemTrackingView() {
   const [kategori, setKategori] = useState<string[]>([]);
   const [mrp, setMrp] = useState<string[]>([]);
   const [vendor, setVendor] = useState<string[]>([]);
+  const [grFilter, setGrFilter] = useState<string[]>([]);
+  // Filter Tanggal Kirim: hanya sel (MRP x vendor) yang punya pengiriman pada rentang itu; angkanya tetap angka penuh sel tersebut.
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [detailKey, setDetailKey] = useState<string | null>(null);
+  const today = localDateString(new Date());
+
+  // Penerimaan di DC dari WOS (tab ERP_INCOMING): dipakai bersama penerimaan Warehouse ERP untuk kolom Diterima DC.
+  const [wos, setWos] = useState<WosKoliStatusResult | null>(null);
+  const [wosBusy, setWosBusy] = useState(false);
+  useEffect(() => {
+    void getWosKoliStatusAction().then((res) => {
+      if (res.ok) setWos(res.data);
+    });
+  }, []);
+  async function refreshWos() {
+    setWosBusy(true);
+    const res = await getWosKoliStatusAction(true);
+    if (res.ok) setWos(res.data);
+    setWosBusy(false);
+  }
 
   const all = useMemo(
-    () => buildItemTracking(mrpDetails, productionBatches, productionResults, deliveryKolis, warehouseReceipts),
-    [mrpDetails, productionBatches, productionResults, deliveryKolis, warehouseReceipts]
+    () => buildItemTracking(mrpDetails, productionBatches, productionResults, deliveryKolis, warehouseReceipts, { invoices, wosByKoli: wos?.byKoli }),
+    [mrpDetails, productionBatches, productionResults, deliveryKolis, warehouseReceipts, invoices, wos]
   );
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
+    const dateOn = !!dateFrom || !!dateTo;
     const out: ItemTrackRow[] = [];
     for (const it of all) {
       if (warna.length > 0 && !warna.includes(it.warna)) continue;
@@ -363,49 +432,84 @@ export function ItemTrackingView() {
       if (picked.length > 0 && !picked.includes(it.itemName)) continue;
       if (needle && !it.itemName.toLowerCase().includes(needle) && !it.warna.toLowerCase().includes(needle)) continue;
       const bd = it.breakdown.filter(
-        (b) => (mrp.length === 0 || mrp.includes(b.mrpId)) && (vendor.length === 0 || vendor.includes(vendorLabel(b.vendorProduksi))) && (kategori.length === 0 || kategori.includes(b.kategori))
+        (b) =>
+          (mrp.length === 0 || mrp.includes(b.mrpId)) &&
+          (vendor.length === 0 || vendor.includes(vendorLabel(b.vendorProduksi))) &&
+          (kategori.length === 0 || kategori.includes(b.kategori)) &&
+          (!dateOn || b.shipments.some((s) => (!dateFrom || s.date >= dateFrom) && (!dateTo || s.date <= dateTo)))
       );
       if (bd.length === 0) continue;
-      out.push(bd.length === it.breakdown.length ? it : itemWithBreakdown(it, bd));
+      const item = bd.length === it.breakdown.length ? it : itemWithBreakdown(it, bd);
+      if (grFilter.length > 0 && !grFilter.includes(GR_LABEL[item.gr])) continue;
+      out.push(item);
     }
     return out;
-  }, [all, q, picked, warna, lengan, size, kategori, mrp, vendor]);
+  }, [all, q, picked, warna, lengan, size, kategori, mrp, vendor, grFilter, dateFrom, dateTo]);
 
   const detail = detailKey ? rows.find((r) => r.key === detailKey) : undefined;
-  const hasFilter = !!q.trim() || picked.length > 0 || warna.length + lengan.length + size.length + kategori.length + mrp.length + vendor.length > 0;
+  const hasFilter = !!q.trim() || picked.length > 0 || !!dateFrom || !!dateTo || warna.length + lengan.length + size.length + kategori.length + mrp.length + vendor.length + grFilter.length > 0;
 
   const opt = (xs: string[]) => Array.from(new Set(xs.filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const allBreakdown = all.flatMap((i) => i.breakdown);
 
-  function exportExcel() {
-    const wb = XLSX.utils.book_new();
-    const summary = rows.map((r) => ({
-      Item: r.itemName, Kategori: r.kategori.join(", "), Warna: r.warna, Lengan: r.lengan === "PENDEK" ? "Pendek" : "Panjang", Size: r.size,
-      "Target MRP": r.target, Cutting: r.cutting, "Finish Good": r.fg, Reject: r.reject, "Di koli (belum dikirim)": r.diKoli, Dikirim: r.dikirim, "Diterima gudang": r.diterima, "Sisa produksi": r.sisaProduksi,
-    }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summary), "Ringkasan per item");
-    const detailRows = rows.flatMap((r) =>
-      r.breakdown.map((b) => ({
-        Item: r.itemName, "No. MRP": b.mrpId, Vendor: vendorLabel(b.vendorProduksi), Kategori: b.kategori, Target: b.alokasi, Cutting: b.cutting, "Finish Good": b.fg, Reject: b.reject,
-        "Di koli (belum dikirim)": b.diKoli, Dikirim: b.dikirim, "Diterima gudang": b.diterima,
-      }))
-    );
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detailRows), "Rincian per MRP dan vendor");
-    XLSX.writeFile(wb, "Tracking-Item.xlsx");
+  async function exportExcel() {
+    const parts: string[] = [];
+    if (picked.length > 0) parts.push("item " + picked.join(", "));
+    if (warna.length > 0) parts.push("warna " + warna.join(", "));
+    if (lengan.length > 0) parts.push("lengan " + lengan.join(", "));
+    if (size.length > 0) parts.push("size " + size.join(", "));
+    if (kategori.length > 0) parts.push("kategori " + kategori.join(", "));
+    if (mrp.length > 0) parts.push("MRP " + mrp.join(", "));
+    if (vendor.length > 0) parts.push("vendor " + vendor.join(", "));
+    if (grFilter.length > 0) parts.push("Good Receive " + grFilter.join(", "));
+    if (dateFrom || dateTo) parts.push(`tanggal kirim ${dateFrom ? formatDate(dateFrom) : "…"} s/d ${dateTo ? formatDate(dateTo) : "…"}`);
+    try {
+      await exportTrackingExcel({ rows, filterLabel: parts.length > 0 ? "Filter: " + parts.join(" · ") : undefined }, `Tracking-Item-${today}.xlsx`);
+    } catch (e) {
+      await alertDialog({ title: "Gagal membuat Excel", message: e instanceof Error ? e.message : "Terjadi kesalahan saat membuat file Excel.", tone: "danger" });
+    }
   }
 
+  const grTitle = (r: ItemTrackRow) =>
+    r.breakdown
+      .filter((b) => b.vendorProduksi || b.alokasi > 0)
+      .map((b) => `${b.mrpId} ${vendorLabel(b.vendorProduksi)}: ${b.gr ? "Yes" : "No"} (${cellGrTitle(b)})`)
+      .join("\n");
+
+  // Kolom baru (Good Receive, tanggal, estimasi, info penerimaan DC) ada di menu Kolom; yang tampil bawaan hanya Good Receive dan Est. Tiba DC.
+  // Angka qty = posisi saat ini (tidak tumpang tindih), lihat itemTracking.ts.
   const columns: ColumnDef<ItemTrackRow>[] = [
     { key: "kategori", label: "Kategori", default: true, render: (r) => r.kategori.join(", ") || "-" },
     { key: "mrp", label: "MRP", default: false, render: (r) => r.mrpIds.join(", ") },
     { key: "target", label: "Target MRP", default: true, align: "right", render: (r) => formatPcs(r.target) },
-    { key: "cutting", label: "Cutting", default: true, align: "right", render: (r) => formatPcs(r.cutting) },
-    { key: "fg", label: "Finish Good", default: true, align: "right", render: (r) => <span className="font-semibold">{formatPcs(r.fg)}</span> },
-    { key: "pct", label: "% FG", default: true, align: "right", render: (r) => (r.target > 0 ? `${Math.round((r.fg / r.target) * 100)}%` : "-") },
+    { key: "gr", label: "Good Receive", default: true, render: (r) => <GrBadge state={r.gr} title={grTitle(r)} /> },
+    { key: "tglGr", label: "Tgl Good Receive", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.grAt)}</span> },
+    { key: "belumCutting", label: "Belum Cutting", default: true, align: "right", render: (r) => formatPcs(r.belumCutting) },
+    { key: "cutting", label: "Cutting", default: true, align: "right", info: { title: "Cutting", body: "Sudah dicutting tetapi belum jadi Finish Good (cutting dikurangi FG dan reject). Qty yang sudah jadi FG pindah ke kolom Finish Good." }, render: (r) => formatPcs(r.cuttingWip) },
+    { key: "tglCutting", label: "Tgl Cutting", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.cuttingAt)}</span> },
+    { key: "estFg", label: "Est. FG", default: false, render: (r) => <EstDate iso={r.estFg} today={today} /> },
+    { key: "fg", label: "Finish Good", default: true, align: "right", info: { title: "Finish Good", body: "Sudah jadi Finish Good tetapi belum masuk koli. Qty yang sudah masuk koli atau dikirim pindah ke kolom berikutnya. Total FG kumulatif ada di kartu atas dan di Excel." }, render: (r) => <span className="font-semibold">{formatPcs(r.fgWip)}</span> },
+    { key: "pct", label: "% FG", default: true, align: "right", info: { title: "% FG", body: "Total Finish Good kumulatif (termasuk yang sudah dikirim) dibagi Target MRP." }, render: (r) => (r.target > 0 ? `${Math.round((r.fg / r.target) * 100)}%` : "-") },
     { key: "reject", label: "Reject", default: false, align: "right", render: (r) => formatPcs(r.reject) },
     { key: "diKoli", label: "Di koli", default: true, align: "right", render: (r) => formatPcs(r.diKoli) },
-    { key: "dikirim", label: "Dikirim", default: true, align: "right", render: (r) => formatPcs(r.dikirim) },
-    { key: "diterima", label: "Diterima gudang", default: true, align: "right", render: (r) => formatPcs(r.diterima) },
-    { key: "sisa", label: "Sisa produksi", default: true, align: "right", render: (r) => formatPcs(r.sisaProduksi) },
+    { key: "estKirim", label: "Est. Kirim", default: false, render: (r) => <EstDate iso={r.estKirim} today={today} /> },
+    {
+      key: "tglKirim",
+      label: "Tanggal Kirim",
+      default: false,
+      render: (r) => (
+        <span className="whitespace-nowrap" title={r.shipDates.map(formatDate).join(", ") || undefined}>
+          {shipRange(r.shipDates)}
+        </span>
+      ),
+    },
+    { key: "dikirim", label: "Dikirim (belum tiba)", default: true, align: "right", info: { title: "Dikirim", body: "Sudah dikirim vendor tetapi belum sampai di DC. Total yang pernah dikirim ada di kartu atas dan di Excel." }, render: (r) => formatPcs(r.perjalanan) },
+    { key: "estTiba", label: "Est. Tiba DC", default: true, info: { title: "Est. Tiba DC", body: "Tanggal kirim + lead time ke DC (7 hari; Konveksi Makassar 1 hari). Untuk qty yang belum dikirim, dihitung dari Est. Kirim. Tanggal paling lambat di antara MRP dan vendor item ini; merah = sudah lewat dari hari ini." }, render: (r) => <EstDate iso={r.estTiba} today={today} /> },
+    { key: "tibaDc", label: "Tiba DC (belum validasi)", default: false, align: "right", render: (r) => formatPcs(r.tibaDc) },
+    { key: "diterima", label: "Diterima DC", default: true, align: "right", info: { title: "Diterima DC", body: "Koli yang sudah diterima di DC: penerimaan Warehouse ERP atau status Diterima dari WOS (tidak dihitung ganda)." }, render: (r) => formatPcs(r.diterima) },
+    { key: "tglDiterima", label: "Tgl Diterima DC", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.receivedAt)}</span> },
+    { key: "koliDiterima", label: "No. Koli Diterima", default: false, render: (r) => <span className="font-mono text-[11px]">{r.receivedKoli.join(", ") || "-"}</span> },
+    { key: "sisa", label: "Sisa produksi", default: false, align: "right", render: (r) => formatPcs(r.sisaProduksi) },
   ];
 
   return (
@@ -421,6 +525,13 @@ export function ItemTrackingView() {
           <MultiSelectFilter label="Kategori" options={opt(allBreakdown.map((b) => b.kategori))} value={kategori} onChange={setKategori} />
           <MultiSelectFilter label="No. MRP" options={opt(allBreakdown.map((b) => b.mrpId)).reverse()} value={mrp} onChange={setMrp} />
           <MultiSelectFilter label="Vendor" options={opt(allBreakdown.map((b) => vendorLabel(b.vendorProduksi)))} value={vendor} onChange={setVendor} />
+          <MultiSelectFilter label="Good Receive" options={["Yes", "No", "Sebagian"]} value={grFilter} onChange={setGrFilter} />
+          <label className="flex items-center gap-1.5 font-sans text-[11.5px] font-medium text-[#31414F]" title="Tampilkan item yang punya pengiriman pada rentang tanggal ini">
+            Tgl kirim
+            <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} className={selectCls} aria-label="Tanggal kirim dari" />
+            s/d
+            <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} className={selectCls} aria-label="Tanggal kirim sampai" />
+          </label>
           {hasFilter && (
             <button
               onClick={() => {
@@ -432,6 +543,9 @@ export function ItemTrackingView() {
                 setKategori([]);
                 setMrp([]);
                 setVendor([]);
+                setGrFilter([]);
+                setDateFrom("");
+                setDateTo("");
               }}
               className="font-sans text-[11.5px] font-semibold text-action-primary underline"
             >
@@ -439,6 +553,9 @@ export function ItemTrackingView() {
             </button>
           )}
         </div>
+        {wos && (!wos.configured || !wos.hasStatusColumn) && (
+          <div className="mt-2 font-sans text-[11px] text-text-muted">Status penerimaan DC dari WOS belum aktif, jadi kolom Diterima DC hanya dari penerimaan Warehouse ERP.</div>
+        )}
         {picked.length > 0 && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {picked.map((name) => (
@@ -457,9 +574,14 @@ export function ItemTrackingView() {
         <DataTable
           title="Tracking per item"
           headerActions={
-            <Button onClick={exportExcel} disabled={rows.length === 0} variant="muted" size="xs">
-              Export Excel
-            </Button>
+            <>
+              <Button onClick={() => void refreshWos()} disabled={wosBusy} variant="muted" size="xs" title="Baca ulang status penerimaan DC dari WOS">
+                {wosBusy ? "Memuat…" : "Segarkan status DC"}
+              </Button>
+              <Button onClick={() => void exportExcel()} disabled={rows.length === 0} variant="muted" size="xs" title="Excel estimasi pengiriman per item, MRP, dan vendor (mengikuti filter)">
+                Export Excel
+              </Button>
+            </>
           }
           columns={columns}
           rows={rows}
