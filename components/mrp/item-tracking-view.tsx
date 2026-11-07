@@ -10,26 +10,14 @@ import { formatDate, formatPcs, localDateString } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { getWosKoliStatusAction, type WosKoliStatusResult } from "@/lib/mrp/wosStatusActions";
 import { WOS_STATUS_LABEL, type WosStatusCode } from "@/lib/mrp/wosStatusMap";
-import { buildItemTracking, itemWithBreakdown, koliRowsForItem, lenganShort, type GrState, type ItemMrpVendorRow, type ItemTrackRow } from "@/lib/mrp/itemTracking";
+import { buildItemTracking, itemWithBreakdown, koliRowsForItem, lenganShort, type ItemTrackRow } from "@/lib/mrp/itemTracking";
+import { dayKey, ltTiba, parseLooseDay, plusDays } from "@/lib/mrp/itemEstimates";
 import { exportTrackingExcel } from "@/lib/mrp/exportTrackingExcel";
 
 const vendorLabel = (id: string) => (id ? VENDOR_PRODUKSI[id]?.name ?? id : "Belum dialokasikan");
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 const selectCls = "rounded-md border border-border-subtle bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-medium text-[#31414F]";
 const num = "px-3 py-2 text-right font-mono";
-const GR_LABEL: Record<GrState, string> = { YES: "Yes", NO: "No", SEBAGIAN: "Sebagian" };
-const GR_TONE: Record<GrState, string> = { YES: "bg-[#DCFCE7] text-[#15803D]", NO: "bg-[#FEE2E2] text-[#B91C1C]", SEBAGIAN: "bg-[#FEF3C7] text-[#B45309]" };
-
-/** Penanda Good Receive: Yes hijau, No merah (Sebagian kuning, hanya untuk item yang sebagian MRP-nya sudah dan sebagian belum). */
-function GrBadge({ state, title }: { state: GrState; title?: string }) {
-  return (
-    <span title={title} className={"inline-block rounded-full px-2.5 py-[2px] font-sans text-[11px] font-bold " + GR_TONE[state]}>
-      {GR_LABEL[state]}
-    </span>
-  );
-}
-
-const cellGrTitle = (b: ItemMrpVendorRow) => (b.grTotal > 0 ? `${b.grArrived} dari ${b.grTotal} roll sudah diterima vendor` : b.gr ? "Sudah cutting" : "Belum ada roll diterima vendor");
 const dateText = (iso?: string) => (iso ? formatDate(iso) : "-");
 /** Tanggal estimasi; merah kalau sudah lewat dari hari ini tetapi qty-nya masih menunggu tahap itu. */
 function EstDate({ iso, today }: { iso?: string; today: string }) {
@@ -217,7 +205,7 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
           <StageCards rows={[item]} />
           <div className="mt-4 font-sans text-[12px] font-semibold text-text-primary">Rincian per MRP dan vendor</div>
           <div className="mt-1 font-sans text-[10.5px] text-text-muted">
-            Qty per posisi saat ini (tidak tumpang tindih). Tanggal GR dan Cutting aktual; Est. Tiba = tanggal kirim + lead time ke DC (merah = sudah lewat).
+            Qty per posisi saat ini (tidak tumpang tindih). Tanggal awal = kejadian pertama untuk item ini; tanggal kirim = pengiriman terbaru. Estimasi tiba ada di tabel koli di bawah.
           </div>
           <div className="mt-2 overflow-x-auto rounded-md border border-[#E4E9EE]">
             <table className="w-full border-collapse font-sans text-[11.5px]">
@@ -228,15 +216,16 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
                   <th className="px-3 py-2 text-left">Kategori</th>
                   <th className="px-3 py-2 text-right">Target</th>
                   <th className="px-3 py-2 text-right">Belum cutting</th>
-                  <th className="px-3 py-2 text-left">Good Receive</th>
                   <th className="px-3 py-2 text-left">Tgl GR</th>
                   <th className="px-3 py-2 text-right">Cutting</th>
-                  <th className="px-3 py-2 text-left">Tgl cutting</th>
+                  <th className="px-3 py-2 text-left">Tgl awal cutting</th>
                   <th className="px-3 py-2 text-right">FG</th>
+                  <th className="px-3 py-2 text-left">Tgl awal FG</th>
                   <th className="px-3 py-2 text-right">Reject</th>
                   <th className="px-3 py-2 text-right">Di koli</th>
+                  <th className="px-3 py-2 text-left">Tgl awal di koli</th>
                   <th className="px-3 py-2 text-right">Dikirim</th>
-                  <th className="px-3 py-2 text-left">Est. tiba</th>
+                  <th className="px-3 py-2 text-left">Tgl kirim terakhir</th>
                   <th className="px-3 py-2 text-right">Diterima DC</th>
                 </tr>
               </thead>
@@ -248,19 +237,16 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
                     <td className="px-3 py-2 text-text-muted">{b.kategori || "-"}</td>
                     <td className={num}>{formatPcs(b.alokasi)}</td>
                     <td className={num}>{formatPcs(b.belumCutting)}</td>
-                    <td className="px-3 py-2">
-                      <GrBadge state={b.gr ? "YES" : "NO"} title={cellGrTitle(b)} />
-                    </td>
                     <td className="px-3 py-2">{dateText(b.grAt)}</td>
                     <td className={num}>{formatPcs(b.cuttingWip)}</td>
                     <td className="px-3 py-2">{dateText(b.cuttingAt)}</td>
                     <td className={num}>{formatPcs(b.fgWip)}</td>
+                    <td className="px-3 py-2">{dateText(b.fgFirstAt)}</td>
                     <td className={num}>{formatPcs(b.reject)}</td>
                     <td className={num}>{formatPcs(b.diKoli)}</td>
+                    <td className="px-3 py-2">{dateText(b.koliFirstAt)}</td>
                     <td className={num}>{formatPcs(b.perjalanan)}</td>
-                    <td className="px-3 py-2">
-                      <EstDate iso={b.estTiba} today={today} />
-                    </td>
+                    <td className="px-3 py-2">{dateText(b.shipLastAt)}</td>
                     <td className={num}>{formatPcs(b.diterima)}</td>
                   </tr>
                 ))}
@@ -270,12 +256,14 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
                   <td className="px-3 py-2" colSpan={3}>Total</td>
                   <td className={num}>{formatPcs(item.target)}</td>
                   <td className={num}>{formatPcs(item.belumCutting)}</td>
-                  <td colSpan={2} />
+                  <td />
                   <td className={num}>{formatPcs(item.cuttingWip)}</td>
                   <td />
                   <td className={num}>{formatPcs(item.fgWip)}</td>
+                  <td />
                   <td className={num}>{formatPcs(item.reject)}</td>
                   <td className={num}>{formatPcs(item.diKoli)}</td>
+                  <td />
                   <td className={num}>{formatPcs(item.perjalanan)}</td>
                   <td />
                   <td className={num}>{formatPcs(item.diterima)}</td>
@@ -308,13 +296,14 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
                   <th className="px-3 py-2 text-left">Ekspedisi</th>
                   <th className="px-3 py-2 text-left">No. Resi</th>
                   <th className="px-3 py-2 text-left">Tgl kirim</th>
+                  <th className="px-3 py-2 text-left">Est. tiba DC</th>
                   <th className="px-3 py-2 text-left">Diterima gudang</th>
                 </tr>
               </thead>
               <tbody>
                 {koliRows.length === 0 && (
                   <tr>
-                    <td colSpan={11} className="px-3 py-4 text-center text-text-muted">Belum ada koli yang memuat item ini.</td>
+                    <td colSpan={12} className="px-3 py-4 text-center text-text-muted">Belum ada koli yang memuat item ini.</td>
                   </tr>
                 )}
                 {koliRows.map((k) => (
@@ -343,7 +332,16 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
                     <td className="px-3 py-2">{k.ekspedisi ?? "-"}</td>
                     <td className="px-3 py-2 font-mono">{k.noResi ?? "-"}</td>
                     <td className="px-3 py-2">{k.deliveredAt ? formatDate(k.deliveredAt) : "-"}</td>
-                    <td className="px-3 py-2">{k.receivedAt ? formatDate(k.receivedAt) : "-"}</td>
+                    <td className="px-3 py-2">
+                      {(() => {
+                        // Est. Tiba per koli = tanggal kirim + lead time ke DC; hanya untuk koli yang sudah dikirim dan belum tiba/diterima.
+                        const w = wosOf(k.koliId);
+                        const sentDay = dayKey(k.deliveredAt);
+                        if (!sentDay || k.receivedAt || (w && ["DITERIMA", "BERMASALAH", "TIBA"].includes(w.code))) return <span className="text-text-muted">-</span>;
+                        return <EstDate iso={plusDays(sentDay, ltTiba(k.vendorProduksi))} today={today} />;
+                      })()}
+                    </td>
+                    <td className="px-3 py-2">{k.receivedAt ? formatDate(k.receivedAt) : dateText(parseLooseDay(wosOf(k.koliId)?.diterimaPada))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -352,7 +350,7 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
                   <tr>
                     <td className="px-3 py-2" colSpan={3}>Total di koli ({koliRows.length} koli)</td>
                     <td className={num}>{formatPcs(sum(koliRows.map((k) => k.qty)))}</td>
-                    <td colSpan={7} />
+                    <td colSpan={8} />
                   </tr>
                 </tfoot>
               )}
@@ -394,7 +392,6 @@ export function ItemTrackingView() {
   const [kategori, setKategori] = useState<string[]>([]);
   const [mrp, setMrp] = useState<string[]>([]);
   const [vendor, setVendor] = useState<string[]>([]);
-  const [grFilter, setGrFilter] = useState<string[]>([]);
   // Filter Tanggal Kirim: hanya sel (MRP x vendor) yang punya pengiriman pada rentang itu; angkanya tetap angka penuh sel tersebut.
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -440,14 +437,13 @@ export function ItemTrackingView() {
       );
       if (bd.length === 0) continue;
       const item = bd.length === it.breakdown.length ? it : itemWithBreakdown(it, bd);
-      if (grFilter.length > 0 && !grFilter.includes(GR_LABEL[item.gr])) continue;
       out.push(item);
     }
     return out;
-  }, [all, q, picked, warna, lengan, size, kategori, mrp, vendor, grFilter, dateFrom, dateTo]);
+  }, [all, q, picked, warna, lengan, size, kategori, mrp, vendor, dateFrom, dateTo]);
 
   const detail = detailKey ? rows.find((r) => r.key === detailKey) : undefined;
-  const hasFilter = !!q.trim() || picked.length > 0 || !!dateFrom || !!dateTo || warna.length + lengan.length + size.length + kategori.length + mrp.length + vendor.length + grFilter.length > 0;
+  const hasFilter = !!q.trim() || picked.length > 0 || !!dateFrom || !!dateTo || warna.length + lengan.length + size.length + kategori.length + mrp.length + vendor.length > 0;
 
   const opt = (xs: string[]) => Array.from(new Set(xs.filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const allBreakdown = all.flatMap((i) => i.breakdown);
@@ -461,7 +457,6 @@ export function ItemTrackingView() {
     if (kategori.length > 0) parts.push("kategori " + kategori.join(", "));
     if (mrp.length > 0) parts.push("MRP " + mrp.join(", "));
     if (vendor.length > 0) parts.push("vendor " + vendor.join(", "));
-    if (grFilter.length > 0) parts.push("Good Receive " + grFilter.join(", "));
     if (dateFrom || dateTo) parts.push(`tanggal kirim ${dateFrom ? formatDate(dateFrom) : "…"} s/d ${dateTo ? formatDate(dateTo) : "…"}`);
     try {
       await exportTrackingExcel({ rows, filterLabel: parts.length > 0 ? "Filter: " + parts.join(" · ") : undefined }, `Tracking-Item-${today}.xlsx`);
@@ -470,28 +465,23 @@ export function ItemTrackingView() {
     }
   }
 
-  const grTitle = (r: ItemTrackRow) =>
-    r.breakdown
-      .filter((b) => b.vendorProduksi || b.alokasi > 0)
-      .map((b) => `${b.mrpId} ${vendorLabel(b.vendorProduksi)}: ${b.gr ? "Yes" : "No"} (${cellGrTitle(b)})`)
-      .join("\n");
-
-  // Kolom baru (Good Receive, tanggal, estimasi, info penerimaan DC) ada di menu Kolom; yang tampil bawaan hanya Good Receive dan Est. Tiba DC.
+  // Kolom baru (tanggal GR/awal cutting/awal FG/awal di koli/kirim, estimasi, info penerimaan DC) ada di menu Kolom; yang tampil bawaan hanya Est. Tiba DC.
   // Angka qty = posisi saat ini (tidak tumpang tindih), lihat itemTracking.ts.
   const columns: ColumnDef<ItemTrackRow>[] = [
     { key: "kategori", label: "Kategori", default: true, render: (r) => r.kategori.join(", ") || "-" },
     { key: "mrp", label: "MRP", default: false, render: (r) => r.mrpIds.join(", ") },
     { key: "target", label: "Target MRP", default: true, align: "right", render: (r) => formatPcs(r.target) },
-    { key: "gr", label: "Good Receive", default: true, render: (r) => <GrBadge state={r.gr} title={grTitle(r)} /> },
     { key: "tglGr", label: "Tgl Good Receive", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.grAt)}</span> },
     { key: "belumCutting", label: "Belum Cutting", default: true, align: "right", render: (r) => formatPcs(r.belumCutting) },
     { key: "cutting", label: "Cutting", default: true, align: "right", info: { title: "Cutting", body: "Sudah dicutting tetapi belum jadi Finish Good (cutting dikurangi FG dan reject). Qty yang sudah jadi FG pindah ke kolom Finish Good." }, render: (r) => formatPcs(r.cuttingWip) },
-    { key: "tglCutting", label: "Tgl Cutting", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.cuttingAt)}</span> },
+    { key: "tglCutting", label: "Tgl Awal Cutting", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.cuttingAt)}</span> },
     { key: "estFg", label: "Est. FG", default: false, render: (r) => <EstDate iso={r.estFg} today={today} /> },
     { key: "fg", label: "Finish Good", default: true, align: "right", info: { title: "Finish Good", body: "Sudah jadi Finish Good tetapi belum masuk koli. Qty yang sudah masuk koli atau dikirim pindah ke kolom berikutnya. Total FG kumulatif ada di kartu atas dan di Excel." }, render: (r) => <span className="font-semibold">{formatPcs(r.fgWip)}</span> },
+    { key: "tglFg", label: "Tgl Awal FG", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.fgFirstAt)}</span> },
     { key: "pct", label: "% FG", default: true, align: "right", info: { title: "% FG", body: "Total Finish Good kumulatif (termasuk yang sudah dikirim) dibagi Target MRP." }, render: (r) => (r.target > 0 ? `${Math.round((r.fg / r.target) * 100)}%` : "-") },
     { key: "reject", label: "Reject", default: false, align: "right", render: (r) => formatPcs(r.reject) },
     { key: "diKoli", label: "Di koli", default: true, align: "right", render: (r) => formatPcs(r.diKoli) },
+    { key: "tglKoli", label: "Tgl Awal Di Koli", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.koliFirstAt)}</span> },
     { key: "estKirim", label: "Est. Kirim", default: false, render: (r) => <EstDate iso={r.estKirim} today={today} /> },
     {
       key: "tglKirim",
@@ -504,7 +494,7 @@ export function ItemTrackingView() {
       ),
     },
     { key: "dikirim", label: "Dikirim (belum tiba)", default: true, align: "right", info: { title: "Dikirim", body: "Sudah dikirim vendor tetapi belum sampai di DC. Total yang pernah dikirim ada di kartu atas dan di Excel." }, render: (r) => formatPcs(r.perjalanan) },
-    { key: "estTiba", label: "Est. Tiba DC", default: true, info: { title: "Est. Tiba DC", body: "Tanggal kirim + lead time ke DC (7 hari; Konveksi Makassar 1 hari). Untuk qty yang belum dikirim, dihitung dari Est. Kirim. Tanggal paling lambat di antara MRP dan vendor item ini; merah = sudah lewat dari hari ini." }, render: (r) => <EstDate iso={r.estTiba} today={today} /> },
+    { key: "estTiba", label: "Est. Tiba DC", default: true, info: { title: "Est. Tiba DC", body: "Tanggal kirim + lead time ke DC (7 hari; Konveksi Makassar 1 hari), hanya untuk koli yang sudah dikirim dan belum sampai di DC. Barang yang belum dikirim tidak punya Est. Tiba. Tanggal paling lambat di antara MRP dan vendor item ini; merah = sudah lewat dari hari ini." }, render: (r) => <EstDate iso={r.estTiba} today={today} /> },
     { key: "tibaDc", label: "Tiba DC (belum validasi)", default: false, align: "right", render: (r) => formatPcs(r.tibaDc) },
     { key: "diterima", label: "Diterima DC", default: true, align: "right", info: { title: "Diterima DC", body: "Koli yang sudah diterima di DC: penerimaan Warehouse ERP atau status Diterima dari WOS (tidak dihitung ganda)." }, render: (r) => formatPcs(r.diterima) },
     { key: "tglDiterima", label: "Tgl Diterima DC", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.receivedAt)}</span> },
@@ -525,7 +515,6 @@ export function ItemTrackingView() {
           <MultiSelectFilter label="Kategori" options={opt(allBreakdown.map((b) => b.kategori))} value={kategori} onChange={setKategori} />
           <MultiSelectFilter label="No. MRP" options={opt(allBreakdown.map((b) => b.mrpId)).reverse()} value={mrp} onChange={setMrp} />
           <MultiSelectFilter label="Vendor" options={opt(allBreakdown.map((b) => vendorLabel(b.vendorProduksi)))} value={vendor} onChange={setVendor} />
-          <MultiSelectFilter label="Good Receive" options={["Yes", "No", "Sebagian"]} value={grFilter} onChange={setGrFilter} />
           <label className="flex items-center gap-1.5 font-sans text-[11.5px] font-medium text-[#31414F]" title="Tampilkan item yang punya pengiriman pada rentang tanggal ini">
             Tgl kirim
             <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} className={selectCls} aria-label="Tanggal kirim dari" />
@@ -543,7 +532,6 @@ export function ItemTrackingView() {
                 setKategori([]);
                 setMrp([]);
                 setVendor([]);
-                setGrFilter([]);
                 setDateFrom("");
                 setDateTo("");
               }}

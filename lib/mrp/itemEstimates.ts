@@ -3,7 +3,7 @@ import { addDays, localDateString } from "./derive";
 // Aturan estimasi Tracking Item (owner 2026-11-07). Tanggal GR dan tanggal Cutting adalah tanggal AKTUAL (tanpa estimasi); estimasi hanya untuk tahap berikutnya:
 //   Est. FG    = tanggal cutting + LT_CUTTING_KE_FG
 //   Est. Kirim = tanggal FG (aktual, atau Est. FG kalau belum) + LT_FG_KE_KIRIM
-//   Est. Tiba  = tanggal kirim (aktual, atau Est. Kirim kalau belum) + LT tiba di DC
+//   Est. Tiba  = tanggal kirim AKTUAL + LT tiba di DC (hanya untuk koli yang sudah dikirim dan belum sampai; tanpa pengiriman tidak ada Est. Tiba)
 // Ubah angka di sini kalau aturannya berubah; semua kolom dan Excel export ikut.
 export const LT_CUTTING_KE_FG = 3;
 export const LT_FG_KE_KIRIM = 1;

@@ -43,25 +43,27 @@ export type ItemStage = {
 /** Pengiriman item per tanggal kirim: qty dan nomor koli yang dikirim pada tanggal itu. */
 export type ItemShipment = { date: string; qty: number; koli: string[] };
 
-/** Informasi per sel (MRP x vendor x item) yang tidak bisa dijumlahkan: tanggal, status Good Receive, daftar koli. */
+/** Informasi per sel (MRP x vendor x item) yang tidak bisa dijumlahkan: tanggal dan daftar koli. */
 export type ItemCellInfo = {
-  /** Roll bahan warna·lengan ini yang sudah di-Good Receive vendor, dari total roll di invoice bahan. */
-  grArrived: number;
-  grTotal: number;
-  /** Ya = ada roll yang sudah diterima vendor, atau sudah cutting (tidak mungkin cutting tanpa bahan). */
-  gr: boolean;
   /** Tanggal roll PERTAMA diterima (Good Receive). */
   grAt?: string;
   /** Tanggal cutting pertama yang memuat size ini. */
   cuttingAt?: string;
-  /** Tanggal FG terakhir dicatat untuk item ini. */
+  /** Tanggal FG PERTAMA dicatat untuk item ini (tanggal awal FG). */
+  fgFirstAt?: string;
+  /** Tanggal FG terakhir dicatat (dasar Est. Kirim untuk FG yang menunggu). */
   fgAt?: string;
+  /** Tanggal item ini PERTAMA masuk koli (tanggal awal di koli). */
+  koliFirstAt?: string;
+  /** Tanggal kirim TERAKHIR (pengiriman terbaru); dasar Est. Tiba terbaru. */
+  shipLastAt?: string;
   shipments: ItemShipment[];
   /** Nomor koli yang sudah berisi item ini tetapi belum dikirim. */
   inKoli: string[];
   receivedKoli: string[];
   receivedAt?: string;
-  /** Estimasi per tahap, hanya untuk qty yang MASIH di tahap itu (kosong = tidak ada yang menunggu atau belum bisa dihitung). */
+  /** Estimasi per tahap, hanya untuk qty yang MASIH di tahap itu (kosong = tidak ada yang menunggu atau belum bisa dihitung).
+   *  Est. Tiba beda: murni tanggal kirim aktual + LT untuk koli yang sudah dikirim dan belum sampai DC; tanpa pengiriman tidak ada Est. Tiba. */
   estFg?: string;
   estKirimCut?: string;
   estKirimFg?: string;
@@ -78,8 +80,6 @@ export type ItemMrpVendorRow = ItemStage &
     kategori: string;
   };
 
-export type GrState = "YES" | "NO" | "SEBAGIAN";
-
 export type ItemTrackRow = ItemStage & {
   key: string;
   warna: string;
@@ -94,10 +94,11 @@ export type ItemTrackRow = ItemStage & {
   /** Target yang belum selesai menjadi Finish Good (tidak pernah negatif). */
   sisaProduksi: number;
   breakdown: ItemMrpVendorRow[];
-  /** Good Receive seluruh sel: semua sel Ya = YES, tidak satu pun = NO, selebihnya SEBAGIAN. */
-  gr: GrState;
   grAt?: string;
   cuttingAt?: string;
+  fgFirstAt?: string;
+  koliFirstAt?: string;
+  shipLastAt?: string;
   /** Tanggal estimasi item: yang PALING LAMBAT di antara sel yang masih menunggu tahap itu (kapan semuanya beres). */
   estFg?: string;
   estKirim?: string;
@@ -109,7 +110,7 @@ export type ItemTrackRow = ItemStage & {
 };
 
 const emptyStage = (): ItemStage => ({ alokasi: 0, cutting: 0, fg: 0, reject: 0, diKoli: 0, dikirim: 0, diterima: 0, belumCutting: 0, cuttingWip: 0, fgWip: 0, perjalanan: 0, tibaDc: 0 });
-const emptyInfo = (): ItemCellInfo => ({ grArrived: 0, grTotal: 0, gr: false, shipments: [], inKoli: [], receivedKoli: [] });
+const emptyInfo = (): ItemCellInfo => ({ shipments: [], inKoli: [], receivedKoli: [] });
 const STAGE_KEYS: (keyof ItemStage)[] = ["alokasi", "cutting", "fg", "reject", "diKoli", "dikirim", "diterima", "belumCutting", "cuttingWip", "fgWip", "perjalanan", "tibaDc"];
 
 export const lenganShort = (l: Lengan) => (l === "PENDEK" ? "PDK" : "PJG");
@@ -126,16 +127,17 @@ const uniqSorted = (xs: string[]) => Array.from(new Set(xs)).sort((a, b) => comp
 function applyBreakdown(out: ItemTrackRow, breakdown: ItemMrpVendorRow[]) {
   out.kategori = [];
   out.mrpIds = [];
-  let yes = 0;
   const dates = new Set<string>();
   const received: string[] = [];
   for (const b of breakdown) {
     for (const key of STAGE_KEYS) out[key] += b[key];
     if (b.kategori && !out.kategori.includes(b.kategori)) out.kategori.push(b.kategori);
     if (!out.mrpIds.includes(b.mrpId)) out.mrpIds.push(b.mrpId);
-    if (b.gr) yes++;
     out.grAt = minDay(out.grAt, b.grAt);
     out.cuttingAt = minDay(out.cuttingAt, b.cuttingAt);
+    out.fgFirstAt = minDay(out.fgFirstAt, b.fgFirstAt);
+    out.koliFirstAt = minDay(out.koliFirstAt, b.koliFirstAt);
+    out.shipLastAt = maxDay(out.shipLastAt, b.shipLastAt);
     out.estFg = maxDay(out.estFg, b.estFg);
     out.estKirim = maxDay(out.estKirim, b.estKirim);
     out.estTiba = maxDay(out.estTiba, b.estTiba);
@@ -144,7 +146,6 @@ function applyBreakdown(out: ItemTrackRow, breakdown: ItemMrpVendorRow[]) {
     received.push(...b.receivedKoli);
   }
   out.kategori.sort();
-  out.gr = breakdown.length === 0 || yes === 0 ? "NO" : yes === breakdown.length ? "YES" : "SEBAGIAN";
   out.shipDates = Array.from(dates).sort();
   out.receivedKoli = uniqSorted(received);
   out.target = out.alokasi;
@@ -152,7 +153,7 @@ function applyBreakdown(out: ItemTrackRow, breakdown: ItemMrpVendorRow[]) {
 }
 
 const blankItem = (key: string, warna: string, lengan: Lengan, size: string): ItemTrackRow => ({
-  key, warna, lengan, size, itemName: itemNameOf(warna, lengan, size), kategori: [], mrpIds: [], target: 0, sisaProduksi: 0, breakdown: [], gr: "NO", shipDates: [], receivedKoli: [], ...emptyStage(),
+  key, warna, lengan, size, itemName: itemNameOf(warna, lengan, size), kategori: [], mrpIds: [], target: 0, sisaProduksi: 0, breakdown: [], shipDates: [], receivedKoli: [], ...emptyStage(),
 });
 
 /** Hitung ulang satu item dari sebagian rinciannya (dipakai saat filter No. MRP, vendor, kategori, atau tanggal kirim aktif). */
@@ -238,7 +239,10 @@ export function buildItemTracking(
       const c = cell(r.mrpId, r.vendorProduksi, r.warna, r.lengan, size);
       if (r.kind === "FG") {
         c.fg += qty;
-        if (qty > 0) c.fgAt = maxDay(c.fgAt, day);
+        if (qty > 0) {
+          c.fgAt = maxDay(c.fgAt, day);
+          c.fgFirstAt = minDay(c.fgFirstAt, day);
+        }
       } else c.reject += qty;
     }
   }
@@ -267,6 +271,7 @@ export function buildItemTracking(
     for (const it of k.items) {
       if (it.kind === "REJECT") continue;
       const c = cell(k.mrpId, k.vendorProduksi, it.warna, it.lengan, it.size);
+      c.koliFirstAt = minDay(c.koliFirstAt, dayKey(k.createdAt));
       if (!k.deliveredAt) {
         c.diKoli += it.qty;
         if (!c.inKoli.includes(koliNo)) c.inKoli.push(koliNo);
@@ -325,23 +330,22 @@ export function buildItemTracking(
     c.perjalanan = Math.max(0, c.dikirim - c.diterima - c.tibaDc);
 
     const gr = grByGroup.get(`${c.mrpId}|${c.vendorProduksi}|${c.warna}|${c.lengan}`);
-    c.grArrived = gr?.arrived ?? 0;
-    c.grTotal = gr?.total ?? 0;
     c.grAt = gr?.at;
-    c.gr = c.grArrived > 0 || !!c.cuttingAt;
     c.inKoli.sort(compareNoKoli);
     c.receivedKoli.sort(compareNoKoli);
     c.shipments = Array.from(shipByCell.get(c.key) ?? [])
       .map(([date, s]) => ({ date, qty: s.qty, koli: Array.from(s.koli).sort(compareNoKoli) }))
       .sort((a, b) => a.date.localeCompare(b.date));
+    c.shipLastAt = c.shipments.length > 0 ? c.shipments[c.shipments.length - 1].date : undefined;
 
     // Estimasi: hanya untuk qty yang masih menunggu tahap itu.
     c.estFg = c.cuttingWip > 0 ? plusDays(c.cuttingAt, LT_CUTTING_KE_FG) : undefined;
     c.estKirimCut = c.cuttingWip > 0 ? plusDays(c.estFg, LT_FG_KE_KIRIM) : undefined;
     c.estKirimFg = c.fgWip > 0 || c.diKoli > 0 ? plusDays(c.fgAt, LT_FG_KE_KIRIM) : undefined;
     c.estKirim = maxDay(c.estKirimCut, c.estKirimFg);
+    // Est. Tiba HANYA dari tanggal kirim aktual (owner 2026-11-07): koli yang sudah dikirim tetapi belum sampai di DC = tanggal kirim + LT. Barang yang belum dikirim tidak punya Est. Tiba.
     const lt = ltTiba(c.vendorProduksi);
-    let tiba: string | undefined = plusDays(c.estKirim, lt);
+    let tiba: string | undefined;
     for (const d of transitDates.get(c.key) ?? []) tiba = maxDay(tiba, plusDays(d, lt));
     c.estTiba = tiba;
   }

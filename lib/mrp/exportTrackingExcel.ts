@@ -1,7 +1,7 @@
 import type { Workbook } from "exceljs";
 import { LT_TIBA_BY_VENDOR, LT_TIBA_DEFAULT, ltTiba, maxDay } from "./itemEstimates";
 import { VENDOR_PRODUKSI } from "./seed";
-import type { GrState, ItemMrpVendorRow, ItemTrackRow } from "./itemTracking";
+import type { ItemMrpVendorRow, ItemTrackRow } from "./itemTracking";
 
 // Export Excel Tracking Item (PPIC/SCM, owner 2026-11-07). Sheet utama "PENGIRIMAN" mengikuti contoh "ESTIMASI PENGIRIMAN" owner: satu baris per item x MRP (week) x vendor
 // x status pengiriman, kolom tanggal pengiriman / estimasi tiba / qty / no. koli bernomor 1..N (N = pengiriman terbanyak), status, dan catatan. Dua sheet pendukung:
@@ -34,7 +34,6 @@ const colLetter = (n: number) => {
   for (let x = n; x > 0; x = Math.floor((x - 1) / 26)) s = String.fromCharCode(65 + ((x - 1) % 26)) + s;
   return s;
 };
-const GR_LABEL: Record<GrState, string> = { YES: "Yes", NO: "No", SEBAGIAN: "Sebagian" };
 const dateList = (dates: string[]) => dates.map((d) => d.split("-").reverse().join("/")).join(", ");
 
 type Seg = { item: string; mrp: string; vendorId: string; dates: string[]; qtys: number[]; kolis: string[]; status: string; note: string };
@@ -108,7 +107,7 @@ function pengirimanSheet(wb: Workbook, rows: ItemTrackRow[]) {
   ws.getCell(1, 2).value = N;
   ws.getCell(1, 3).value = "KALI";
   const vendorRule = Object.entries(LT_TIBA_BY_VENDOR).map(([id, d]) => `${vendorName(id)} ${d} hari`).join(", ");
-  ws.getCell(1, 5).value = `LT (hari) = lama kirim sampai tiba di DC: ${vendorRule ? vendorRule + ", " : ""}vendor lain ${LT_TIBA_DEFAULT} hari. Tanggal estimasi tiba = tanggal pengiriman + LT.`;
+  ws.getCell(1, 5).value = `LT (hari) = lama kirim sampai tiba di DC: ${vendorRule ? vendorRule + ", " : ""}vendor lain ${LT_TIBA_DEFAULT} hari. Tanggal estimasi tiba = tanggal pengiriman aktual + LT (kosong untuk baris yang belum dikirim).`;
   ws.getCell(1, 5).font = { name: FONT, size: 9, italic: true, color: { argb: "FF6B7280" } };
   for (const c of [1, 2, 3]) ws.getCell(1, c).font = { name: FONT, size: 11, bold: true, color: { argb: INK } };
 
@@ -159,7 +158,9 @@ function pengirimanSheet(wb: Workbook, rows: ItemTrackRow[]) {
       const d = s.dates[i - 1];
       const dLetter = colLetter(dateCol(i));
       put(dateCol(i), d ? dateOf(d) : null, FMT_DATE, true);
-      put(tibaCol(i), { formula: `IF(${dLetter}${r}="","",${dLetter}${r}+$D${r})`, result: d ? serial(d) + lt : "" }, FMT_DATE);
+      // Estimasi tiba hanya untuk pengiriman yang benar-benar sudah terjadi; tanggal pada baris belum dikirim hanyalah asumsi kirim (owner 2026-11-07).
+      if (s.status === "SUDAH DIKIRIM") put(tibaCol(i), { formula: `IF(${dLetter}${r}="","",${dLetter}${r}+$D${r})`, result: d ? serial(d) + lt : "" }, FMT_DATE);
+      else put(tibaCol(i), null, FMT_DATE);
       put(qtyCol(i), s.qtys[i - 1] ?? null, FMT_INT, true);
       put(koliCol(i), s.kolis[i - 1] || null, undefined, true);
     }
@@ -217,23 +218,25 @@ function tableSheet<T>(wb: Workbook, name: string, title: string, cols: Col<T>[]
 }
 
 type Stage = ItemTrackRow | ItemMrpVendorRow;
-const grText = (r: Stage) => ("breakdown" in r ? GR_LABEL[r.gr] : r.gr ? "Yes" : "No");
 const shipDates = (r: Stage) => dateList("breakdown" in r ? r.shipDates : r.shipments.map((s) => s.date));
-const stageCols = <T extends Stage>(): Col<T>[] => [
+/** Kolom qty dan tanggal. Est. Tiba DC hanya di ringkasan per item; di rincian per MRP dan vendor estimasi tiba tidak ditampilkan (owner 2026-11-07). */
+const stageCols = <T extends Stage>(withTiba: boolean): Col<T>[] => [
   { head: "Target MRP", width: 11, fmt: FMT_INT, value: (r) => ("breakdown" in r ? r.target : r.alokasi) },
   { head: "Belum Cutting", width: 11, fmt: FMT_INT, value: (r) => r.belumCutting },
-  { head: "Good Receive", width: 11, value: grText },
   { head: "Tgl Good Receive", width: 14, fmt: FMT_DATE, value: (r) => dateOf(r.grAt) },
   { head: "Cutting (belum FG)", width: 11, fmt: FMT_INT, value: (r) => r.cuttingWip },
-  { head: "Tgl Cutting", width: 13, fmt: FMT_DATE, value: (r) => dateOf(r.cuttingAt) },
+  { head: "Tgl Awal Cutting", width: 13, fmt: FMT_DATE, value: (r) => dateOf(r.cuttingAt) },
   { head: "Est. FG", width: 13, fmt: FMT_DATE, value: (r) => dateOf(r.estFg) },
   { head: "Finish Good (belum masuk koli)", width: 14, fmt: FMT_INT, value: (r) => r.fgWip },
+  { head: "Tgl Awal FG", width: 13, fmt: FMT_DATE, value: (r) => dateOf(r.fgFirstAt) },
   { head: "Reject", width: 9, fmt: FMT_INT, value: (r) => r.reject },
   { head: "Di Koli (belum dikirim)", width: 12, fmt: FMT_INT, value: (r) => r.diKoli },
+  { head: "Tgl Awal Di Koli", width: 13, fmt: FMT_DATE, value: (r) => dateOf(r.koliFirstAt) },
   { head: "Est. Kirim", width: 13, fmt: FMT_DATE, value: (r) => dateOf(r.estKirim) },
   { head: "Tanggal Kirim", width: 24, value: shipDates },
+  { head: "Tgl Kirim Terakhir", width: 13, fmt: FMT_DATE, value: (r) => dateOf(r.shipLastAt) },
   { head: "Dikirim (belum tiba)", width: 12, fmt: FMT_INT, value: (r) => r.perjalanan },
-  { head: "Est. Tiba DC", width: 13, fmt: FMT_DATE, value: (r) => dateOf(r.estTiba) },
+  ...(withTiba ? [{ head: "Est. Tiba DC", width: 13, fmt: FMT_DATE, value: (r: T) => dateOf(r.estTiba) } as Col<T>] : []),
   { head: "Tiba DC (belum validasi)", width: 12, fmt: FMT_INT, value: (r) => r.tibaDc },
   { head: "Diterima DC", width: 11, fmt: FMT_INT, value: (r) => r.diterima },
   { head: "Tgl Diterima DC", width: 14, fmt: FMT_DATE, value: (r) => dateOf(r.receivedAt) },
@@ -262,7 +265,7 @@ export async function buildTrackingWorkbook(input: TrackingExportInput): Promise
     [
       { head: "Item", width: 28, value: (r) => r.itemName },
       { head: "Kategori", width: 14, value: (r) => r.kategori.join(", ") },
-      ...stageCols<ItemTrackRow>(),
+      ...stageCols<ItemTrackRow>(true),
     ],
     input.rows
   );
@@ -276,7 +279,7 @@ export async function buildTrackingWorkbook(input: TrackingExportInput): Promise
       { head: "No. MRP", width: 10, value: (r) => r.cell.mrpId },
       { head: "Vendor", width: 22, value: (r) => vendorName(r.cell.vendorProduksi) },
       { head: "Kategori", width: 14, value: (r) => r.cell.kategori },
-      ...stageCols<ItemMrpVendorRow>().map((c) => ({ ...c, value: (r: { item: ItemTrackRow; cell: ItemMrpVendorRow }) => c.value(r.cell) })),
+      ...stageCols<ItemMrpVendorRow>(false).map((c) => ({ ...c, value: (r: { item: ItemTrackRow; cell: ItemMrpVendorRow }) => c.value(r.cell) })),
     ],
     detail
   );
