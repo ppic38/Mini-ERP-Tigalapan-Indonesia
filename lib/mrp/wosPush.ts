@@ -374,11 +374,24 @@ export async function enqueueAllShippedResis(): Promise<{ resis: number; already
 }
 
 /** Hitung ulang HPP semua resi yang sudah pernah diantrekan (termasuk yang sudah terkirim), simpan ke antrean, dan tandai PENDING supaya
- *  dikirim ulang dan menimpa kolom items dan hpp_total di sheet. Hanya bermakna untuk tujuan Google Sheets. */
-export async function refreshHppOfQueuedResis(): Promise<{ resis: number; updated: number }> {
+ *  dikirim ulang dan menimpa baris item di sheet. Hanya bermakna untuk tujuan Google Sheets.
+ *  Gerbang validasi ongkir (wosGate.ts) berlaku juga di sini: resi di antrean yang ongkirnya BELUM tervalidasi Procurement (mis. diantrekan sebelum aturan
+ *  itu ada) TIDAK dikirim ulang; barisnya dilepas dari antrean (`withdrawn`) supaya begitu divalidasi dikirim otomatis seperti resi baru. Baris resi itu yang
+ *  sudah ada di sheet tidak dihapus ERP (hapus manual di sheet kalau tidak diinginkan); kalau nanti divalidasi, barisnya ditimpa. */
+export async function refreshHppOfQueuedResis(): Promise<{ resis: number; updated: number; withdrawn: number }> {
   if (!sheetsConfig()) throw new Error("Tujuan Google Sheets belum dikonfigurasi (env WOS_SHEETS_ID, GOOGLE_SA_EMAIL, GOOGLE_SA_PRIVATE_KEY).");
   const db = supabaseServer();
-  const queued = await fetchAll<{ id: number; resi_group_id: string }>((a, b) => db.from("wos_outbox").select("id,resi_group_id").eq("event", EVENT_RESI_CREATED).order("id").range(a, b));
+  const allQueued = await fetchAll<{ id: number; resi_group_id: string }>((a, b) => db.from("wos_outbox").select("id,resi_group_id").eq("event", EVENT_RESI_CREATED).order("id").range(a, b));
+  // Resi yang tidak ditemukan lagi di delivery_kolis (gerbang tidak diketahui) dibiarkan seperti dulu: payload-nya kosong sehingga dilewati di bawah.
+  const gates = await loadResiGates(db, allQueued.map((q) => q.resi_group_id));
+  const unvalidated = allQueued.filter((q) => gates.get(q.resi_group_id) === false);
+  if (unvalidated.length > 0) {
+    for (const chunk of chunked(unvalidated, 100)) {
+      const { error } = await db.from("wos_outbox").delete().in("id", chunk.map((q) => q.id));
+      if (error) throw new Error(`Gagal melepas resi belum tervalidasi dari antrean: ${error.message}`);
+    }
+  }
+  const queued = allQueued.filter((q) => gates.get(q.resi_group_id) !== false);
   const hpp = await computeHppByKoliItem();
   let updated = 0;
   for (const chunk of chunked(queued, 40)) {
@@ -391,7 +404,7 @@ export async function refreshHppOfQueuedResis(): Promise<{ resis: number; update
       updated++;
     }
   }
-  return { resis: queued.length, updated };
+  return { resis: queued.length, updated, withdrawn: unvalidated.length };
 }
 
 /** Ringkasan antrean untuk halaman Sysadmin. Tidak memuat rahasia apa pun. `withGates` menambah hitungan resi yang belum masuk antrean

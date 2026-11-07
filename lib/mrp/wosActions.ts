@@ -59,7 +59,7 @@ export async function sendWosOutboxAction(limit = 40): Promise<ActionResult<{ se
 }
 
 /** Hitung ulang HPP semua resi yang sudah di antrean dan tandai untuk dikirim ulang (menimpa kolom items dan hpp_total di sheet). */
-export async function refreshWosHppAction(): Promise<ActionResult<{ resis: number; updated: number }>> {
+export async function refreshWosHppAction(): Promise<ActionResult<{ resis: number; updated: number; withdrawn: number }>> {
   return toActionResult(async () => {
     await requireSysadmin();
     const res = await refreshHppOfQueuedResis();

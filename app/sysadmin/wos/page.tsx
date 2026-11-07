@@ -89,7 +89,8 @@ export default function SysadminWosPage() {
       return;
     }
     setError(null);
-    setMsg(`HPP ${res.data.updated} dari ${res.data.resis} resi dihitung ulang. Mengirim…`);
+    const lepas = res.data.withdrawn > 0 ? ` ${res.data.withdrawn} resi yang ongkirnya belum divalidasi Procurement dilepas dari antrean (dikirim otomatis setelah divalidasi; baris lamanya di sheet tidak dihapus ERP).` : "";
+    setMsg(`HPP ${res.data.updated} dari ${res.data.resis} resi dihitung ulang.${lepas} Mengirim…`);
     await load();
     setBusy(false);
     await sendAll();
