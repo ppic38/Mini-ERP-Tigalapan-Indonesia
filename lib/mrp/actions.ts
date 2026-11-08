@@ -784,7 +784,7 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
   // PO Level 1 (nilai kecil, <= Rp 2 juta): pengajuan Procurement = persetujuan final, langsung disetujui.
   for (const p of materialPOs) {
     if (p.approvalLevel === 1) {
-      await finalizeMaterialPo(db, p.id, { role: "procurement", actorName: submitter.actorName });
+      await finalizeMaterialPo(db, p.id);
       p.approved = true;
     }
   }
@@ -794,13 +794,7 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
       p.approved = true;
     }
   }
-  // PO Produksi bisa ikut disetujui otomatis begitu semua PO Material vendornya disetujui (autoApproveMaklonWithMaterial), jadi baca ulang statusnya.
-  if (maklonPOs.length > 0) {
-    const { data: maklonNow } = await db.from("maklon_pos").select("id,approved").in("id", maklonPOs.map((p) => p.id));
-    const doneIds = new Set((maklonNow ?? []).filter((r) => r.approved).map((r) => r.id));
-    for (const p of maklonPOs) if (doneIds.has(p.id)) p.approved = true;
-  }
-  const needReview = [...materialPOs, ...maklonPOs].filter((p) => !p.approved && (p.approvalLevel ?? 1) >= 2).length;
+  const needReview = [...materialPOs, ...maklonPOs].filter((p) => (p.approvalLevel ?? 1) >= 2).length;
   const outstandingAfter = materialRows.some((m) => m.qtyRoll > 0 && !m.sentToPoAt && !sentMaterialRowIds.has(m.id));
   const notifText = outstandingAfter
     ? `PO untuk ${mrpId} diajukan SEBAGIAN — ${materialPOs.length} PO material, ${maklonPOs.length} PO maklon (masih ada warna yang belum dipilih vendor material)`
@@ -8134,7 +8128,7 @@ async function materialGroupSubjects(db: SupabaseClient, id: string): Promise<Ap
 }
 
 /** Persetujuan FINAL PO Material: dipecah per entitas + approved=true (logika lama approve Finance). */
-async function finalizeMaterialPo(db: SupabaseClient, id: string, trigger?: ApprovalTrigger): Promise<void> {
+async function finalizeMaterialPo(db: SupabaseClient, id: string): Promise<void> {
   const po = await fetchOneMaterialPo(db, id);
   if (!po) return;
   const entitasOrder = Array.from(new Set(po.colorBreakdown.map((c) => c.entitas ?? po.entity)));
@@ -8149,54 +8143,55 @@ async function finalizeMaterialPo(db: SupabaseClient, id: string, trigger?: Appr
     }
     if (po.entity) await db.from("raw_material_invoices").update({ entity: po.entity }).eq("po_id", id);
     await checkPoApproved(po.mrpId);
-    await autoApproveMaklonWithMaterial(db, po.mrpId, po.vendorProduksi, trigger);
     return;
   }
   const newIds = await Promise.all(entitasOrder.slice(1).map((entitas) => nextPoDisplayId("material_pos", "PO-SUP", [po.mrpId, po.vendorProduksi, po.supplier, entitas])));
   const parts = splitMaterialPoByEntitas(po, newIds).map((p) => ({ ...p, approved: true }));
   await writeMaterialPoSplit(db, id, parts);
   await checkPoApproved(po.mrpId);
-  await autoApproveMaklonWithMaterial(db, po.mrpId, po.vendorProduksi, trigger);
 }
 
-/** Siapa yang memicu persetujuan akhir PO Material (dicatat di log PO Produksi yang ikut disetujui otomatis). */
-type ApprovalTrigger = { role: ApprovalRole; actorName?: string };
-
-/** PO Produksi mengikuti PO Material (owner 2026-11-08): begitu SEMUA PO Material (semua supplier) satu vendor produksi di satu MRP sudah disetujui penuh, PO Produksi
- *  vendor itu di MRP yang sama ikut disetujui penuh OTOMATIS, tanpa langkah approval sendiri berapa pun nilainya. PO Produksi yang sedang DITOLAK tidak disentuh
- *  (menunggu diajukan ulang), dan PO Material yang dibatalkan tidak dihitung. Kegagalan di sini tidak menggagalkan persetujuan PO Material; Procurement diberi notifikasi
- *  supaya PO Produksi disetujui manual. */
-async function autoApproveMaklonWithMaterial(db: SupabaseClient, mrpId: string, vendorProduksi: string, trigger?: ApprovalTrigger): Promise<void> {
+/** PO Produksi mengikuti PO Material TIAP TAHAP approval (owner 2026-11-08, revisi dari versi "hanya persetujuan akhir"): kalau SEMUA PO Material (semua supplier,
+ *  tanpa yang CANCELLED) satu vendor produksi di satu MRP sudah melewati tahap yang sama (peran `role` di langkah `step`, atau sudah disetujui penuh), PO Produksi
+ *  vendor itu di MRP yang sama ikut disetujui di tahap itu juga, kalau PO Produksi memang sedang menunggu peran itu di langkah itu. Alasan: tim Finance kadang lupa
+ *  menyetujui PO Produksi sehingga tidak pernah naik ke approver berikutnya (mis. General Manager). Level PO Produksi sendiri tetap dihormati (selesai di levelnya,
+ *  atau lanjut ke langkah berikutnya bersama PO Material); PO Produksi yang DITOLAK atau PO lama (tanpa level) tidak disentuh. Kegagalan tidak menggagalkan approval
+ *  PO Material; Procurement diberi notifikasi supaya PO Produksi disetujui manual. */
+async function mirrorMaklonStepWithMaterial(db: SupabaseClient, mrpId: string, vendorProduksi: string, role: ApprovalRole, step: number, actorName?: string): Promise<void> {
   try {
-    const { data: mats, error } = await db.from("material_pos").select("id,approved,status").eq("mrp_id", mrpId).eq("vendor_produksi", vendorProduksi);
+    const { data: mats, error } = await db
+      .from("material_pos")
+      .select("id,approved,status,approval_level,approval_log,approval_submitted_at")
+      .eq("mrp_id", mrpId)
+      .eq("vendor_produksi", vendorProduksi);
     if (error) throw new Error(error.message);
     const active = (mats ?? []).filter((p) => p.status !== "CANCELLED");
-    if (active.length === 0 || !active.every((p) => p.approved)) return;
+    if (active.length === 0) return;
+    const cleared = (p: (typeof active)[number]): boolean => {
+      if (p.approved) return true;
+      const st = poApprovalState({
+        approved: p.approved,
+        approvalLevel: p.approval_level ?? undefined,
+        approvalLog: (p.approval_log ?? []) as PoApprovalEntry[],
+        approvalSubmittedAt: p.approval_submitted_at ?? undefined,
+      });
+      if (st.legacy || st.rejected) return false;
+      if (st.cycle.some((e) => e.step === step && e.role === role && e.action === "APPROVED")) return true;
+      return st.currentStep != null && st.currentStep > step;
+    };
+    if (!active.every(cleared)) return;
     const { data: maklons, error: mkErr } = await db.from("maklon_pos").select("id").eq("mrp_id", mrpId).eq("vendor_produksi", vendorProduksi).eq("approved", false);
     if (mkErr) throw new Error(mkErr.message);
     for (const m of maklons ?? []) {
       const subject = await loadApprovalSubject(db, "MAKLON", m.id);
       if (!subject || subject.approved) continue;
       const state = poApprovalState(subject);
-      if (state.rejected) continue;
-      if (!state.legacy) {
-        const entry: PoApprovalEntry = {
-          step: state.currentStep ?? 1,
-          role: trigger?.role ?? "procurement",
-          action: "APPROVED",
-          at: new Date().toISOString(),
-          note: `Disetujui otomatis mengikuti persetujuan seluruh PO Material vendor ${vendorProduksi} (${mrpId})`,
-          ...(trigger?.actorName ? { actorName: trigger.actorName } : {}),
-        };
-        const { error: logErr } = await db.from("maklon_pos").update({ approval_log: [...(subject.approvalLog ?? []), entry] }).eq("id", m.id);
-        if (logErr) throw new Error(logErr.message);
-      }
-      await finalizeMaklonPo(db, m.id);
-      await insertNotification(notif(`PO Produksi ${m.id} (${mrpId}) disetujui otomatis karena seluruh PO Material vendor ${vendorProduksi} sudah disetujui`, ["procurement"]));
+      if (state.legacy || state.rejected || state.currentStep !== step || !state.pendingRoles.includes(role)) continue;
+      await recordApprovalStep(db, "MAKLON", subject, role, "APPROVED", `Mengikuti persetujuan seluruh PO Material vendor ${vendorProduksi} (${mrpId})`, actorName);
     }
   } catch (err) {
     await insertNotification(
-      notif(`PO Produksi vendor ${vendorProduksi} (${mrpId}) GAGAL disetujui otomatis (${err instanceof Error ? err.message : String(err)}) — setujui manual dari menu Approval PO`, ["procurement"])
+      notif(`PO Produksi vendor ${vendorProduksi} (${mrpId}) GAGAL mengikuti persetujuan PO Material (${err instanceof Error ? err.message : String(err)}) — setujui manual dari menu Approval PO`, ["procurement"])
     );
   }
 }
@@ -8256,6 +8251,12 @@ async function recordApprovalStep(
 ): Promise<void> {
   const state = poApprovalState(subject);
   if (state.currentStep == null) throw new Error("PO ini tidak sedang menunggu approval.");
+  // Vendor produksi PO Material dicatat sebelum finalisasi (pemecahan per entitas bisa mengganti id baris), untuk menyamakan PO Produksi vendor itu di bawah.
+  let materialVendor: string | undefined;
+  if (type === "MATERIAL" && action === "APPROVED") {
+    const { data: vrow } = await db.from("material_pos").select("vendor_produksi").eq("id", subject.id).maybeSingle();
+    materialVendor = vrow?.vendor_produksi ?? undefined;
+  }
   const entry: PoApprovalEntry = {
     step: state.currentStep,
     role,
@@ -8273,12 +8274,14 @@ async function recordApprovalStep(
     return;
   }
   if (next.approved) {
-    if (type === "MATERIAL") await finalizeMaterialPo(db, subject.id, { role, actorName });
+    if (type === "MATERIAL") await finalizeMaterialPo(db, subject.id);
     else await finalizeMaklonPo(db, subject.id);
     if (notify) await insertNotification(notif(`PO ${subject.id} (${subject.mrpId}) DISETUJUI penuh (Level ${next.level})`, ["procurement"]));
   } else if (notify) {
     await notifyNextApprovers(subject, next);
   }
+  // PO Produksi vendor yang sama ikut tahap ini kalau semua PO Material vendor itu sudah melewatinya (lihat mirrorMaklonStepWithMaterial).
+  if (materialVendor) await mirrorMaklonStepWithMaterial(db, subject.mrpId, materialVendor, role, entry.step, actorName);
 }
 
 /** Approval Finance (FAT Manager) untuk PO Material -- dipakai tombol "Approve" lama Finance (tunggal & massal).
@@ -8288,7 +8291,7 @@ async function financeApproveMaterialPo(db: SupabaseClient, po: MaterialPO, acto
   if (po.approved || po.status === "CANCELLED") return;
   const state = poApprovalState(po);
   if (state.legacy) {
-    await finalizeMaterialPo(db, po.id, { role: "finance", actorName });
+    await finalizeMaterialPo(db, po.id);
     return;
   }
   if (state.rejected || !state.pendingRoles.includes("finance")) return; // bukan giliran Finance
@@ -8325,7 +8328,7 @@ async function poStepImpl(type: PoType, id: string, asRole: ApprovalRole, action
   const state = poApprovalState(subject);
   if (state.legacy) {
     if (asRole !== "finance" || action !== "APPROVED") throw new Error("PO ini dibuat sebelum matriks approval berlaku -- hanya bisa disetujui Finance.");
-    if (type === "MATERIAL") await finalizeMaterialPo(db, id, { role: asRole, actorName: actor.actorName });
+    if (type === "MATERIAL") await finalizeMaterialPo(db, id);
     else await finalizeMaklonPo(db, id);
     return;
   }
