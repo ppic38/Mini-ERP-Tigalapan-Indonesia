@@ -540,7 +540,13 @@ export function PaymentPanel() {
   ];
   // Tabel "Invoice siap dibayar" belum ada yang dibayar, jadi PIC Pembayaran selalu kosong di sana -- disembunyikan secara bawaan (owner 2026-11-06).
   // Tabel riwayat tetap menampilkannya. Keduanya masih bisa diubah lewat tombol "Kolom".
-  const readyColumns: ColumnDef<RawMaterialInvoice>[] = columns.map((c) => (c.key === "paidBy" ? { ...c, default: false } : c));
+  // Urutan dan kolom bawaan tabel "Invoice siap dibayar" (owner 2026-11-08): No MRP, Supplier, Vendor Produksi, Harga, No Invoice Supplier, Kode Transaksi, Transaksi,
+  // Entitas, Lampiran Invoice, Bukti Pembayaran. Kolom lain (Status, Kode Cabang, PIC Pembayaran, dst.) tetap ada di tombol "Kolom", tidak tampil bawaan.
+  const READY_ORDER = ["sysadmin", "noMrp", "supplier", "vendorProduksi", "nilai", "noInvVendor", "kodeTransaksi", "txnCreated", "entitas", "bukti", "buktiBayar"];
+  const readyColumns: ColumnDef<RawMaterialInvoice>[] = [
+    ...READY_ORDER.map((k) => columns.find((c) => c.key === k)).filter((c): c is ColumnDef<RawMaterialInvoice> => !!c),
+    ...columns.filter((c) => !READY_ORDER.includes(c.key)),
+  ].map((c) => (c.sysadmin ? c : { ...c, default: READY_ORDER.includes(c.key) }));
 
   // Item revisi 2026-09-06: klik baris untuk lihat detail material (rincian per warna + add buy)
   // DAN detail maklon (biaya PO Produksi terkait) sekaligus -- diekstrak jadi fungsi biasa (dulu
@@ -735,6 +741,7 @@ export function PaymentPanel() {
       {effectiveMrpId && (
         <DataTable
           title={`Invoice siap dibayar — ${effectiveMrpId}`}
+          nowrap
           columns={readyColumns}
           rows={scopedReadyInvoices}
           keyOf={(i) => i.id}
