@@ -383,7 +383,6 @@ export function ItemTrackingView() {
   const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
   const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
   const invoices = useMrpStore((s) => s.invoices);
-  const maklonPOs = useMrpStore((s) => s.maklonPOs);
 
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
@@ -459,29 +458,10 @@ export function ItemTrackingView() {
     if (mrp.length > 0) parts.push("MRP " + mrp.join(", "));
     if (vendor.length > 0) parts.push("vendor " + vendor.join(", "));
     if (dateFrom || dateTo) parts.push(`tanggal kirim ${dateFrom ? formatDate(dateFrom) : "…"} s/d ${dateTo ? formatDate(dateTo) : "…"}`);
-    // NO.PO sheet PENGIRIMAN = nomor PO Produksi (maklon) per MRP + vendor.
-    const poByMrpVendor: Record<string, string> = {};
-    for (const p of maklonPOs) {
-      const key = `${p.mrpId}|${p.vendorProduksi}`;
-      poByMrpVendor[key] = poByMrpVendor[key] ? `${poByMrpVendor[key]}, ${p.id}` : p.id;
-    }
-    // Aduan pola semua MRP (penghubung roll -> aduan untuk sheet "Detail Koli per Aduan" dan "Ringkasan per Aduan").
-    const aduans = mrpDetails.flatMap((d) => d.aduanRows.map((a) => ({ id: a.id, mrpId: d.mrp.id, kode: a.kode, vendor: a.vendor, warna: a.warna, lengan: a.lengan, qty: a.qty, qtyRoll: a.qtyRoll, sizes: a.sizes })));
     try {
       await exportTrackingExcel(
-        {
-          rows,
-          filterLabel: parts.length > 0 ? "Filter: " + parts.join(" · ") : undefined,
-          kolis: deliveryKolis,
-          receipts: warehouseReceipts,
-          wosByKoli: wos?.byKoli,
-          poByMrpVendor,
-          dateFrom: dateFrom || undefined,
-          dateTo: dateTo || undefined,
-          batches: productionBatches,
-          aduans,
-        },
-        `Tracking-Item-${today}.xlsx`
+        { rows, filterLabel: parts.length > 0 ? "Filter: " + parts.join(" · ") : undefined, batches: productionBatches, results: productionResults, kolis: deliveryKolis, invoices },
+        `WIP-Tracking-Item-${today}.xlsx`
       );
     } catch (e) {
       await alertDialog({ title: "Gagal membuat Excel", message: e instanceof Error ? e.message : "Terjadi kesalahan saat membuat file Excel.", tone: "danger" });
