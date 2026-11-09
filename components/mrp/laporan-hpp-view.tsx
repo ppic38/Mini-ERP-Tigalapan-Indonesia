@@ -8,6 +8,7 @@ import { KpiCard } from "@/components/ui/kpi-card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MultiSelectFilter } from "@/components/mrp/multi-select-filter";
+import { HppTambahanDialog } from "@/components/mrp/hpp-tambahan-dialog";
 import { StatusPill } from "@/components/ui/status-pill";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatPcs, formatRupiah, hppRowsForInvoicePerRoll, type HppRow } from "@/lib/mrp/derive";
@@ -318,6 +319,7 @@ export function LaporanHppView({ role, activeHref }: { role: "finance" | "scm"; 
   // menampilkan semua MRP (sudah punya drill-down sendiri, tidak diubah).
   const [hppMrpFilter, setHppMrpFilter] = useState("");
   const [downloadMrp, setDownloadMrp] = useState<string | null>(null);
+  const [tambahanOpen, setTambahanOpen] = useState(false);
 
   // Seluruh hitungan HPP (per roll, per invoice) berat: di-memo supaya tidak diulang tiap render (ganti filter, buka baris, dst.), hanya saat data berubah.
   const { rows, mrpRowsSorted } = useMemo(() => {
@@ -501,6 +503,12 @@ export function LaporanHppView({ role, activeHref }: { role: "finance" | "scm"; 
             ))}
           </select>
         </div>
+        {/* Template HPP + biaya tambahan (owner 2026-11-09): benang, label, dll. yang belum ada di mesin HPP, diisi di Excel per PO (terutama Konveksi Makassar). */}
+        <div className="ml-auto">
+          <Button onClick={() => setTambahanOpen(true)} variant="ghost" size="md" disabled={rows.length === 0} title="Excel per PO: HPP sistem + kolom isian benang, label size, dll.">
+            Template HPP + Biaya Tambahan
+          </Button>
+        </div>
       </div>
 
       {/* Item revisi 2026-09-18 (owner: "tidak usah hapus filter -- pilih 'Semua' saja di select;
@@ -620,6 +628,7 @@ export function LaporanHppView({ role, activeHref }: { role: "finance" | "scm"; 
           </div>
         )}
       </div>
+      {tambahanOpen && <HppTambahanDialog rows={rows} onClose={() => setTambahanOpen(false)} />}
       {downloadMrp !== null && <DownloadHppDialog rows={rows} defaultMrp={downloadMrp} onClose={() => setDownloadMrp(null)} />}
     </AppShell>
   );
