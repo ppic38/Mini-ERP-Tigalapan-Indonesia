@@ -1,12 +1,15 @@
 import type { Workbook } from "exceljs";
-import { LT_TIBA_BY_VENDOR, LT_TIBA_DEFAULT, ltTiba, maxDay } from "./itemEstimates";
+import { SIZE_ORDER, compareNoKoli } from "./derive";
+import { dayKey, ltTiba } from "./itemEstimates";
+import { koliRowsForItem, type ItemTrackRow, type ItemMrpVendorRow } from "./itemTracking";
 import { VENDOR_PRODUKSI } from "./seed";
-import type { ItemMrpVendorRow, ItemTrackRow } from "./itemTracking";
+import type { DeliveryKoli, ProductionBatch, WarehouseReceipt } from "./types";
+import type { WosKoliStatus } from "./wosStatusMap";
 
-// Export Excel Tracking Item (PPIC/SCM, owner 2026-11-07). Sheet utama "PENGIRIMAN" mengikuti contoh "ESTIMASI PENGIRIMAN" owner: satu baris per item x MRP (week) x vendor
-// x status pengiriman, kolom tanggal pengiriman / estimasi tiba / qty / no. koli bernomor 1..N (N = pengiriman terbanyak), status, dan catatan. Dua sheet pendukung:
-// "Ringkasan per item" dan "Rincian per MRP dan vendor" (qty per posisi proses, tanggal, estimasi). Sel LT, estimasi tiba (tanggal kirim + LT), QTY, dan total ditulis sebagai
-// rumus Excel; nilai hasilnya ikut disimpan supaya tampil benar di Protected View.
+// Export Excel Tracking Item (PPIC/SCM). Sheet utama "PENGIRIMAN" (format baru 2026-11-09, mengikuti contoh owner): SATU BARIS PER KOLI x ITEM dengan kolom ITEM, NO.PO, QTY,
+// NO.KOLI, STATUS, lalu TGL DELIVERY KOLI (tanggal koli dikirim). Di kanan ada EST. TIBA DC (tanggal delivery + LT, rumus; hanya koli yang masih di jalan) dan EST. KIRIM (hanya baris
+// yang belum dikirim). Barang yang belum masuk koli ikut tampil per posisi (FG belum masuk koli, Cutting belum FG, Belum cutting) tanpa NO.KOLI. NO.PO = nomor PO Produksi (maklon)
+// MRP + vendor. Dua sheet pendukung: "Ringkasan per item" dan "Rincian per MRP dan vendor" (qty per posisi proses, tanggal, estimasi).
 
 const INK = "FF1A1A1F";
 const ORANGE = "FFFFC000";
@@ -29,162 +32,425 @@ const serial = (iso: string) => {
   const d = dateOf(iso);
   return d ? Math.round((d.getTime() - Date.UTC(1899, 11, 30)) / 86400000) : 0;
 };
-const colLetter = (n: number) => {
-  let s = "";
-  for (let x = n; x > 0; x = Math.floor((x - 1) / 26)) s = String.fromCharCode(65 + ((x - 1) % 26)) + s;
-  return s;
-};
 const dateList = (dates: string[]) => dates.map((d) => d.split("-").reverse().join("/")).join(", ");
+const asNumberIfDigits = (s: string): string | number => (/^\d+$/.test(s.trim()) ? Number(s.trim()) : s);
 
-type Seg = { item: string; mrp: string; vendorId: string; dates: string[]; qtys: number[]; kolis: string[]; status: string; note: string };
+export type TrackingExportInput = {
+  rows: ItemTrackRow[];
+  filterLabel?: string;
+  /** Koli, penerimaan Warehouse ERP, dan status WOS: sumber baris per koli sheet PENGIRIMAN. Kosong = sheet hanya memuat barang yang belum masuk koli. */
+  kolis?: DeliveryKoli[];
+  receipts?: WarehouseReceipt[];
+  wosByKoli?: Record<string, WosKoliStatus>;
+  /** Kunci "MRP|vendor" -> nomor PO Produksi (beberapa PO digabung koma). */
+  poByMrpVendor?: Record<string, string>;
+  /** Filter tanggal kirim di layar (yyyy-mm-dd): hanya koli yang dikirim pada rentang itu yang diekspor. */
+  dateFrom?: string;
+  dateTo?: string;
+  /** Roll produksi (penghubung item koli -> aduan lewat `sourceBatchId`) dan daftar aduan pola semua MRP: sumber sheet per koli dan per aduan. */
+  batches?: ProductionBatch[];
+  aduans?: AduanRef[];
+};
 
-/** Baris-baris sheet PENGIRIMAN untuk satu item: sudah dikirim, masuk koli, belum dikirim (sudah cutting), lalu belum cutting. */
-export function pengirimanSegments(rows: ItemTrackRow[]): Seg[] {
-  const out: Seg[] = [];
+/** Aduan pola (alokasi warna x lengan ke satu vendor) beserta MRP-nya. */
+export type AduanRef = { id: string; mrpId: string; kode: string; vendor: string; warna: string; lengan: string; qty: number; qtyRoll: number; sizes: { size: string; qty: number }[] };
+
+export type PengirimanRow = {
+  item: string;
+  po: string;
+  qty: number;
+  /** Kosong untuk barang yang belum masuk koli. */
+  koli: string;
+  status: string;
+  /** Tanggal koli dikirim (yyyy-mm-dd). */
+  sentAt?: string;
+  /** Lama kirim sampai tiba di DC (hari); dipakai kalau `estTiba` dihitung. */
+  lt: number;
+  /** Est. Tiba DC = tanggal kirim + LT, hanya koli yang sudah dikirim dan belum sampai DC. */
+  estTiba: boolean;
+  /** Tanggal asumsi kirim, hanya baris yang belum dikirim. */
+  estKirim?: string;
+};
+
+/** Status satu koli (aturan sama dengan kolom Diterima DC di tabel Tracking Item). `transit` = sudah dikirim tetapi belum sampai DC. */
+function koliStatus(deliveredAt: string | undefined, receivedAt: string | undefined, w: WosKoliStatus | undefined): { label: string; transit: boolean } {
+  if (!deliveredAt) return { label: "BELUM DIKIRIM (SUDAH DI KOLI)", transit: false };
+  if (receivedAt || w?.code === "DITERIMA") return { label: "DITERIMA", transit: false };
+  if (w?.code === "BERMASALAH") return { label: "DITERIMA (BERMASALAH)", transit: false };
+  if (w?.code === "TIBA") return { label: "TIBA DC, BELUM VALIDASI", transit: false };
+  return { label: "DALAM PERJALANAN", transit: true };
+}
+
+/** Baris sheet PENGIRIMAN: per item, koli lebih dulu (urut NO.PO lalu no. koli), lalu barang yang belum masuk koli (FG, Cutting, Belum cutting). */
+export function pengirimanRows(input: TrackingExportInput): PengirimanRow[] {
+  const { rows, kolis = [], receipts = [], wosByKoli = {}, poByMrpVendor = {}, dateFrom, dateTo } = input;
+  const dateOn = !!dateFrom || !!dateTo;
+  const poOf = (mrp: string, vendor: string) => poByMrpVendor[`${mrp}|${vendor}`] ?? "";
+  const byPo = (a: PengirimanRow, b: PengirimanRow) => a.po.localeCompare(b.po, "id-ID", { numeric: true }) || compareNoKoli(a.koli, b.koli);
+  const out: PengirimanRow[] = [];
   for (const r of rows) {
-    const sent: Seg[] = [];
-    const inKoli: Seg[] = [];
-    const pending: Seg[] = [];
-    const notCut: Seg[] = [];
+    const cellOf = (mrp: string, vendor: string): ItemMrpVendorRow | undefined => r.breakdown.find((b) => b.mrpId === mrp && b.vendorProduksi === vendor);
+    const koliPart: PengirimanRow[] = [];
+    for (const k of koliRowsForItem(r, kolis, receipts)) {
+      const sent = dayKey(k.deliveredAt);
+      if (dateOn && (!sent || (dateFrom && sent < dateFrom) || (dateTo && sent > dateTo))) continue;
+      const w = wosByKoli[k.koliId];
+      const base = { item: r.itemName, po: poOf(k.mrpId, k.vendorProduksi), qty: k.qty, koli: k.noKoli, sentAt: sent, lt: ltTiba(k.vendorProduksi) };
+      const st = koliStatus(k.deliveredAt, k.receivedAt, w);
+      koliPart.push({ ...base, status: st.label, estTiba: st.transit && !!sent, estKirim: k.deliveredAt ? undefined : cellOf(k.mrpId, k.vendorProduksi)?.estKirimFg });
+    }
+    out.push(...koliPart.sort(byPo));
+    if (dateOn) continue; // filter tanggal kirim: barang yang belum dikirim tidak ikut
+    const restPart: PengirimanRow[] = [];
     for (const b of r.breakdown) {
       if (!b.vendorProduksi) continue; // target yang belum dialokasikan ke vendor belum punya rencana kirim
-      const base = { item: r.itemName, mrp: b.mrpId, vendorId: b.vendorProduksi };
-      if (b.shipments.length > 0) {
-        const recv = [b.diterima > 0 ? `Diterima DC ${b.diterima} pcs` : "", b.tibaDc > 0 ? `tiba DC belum validasi ${b.tibaDc} pcs` : ""].filter(Boolean).join(", ");
-        sent.push({ ...base, dates: b.shipments.map((s) => s.date), qtys: b.shipments.map((s) => s.qty), kolis: b.shipments.map((s) => s.koli.join(", ")), status: "SUDAH DIKIRIM", note: recv });
-      }
-      if (b.diKoli > 0) {
-        inKoli.push({
-          ...base,
-          dates: b.estKirimFg ? [b.estKirimFg] : [],
-          qtys: [b.diKoli],
-          kolis: [b.inKoli.join(", ")],
-          status: "MASUK KOLI, BELUM DIKIRIM",
-          note: (b.estKirimFg ? "Tanggal asumsi (Est. Kirim)." : "Tanggal belum bisa diperkirakan (belum ada tanggal FG).") + " Sudah masuk koli, belum dikirim.",
-        });
-      }
-      const wip = b.cuttingWip + b.fgWip;
-      if (wip > 0) {
-        const date = maxDay(b.cuttingWip > 0 ? b.estKirimCut : undefined, b.fgWip > 0 ? b.estKirimFg : undefined);
-        const formula = ["Cutting", b.reject > 0 ? "Reject" : "", b.diKoli > 0 ? "Di koli" : "", b.dikirim > 0 ? "Dikirim" : ""].filter(Boolean).join(" - ");
-        pending.push({
-          ...base,
-          dates: date ? [date] : [],
-          qtys: [wip],
-          kolis: [""],
-          status: "BELUM DIKIRIM",
-          note: (date ? "Tanggal asumsi (Est. Kirim)." : "Tanggal belum bisa diperkirakan (belum ada tanggal cutting/FG).") + ` QTY = ${formula}.`,
-        });
-      }
-      if (b.belumCutting > 0) {
-        notCut.push({
-          ...base,
-          dates: [],
-          qtys: [b.belumCutting],
-          kolis: [""],
-          status: "BELUM DIKIRIM",
-          note: `Belum cutting, QTY = Target MRP${b.cutting > 0 ? " - Cutting" : ""}. Tanggal kirim belum bisa diperkirakan.`,
-        });
-      }
+      const base = { item: r.itemName, po: poOf(b.mrpId, b.vendorProduksi), koli: "", lt: ltTiba(b.vendorProduksi), estTiba: false };
+      if (b.fgWip > 0) restPart.push({ ...base, qty: b.fgWip, status: "FG, BELUM MASUK KOLI", estKirim: b.estKirimFg });
+      if (b.cuttingWip > 0) restPart.push({ ...base, qty: b.cuttingWip, status: "CUTTING, BELUM FG", estKirim: b.estKirimCut });
+      if (b.belumCutting > 0) restPart.push({ ...base, qty: b.belumCutting, status: "BELUM CUTTING" });
     }
-    out.push(...sent, ...inKoli, ...pending, ...notCut);
+    out.push(...restPart.sort((x, y) => x.po.localeCompare(y.po, "id-ID", { numeric: true })));
   }
   return out;
 }
 
-function pengirimanSheet(wb: Workbook, rows: ItemTrackRow[]) {
-  const segs = pengirimanSegments(rows);
-  const N = Math.max(1, ...segs.map((s) => s.dates.length));
-  const ws = wb.addWorksheet("PENGIRIMAN", { views: [{ state: "frozen", xSplit: 4, ySplit: 2 }] });
-  const dateCol = (i: number) => 5 + i; // tanggal pengiriman
-  const tibaCol = (i: number) => 5 + N + i; // estimasi tiba
-  const qtyCol = (i: number) => 5 + 2 * N + i;
-  const koliCol = (i: number) => 5 + 3 * N + i;
-  const statusCol = 6 + 4 * N;
-  const noteCol = statusCol + 1;
-
-  ws.getCell(1, 1).value = "FREKUENSI PENGIRIMAN";
-  ws.getCell(1, 2).value = N;
-  ws.getCell(1, 3).value = "KALI";
-  const vendorRule = Object.entries(LT_TIBA_BY_VENDOR).map(([id, d]) => `${vendorName(id)} ${d} hari`).join(", ");
-  ws.getCell(1, 5).value = `LT (hari) = lama kirim sampai tiba di DC: ${vendorRule ? vendorRule + ", " : ""}vendor lain ${LT_TIBA_DEFAULT} hari. Tanggal estimasi tiba = tanggal pengiriman aktual + LT (kosong untuk baris yang belum dikirim).`;
-  ws.getCell(1, 5).font = { name: FONT, size: 9, italic: true, color: { argb: "FF6B7280" } };
-  for (const c of [1, 2, 3]) ws.getCell(1, c).font = { name: FONT, size: 11, bold: true, color: { argb: INK } };
-
-  const heads = ["ITEM", "WEEK (NO. PO)", "VENDOR", "LT (HARI)", "QTY"];
-  for (let i = 1; i <= N; i++) heads[dateCol(i) - 1] = `TANGGAL PENGIRIMAN_${i}`;
-  for (let i = 1; i <= N; i++) heads[tibaCol(i) - 1] = `TANGGAL ESTIMASI TIBA_${i}`;
-  for (let i = 1; i <= N; i++) heads[qtyCol(i) - 1] = `QTY_${i}`;
-  for (let i = 1; i <= N; i++) heads[koliCol(i) - 1] = `NO. KOLI_${i}`;
-  heads[statusCol - 1] = "STATUS";
-  heads[noteCol - 1] = "CATATAN";
-  const widths: number[] = [28, 14, 24, 10, 9];
-  for (let i = 1; i <= N; i++) widths[dateCol(i) - 1] = 18;
-  for (let i = 1; i <= N; i++) widths[tibaCol(i) - 1] = 22;
-  for (let i = 1; i <= N; i++) widths[qtyCol(i) - 1] = 8;
-  for (let i = 1; i <= N; i++) widths[koliCol(i) - 1] = 18;
-  widths[statusCol - 1] = 28;
-  widths[noteCol - 1] = 70;
-  ws.columns = widths.map((w) => ({ width: w }));
+function pengirimanSheet(wb: Workbook, input: TrackingExportInput) {
+  const rows = pengirimanRows(input);
+  const ws = wb.addWorksheet("PENGIRIMAN", { views: [{ state: "frozen", ySplit: 1 }] });
+  const heads = ["ITEM", "NO.PO", "QTY", "NO.KOLI", "STATUS", "TGL DELIVERY KOLI", "EST. TIBA DC", "EST. KIRIM"];
+  ws.columns = [{ width: 28 }, { width: 28 }, { width: 9 }, { width: 10 }, { width: 32 }, { width: 18 }, { width: 14 }, { width: 14 }];
   heads.forEach((h, i) => {
-    const cell = ws.getCell(2, i + 1);
+    const cell = ws.getCell(1, i + 1);
     cell.value = h;
     cell.font = { name: FONT, size: 10, bold: true, color: { argb: INK } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ORANGE } };
     cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
     cell.border = BORDER;
   });
-  ws.getRow(2).height = 32;
+  ws.getCell(1, 7).note = "Tanggal delivery koli + LT (lama kirim sampai tiba di DC: Konveksi Makassar 1 hari, vendor lain 7 hari). Hanya untuk koli berstatus DALAM PERJALANAN.";
+  ws.getCell(1, 8).note = "Tanggal asumsi kirim (Est. Kirim) untuk barang yang belum dikirim.";
+  ws.getRow(1).height = 24;
 
-  const FIRST = 3;
-  segs.forEach((s, idx) => {
-    const r = FIRST + idx;
-    const lt = ltTiba(s.vendorId);
-    const put = (c: number, v: unknown, fmt?: string, input = false) => {
-      const cell = ws.getCell(r, c);
+  const FIRST = 2;
+  rows.forEach((r, idx) => {
+    const n = FIRST + idx;
+    const put = (c: number, v: unknown, fmt?: string, input = false, align?: "left" | "right" | "center") => {
+      const cell = ws.getCell(n, c);
       cell.value = v as never;
       cell.font = { name: FONT, size: 10, color: { argb: input ? INPUT_INK : INK } };
       cell.border = BORDER;
       if (fmt) cell.numFmt = fmt;
+      if (align) cell.alignment = { horizontal: align };
     };
-    put(1, s.item);
-    put(2, s.mrp);
-    put(3, vendorName(s.vendorId));
-    put(4, lt, undefined, true);
-    const qtyFirst = colLetter(qtyCol(1));
-    const qtyLast = colLetter(qtyCol(N));
-    put(5, { formula: `SUM(${qtyFirst}${r}:${qtyLast}${r})`, result: s.qtys.reduce((a, b) => a + b, 0) }, FMT_INT);
-    for (let i = 1; i <= N; i++) {
-      const d = s.dates[i - 1];
-      const dLetter = colLetter(dateCol(i));
-      put(dateCol(i), d ? dateOf(d) : null, FMT_DATE, true);
-      // Estimasi tiba hanya untuk pengiriman yang benar-benar sudah terjadi; tanggal pada baris belum dikirim hanyalah asumsi kirim (owner 2026-11-07).
-      if (s.status === "SUDAH DIKIRIM") put(tibaCol(i), { formula: `IF(${dLetter}${r}="","",${dLetter}${r}+$D${r})`, result: d ? serial(d) + lt : "" }, FMT_DATE);
-      else put(tibaCol(i), null, FMT_DATE);
-      put(qtyCol(i), s.qtys[i - 1] ?? null, FMT_INT, true);
-      put(koliCol(i), s.kolis[i - 1] || null, undefined, true);
-    }
-    put(statusCol, s.status);
-    put(noteCol, s.note || null);
-    ws.getRow(r).height = 16;
+    put(1, r.item);
+    put(2, r.po || null);
+    put(3, r.qty, FMT_INT, true, "right");
+    put(4, r.koli ? asNumberIfDigits(r.koli) : null, undefined, true, "right");
+    put(5, r.status);
+    put(6, r.sentAt ? dateOf(r.sentAt) : null, FMT_DATE, true, "center");
+    if (r.estTiba && r.sentAt) put(7, { formula: `IF(F${n}="","",F${n}+${r.lt})`, result: serial(r.sentAt) + r.lt }, FMT_DATE, false, "center");
+    else put(7, null, FMT_DATE);
+    put(8, r.estKirim ? dateOf(r.estKirim) : null, FMT_DATE, false, "center");
   });
-  const LAST = FIRST + segs.length - 1;
-  if (segs.length > 0) {
-    ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: LAST, column: noteCol } };
+  const LAST = FIRST + rows.length - 1;
+  if (rows.length > 0) {
+    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: LAST, column: heads.length } };
     const T = LAST + 2;
     ws.getCell(T, 1).value = "TOTAL";
     ws.getCell(T, 1).font = { name: FONT, size: 10, bold: true, color: { argb: INK } };
-    const subtotal = (col: number, total: number) => {
-      const L = colLetter(col);
-      const cell = ws.getCell(T, col);
-      cell.value = { formula: `SUBTOTAL(9,${L}${FIRST}:${L}${LAST})`, result: total };
-      cell.numFmt = FMT_INT;
-      cell.font = { name: FONT, size: 10, bold: true, color: { argb: INK } };
-    };
-    subtotal(5, segs.reduce((a, s) => a + s.qtys.reduce((x, y) => x + y, 0), 0));
-    for (let i = 1; i <= N; i++) subtotal(qtyCol(i), segs.reduce((a, s) => a + (s.qtys[i - 1] ?? 0), 0));
+    const cell = ws.getCell(T, 3);
+    cell.value = { formula: `SUBTOTAL(9,C${FIRST}:C${LAST})`, result: rows.reduce((a, r) => a + r.qty, 0) };
+    cell.numFmt = FMT_INT;
+    cell.font = { name: FONT, size: 10, bold: true, color: { argb: INK } };
   }
   ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+}
+
+// ---- Sheet "Sudah Delivery per Koli" dan "WIP per Aduan" (2026-11-09): susunan kolom dan warna header mengikuti sheet Detail Roll di Laporan HPP, TANPA nilai HPP / biaya.
+// Dipisah menurut posisi barang: yang SUDAH DIKIRIM dilihat per koli (satu baris per koli x aduan x size; aduan ditemukan lewat roll asal item: `sourceBatchId` -> roll -> aduan, item tanpa
+// roll asal = "(tanpa aduan)"); yang MASIH WIP (belum cutting, cutting, FG, atau sudah di koli tetapi belum dikirim) dilihat per aduan x size. Keduanya saling melengkapi tanpa tumpang tindih.
+
+const GRP_ID = "FF475569";
+const GRP_ONG = "FFB45309";
+const GRP_ADU = "FF7C3AED";
+const NO_ADUAN = "(tanpa aduan)";
+const sizeRank = (size: string) => {
+  const i = SIZE_ORDER.indexOf(size.trim().toUpperCase());
+  return i < 0 ? SIZE_ORDER.length : i;
+};
+
+export type KoliAduanRow = {
+  vendor: string;
+  po: string;
+  mrp: string;
+  aduan: string;
+  warna: string;
+  lengan: string;
+  size: string;
+  roll: string;
+  qty: number;
+  resi: string;
+  koli: string;
+  ekspedisi: string;
+  sentAt?: string;
+  status: string;
+  beratKoli: number | null;
+  beratResi: number | null;
+  pcsKoli: number;
+};
+
+/** Baris "Sudah Delivery per Koli": hanya koli yang sudah dikirim, dan item (MRP x vendor x warna x lengan x size) yang lolos filter layar; reject tidak dihitung. */
+export function koliAduanRows(input: TrackingExportInput): KoliAduanRow[] {
+  const { rows, kolis = [], receipts = [], wosByKoli = {}, poByMrpVendor = {}, batches = [], aduans = [], dateFrom, dateTo } = input;
+  const dateOn = !!dateFrom || !!dateTo;
+  const scope = new Set<string>();
+  for (const r of rows) for (const b of r.breakdown) if (b.vendorProduksi) scope.add(`${b.mrpId}|${b.vendorProduksi}|${r.warna}|${r.lengan}|${r.size}`);
+  const batchById = new Map(batches.map((b) => [b.id, b]));
+  const aduanById = new Map(aduans.map((a) => [a.id, a]));
+  const receivedAt = new Map<string, string>();
+  for (const rc of receipts) for (const id of rc.koliIds) receivedAt.set(id, rc.receivedAt);
+  // Berat resi = jumlah berat semua koli dalam satu grup resi (termasuk koli yang tidak lolos filter).
+  const weightByResi = new Map<string, number>();
+  for (const k of kolis) if (k.resiGroupId && k.beratKoli) weightByResi.set(k.resiGroupId, (weightByResi.get(k.resiGroupId) ?? 0) + k.beratKoli);
+
+  const out: KoliAduanRow[] = [];
+  for (const k of kolis) {
+    if (!k.deliveredAt) continue; // koli yang belum dikirim = WIP, ada di sheet "WIP per Aduan"
+    const sent = dayKey(k.deliveredAt);
+    if (dateOn && (!sent || (dateFrom && sent < dateFrom) || (dateTo && sent > dateTo))) continue;
+    const pcsKoli = k.items.reduce((s, it) => s + (it.kind === "REJECT" ? 0 : it.qty), 0);
+    const groups = new Map<string, KoliAduanRow & { codes: Set<string> }>();
+    for (const it of k.items) {
+      if (it.kind === "REJECT" || it.qty <= 0) continue;
+      if (!scope.has(`${k.mrpId}|${k.vendorProduksi}|${it.warna}|${it.lengan}|${it.size}`)) continue;
+      const batch = it.sourceBatchId ? batchById.get(it.sourceBatchId) : undefined;
+      const aduan = batch ? aduanById.get(batch.aduanRowId) : undefined;
+      const aduanLabel = aduan ? aduan.kode : batch?.kode || NO_ADUAN;
+      const key = `${aduanLabel}|${it.warna}|${it.lengan}|${it.size}`;
+      let g = groups.get(key);
+      if (!g) {
+        const st = koliStatus(k.deliveredAt, receivedAt.get(k.id), wosByKoli[k.id]);
+        g = {
+          vendor: vendorName(k.vendorProduksi), po: poByMrpVendor[`${k.mrpId}|${k.vendorProduksi}`] ?? "", mrp: k.mrpId, aduan: aduanLabel, warna: it.warna, lengan: it.lengan === "PENDEK" ? "Pendek" : "Panjang", size: it.size,
+          roll: "", qty: 0, resi: k.noResi ?? "", koli: k.noKoli, ekspedisi: k.ekspedisi ?? "", sentAt: sent, status: st.label, beratKoli: k.beratKoli ?? null,
+          beratResi: k.resiGroupId ? weightByResi.get(k.resiGroupId) ?? null : null, pcsKoli, codes: new Set<string>(),
+        };
+        groups.set(key, g);
+      }
+      g.qty += it.qty;
+      if (batch?.codeRoll) g.codes.add(batch.codeRoll);
+    }
+    for (const g of groups.values()) {
+      const { codes, ...rest } = g;
+      out.push({ ...rest, roll: Array.from(codes).sort().join(", ") });
+    }
+  }
+  return out.sort(
+    (a, b) =>
+      a.po.localeCompare(b.po, "id-ID", { numeric: true }) || compareNoKoli(a.koli, b.koli) || a.aduan.localeCompare(b.aduan, "id-ID", { numeric: true }) || a.warna.localeCompare(b.warna) || sizeRank(a.size) - sizeRank(b.size)
+  );
+}
+
+type SheetCol<T> = { head: string; width: number; bg: string; kind: "text" | "int" | "dec" | "date"; value: (r: T) => string | number | Date | null };
+
+/** Sheet bergaya Laporan HPP: judul, catatan, header berwarna per kelompok, filter, baris beku, dan TOTAL (SUBTOTAL) di bawah kolom qty. */
+function templateSheet<T>(wb: Workbook, name: string, title: string, note: string, cols: SheetCol<T>[], rows: T[], totalCols: number[]) {
+  const ws = wb.addWorksheet(name, { views: [{ state: "frozen", xSplit: 3, ySplit: 4 }] });
+  ws.columns = cols.map((c) => ({ width: c.width }));
+  ws.mergeCells(1, 1, 1, Math.min(cols.length, 9));
+  ws.getCell(1, 1).value = title;
+  ws.getCell(1, 1).font = { name: FONT, size: 14, bold: true, color: { argb: INK } };
+  ws.mergeCells(2, 1, 2, Math.min(cols.length, 14));
+  ws.getCell(2, 1).value = note;
+  ws.getCell(2, 1).font = { name: FONT, size: 9, italic: true, color: { argb: "FF828290" } };
+  ws.getCell(2, 1).alignment = { wrapText: true, vertical: "top" };
+  ws.getRow(2).height = 52;
+  ws.mergeCells(3, 1, 3, Math.min(cols.length, 14));
+  ws.getCell(3, 1).value = "Warna header: ABU = identitas dan qty · ORANYE = koli dan pengiriman · UNGU = aduan · BIRU = data masukan (angka dari produksi dan pengiriman)";
+  ws.getCell(3, 1).font = { name: FONT, size: 9, bold: true, color: { argb: INPUT_INK } };
+  cols.forEach((c, i) => {
+    const cell = ws.getCell(4, i + 1);
+    cell.value = c.head;
+    cell.font = { name: FONT, size: 10, bold: true, color: { argb: "FFFFFFFF" } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: c.bg } };
+    cell.alignment = { vertical: "middle", horizontal: c.kind === "text" || c.kind === "date" ? "left" : "right", wrapText: true };
+    cell.border = BORDER;
+  });
+  ws.getRow(4).height = 32;
+  rows.forEach((r, ri) => {
+    cols.forEach((c, ci) => {
+      const cell = ws.getCell(5 + ri, ci + 1);
+      const v = c.value(r);
+      cell.value = v === "" ? null : v;
+      cell.font = { name: FONT, size: 10, color: { argb: typeof v === "number" ? INPUT_INK : INK } };
+      cell.border = BORDER;
+      cell.alignment = { vertical: "middle", horizontal: c.kind === "text" || c.kind === "date" ? "left" : "right" };
+      if (c.kind === "int") cell.numFmt = FMT_INT;
+      if (c.kind === "dec") cell.numFmt = "#,##0.00";
+      if (c.kind === "date") cell.numFmt = FMT_DATE;
+      if (ri % 2 === 1) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0F3F6" } };
+    });
+  });
+  if (rows.length === 0) {
+    ws.getCell(5, 1).value = "Belum ada data.";
+    return;
+  }
+  const FIRST = 5;
+  const LAST = FIRST + rows.length - 1;
+  ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: LAST, column: cols.length } };
+  const T = LAST + 2;
+  ws.getCell(T, 1).value = "TOTAL";
+  ws.getCell(T, 1).font = { name: FONT, size: 10, bold: true, color: { argb: INK } };
+  for (const ci of totalCols) {
+    const L = colLetter(ci + 1);
+    const cell = ws.getCell(T, ci + 1);
+    cell.value = { formula: `SUBTOTAL(9,${L}${FIRST}:${L}${LAST})`, result: rows.reduce((a, r) => a + (Number(cols[ci].value(r)) || 0), 0) };
+    cell.numFmt = FMT_INT;
+    cell.font = { name: FONT, size: 10, bold: true, color: { argb: INK } };
+  }
+  ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+}
+
+const colLetter = (n: number) => {
+  let s = "";
+  for (let x = n; x > 0; x = Math.floor((x - 1) / 26)) s = String.fromCharCode(65 + ((x - 1) % 26)) + s;
+  return s;
+};
+
+function koliAduanSheet(wb: Workbook, input: TrackingExportInput, note: string) {
+  const rows = koliAduanRows(input);
+  const cols: SheetCol<KoliAduanRow>[] = [
+    { head: "Vendor", width: 20, bg: GRP_ID, kind: "text", value: (r) => r.vendor },
+    { head: "No PO Produksi", width: 24, bg: GRP_ID, kind: "text", value: (r) => r.po },
+    { head: "MRP", width: 9, bg: GRP_ID, kind: "text", value: (r) => r.mrp },
+    { head: "Kode Aduan", width: 16, bg: GRP_ADU, kind: "text", value: (r) => r.aduan },
+    { head: "Warna", width: 24, bg: GRP_ID, kind: "text", value: (r) => r.warna },
+    { head: "Lengan", width: 9, bg: GRP_ID, kind: "text", value: (r) => r.lengan },
+    { head: "Size", width: 8, bg: GRP_ID, kind: "text", value: (r) => r.size },
+    { head: "Code Roll", width: 22, bg: GRP_ADU, kind: "text", value: (r) => r.roll },
+    { head: "Qty (pcs)", width: 10, bg: GRP_ID, kind: "int", value: (r) => r.qty },
+    { head: "No Resi", width: 18, bg: GRP_ONG, kind: "text", value: (r) => r.resi },
+    { head: "No Koli", width: 10, bg: GRP_ONG, kind: "int", value: (r) => (r.koli ? asNumberIfDigits(r.koli) : null) },
+    { head: "Ekspedisi", width: 14, bg: GRP_ONG, kind: "text", value: (r) => r.ekspedisi },
+    { head: "Tgl Kirim", width: 12, bg: GRP_ONG, kind: "date", value: (r) => (r.sentAt ? dateOf(r.sentAt) : null) },
+    { head: "Status Pengiriman", width: 30, bg: GRP_ONG, kind: "text", value: (r) => r.status },
+    { head: "Berat Resi (kg)", width: 13, bg: GRP_ONG, kind: "dec", value: (r) => r.beratResi },
+    { head: "Berat Koli (kg)", width: 12, bg: GRP_ONG, kind: "dec", value: (r) => r.beratKoli },
+    { head: "Pcs di Koli", width: 10, bg: GRP_ONG, kind: "int", value: (r) => r.pcsKoli },
+  ];
+  templateSheet(
+    wb,
+    "Sudah Delivery per Koli",
+    "Sudah Delivery per Koli",
+    `${note} · Hanya koli yang sudah dikirim (dalam perjalanan, tiba, atau diterima DC). Satu baris = satu koli x aduan x size (qty yang berasal dari aduan itu); gunakan filter di kolom No Koli atau Kode Aduan. Barang yang belum dikirim ada di sheet "WIP per Aduan". Susunan kolom mengikuti sheet Detail Roll di Laporan HPP, tanpa nilai HPP dan biaya. Pcs di Koli = isi seluruh koli (bukan hanya baris ini); Berat Resi = jumlah berat semua koli dalam resi yang sama. Reject tidak dihitung.`,
+    cols,
+    rows,
+    [8]
+  );
+}
+
+type WipRow = {
+  mrp: string;
+  vendor: string;
+  po: string;
+  aduan: string;
+  warna: string;
+  lengan: string;
+  size: string;
+  alokasi: number;
+  belumCutting: number;
+  cuttingWip: number;
+  fgWip: number;
+  diKoli: number;
+  total: number;
+  estKirim?: string;
+};
+
+/** Barang yang MASIH WIP per aduan x size: belum cutting, sudah cutting belum FG, FG belum masuk koli, dan sudah di koli tetapi belum dikirim. Hanya baris dengan sisa WIP > 0, mengikuti
+ *  filter MRP, vendor, warna, lengan, dan size di layar (kosong kalau filter Tanggal Kirim aktif, karena WIP belum punya tanggal kirim). Rumus per size = rumus Tracking Item tetapi dari roll
+ *  milik aduan itu: belum cutting = alokasi - cutting; cutting = cutting - FG; FG = FG - di koli - dikirim. Reject tidak tercatat per aduan, jadi masih ikut di kolom Cutting (belum FG). */
+export function wipAduanRows(input: TrackingExportInput): WipRow[] {
+  const { rows, kolis = [], poByMrpVendor = {}, batches = [], aduans = [], dateFrom, dateTo } = input;
+  if (dateFrom || dateTo) return [];
+  const cellByKey = new Map<string, ItemMrpVendorRow>();
+  for (const r of rows) for (const b of r.breakdown) if (b.vendorProduksi) cellByKey.set(`${b.mrpId}|${b.vendorProduksi}|${r.warna}|${r.lengan}|${r.size}`, b);
+  const batchesByAduan = new Map<string, ProductionBatch[]>();
+  for (const b of batches) batchesByAduan.set(b.aduanRowId, [...(batchesByAduan.get(b.aduanRowId) ?? []), b]);
+  const aduanOfBatch = new Map<string, string>();
+  for (const b of batches) aduanOfBatch.set(b.id, b.aduanRowId);
+  // Qty item koli per aduan x size, dipisah sudah dikirim / belum (reject tidak dihitung).
+  const koliQty = new Map<string, { diKoli: number; dikirim: number }>();
+  for (const k of kolis) {
+    for (const it of k.items) {
+      if (it.kind === "REJECT" || !it.sourceBatchId) continue;
+      const aid = aduanOfBatch.get(it.sourceBatchId);
+      if (!aid) continue;
+      const key = `${aid}|${it.size}`;
+      const q = koliQty.get(key) ?? { diKoli: 0, dikirim: 0 };
+      if (k.deliveredAt) q.dikirim += it.qty;
+      else q.diKoli += it.qty;
+      koliQty.set(key, q);
+    }
+  }
+  const out: WipRow[] = [];
+  for (const a of aduans) {
+    const bs = batchesByAduan.get(a.id) ?? [];
+    const sizes = new Set<string>(a.sizes.map((s) => s.size));
+    for (const b of bs) {
+      for (const sz of Object.keys(b.sizeQty ?? {})) sizes.add(sz);
+      for (const sz of Object.keys(b.fgSizeQty ?? {})) sizes.add(sz);
+    }
+    for (const sz of sizes) {
+      const cell = cellByKey.get(`${a.mrpId}|${a.vendor}|${a.warna}|${a.lengan}|${sz}`);
+      if (!cell) continue; // di luar filter layar
+      const alokasi = a.sizes.find((s) => s.size === sz)?.qty ?? 0;
+      const cutting = bs.reduce((s, b) => s + (b.sizeQty?.[sz] ?? 0), 0);
+      const fg = bs.reduce((s, b) => s + (b.fgSizeQty?.[sz] ?? 0), 0);
+      const q = koliQty.get(`${a.id}|${sz}`) ?? { diKoli: 0, dikirim: 0 };
+      const belumCutting = Math.max(0, alokasi - cutting);
+      const cuttingWip = Math.max(0, cutting - fg);
+      const fgWip = Math.max(0, fg - q.diKoli - q.dikirim);
+      const total = belumCutting + cuttingWip + fgWip + q.diKoli;
+      if (total <= 0) continue;
+      out.push({
+        mrp: a.mrpId, vendor: vendorName(a.vendor), po: poByMrpVendor[`${a.mrpId}|${a.vendor}`] ?? "", aduan: a.kode, warna: a.warna, lengan: a.lengan === "PENDEK" ? "Pendek" : "Panjang", size: sz,
+        alokasi, belumCutting, cuttingWip, fgWip, diKoli: q.diKoli, total, estKirim: cell.estKirim,
+      });
+    }
+  }
+  return out.sort(
+    (x, y) =>
+      y.mrp.localeCompare(x.mrp, undefined, { numeric: true }) || x.po.localeCompare(y.po, "id-ID", { numeric: true }) || x.aduan.localeCompare(y.aduan, "id-ID", { numeric: true }) || x.warna.localeCompare(y.warna) || x.lengan.localeCompare(y.lengan) || sizeRank(x.size) - sizeRank(y.size)
+  );
+}
+
+function wipAduanSheet(wb: Workbook, input: TrackingExportInput, note: string) {
+  const rows = wipAduanRows(input);
+  const cols: SheetCol<WipRow>[] = [
+    { head: "MRP", width: 9, bg: GRP_ID, kind: "text", value: (r) => r.mrp },
+    { head: "Vendor", width: 20, bg: GRP_ID, kind: "text", value: (r) => r.vendor },
+    { head: "No PO Produksi", width: 24, bg: GRP_ID, kind: "text", value: (r) => r.po },
+    { head: "Kode Aduan", width: 16, bg: GRP_ADU, kind: "text", value: (r) => r.aduan },
+    { head: "Warna", width: 24, bg: GRP_ID, kind: "text", value: (r) => r.warna },
+    { head: "Lengan", width: 9, bg: GRP_ID, kind: "text", value: (r) => r.lengan },
+    { head: "Size", width: 8, bg: GRP_ID, kind: "text", value: (r) => r.size },
+    { head: "Alokasi Aduan (pcs)", width: 12, bg: GRP_ID, kind: "int", value: (r) => r.alokasi },
+    { head: "Belum Cutting", width: 11, bg: GRP_ADU, kind: "int", value: (r) => r.belumCutting },
+    { head: "Cutting (belum FG)", width: 12, bg: GRP_ADU, kind: "int", value: (r) => r.cuttingWip },
+    { head: "Finish Good (belum masuk koli)", width: 15, bg: GRP_ADU, kind: "int", value: (r) => r.fgWip },
+    { head: "Di Koli (belum dikirim)", width: 13, bg: GRP_ONG, kind: "int", value: (r) => r.diKoli },
+    { head: "Total WIP (pcs)", width: 12, bg: GRP_ID, kind: "int", value: (r) => r.total },
+    { head: "Est. Kirim", width: 12, bg: GRP_ONG, kind: "date", value: (r) => (r.estKirim ? dateOf(r.estKirim) : null) },
+  ];
+  templateSheet(
+    wb,
+    "WIP per Aduan",
+    "Barang masih WIP per Aduan",
+    `${note} · Satu baris = satu aduan x size yang masih punya sisa WIP (belum dikirim). Posisi tidak tumpang tindih: Belum Cutting + Cutting (belum FG) + Finish Good (belum masuk koli) + Di Koli (belum dikirim) = Total WIP. Dihitung dari roll milik aduan itu; reject tidak tercatat per aduan sehingga masih ikut di kolom Cutting (belum FG). Item koli tanpa roll asal (koli lama, rework) tidak bisa dikaitkan ke aduan, jadi tidak ikut di sini. Est. Kirim = tanggal asumsi kirim item (MRP x vendor x size). Barang yang sudah dikirim ada di sheet "Sudah Delivery per Koli". Kosong kalau filter Tanggal Kirim aktif.`,
+    cols,
+    rows,
+    [7, 8, 9, 10, 11, 12]
+  );
 }
 
 type Col<T> = { head: string; width: number; value: (r: T) => string | number | Date | null; fmt?: string };
@@ -246,8 +512,6 @@ const stageCols = <T extends Stage>(withTiba: boolean): Col<T>[] => [
   { head: "Total Dikirim (kumulatif)", width: 12, fmt: FMT_INT, value: (r) => r.dikirim },
 ];
 
-export type TrackingExportInput = { rows: ItemTrackRow[]; filterLabel?: string };
-
 export async function buildTrackingWorkbook(input: TrackingExportInput): Promise<Workbook> {
   const ExcelJS = (await import("exceljs")).default;
   const wb: Workbook = new ExcelJS.Workbook();
@@ -257,7 +521,9 @@ export async function buildTrackingWorkbook(input: TrackingExportInput): Promise
   const stamp = new Date().toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" });
   const note = `Diunduh ${stamp}${input.filterLabel ? " · " + input.filterLabel : ""}`;
 
-  pengirimanSheet(wb, input.rows);
+  pengirimanSheet(wb, input);
+  koliAduanSheet(wb, input, note);
+  wipAduanSheet(wb, input, note);
   tableSheet<ItemTrackRow>(
     wb,
     "Ringkasan per item",
