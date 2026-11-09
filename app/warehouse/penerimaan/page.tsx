@@ -242,11 +242,12 @@ export default function WarehousePenerimaanPage() {
         for (const it of g.items) {
           const type = it.kind === "FG" ? "FINISH GOOD" : it.kind === "REWORK" ? "REWORK" : "REJECT";
           const noKoli = it.noKoli ?? it.deliveryKoliId;
-          const itemName = nameByKey.get(`${it.warna}|${it.lengan}|${it.size}`) ?? `${it.warna} ${it.lengan === "PENDEK" ? "PDK" : "PJG"} ${it.size}`;
+          const itemMoka = `${it.warna} ${it.lengan === "PENDEK" ? "PDK" : "PJG"} ${it.size}`;
+          const itemName = nameByKey.get(`${it.warna}|${it.lengan}|${it.size}`) ?? itemMoka;
           const key = [noKoli, itemName, type].join("|");
           const cur = merged.get(key);
           if (cur) cur.qty += it.qty;
-          else merged.set(key, { noKoli, itemName, qty: it.qty, type });
+          else merged.set(key, { noKoli, itemName, itemMoka, qty: it.qty, type });
         }
         const noPo = maklonPOs.filter((p) => g.mrpIds.includes(p.mrpId) && p.vendorProduksi === g.vendorProduksi).map((p) => p.id).join(", ");
         return { noResi: g.noResi ?? g.resiGroupId, noPo, deliveredAt: g.deliveredAt, rows: Array.from(merged.values()) };

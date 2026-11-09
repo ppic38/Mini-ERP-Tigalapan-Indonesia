@@ -1,5 +1,12 @@
 # Migrasi Project — Status & Riwayat
 
+## Warehouse Excel: kolom "Item (MOKA)" (2026-11-09, tanpa migration)
+Owner mengirim contoh format MOKA (kolom KATEGORI, ITEM, JENIS LENGAN DAN UKURAN, QTY, COGS; contoh item "BURGUNDY 24S PJG 2XL") dan minta kolom "Item (MOKA)" dengan format item itu di unduhan Excel Warehouse. Format = `WARNA PDK|PJG SIZE` (sama dengan `itemNameOf` Tracking Item: nama warna ERP + PDK atau PJG + size), BUKAN nama Master SKU yang berawalan seperti "MLS HITAM 24S PDK M".
+- Unduhan baru per resi (`lib/mrp/exportResiTemplateExcel.ts`, tombol Download Excel di kepala tabel Batch Pengiriman): kolom H "Item (MOKA)" setelah ETA (urutan template BY38 MLS tidak berubah); `ResiSheetRow.itemMoka`, diisi di `app/warehouse/penerimaan/page.tsx`.
+- Unduhan lama per resi (`lib/mrp/exportResiExcel.ts`, panel rincian baris): kolom terakhir "Item (MOKA)" di sheet "Rincian Item" (kolom J) dan "Ringkasan Item" (kolom J; sheet ini sudah memuat Total HPP dan HPP/item rata-rata yang setara COGS di contoh). Rumus yang ada tidak berubah karena kolom ditambah di ujung kanan.
+- Usia (Kids/Dewasa) tidak ikut di nama item, sesuai contoh. Kolom KATEGORI dan JENIS LENGAN DAN UKURAN di contoh belum dibuat (belum diminta).
+- Diuji dengan data tiruan (kedua unduhan); tsc bersih, belum dilihat di layar sungguhan.
+
 ## Warehouse Penerimaan: Download Excel pengiriman, satu sheet satu resi (template BY38 MLS) (2026-11-09, tanpa migration)
 Owner mengirim template Excel "BY38 MLS" dan minta unduhan per resi pengiriman: satu sheet = satu resi; AWB = no resi; ETA = tanggal kirim + 7.
 - `lib/mrp/exportResiTemplateExcel.ts` (baru, ExcelJS): satu file, satu sheet per resi (nama sheet = no resi, dibersihkan dari karakter terlarang Excel, maksimal 31 karakter, akhiran -2 kalau kembar). Blok kiri atas: NO PO (PO Produksi / `maklon_pos` MRP + vendor resi itu, "-" kalau tidak ada), Start (tanggal kirim), End ("-", barang belum diterima), total qty merah (`SUBTOTAL(9)` jadi ikut filter) dan legenda warna Produksi (hijau toska) dan Warehouse (salmon). Tabel ber-filter, header beku: NO KOLI (angka kalau murni digit), ITEM NAME, QTY, Type (FINISH GOOD / REWORK / REJECT), Tgl Kirim (format d-mmm, miring), AWB (no resi), ETA (rumus `Tgl Kirim + 7`, header oranye, konstanta `ETA_HARI` = `LT_TIBA_DEFAULT`; BUKAN lead time per vendor seperti di Tracking Item, sesuai aturan owner "7 + tanggal kirim"). Satu baris per koli x item x jenis (qty beberapa roll dijumlahkan), urut nomor koli lalu nama item.

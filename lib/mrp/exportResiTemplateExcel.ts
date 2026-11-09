@@ -4,7 +4,7 @@ import { LT_TIBA_DEFAULT } from "./itemEstimates";
 
 // Excel pengiriman per resi untuk Warehouse (owner 2026-11-09), mengikuti template "BY38 MLS": SATU sheet = SATU resi. Blok kiri atas: NO PO, Start (tanggal kirim), End,
 // total qty (merah, SUBTOTAL jadi ikut filter) dan legenda warna Produksi / Warehouse. Tabel: NO KOLI, ITEM NAME (nama dari Master SKU), QTY, Type, Tgl Kirim, AWB (= no resi),
-// ETA (= Tgl Kirim + 7 hari, rumus). Satu baris per koli x item x jenis (qty dari beberapa roll sudah dijumlahkan), header ber-filter.
+// ETA (= Tgl Kirim + 7 hari, rumus), lalu Item (MOKA) (nama item format MOKA "WARNA PDK/PJG SIZE"). Satu baris per koli x item x jenis (qty dari beberapa roll sudah dijumlahkan), header ber-filter.
 
 const FONT = "Calibri";
 const TEAL = "FF45B5C4";
@@ -17,7 +17,8 @@ const FMT_DATE = "d-mmm";
 const FMT_INT = "#,##0";
 export const ETA_HARI = LT_TIBA_DEFAULT; // owner: ETA = tanggal kirim + 7
 
-export type ResiSheetRow = { noKoli: string; itemName: string; qty: number; type: "FINISH GOOD" | "REWORK" | "REJECT" };
+/** `itemMoka` = nama item format MOKA: "WARNA PDK/PJG SIZE" (mis. "BURGUNDY 24S PJG 2XL"), tanpa nama Master SKU. */
+export type ResiSheetRow = { noKoli: string; itemName: string; itemMoka: string; qty: number; type: "FINISH GOOD" | "REWORK" | "REJECT" };
 export type ResiSheet = {
   noResi: string;
   /** Nomor PO Produksi (maklon) MRP + vendor resi ini; kosong = "-". */
@@ -59,7 +60,7 @@ export async function buildResiTemplateWorkbook(sheets: ResiSheet[]): Promise<Wo
 
   for (const s of sheets) {
     const ws = wb.addWorksheet(sheetName(s.noResi, used), { views: [{ state: "frozen", ySplit: 4, showGridLines: true }] });
-    ws.columns = [{ width: 9 }, { width: 40 }, { width: 9 }, { width: 18 }, { width: 11 }, { width: 14 }, { width: 11 }];
+    ws.columns = [{ width: 9 }, { width: 40 }, { width: 9 }, { width: 18 }, { width: 11 }, { width: 14 }, { width: 11 }, { width: 34 }];
     const rows = sortResiRows(s.rows);
     const FIRST = 5;
     const LAST = FIRST + Math.max(rows.length, 1) - 1;
@@ -96,7 +97,7 @@ export async function buildResiTemplateWorkbook(sheets: ResiSheet[]): Promise<Wo
     ws.getCell(2, 4).value = "Warehouse";
     for (const r of [1, 2]) ws.getCell(r, 4).font = { name: FONT, size: 11, bold: true, color: { argb: INK } };
 
-    const heads = ["NO KOLI", "ITEM NAME", "QTY", "Type", "Tgl Kirim", "AWB", "ETA"];
+    const heads = ["NO KOLI", "ITEM NAME", "QTY", "Type", "Tgl Kirim", "AWB", "ETA", "Item (MOKA)"];
     heads.forEach((h, i) => {
       const c = ws.getCell(4, i + 1);
       c.value = h;
@@ -109,7 +110,7 @@ export async function buildResiTemplateWorkbook(sheets: ResiSheet[]): Promise<Wo
 
     const awb = asNumberIfDigits(s.noResi);
     if (rows.length === 0) {
-      ws.mergeCells(FIRST, 1, FIRST, 7);
+      ws.mergeCells(FIRST, 1, FIRST, 8);
       ws.getCell(FIRST, 1).value = "Resi ini belum berisi item.";
       ws.getCell(FIRST, 1).font = { name: FONT, size: 10, italic: true, color: { argb: "FF6B7280" } };
     }
@@ -123,18 +124,19 @@ export async function buildResiTemplateWorkbook(sheets: ResiSheet[]): Promise<Wo
         kirim,
         awb,
         { formula: `IF(E${n}="","",E${n}+${ETA_HARI})`, result: kirim ? serialOf(kirim) + ETA_HARI : "" },
+        r.itemMoka,
       ];
       vals.forEach((v, c) => {
         const cell = ws.getCell(n, c + 1);
         cell.value = v as never;
         cell.font = { name: FONT, size: 11, italic: c === 4 || c === 6, color: { argb: INK } };
         cell.border = BORDER;
-        cell.alignment = { vertical: "middle", horizontal: c === 1 || c === 3 ? "left" : c === 0 || c === 2 || c === 5 ? "right" : "center" };
+        cell.alignment = { vertical: "middle", horizontal: c === 1 || c === 3 || c === 7 ? "left" : c === 0 || c === 2 || c === 5 ? "right" : "center" };
         if (c === 2) cell.numFmt = FMT_INT;
         if (c === 4 || c === 6) cell.numFmt = FMT_DATE;
       });
     });
-    if (rows.length > 0) ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: LAST, column: 7 } };
+    if (rows.length > 0) ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: LAST, column: 8 } };
     ws.pageSetup = { orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
   }
   return wb;
