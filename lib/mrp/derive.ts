@@ -5057,6 +5057,11 @@ export type WarehouseReceivableGroup = {
    *  info ke gudang, walau `mrpId` yang disimpan cuma yang representatif. */
   mrpId: string;
   mrpLabel: string;
+  /** Semua No MRP berbeda dalam grup, tanpa kategori (mis. ["W39", "W40"]); `mrpLabel` di atas memuat kategori juga. */
+  mrpIds: string[];
+  /** Validasi ongkir resi oleh Procurement (Invoice Ekspedisi): VALIDATED = semua koli berbiaya sudah punya biaya aktual; PENDING = belum; NA = pengiriman internal tanpa ongkir.
+   *  Murni informasi untuk tampilan (owner 2026-11-09); syarat Bongkar tetap `gateReason`. */
+  ongkirValidasi: "VALIDATED" | "PENDING" | "NA";
   vendorProduksi: string;
   /** Himpunan invoiceId yang menaungi item-item grup ini (lihat gatePassed di spec) -- kosong
    *  berarti belum ada invoice vendor sama sekali untuk resi ini. */
@@ -5261,6 +5266,12 @@ export function warehouseReceivableGroups(
       noResi: rep.noResi,
       mrpId: rep.mrpId,
       mrpLabel,
+      mrpIds,
+      ongkirValidasi: (() => {
+        const berbiaya = kolis.filter((k) => isEkspedisiBerbiaya(k.ekspedisi));
+        if (berbiaya.length === 0) return "NA" as const;
+        return berbiaya.every((k) => ekspedisiActualBiaya(k) != null) ? ("VALIDATED" as const) : ("PENDING" as const);
+      })(),
       vendorProduksi,
       invoiceIds,
       totalQty: items.reduce((s, i) => s + i.qty, 0),

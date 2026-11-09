@@ -228,14 +228,17 @@ export default function WarehousePenerimaanPage() {
   const waitingCount = groups.length - readyCount;
   const totalNilaiReady = groups.filter((g) => !g.gateReason).reduce((s, g) => s + g.totalNilai, 0);
 
+  // Tampilan tabel (owner 2026-11-09): No MRP (W39, W40, tanpa kategori), Jumlah Koli, Ekspedisi, No Resi (kolom pertama), Tanggal Kirim, Total Qty, Total HPP, dan Status
+  // = apakah resi sudah divalidasi Procurement (Invoice Ekspedisi), BUKAN lagi status pembayaran invoice vendor. Syarat Bongkar yang lama (pembayaran, revisi, dst.)
+  // tetap berlaku dan tampil di panel rincian baris serta kolom opsional "Syarat Bongkar".
+  const ongkirLabelOf = (g: WarehouseReceivableGroup) => (g.ongkirValidasi === "VALIDATED" ? "Resi sudah divalidasi" : g.ongkirValidasi === "PENDING" ? "Menunggu validasi Procurement" : "Tanpa ongkir (internal)");
   const columns: ColumnDef<WarehouseReceivableGroup>[] = [
-    { key: "noKoli", label: "No Koli", default: true, render: (g) => g.noKoli },
+    { key: "mrp", label: "No MRP", default: true, render: (g) => <span className="font-mono font-semibold">{g.mrpIds.join(", ")}</span> },
+    { key: "vendor", label: "Vendor Produksi", default: true, render: (g) => VENDOR_PRODUKSI[g.vendorProduksi]?.name ?? g.vendorProduksi },
+    { key: "jumlahKoli", label: "Jumlah Koli", default: true, align: "right", render: (g) => <span className="font-mono">{g.koliIds.length}</span> },
     { key: "ekspedisi", label: "Ekspedisi", default: true, render: (g) => g.ekspedisi || "—" },
     { key: "tanggalKirim", label: "Tanggal Kirim", default: true, render: (g) => formatDate(g.deliveredAt) },
-    { key: "mrp", label: "No MRP", default: true, render: (g) => <span className="font-mono">{g.mrpLabel || g.mrpId}</span> },
-    { key: "vendor", label: "Vendor Produksi", default: true, render: (g) => VENDOR_PRODUKSI[g.vendorProduksi]?.name ?? g.vendorProduksi },
-    { key: "invoice", label: "No Invoice Vendor", default: false, render: (g) => (g.invoiceIds.length > 0 ? g.invoiceIds.join(", ") : "—") },
-    { key: "qty", label: "Total Qty", default: true, align: "right", render: (g) => formatPcs(g.totalQty) },
+    { key: "qty", label: "Total Qty", default: true, align: "right", render: (g) => <span className="font-mono">{formatPcs(g.totalQty)}</span> },
     {
       // HPP resi ini = Σ qty x HPP/item (mesin HPP yang sama dengan Laporan HPP Finance), tampil walau invoice belum dibayar.
       key: "totalHpp",
@@ -248,16 +251,36 @@ export default function WarehousePenerimaanPage() {
         return (
           <span className="font-mono">
             {formatRupiah(h.value)}
-            {(h.anyEstimasi || h.missing) && (
-              <span className="mt-0.5 block font-sans text-[9.5px] font-semibold text-warning-fg">{h.missing ? "belum lengkap" : "estimasi"}</span>
-            )}
+            {(h.anyEstimasi || h.missing) && <span className="ml-1.5 font-sans text-[9.5px] font-semibold text-warning-fg">{h.missing ? "belum lengkap" : "estimasi"}</span>}
           </span>
         );
       },
     },
     {
-      // Item 2026-09-16 (integrasi WMS, migration 0041) -- status TERPISAH dari kolom "Status" di
-      // bawah (yang soal gate invoice/HPP): ini murni menandai barang sudah dicek fisik masuk di
+      key: "status",
+      label: "Status",
+      default: true,
+      render: (g) =>
+        g.ongkirValidasi === "VALIDATED" ? (
+          <span className="font-sans text-[11px] font-semibold text-success-fg">✓ {ongkirLabelOf(g)}</span>
+        ) : g.ongkirValidasi === "PENDING" ? (
+          <span className="font-sans text-[11px] font-semibold text-danger-fg">{ongkirLabelOf(g)}</span>
+        ) : (
+          <span className="font-sans text-[11px] text-text-muted">{ongkirLabelOf(g)}</span>
+        ),
+    },
+    { key: "noKoli", label: "No Koli", default: false, render: (g) => g.noKoli },
+    { key: "invoice", label: "No Invoice Vendor", default: false, render: (g) => (g.invoiceIds.length > 0 ? g.invoiceIds.join(", ") : "—") },
+    {
+      // Syarat Bongkar (gate lama): pembayaran invoice vendor, revisi, kelengkapan invoice, ditambah validasi ongkir. Tidak tampil bawaan.
+      key: "syaratBongkar",
+      label: "Syarat Bongkar",
+      default: false,
+      render: (g) =>
+        g.gateReason ? <span className="font-sans text-[10.5px] font-semibold text-danger-fg">{g.gateReason}</span> : <span className="font-sans text-[10.5px] font-semibold text-success-fg">Siap dibongkar</span>,
+    },
+    {
+      // Item 2026-09-16 (integrasi WMS, migration 0041) -- status TERPISAH: murni menandai barang sudah dicek fisik masuk di
       // WMS atau belum, tidak memengaruhi boleh/tidaknya "Bongkar Koli".
       key: "statusWms",
       label: "Status WMS",
@@ -267,17 +290,6 @@ export default function WarehousePenerimaanPage() {
           <span className="font-sans text-[10.5px] font-semibold text-success-fg">✓ Diterima WMS · {formatDate(g.wmsReceivedAt)}</span>
         ) : (
           <span className="font-sans text-[10.5px] text-text-muted">Belum dikonfirmasi WMS</span>
-        ),
-    },
-    {
-      key: "status",
-      label: "Status",
-      default: true,
-      render: (g) =>
-        g.gateReason ? (
-          <span className="font-sans text-[10.5px] font-semibold text-danger-fg">{g.gateReason}</span>
-        ) : (
-          <span className="font-sans text-[10.5px] font-semibold text-success-fg">Siap dibongkar</span>
         ),
     },
   ];
@@ -298,6 +310,7 @@ export default function WarehousePenerimaanPage() {
       <DataTable
         title="Batch Pengiriman (Resi)"
         subtitle="Klik baris untuk lihat rincian item & tombol Bongkar"
+        nowrap
         columns={columns}
         rows={groups}
         keyOf={(g) => g.resiGroupId}
@@ -306,10 +319,11 @@ export default function WarehousePenerimaanPage() {
           getText: (g) => [g.noResi, g.resiGroupId, g.noKoli, g.mrpLabel, g.mrpId, g.invoiceIds.join(" ")].filter(Boolean).join(" "),
         }}
         filterDefs={[
-          { label: "Status", options: ["Siap dibongkar", "Menunggu Finance membayar invoice", "Menunggu Procurement memvalidasi ongkir", "Belum ada invoice vendor", "Invoice dalam revisi", "Lainnya"].filter((o) => groups.some((g) => statusLabelOf(g) === o)), test: (g, v) => statusLabelOf(g) === v },
+          { label: "Status", options: ["Resi sudah divalidasi", "Menunggu validasi Procurement", "Tanpa ongkir (internal)"].filter((o) => groups.some((g) => ongkirLabelOf(g) === o)), test: (g, v) => ongkirLabelOf(g) === v },
+          { label: "Syarat Bongkar", options: ["Siap dibongkar", "Menunggu Finance membayar invoice", "Menunggu Procurement memvalidasi ongkir", "Belum ada invoice vendor", "Invoice dalam revisi", "Lainnya"].filter((o) => groups.some((g) => statusLabelOf(g) === o)), test: (g, v) => statusLabelOf(g) === v },
           { label: "Ekspedisi", options: uniqSorted(groups.map((g) => g.ekspedisi)), test: (g, v) => g.ekspedisi === v },
           { label: "Vendor Produksi", options: uniqSorted(groups.map(vendorName)), test: (g, v) => vendorName(g) === v },
-          { label: "No MRP", options: uniqSorted(groups.flatMap((g) => g.mrpLabel.split(", ").map((m) => m.trim()))), test: (g, v) => g.mrpLabel.split(", ").some((m) => m.trim() === v) },
+          { label: "No MRP", options: uniqSorted(groups.flatMap((g) => g.mrpIds)).reverse(), test: (g, v) => g.mrpIds.includes(v) },
           { label: "Tanggal Kirim", options: tanggalOptions, test: (g, v) => formatDate(g.deliveredAt) === v },
           { label: "Status WMS", options: ["Diterima WMS", "Belum dikonfirmasi WMS"], test: (g, v) => (v === "Diterima WMS") === !!g.wmsReceivedAt },
         ]}
