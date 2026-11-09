@@ -5238,11 +5238,10 @@ export function warehouseReceivableGroups(
     } else {
       const invoicesInGroup = invoiceIds.map((id) => invoiceById.get(id)).filter((i): i is VendorInvoice => !!i);
       const revisionInv = invoicesInGroup.find((i) => i.status === "REVISION");
-      const unpaid = invoicesInGroup.filter((i) => i.status !== "REVISION" && i.status !== "PAID");
+      // Pembayaran invoice vendor oleh Finance BUKAN lagi syarat Bongkar (owner 2026-11-09): barang fisik tidak perlu menunggu pembayaran. Yang tetap disyaratkan:
+      // invoice vendor sudah ada dan tidak sedang direvisi, serta ongkir resi sudah divalidasi Procurement (di bawah).
       if (revisionInv) {
         gateReason = `Invoice ${revisionInv.id} masih dalam revisi`;
-      } else if (unpaid.length > 0) {
-        gateReason = `Menunggu Finance membayar invoice ${unpaid.map((i) => i.id).join(", ")}`;
       } else if (anyNoInvoice) {
         gateReason = "Sebagian item resi ini belum ada invoice vendor";
       } else if (anyUntraceable) {

@@ -5,7 +5,7 @@ import type { WarehouseReceivableGroup } from "./derive";
 // Unduh Excel per resi (Warehouse > Penerimaan, owner 2026-11-04): satu file per batch pengiriman (resi) berisi dua sheet --
 //  - "Rincian Item": satu baris per isi koli (koli, warna, lengan, size, jenis, qty, HPP/item, nilai HPP), blok info resi di atas.
 //  - "Ringkasan Item": satu baris per warna · lengan · size, dijumlahkan lewat rumus SUMIFS dari sheet Rincian.
-// Kolom terakhir "Item (MOKA)" (owner 2026-11-09) = nama item format MOKA "WARNA PDK/PJG SIZE" di kedua sheet.
+// Kolom "Item (MOKA)" (owner 2026-11-09) = nama item format MOKA "WARNA PDK/PJG SIZE", di samping kanan kolom Warna di kedua sheet.
 // Header berwarna biru (sama dengan tema ERP), baris berselang-seling, angka berformat. Nilai HPP, total, dan ringkasan ditulis sebagai rumus
 // Excel supaya bisa ditelusuri; nilai tersimpan di tiap rumus sama dengan hasil hitung aplikasi. HPP/item berasal dari data HPP Finance
 // (hppRowsForInvoicePerRoll) -- "Estimasi" = roll bahan belum ditutup.
@@ -92,12 +92,12 @@ export async function buildResiWorkbook(group: WarehouseReceivableGroup): Promis
   // ---------- Sheet 1: Rincian Item ----------
   const rin = wb.addWorksheet("Rincian Item", { views: [{ showGridLines: false }] });
   const RIN = "'Rincian Item'";
-  rin.columns = [{ width: 20 }, { width: 26 }, { width: 12 }, { width: 10 }, { width: 14 }, { width: 14 }, { width: 18 }, { width: 20 }, { width: 22 }, { width: 32 }];
-  rin.mergeCells(1, 1, 1, 9);
+  rin.columns = [{ width: 20 }, { width: 26 }, { width: 32 }, { width: 12 }, { width: 10 }, { width: 14 }, { width: 14 }, { width: 18 }, { width: 20 }, { width: 22 }];
+  rin.mergeCells(1, 1, 1, 10);
   rin.getCell(1, 1).value = `Penerimaan Warehouse — Resi ${noResi}`;
   rin.getCell(1, 1).font = { name: FONT, size: 15, bold: true, color: { argb: INK } };
   rin.getRow(1).height = 26;
-  rin.mergeCells(2, 1, 2, 9);
+  rin.mergeCells(2, 1, 2, 10);
   rin.getCell(2, 1).value = `Diunduh ${stamp} · HPP/item dari data HPP Finance; "Estimasi" = roll bahan belum ditutup, angkanya masih bisa berubah. Nilai HPP = Qty x HPP/item (rumus).`;
   rin.getCell(2, 1).font = { name: FONT, size: 9, italic: true, color: { argb: MUTED } };
   rin.getCell(2, 1).alignment = { wrapText: true, vertical: "top" };
@@ -137,6 +137,7 @@ export async function buildResiWorkbook(group: WarehouseReceivableGroup): Promis
   styleHeader(rin, HEAD_ROW, [
     { text: "No Koli", numeric: false },
     { text: "Warna", numeric: false },
+    { text: "Item (MOKA)", numeric: false },
     { text: "Lengan", numeric: false },
     { text: "Size", numeric: false },
     { text: "Jenis", numeric: false },
@@ -144,7 +145,6 @@ export async function buildResiWorkbook(group: WarehouseReceivableGroup): Promis
     { text: "HPP / item", numeric: true },
     { text: "Nilai HPP", numeric: true },
     { text: "Catatan", numeric: false },
-    { text: "Item (MOKA)", numeric: false },
   ]);
   let totalQty = 0;
   let totalNilai = 0;
@@ -158,46 +158,47 @@ export async function buildResiWorkbook(group: WarehouseReceivableGroup): Promis
     const vals: CellValue[] = [
       "Koli " + (it.noKoli ?? it.deliveryKoliId),
       it.warna,
+      itemMokaOf(it.warna, it.lengan, it.size),
       lenganLabel(it.lengan),
       it.size,
       jenisLabel(it.kind),
       it.qty,
       hpp,
-      nilai == null ? null : f(`F${r}*G${r}`, nilai),
+      nilai == null ? null : f(`G${r}*H${r}`, nilai),
       note,
-      itemMokaOf(it.warna, it.lengan, it.size),
     ];
     vals.forEach((v, c) => {
       rin.getCell(r, c + 1).value = toXlsx(v);
     });
-    styleBody(rin, r, i, [null, null, null, null, null, FMT_INT, FMT_RP, FMT_RP, null, null]);
+    styleBody(rin, r, i, [null, null, null, null, null, null, FMT_INT, FMT_RP, FMT_RP, null]);
     // Sel masukan (angka dari data) biru, sel rumus hitam -- konsisten dengan unduhan Laporan HPP.
-    for (const c of [6, 7]) rin.getCell(r, c).font = { name: FONT, size: 10, color: { argb: "FF1D4ED8" } };
-    if (it.sementara && hpp != null) rin.getCell(r, 9).font = { name: FONT, size: 10, bold: true, color: { argb: "FFB45309" } };
+    for (const c of [7, 8]) rin.getCell(r, c).font = { name: FONT, size: 10, color: { argb: "FF1D4ED8" } };
+    if (it.sementara && hpp != null) rin.getCell(r, 10).font = { name: FONT, size: 10, bold: true, color: { argb: "FFB45309" } };
   });
   const LAST = FIRST + items.length - 1;
   const TOTAL_ROW = LAST + 1;
-  const totalCells: CellValue[] = ["Total", null, null, null, null, items.length > 0 ? f(`SUM(F${FIRST}:F${LAST})`, totalQty) : 0, null, items.length > 0 ? f(`SUM(H${FIRST}:H${LAST})`, totalNilai) : 0, "", ""];
+  const totalCells: CellValue[] = ["Total", null, null, null, null, null, items.length > 0 ? f(`SUM(G${FIRST}:G${LAST})`, totalQty) : 0, null, items.length > 0 ? f(`SUM(I${FIRST}:I${LAST})`, totalNilai) : 0, ""];
   totalCells.forEach((v, c) => {
     rin.getCell(TOTAL_ROW, c + 1).value = toXlsx(v);
   });
-  styleBody(rin, TOTAL_ROW, 0, [null, null, null, null, null, FMT_INT, null, FMT_RP, null, null], true, TOTAL_BG);
+  styleBody(rin, TOTAL_ROW, 0, [null, null, null, null, null, null, FMT_INT, null, FMT_RP, null], true, TOTAL_BG);
   if (items.length > 0) rin.autoFilter = { from: { row: HEAD_ROW, column: 1 }, to: { row: LAST, column: 10 } };
   rin.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
 
   // ---------- Sheet 2: Ringkasan Item ----------
   const sum = wb.addWorksheet("Ringkasan Item", { views: [{ showGridLines: false }] });
-  sum.columns = [{ width: 26 }, { width: 12 }, { width: 10 }, { width: 16 }, { width: 14 }, { width: 14 }, { width: 16 }, { width: 20 }, { width: 22 }, { width: 32 }];
-  sum.mergeCells(1, 1, 1, 9);
+  sum.columns = [{ width: 26 }, { width: 32 }, { width: 12 }, { width: 10 }, { width: 16 }, { width: 14 }, { width: 14 }, { width: 16 }, { width: 20 }, { width: 22 }];
+  sum.mergeCells(1, 1, 1, 10);
   sum.getCell(1, 1).value = `Ringkasan per warna · lengan · size — Resi ${noResi}`;
   sum.getCell(1, 1).font = { name: FONT, size: 15, bold: true, color: { argb: INK } };
   sum.getRow(1).height = 26;
-  sum.mergeCells(2, 1, 2, 9);
+  sum.mergeCells(2, 1, 2, 10);
   sum.getCell(2, 1).value = "Dijumlahkan dari sheet Rincian Item lewat rumus SUMIFS. HPP/item rata-rata = Total HPP / (Finish Good + Rework); reject tidak punya HPP.";
   sum.getCell(2, 1).font = { name: FONT, size: 9, italic: true, color: { argb: MUTED } };
   sum.getRow(2).height = 18;
   styleHeader(sum, 4, [
     { text: "Warna", numeric: false },
+    { text: "Item (MOKA)", numeric: false },
     { text: "Lengan", numeric: false },
     { text: "Size", numeric: false },
     { text: "Finish Good", numeric: true },
@@ -206,7 +207,6 @@ export async function buildResiWorkbook(group: WarehouseReceivableGroup): Promis
     { text: "Total Qty", numeric: true },
     { text: "Total HPP", numeric: true },
     { text: "HPP / item rata-rata", numeric: true },
-    { text: "Item (MOKA)", numeric: false },
   ]);
   const groups = new Map<string, { warna: string; lengan: string; size: string; fg: number; rw: number; rj: number; nilai: number }>();
   for (const it of items) {
@@ -223,25 +223,25 @@ export async function buildResiWorkbook(group: WarehouseReceivableGroup): Promis
   const S_FIRST = 5;
   lines.forEach((g, i) => {
     const r = S_FIRST + i;
-    const crit = `${rng("B")},$A${r},${rng("C")},$B${r},${rng("D")},$C${r}`;
+    const crit = `${rng("B")},$A${r},${rng("D")},$C${r},${rng("E")},$D${r}`;
     const total = g.fg + g.rw + g.rj;
     const hppPcs = g.fg + g.rw > 0 ? g.nilai / (g.fg + g.rw) : 0;
     const vals: CellValue[] = [
       g.warna,
+      itemMokaOf(g.warna, g.lengan, g.size),
       lenganLabel(g.lengan),
       g.size,
-      f(`SUMIFS(${rng("F")},${crit},${rng("E")},"Finish Good")`, g.fg),
-      f(`SUMIFS(${rng("F")},${crit},${rng("E")},"Rework")`, g.rw),
-      f(`SUMIFS(${rng("F")},${crit},${rng("E")},"Reject")`, g.rj),
-      f(`SUM(D${r}:F${r})`, total),
-      f(`SUMIFS(${rng("H")},${crit})`, g.nilai),
-      f(`IFERROR(H${r}/(D${r}+E${r}),0)`, hppPcs),
-      itemMokaOf(g.warna, g.lengan, g.size),
+      f(`SUMIFS(${rng("G")},${crit},${rng("F")},"Finish Good")`, g.fg),
+      f(`SUMIFS(${rng("G")},${crit},${rng("F")},"Rework")`, g.rw),
+      f(`SUMIFS(${rng("G")},${crit},${rng("F")},"Reject")`, g.rj),
+      f(`SUM(E${r}:G${r})`, total),
+      f(`SUMIFS(${rng("I")},${crit})`, g.nilai),
+      f(`IFERROR(I${r}/(E${r}+F${r}),0)`, hppPcs),
     ];
     vals.forEach((v, c) => {
       sum.getCell(r, c + 1).value = toXlsx(v);
     });
-    styleBody(sum, r, i, [null, null, null, FMT_INT, FMT_INT, FMT_INT, FMT_INT, FMT_RP_DASH, FMT_RP_DASH, null]);
+    styleBody(sum, r, i, [null, null, null, null, FMT_INT, FMT_INT, FMT_INT, FMT_INT, FMT_RP_DASH, FMT_RP_DASH]);
   });
   if (lines.length > 0) {
     const S_LAST = S_FIRST + lines.length - 1;
@@ -254,18 +254,18 @@ export async function buildResiWorkbook(group: WarehouseReceivableGroup): Promis
       "Total",
       null,
       null,
-      f(`SUM(D${S_FIRST}:D${S_LAST})`, tFg),
-      f(`SUM(E${S_FIRST}:E${S_LAST})`, tRw),
-      f(`SUM(F${S_FIRST}:F${S_LAST})`, sumOf((g) => g.rj)),
-      f(`SUM(G${S_FIRST}:G${S_LAST})`, sumOf((g) => g.fg + g.rw + g.rj)),
-      f(`SUM(H${S_FIRST}:H${S_LAST})`, tNilai),
-      f(`IFERROR(H${T}/(D${T}+E${T}),0)`, tFg + tRw > 0 ? tNilai / (tFg + tRw) : 0),
-      "",
+      null,
+      f(`SUM(E${S_FIRST}:E${S_LAST})`, tFg),
+      f(`SUM(F${S_FIRST}:F${S_LAST})`, tRw),
+      f(`SUM(G${S_FIRST}:G${S_LAST})`, sumOf((g) => g.rj)),
+      f(`SUM(H${S_FIRST}:H${S_LAST})`, sumOf((g) => g.fg + g.rw + g.rj)),
+      f(`SUM(I${S_FIRST}:I${S_LAST})`, tNilai),
+      f(`IFERROR(I${T}/(E${T}+F${T}),0)`, tFg + tRw > 0 ? tNilai / (tFg + tRw) : 0),
     ];
     cells.forEach((v, c) => {
       sum.getCell(T, c + 1).value = toXlsx(v);
     });
-    styleBody(sum, T, 0, [null, null, null, FMT_INT, FMT_INT, FMT_INT, FMT_INT, FMT_RP, FMT_RP, null], true, TOTAL_BG);
+    styleBody(sum, T, 0, [null, null, null, null, FMT_INT, FMT_INT, FMT_INT, FMT_INT, FMT_RP, FMT_RP], true, TOTAL_BG);
     sum.autoFilter = { from: { row: 4, column: 1 }, to: { row: S_LAST, column: 10 } };
   }
   sum.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };

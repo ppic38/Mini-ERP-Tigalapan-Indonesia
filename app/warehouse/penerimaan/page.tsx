@@ -213,7 +213,6 @@ export default function WarehousePenerimaanPage() {
 
   const statusLabelOf = (g: WarehouseReceivableGroup) => {
     if (!g.gateReason) return "Siap dibongkar";
-    if (g.gateReason.startsWith("Menunggu Finance")) return "Menunggu Finance membayar invoice";
     if (g.gateReason === "Menunggu Procurement memvalidasi invoice ekspedisi resi ini") return "Menunggu Procurement memvalidasi ongkir";
     if (g.gateReason.startsWith("Belum ada invoice") || g.gateReason.startsWith("Sebagian item")) return "Belum ada invoice vendor";
     if (g.gateReason.includes("revisi")) return "Invoice dalam revisi";
@@ -263,7 +262,7 @@ export default function WarehousePenerimaanPage() {
   const totalNilaiReady = groups.filter((g) => !g.gateReason).reduce((s, g) => s + g.totalNilai, 0);
 
   // Tampilan tabel (owner 2026-11-09): No MRP (W39, W40, tanpa kategori), Jumlah Koli, Ekspedisi, No Resi (kolom pertama), Tanggal Kirim, Total Qty, Total HPP, dan Status
-  // = apakah resi sudah divalidasi Procurement (Invoice Ekspedisi), BUKAN lagi status pembayaran invoice vendor. Syarat Bongkar yang lama (pembayaran, revisi, dst.)
+  // = apakah resi sudah divalidasi Procurement (Invoice Ekspedisi), BUKAN lagi status pembayaran invoice vendor. Syarat Bongkar (invoice vendor ada dan tidak direvisi, ongkir tervalidasi)
   // tetap berlaku dan tampil di panel rincian baris serta kolom opsional "Syarat Bongkar".
   const ongkirLabelOf = (g: WarehouseReceivableGroup) => (g.ongkirValidasi === "VALIDATED" ? "Resi sudah divalidasi" : g.ongkirValidasi === "PENDING" ? "Menunggu validasi Procurement" : "Tanpa ongkir (internal)");
   const columns: ColumnDef<WarehouseReceivableGroup>[] = [
@@ -306,7 +305,7 @@ export default function WarehousePenerimaanPage() {
     { key: "noKoli", label: "No Koli", default: false, render: (g) => g.noKoli },
     { key: "invoice", label: "No Invoice Vendor", default: false, render: (g) => (g.invoiceIds.length > 0 ? g.invoiceIds.join(", ") : "—") },
     {
-      // Syarat Bongkar (gate lama): pembayaran invoice vendor, revisi, kelengkapan invoice, ditambah validasi ongkir. Tidak tampil bawaan.
+      // Syarat Bongkar: invoice vendor ada, tidak sedang direvisi, dan ongkir tervalidasi (pembayaran invoice bukan syarat lagi). Tidak tampil bawaan.
       key: "syaratBongkar",
       label: "Syarat Bongkar",
       default: false,
@@ -336,7 +335,7 @@ export default function WarehousePenerimaanPage() {
       title="Penerimaan"
     >
       <div className="grid grid-cols-3 gap-3.5">
-        <KpiCard label="Siap dibongkar" value={formatPcs(readyCount)} sub="invoice vendor dibayar dan ongkir tervalidasi" accent="success" />
+        <KpiCard label="Siap dibongkar" value={formatPcs(readyCount)} sub="invoice vendor ada dan ongkir tervalidasi" accent="success" />
         <KpiCard label="Menunggu invoice" value={formatPcs(waitingCount)} sub="resi belum lolos syarat" accent="orange" />
         <KpiCard label="Nilai siap dibongkar" value={formatRupiah(totalNilaiReady)} accent="blue" />
       </div>
@@ -359,7 +358,7 @@ export default function WarehousePenerimaanPage() {
         }}
         filterDefs={[
           { label: "Status", options: ["Resi sudah divalidasi", "Menunggu validasi Procurement", "Tanpa ongkir (internal)"].filter((o) => groups.some((g) => ongkirLabelOf(g) === o)), test: (g, v) => ongkirLabelOf(g) === v },
-          { label: "Syarat Bongkar", options: ["Siap dibongkar", "Menunggu Finance membayar invoice", "Menunggu Procurement memvalidasi ongkir", "Belum ada invoice vendor", "Invoice dalam revisi", "Lainnya"].filter((o) => groups.some((g) => statusLabelOf(g) === o)), test: (g, v) => statusLabelOf(g) === v },
+          { label: "Syarat Bongkar", options: ["Siap dibongkar", "Menunggu Procurement memvalidasi ongkir", "Belum ada invoice vendor", "Invoice dalam revisi", "Lainnya"].filter((o) => groups.some((g) => statusLabelOf(g) === o)), test: (g, v) => statusLabelOf(g) === v },
           { label: "Ekspedisi", options: uniqSorted(groups.map((g) => g.ekspedisi)), test: (g, v) => g.ekspedisi === v },
           { label: "Vendor Produksi", options: uniqSorted(groups.map(vendorName)), test: (g, v) => vendorName(g) === v },
           { label: "No MRP", options: uniqSorted(groups.flatMap((g) => g.mrpIds)).reverse(), test: (g, v) => g.mrpIds.includes(v) },
