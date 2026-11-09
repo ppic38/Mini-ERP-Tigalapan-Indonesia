@@ -3,12 +3,15 @@
 import { useEffect, useState } from "react";
 import { Download } from "lucide-react";
 import { exportResiExcel } from "@/lib/mrp/exportResiExcel";
+import { exportResiTemplateExcel, type ResiSheet, type ResiSheetRow } from "@/lib/mrp/exportResiTemplateExcel";
+import { ResiDownloadDialog } from "@/components/warehouse/resi-download-dialog";
+import { alertDialog } from "@/components/ui/confirm-dialog";
 import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Button } from "@/components/ui/button";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatDate, formatPcs, formatRupiah, warehouseReceivableGroups, type WarehouseReceivableGroup } from "@/lib/mrp/derive";
+import { formatDate, formatPcs, formatRupiah, localDateString, warehouseReceivableGroups, type WarehouseReceivableGroup } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 
 /** Panel item read-only + form "Bongkar Koli" -- TIDAK ADA input qty manual (Q5 final, konsisten
@@ -185,6 +188,8 @@ export default function WarehousePenerimaanPage() {
   const ekspedisiRates = useMrpStore((s) => s.ekspedisiRates);
   const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
   const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
+  const maklonPOs = useMrpStore((s) => s.maklonPOs);
+  const [downloadOpen, setDownloadOpen] = useState(false);
 
   if (!mounted) return null;
 
@@ -223,6 +228,34 @@ export default function WarehousePenerimaanPage() {
     const missing = billable.some((it) => it.hppPerItem <= 0);
     return { value: g.totalNilai, anyEstimasi: g.items.some((it) => it.sementara), missing, none: billable.every((it) => it.hppPerItem <= 0) };
   };
+
+  /** Excel pengiriman per resi (template owner 2026-11-09): satu sheet satu resi. Nama item dari Master SKU (tanpa itu "WARNA PDK/PJG SIZE"); NO PO = PO Produksi MRP + vendor resi itu. */
+  async function downloadResiSheets(selected: WarehouseReceivableGroup[]) {
+    try {
+      const nameByKey = new Map<string, string>();
+      for (const r of itemSellingPrices) {
+        const key = `${r.warna}|${r.lengan}|${r.size}`;
+        if (r.itemName && !nameByKey.has(key)) nameByKey.set(key, r.itemName);
+      }
+      const sheets: ResiSheet[] = selected.map((g) => {
+        const merged = new Map<string, ResiSheetRow>();
+        for (const it of g.items) {
+          const type = it.kind === "FG" ? "FINISH GOOD" : it.kind === "REWORK" ? "REWORK" : "REJECT";
+          const noKoli = it.noKoli ?? it.deliveryKoliId;
+          const itemName = nameByKey.get(`${it.warna}|${it.lengan}|${it.size}`) ?? `${it.warna} ${it.lengan === "PENDEK" ? "PDK" : "PJG"} ${it.size}`;
+          const key = [noKoli, itemName, type].join("|");
+          const cur = merged.get(key);
+          if (cur) cur.qty += it.qty;
+          else merged.set(key, { noKoli, itemName, qty: it.qty, type });
+        }
+        const noPo = maklonPOs.filter((p) => g.mrpIds.includes(p.mrpId) && p.vendorProduksi === g.vendorProduksi).map((p) => p.id).join(", ");
+        return { noResi: g.noResi ?? g.resiGroupId, noPo, deliveredAt: g.deliveredAt, rows: Array.from(merged.values()) };
+      });
+      await exportResiTemplateExcel(sheets, `Pengiriman-per-Resi-${localDateString(new Date())}.xlsx`);
+    } catch (e) {
+      await alertDialog({ title: "Gagal membuat Excel", message: e instanceof Error ? e.message : "Terjadi kesalahan saat membuat file Excel.", tone: "danger" });
+    }
+  }
 
   const readyCount = groups.filter((g) => !g.gateReason).length;
   const waitingCount = groups.length - readyCount;
@@ -310,6 +343,11 @@ export default function WarehousePenerimaanPage() {
       <DataTable
         title="Batch Pengiriman (Resi)"
         subtitle="Klik baris untuk lihat rincian item & tombol Bongkar"
+        headerActions={
+          <Button onClick={() => setDownloadOpen(true)} variant="ghost" size="md" disabled={groups.length === 0} title="Excel pengiriman: satu sheet per resi, pilih resi yang diunduh">
+            Download Excel
+          </Button>
+        }
         nowrap
         columns={columns}
         rows={groups}
@@ -332,6 +370,7 @@ export default function WarehousePenerimaanPage() {
         renderExpanded={(g) => <ReceivableGroupPanel group={g} />}
         emptyText="Belum ada koli yang siap/menunggu diterima."
       />
+      {downloadOpen && <ResiDownloadDialog groups={groups} vendorName={vendorName} onDownload={downloadResiSheets} onClose={() => setDownloadOpen(false)} />}
     </AppShell>
   );
 }
