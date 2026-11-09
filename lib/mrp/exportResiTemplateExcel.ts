@@ -4,7 +4,8 @@ import { LT_TIBA_DEFAULT } from "./itemEstimates";
 
 // Excel pengiriman per resi untuk Warehouse (owner 2026-11-09), mengikuti template "BY38 MLS": SATU sheet = SATU resi. Blok kiri atas: NO PO, Start (tanggal kirim), End,
 // total qty (merah, SUBTOTAL jadi ikut filter) dan legenda warna Produksi / Warehouse. Tabel: NO KOLI, ITEM NAME (nama dari Master SKU), QTY, Type, Tgl Kirim, AWB (= no resi),
-// ETA (= Tgl Kirim + 7 hari, rumus), lalu Item (MOKA) (nama item format MOKA "WARNA PDK/PJG SIZE"). Satu baris per koli x item x jenis (qty dari beberapa roll sudah dijumlahkan), header ber-filter.
+// ETA (= Tgl Kirim + 7 hari, rumus), lalu Item (MOKA) (nama item format MOKA "WARNA PDK/PJG SIZE"), HPP / item, Nilai HPP (= QTY x HPP/item, rumus), dan Catatan ("Estimasi"
+// kalau HPP belum final). Total HPP resi ada di atas kolom Nilai HPP (SUBTOTAL, ikut filter). Satu baris per koli x item x jenis (qty dari beberapa roll dijumlahkan), header ber-filter.
 
 const FONT = "Calibri";
 const TEAL = "FF45B5C4";
@@ -15,10 +16,21 @@ const thin = { style: "thin" as const, color: { argb: "FF8FA3AD" } };
 const BORDER = { top: thin, left: thin, bottom: thin, right: thin };
 const FMT_DATE = "d-mmm";
 const FMT_INT = "#,##0";
+const FMT_RP = '"Rp" #,##0';
 export const ETA_HARI = LT_TIBA_DEFAULT; // owner: ETA = tanggal kirim + 7
 
 /** `itemMoka` = nama item format MOKA: "WARNA PDK/PJG SIZE" (mis. "BURGUNDY 24S PJG 2XL"), tanpa nama Master SKU. */
-export type ResiSheetRow = { noKoli: string; itemName: string; itemMoka: string; qty: number; type: "FINISH GOOD" | "REWORK" | "REJECT" };
+export type ResiSheetRow = {
+  noKoli: string;
+  itemName: string;
+  itemMoka: string;
+  qty: number;
+  type: "FINISH GOOD" | "REWORK" | "REJECT";
+  /** HPP per pcs (Rp) dari mesin HPP yang sama dengan Laporan HPP; null = belum ada atau reject (tanpa HPP). */
+  hppPerItem: number | null;
+  /** HPP masih estimasi (roll bahan belum ditutup atau invoice vendor belum ada). */
+  estimasi?: boolean;
+};
 export type ResiSheet = {
   noResi: string;
   /** Nomor PO Produksi (maklon) MRP + vendor resi ini; kosong = "-". */
@@ -60,7 +72,7 @@ export async function buildResiTemplateWorkbook(sheets: ResiSheet[]): Promise<Wo
 
   for (const s of sheets) {
     const ws = wb.addWorksheet(sheetName(s.noResi, used), { views: [{ state: "frozen", ySplit: 4, showGridLines: true }] });
-    ws.columns = [{ width: 9 }, { width: 40 }, { width: 9 }, { width: 18 }, { width: 11 }, { width: 14 }, { width: 11 }, { width: 34 }];
+    ws.columns = [{ width: 9 }, { width: 40 }, { width: 9 }, { width: 18 }, { width: 11 }, { width: 14 }, { width: 11 }, { width: 34 }, { width: 14 }, { width: 16 }, { width: 22 }];
     const rows = sortResiRows(s.rows);
     const FIRST = 5;
     const LAST = FIRST + Math.max(rows.length, 1) - 1;
@@ -96,8 +108,18 @@ export async function buildResiTemplateWorkbook(sheets: ResiSheet[]): Promise<Wo
     ws.getCell(1, 4).value = "Produksi";
     ws.getCell(2, 4).value = "Warehouse";
     for (const r of [1, 2]) ws.getCell(r, 4).font = { name: FONT, size: 11, bold: true, color: { argb: INK } };
+    // total HPP resi (mengikuti filter), di atas kolom Nilai HPP
+    const totalHpp = rows.reduce((a, r) => a + (r.hppPerItem != null ? r.qty * r.hppPerItem : 0), 0);
+    ws.getCell(3, 9).value = "Total HPP :";
+    ws.getCell(3, 9).font = { name: FONT, size: 11, bold: true, color: { argb: INK } };
+    ws.getCell(3, 9).alignment = { horizontal: "right" };
+    const th = ws.getCell(3, 10);
+    th.value = { formula: `SUBTOTAL(9,J${FIRST}:J${LAST})`, result: totalHpp };
+    th.numFmt = FMT_RP;
+    th.font = { name: FONT, size: 11, bold: true, color: { argb: INK } };
+    th.alignment = { horizontal: "right" };
 
-    const heads = ["NO KOLI", "ITEM NAME", "QTY", "Type", "Tgl Kirim", "AWB", "ETA", "Item (MOKA)"];
+    const heads = ["NO KOLI", "ITEM NAME", "QTY", "Type", "Tgl Kirim", "AWB", "ETA", "Item (MOKA)", "HPP / item", "Nilai HPP", "Catatan"];
     heads.forEach((h, i) => {
       const c = ws.getCell(4, i + 1);
       c.value = h;
@@ -110,7 +132,7 @@ export async function buildResiTemplateWorkbook(sheets: ResiSheet[]): Promise<Wo
 
     const awb = asNumberIfDigits(s.noResi);
     if (rows.length === 0) {
-      ws.mergeCells(FIRST, 1, FIRST, 8);
+      ws.mergeCells(FIRST, 1, FIRST, 11);
       ws.getCell(FIRST, 1).value = "Resi ini belum berisi item.";
       ws.getCell(FIRST, 1).font = { name: FONT, size: 10, italic: true, color: { argb: "FF6B7280" } };
     }
@@ -125,18 +147,22 @@ export async function buildResiTemplateWorkbook(sheets: ResiSheet[]): Promise<Wo
         awb,
         { formula: `IF(E${n}="","",E${n}+${ETA_HARI})`, result: kirim ? serialOf(kirim) + ETA_HARI : "" },
         r.itemMoka,
+        r.hppPerItem,
+        r.hppPerItem != null ? { formula: `C${n}*I${n}`, result: r.qty * r.hppPerItem } : null,
+        r.type === "REJECT" ? "Reject (tanpa HPP)" : r.hppPerItem == null ? "HPP belum tersedia" : r.estimasi ? "Estimasi" : "",
       ];
       vals.forEach((v, c) => {
         const cell = ws.getCell(n, c + 1);
         cell.value = v as never;
-        cell.font = { name: FONT, size: 11, italic: c === 4 || c === 6, color: { argb: INK } };
+        cell.font = { name: FONT, size: 11, italic: c === 4 || c === 6, bold: c === 10 && !!r.estimasi, color: { argb: c === 10 && r.estimasi ? "FFB45309" : c === 8 ? "FF1D4ED8" : INK } };
         cell.border = BORDER;
-        cell.alignment = { vertical: "middle", horizontal: c === 1 || c === 3 || c === 7 ? "left" : c === 0 || c === 2 || c === 5 ? "right" : "center" };
+        cell.alignment = { vertical: "middle", horizontal: c === 1 || c === 3 || c === 7 || c === 10 ? "left" : c === 0 || c === 2 || c === 5 || c === 8 || c === 9 ? "right" : "center" };
         if (c === 2) cell.numFmt = FMT_INT;
         if (c === 4 || c === 6) cell.numFmt = FMT_DATE;
+        if (c === 8 || c === 9) cell.numFmt = FMT_RP;
       });
     });
-    if (rows.length > 0) ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: LAST, column: 8 } };
+    if (rows.length > 0) ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: LAST, column: 11 } };
     ws.pageSetup = { orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
   }
   return wb;

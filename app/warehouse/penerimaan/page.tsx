@@ -238,6 +238,8 @@ export default function WarehousePenerimaanPage() {
       }
       const sheets: ResiSheet[] = selected.map((g) => {
         const merged = new Map<string, ResiSheetRow>();
+        // HPP per item = rata-rata tertimbang qty kalau item yang sama berasal dari beberapa roll; reject tidak punya HPP.
+        const hppAcc = new Map<string, { nilai: number; qty: number; estimasi: boolean }>();
         for (const it of g.items) {
           const type = it.kind === "FG" ? "FINISH GOOD" : it.kind === "REWORK" ? "REWORK" : "REJECT";
           const noKoli = it.noKoli ?? it.deliveryKoliId;
@@ -246,7 +248,21 @@ export default function WarehousePenerimaanPage() {
           const key = [noKoli, itemName, type].join("|");
           const cur = merged.get(key);
           if (cur) cur.qty += it.qty;
-          else merged.set(key, { noKoli, itemName, itemMoka, qty: it.qty, type });
+          else merged.set(key, { noKoli, itemName, itemMoka, qty: it.qty, type, hppPerItem: null });
+          if (it.kind !== "REJECT" && it.hppPerItem > 0) {
+            const a = hppAcc.get(key) ?? { nilai: 0, qty: 0, estimasi: false };
+            a.nilai += it.qty * it.hppPerItem;
+            a.qty += it.qty;
+            a.estimasi = a.estimasi || !!it.sementara;
+            hppAcc.set(key, a);
+          }
+        }
+        for (const [key, row] of merged) {
+          const a = hppAcc.get(key);
+          if (a && a.qty > 0) {
+            row.hppPerItem = a.nilai / a.qty;
+            row.estimasi = a.estimasi;
+          }
         }
         const noPo = maklonPOs.filter((p) => g.mrpIds.includes(p.mrpId) && p.vendorProduksi === g.vendorProduksi).map((p) => p.id).join(", ");
         return { noResi: g.noResi ?? g.resiGroupId, noPo, deliveredAt: g.deliveredAt, rows: Array.from(merged.values()) };
