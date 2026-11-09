@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { alertDialog } from "@/components/ui/confirm-dialog";
-import { exportHppTambahanExcel, hppTambahanLines, BIAYA_TAMBAHAN } from "@/lib/mrp/exportHppTambahanExcel";
+import { exportHppTambahanExcel, hppTambahanLines, BIAYA_TAMBAHAN, BIAYA_TAMBAHAN_AWAL } from "@/lib/mrp/exportHppTambahanExcel";
 import type { HppReportRow } from "@/lib/mrp/hppReport";
 import { localDateString } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -117,7 +117,7 @@ export function HppTambahanDialog({ rows, onClose }: { rows: HppReportRow[]; onC
             </div>
           </div>
           <p className="mt-2 font-sans text-[10.5px] text-text-muted">
-            Satu file, satu sheet per PO. Isi biaya tambahan per pcs ({BIAYA_TAMBAHAN.join(", ")}) di kotak biru tiap sheet; HPP baru per pcs = HPP sistem + biaya tambahan, dihitung otomatis. Hanya barang yang sudah dikirim.
+            Satu file, satu sheet per PO. Biaya tambahan per pcs: {BIAYA_TAMBAHAN.map((n, i) => `${n} Rp ${BIAYA_TAMBAHAN_AWAL[i]}`).join(", ")} (nilai awal, bisa diubah di kotak biru tiap sheet); HPP baru per pcs = HPP sistem + biaya tambahan, dihitung otomatis. Hanya barang yang sudah dikirim.
           </p>
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-[#EEF1F4] px-5 py-3">

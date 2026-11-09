@@ -1,12 +1,15 @@
 import type { Workbook, Worksheet } from "exceljs";
 import type { HppReportRow } from "./hppReport";
 
-// Template HPP + biaya tambahan (owner 2026-11-09), terutama untuk barang yang dikirim Konveksi Makassar: biaya yang tidak ada di mesin HPP (benang, label size,
-// label merek, hangtag, kemasan, dll.) diisi di Excel dan otomatis ditambahkan ke HPP yang SUDAH dihitung sistem. Satu file, satu sheet per PO (No MRP), dengan
+// Template HPP + biaya tambahan (owner 2026-11-09), terutama untuk barang yang dikirim Konveksi Makassar: biaya yang tidak ada di mesin HPP (label size, label combed,
+// benang) diisi di Excel dan otomatis ditambahkan ke HPP yang SUDAH dihitung sistem. Nilai awal per pcs = angka di file HPP MKS 26 FINAL (Rp 19, Rp 27, Rp 133). Satu file, satu sheet per PO (No MRP), dengan
 // blok isian biaya tambahan per pcs di atas (nilai itu dipakai semua baris) dan tabel per resi x item; tiap baris bisa menimpa nilai biayanya sendiri.
 // Sel BIRU = masukan (data sistem dan isian), sel HITAM = rumus. HPP baru/pcs = HPP sistem/pcs + total tambahan/pcs.
 
-export const BIAYA_TAMBAHAN = ["Benang", "Label Size", "Label Merek", "Hangtag", "Plastik / Kemasan", "Lainnya"] as const;
+export const BIAYA_TAMBAHAN = ["Label Size", "Label Combed", "Benang"] as const;
+/** Nilai awal per pcs (Rp), searah dengan BIAYA_TAMBAHAN; hanya harga per pcs, bisa diubah di Excel. */
+export const BIAYA_TAMBAHAN_AWAL = [19, 27, 133] as const;
+const TAMBAHAN_AWAL_TOTAL = BIAYA_TAMBAHAN_AWAL.reduce((s, v) => s + v, 0);
 
 const INK = "FF1A1A1F";
 const INPUT_INK = "FF1D4ED8";
@@ -111,7 +114,7 @@ type SheetTotals = { sheet: string; mrpId: string; totalRow: number };
 
 function poSheet(wb: Workbook, name: string, mrpId: string, vendor: string, lines: HppTambahanLine[], stamp: string): SheetTotals {
   const ws: Worksheet = wb.addWorksheet(name, { views: [{ showGridLines: false }] });
-  const COLS = 19; // A..S
+  const COLS = 10 + BIAYA_TAMBAHAN.length + 3; // A..J tetap, kolom biaya, lalu Tambahan/pcs, HPP baru/pcs, Nilai HPP baru
   ws.columns = [
     { width: 24 }, // A status / label isian
     { width: 14 }, // B no resi / nilai isian
@@ -123,15 +126,10 @@ function poSheet(wb: Workbook, name: string, mrpId: string, vendor: string, line
     { width: 10 }, // H qty
     { width: 14 }, // I hpp sistem/pcs
     { width: 16 }, // J nilai hpp sistem
-    { width: 11 }, // K..P biaya
-    { width: 11 },
-    { width: 12 },
-    { width: 10 },
-    { width: 12 },
-    { width: 10 },
-    { width: 14 }, // Q tambahan/pcs
-    { width: 14 }, // R hpp baru/pcs
-    { width: 17 }, // S nilai hpp baru
+    ...BIAYA_TAMBAHAN.map(() => ({ width: 13 })), // kolom biaya tambahan
+    { width: 14 }, // tambahan/pcs
+    { width: 14 }, // hpp baru/pcs
+    { width: 17 }, // nilai hpp baru
   ];
   ws.mergeCells(1, 1, 1, COLS);
   ws.getCell(1, 1).value = `Template HPP + Biaya Tambahan — ${vendor} — PO ${mrpId}`;
@@ -163,7 +161,7 @@ function poSheet(wb: Workbook, name: string, mrpId: string, vendor: string, line
     l.fill = { type: "pattern", pattern: "solid", fgColor: { argb: SOFT } };
     l.border = BORDER;
     const v = ws.getCell(r, 2);
-    v.value = 0;
+    v.value = BIAYA_TAMBAHAN_AWAL[i];
     v.numFmt = FMT_RP2;
     v.font = { name: FONT, size: 10, color: { argb: INPUT_INK } };
     v.border = BORDER;
@@ -172,7 +170,7 @@ function poSheet(wb: Workbook, name: string, mrpId: string, vendor: string, line
   const IN_LAST = IN_FIRST + BIAYA_TAMBAHAN.length - 1;
   const IN_TOTAL = IN_LAST + 1;
   ws.getCell(IN_TOTAL, 1).value = "Total tambahan / pcs";
-  ws.getCell(IN_TOTAL, 2).value = { formula: `SUM(B${IN_FIRST}:B${IN_LAST})`, result: 0 };
+  ws.getCell(IN_TOTAL, 2).value = { formula: `SUM(B${IN_FIRST}:B${IN_LAST})`, result: TAMBAHAN_AWAL_TOTAL };
   ws.getCell(IN_TOTAL, 2).numFmt = FMT_RP2;
   for (const c of [1, 2]) {
     const cell = ws.getCell(IN_TOTAL, c);
@@ -236,10 +234,10 @@ function poSheet(wb: Workbook, name: string, mrpId: string, vendor: string, line
     put(8, l.qty, FMT_INT, true);
     put(9, l.hppPcs, FMT_RP2, true);
     put(10, { formula: `H${r}*I${r}`, result: l.qty * l.hppPcs }, FMT_RP);
-    BIAYA_TAMBAHAN.forEach((_, j) => put(K + j, { formula: `$B$${IN_FIRST + j}`, result: 0 }, FMT_RP2));
-    put(colTambah, { formula: `SUM(${colLetter(K)}${r}:${colLetter(K + nExtra - 1)}${r})`, result: 0 }, FMT_RP2);
-    put(colBaru, { formula: `I${r}+${colLetter(colTambah)}${r}`, result: l.hppPcs }, FMT_RP2, false, true);
-    put(colNilaiBaru, { formula: `H${r}*${colLetter(colBaru)}${r}`, result: l.qty * l.hppPcs }, FMT_RP, false, true);
+    BIAYA_TAMBAHAN.forEach((_, j) => put(K + j, { formula: `$B$${IN_FIRST + j}`, result: BIAYA_TAMBAHAN_AWAL[j] }, FMT_RP2));
+    put(colTambah, { formula: `SUM(${colLetter(K)}${r}:${colLetter(K + nExtra - 1)}${r})`, result: TAMBAHAN_AWAL_TOTAL }, FMT_RP2);
+    put(colBaru, { formula: `I${r}+${colLetter(colTambah)}${r}`, result: l.hppPcs + TAMBAHAN_AWAL_TOTAL }, FMT_RP2, false, true);
+    put(colNilaiBaru, { formula: `H${r}*${colLetter(colBaru)}${r}`, result: l.qty * (l.hppPcs + TAMBAHAN_AWAL_TOTAL) }, FMT_RP, false, true);
     ws.getRow(r).height = 17;
   });
 
@@ -261,10 +259,10 @@ function poSheet(wb: Workbook, name: string, mrpId: string, vendor: string, line
     const sub = (c: number, result: number, fmt: string) => tot(c, { formula: `SUBTOTAL(9,${colLetter(c)}${FIRST}:${colLetter(c)}${LAST})`, result }, fmt);
     sub(8, totalQty, FMT_INT);
     sub(10, totalSistem, FMT_RP);
-    sub(colNilaiBaru, totalSistem, FMT_RP);
+    sub(colNilaiBaru, totalSistem + totalQty * TAMBAHAN_AWAL_TOTAL, FMT_RP);
     tot(9, { formula: `IFERROR(J${TOTAL_ROW}/H${TOTAL_ROW},0)`, result: totalQty > 0 ? totalSistem / totalQty : 0 }, FMT_RP2);
-    tot(colBaru, { formula: `IFERROR(${colLetter(colNilaiBaru)}${TOTAL_ROW}/H${TOTAL_ROW},0)`, result: totalQty > 0 ? totalSistem / totalQty : 0 }, FMT_RP2);
-    tot(colTambah, { formula: `${colLetter(colBaru)}${TOTAL_ROW}-I${TOTAL_ROW}`, result: 0 }, FMT_RP2);
+    tot(colBaru, { formula: `IFERROR(${colLetter(colNilaiBaru)}${TOTAL_ROW}/H${TOTAL_ROW},0)`, result: totalQty > 0 ? totalSistem / totalQty + TAMBAHAN_AWAL_TOTAL : 0 }, FMT_RP2);
+    tot(colTambah, { formula: `${colLetter(colBaru)}${TOTAL_ROW}-I${TOTAL_ROW}`, result: TAMBAHAN_AWAL_TOTAL }, FMT_RP2);
     ws.autoFilter = { from: { row: HEAD, column: 1 }, to: { row: LAST, column: COLS } };
   } else {
     ws.getCell(FIRST, 1).value = "Belum ada barang terkirim dengan data HPP untuk PO ini.";
@@ -319,10 +317,10 @@ export async function buildHppTambahanWorkbook(input: HppTambahanInput): Promise
       { v: t.mrpId },
       { v: { formula: q, result: qty }, fmt: FMT_INT },
       { v: { formula: `'${t.sheet}'!J${t.totalRow}`, result: nilai }, fmt: FMT_RP },
-      { v: { formula: `'${t.sheet}'!S${t.totalRow}`, result: nilai }, fmt: FMT_RP },
+      { v: { formula: `'${t.sheet}'!${colLetter(10 + BIAYA_TAMBAHAN.length + 3)}${t.totalRow}`, result: nilai + qty * TAMBAHAN_AWAL_TOTAL }, fmt: FMT_RP },
       { v: { formula: `IFERROR(C${r}/B${r},0)`, result: qty > 0 ? nilai / qty : 0 }, fmt: FMT_RP2 },
-      { v: { formula: `IFERROR(D${r}/B${r},0)`, result: qty > 0 ? nilai / qty : 0 }, fmt: FMT_RP2 },
-      { v: { formula: `F${r}-E${r}`, result: 0 }, fmt: FMT_RP2 },
+      { v: { formula: `IFERROR(D${r}/B${r},0)`, result: qty > 0 ? nilai / qty + TAMBAHAN_AWAL_TOTAL : 0 }, fmt: FMT_RP2 },
+      { v: { formula: `F${r}-E${r}`, result: TAMBAHAN_AWAL_TOTAL }, fmt: FMT_RP2 },
     ];
     cells.forEach((c, j) => {
       const cell = sum.getCell(r, j + 1);
@@ -345,10 +343,10 @@ export async function buildHppTambahanWorkbook(input: HppTambahanInput): Promise
       { v: "TOTAL" },
       { v: { formula: `SUM(B${first}:B${last})`, result: allQty }, fmt: FMT_INT },
       { v: { formula: `SUM(C${first}:C${last})`, result: allNilai }, fmt: FMT_RP },
-      { v: { formula: `SUM(D${first}:D${last})`, result: allNilai }, fmt: FMT_RP },
+      { v: { formula: `SUM(D${first}:D${last})`, result: allNilai + allQty * TAMBAHAN_AWAL_TOTAL }, fmt: FMT_RP },
       { v: { formula: `IFERROR(C${T}/B${T},0)`, result: allQty > 0 ? allNilai / allQty : 0 }, fmt: FMT_RP2 },
-      { v: { formula: `IFERROR(D${T}/B${T},0)`, result: allQty > 0 ? allNilai / allQty : 0 }, fmt: FMT_RP2 },
-      { v: { formula: `F${T}-E${T}`, result: 0 }, fmt: FMT_RP2 },
+      { v: { formula: `IFERROR(D${T}/B${T},0)`, result: allQty > 0 ? allNilai / allQty + TAMBAHAN_AWAL_TOTAL : 0 }, fmt: FMT_RP2 },
+      { v: { formula: `F${T}-E${T}`, result: TAMBAHAN_AWAL_TOTAL }, fmt: FMT_RP2 },
     ];
     cells.forEach((c, j) => {
       const cell = sum.getCell(T, j + 1);
