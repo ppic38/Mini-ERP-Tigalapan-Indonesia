@@ -460,7 +460,7 @@ export function ItemTrackingView() {
     if (dateFrom || dateTo) parts.push(`tanggal kirim ${dateFrom ? formatDate(dateFrom) : "…"} s/d ${dateTo ? formatDate(dateTo) : "…"}`);
     try {
       await exportTrackingExcel(
-        { rows, filterLabel: parts.length > 0 ? "Filter: " + parts.join(" · ") : undefined, batches: productionBatches, results: productionResults, kolis: deliveryKolis, invoices },
+        { rows, filterLabel: parts.length > 0 ? "Filter: " + parts.join(" · ") : undefined, batches: productionBatches, results: productionResults, kolis: deliveryKolis, invoices, aduans: mrpDetails.flatMap((d) => d.aduanRows) },
         `WIP-Tracking-Item-${today}.xlsx`
       );
     } catch (e) {
