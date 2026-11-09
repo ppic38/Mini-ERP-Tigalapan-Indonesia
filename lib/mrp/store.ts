@@ -1203,7 +1203,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       }),
     });
     try {
-      await actions.markRollArrivedAction(invoiceId, warna, lengan, rollIndex, codeRoll, codeLot);
+      unwrapAction(await actions.markRollArrivedAction(invoiceId, warna, lengan, rollIndex, codeRoll, codeLot));
     } catch (err) {
       set({ invoices: previous });
       notifyError("Gagal menandai roll diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
@@ -1233,7 +1233,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       }),
     });
     try {
-      await actions.receiveMaterialBatchAction(invoiceId, warna, lengan, rolls, addBuyIds);
+      unwrapAction(await actions.receiveMaterialBatchAction(invoiceId, warna, lengan, rolls, addBuyIds));
     } catch (err) {
       set({ invoices: previous });
       notifyError("Gagal menandai material diterima -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));

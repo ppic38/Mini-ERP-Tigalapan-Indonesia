@@ -1873,7 +1873,13 @@ export async function setInvoicesDeliveryAction(invoiceIds: string[], deliveryDa
 /** Tandai 1 roll FISIK DITERIMA di Good Receive — TIDAK menimbang (lihat
  *  receiveRawMaterialRollAction untuk itu, sekarang dipanggil dari halaman Cutting). Ini yang
  *  memindahkan status invoice DELIVERY → RECEIVING (dulu dipicu oleh penimbangan roll pertama). */
-export async function markRollArrivedAction(invoiceId: string, warna: string, lengan: Lengan, rollIndex: number, codeRoll?: string, codeLot?: string): Promise<void> {
+export async function markRollArrivedAction(invoiceId: string, warna: string, lengan: Lengan, rollIndex: number, codeRoll?: string, codeLot?: string): Promise<ActionResult<void>> {
+  // Dibungkus supaya alasan penolakan (mis. code roll sudah dipakai invoice lain) sampai ke vendor di production;
+  // tanpa ini Next hanya mengirim "Minified React error #441" (pesan error server disembunyikan).
+  return toActionResultKeepAuth(() => markRollArrivedImpl(invoiceId, warna, lengan, rollIndex, codeRoll, codeLot));
+}
+
+async function markRollArrivedImpl(invoiceId: string, warna: string, lengan: Lengan, rollIndex: number, codeRoll?: string, codeLot?: string): Promise<void> {
   const actor = await requireVendorSessionWithActor();
   const db = supabaseServer();
   await assertInvoiceOwnedByVendor(db, invoiceId, actor.vendorId);
@@ -1915,6 +1921,17 @@ export async function markRollArrivedAction(invoiceId: string, warna: string, le
  *  berurutan (N tulisan + N refresh = sumber flicker & lambat). Semantik per roll/add buy SAMA persis
  *  dengan kedua action tunggal itu (code_lot cuma diisi kalau masih kosong, lihat fillEmptyCodeLot). */
 export async function receiveMaterialBatchAction(
+  invoiceId: string,
+  warna: string,
+  lengan: Lengan,
+  rolls: { rollIndex: number; codeRoll?: string; codeLot?: string }[],
+  addBuyIds: string[]
+): Promise<ActionResult<void>> {
+  // Lihat catatan di markRollArrivedAction: pesan penolakan harus sampai ke vendor, bukan "error #441".
+  return toActionResultKeepAuth(() => receiveMaterialBatchImpl(invoiceId, warna, lengan, rolls, addBuyIds));
+}
+
+async function receiveMaterialBatchImpl(
   invoiceId: string,
   warna: string,
   lengan: Lengan,
