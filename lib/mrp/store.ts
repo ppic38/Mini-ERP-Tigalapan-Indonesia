@@ -440,7 +440,17 @@ type FlowActions = {
   /** Simpan (validasi) + unggah nota (+ ajukan kalau `submit`) dalam SATU alur dengan satu ambil-ulang data di akhir. `files` = nota yang dipilih (menggantikan nota lama).
    *  Mengembalikan `extraError` kalau biaya sudah tersimpan tetapi file nota ke-2 dan seterusnya (atau pengajuannya) gagal. */
   saveEkspedisiInvoice: (
-    input: { key: string; keys?: string[]; noResi: string; biaya: number; noNota?: string; catatan?: string; submit?: boolean },
+    input: {
+      key: string;
+      keys?: string[];
+      noResi: string;
+      /** Biaya pengiriman PERTAMA; kalau ada `operan`, total tersimpan = biaya ini + biaya semua operan. */
+      biaya: number;
+      operan?: { noResi: string; ekspedisi?: string; biaya: number; noNota?: string }[];
+      noNota?: string;
+      catatan?: string;
+      submit?: boolean;
+    },
     files?: { dataUrl: string; fileName: string }[]
   ) => Promise<{ extraError?: string }>;
   submitEkspedisiInvoice: (key: string) => Promise<void>;
@@ -1700,6 +1710,8 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     // Baris bisa menggabungkan beberapa grup resi vendor bernomor sama (`keys`); semua koli-nya mendapat invoice yang sama dengan groupKey = kunci utama.
     const keySet = new Set(input.keys && input.keys.length > 0 ? input.keys : [input.key]);
     const merging = keySet.size > 1;
+    const operan = (input.operan ?? []).map((o) => ({ noResi: o.noResi.trim(), ekspedisi: o.ekspedisi?.trim() || undefined, biaya: Math.round(o.biaya), noNota: o.noNota?.trim() || undefined }));
+    const biayaUtama = Math.round(input.biaya);
     set({
       deliveryKolis: previous.map((k) =>
         keySet.has(k.resiGroupId ?? k.id) || k.ekspedisiInvoice?.groupKey === input.key
@@ -1712,7 +1724,9 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
                 status: submitInFirst ? "SUBMITTED" : "DRAFT",
                 noResi: input.noResi.trim(),
                 noResiAsli: k.ekspedisiInvoice?.noResiAsli ?? (k.noResi && k.noResi !== input.noResi.trim() ? k.noResi : undefined),
-                biaya: Math.round(input.biaya),
+                biaya: biayaUtama + operan.reduce((s, o) => s + o.biaya, 0),
+                biayaUtama: operan.length > 0 ? biayaUtama : undefined,
+                operan: operan.length > 0 ? operan : undefined,
                 noNota: input.noNota?.trim() || undefined,
                 catatan: input.catatan?.trim() || undefined,
                 notaCount: files.length > 0 ? files.length : k.ekspedisiInvoice?.notaCount,

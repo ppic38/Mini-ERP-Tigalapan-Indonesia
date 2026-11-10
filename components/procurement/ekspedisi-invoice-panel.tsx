@@ -40,34 +40,63 @@ function diffText(biaya: number, estimasi: number): { text: string; tone: string
   };
 }
 
+/** Satu baris isian pengiriman operan di dialog Validasi (biaya disimpan sebagai teks angka seperti kolom biaya utama). */
+type OperanDraft = { noResi: string; ekspedisi: string; biayaText: string; noNota: string };
+const digitsOnly = (s: string) => s.replace(/[^0-9]/g, "");
+const MAX_OPERAN = 5;
+
 function EkspedisiInvoiceModal({ group, onClose }: { group: EkspedisiResiGroup; onClose: () => void }) {
   const saveEkspedisiInvoice = useMrpStore((s) => s.saveEkspedisiInvoice);
+  const ekspedisiRates = useMrpStore((s) => s.ekspedisiRates);
   const inv = group.invoice;
   const [noResi, setNoResi] = useState(inv?.noResi ?? group.noResi);
   const [noNota, setNoNota] = useState(inv?.noNota ?? "");
-  const [biayaText, setBiayaText] = useState(inv ? String(Math.round(inv.biaya)) : "");
+  // Kalau invoice punya pengiriman operan, kolom biaya ini hanya pengiriman PERTAMA (`biayaUtama`); total ada di inv.biaya.
+  const [biayaText, setBiayaText] = useState(inv ? String(Math.round(inv.biayaUtama ?? inv.biaya)) : "");
+  const [operan, setOperan] = useState<OperanDraft[]>(
+    (inv?.operan ?? []).map((o) => ({ noResi: o.noResi, ekspedisi: o.ekspedisi ?? "", biayaText: String(Math.round(o.biaya)), noNota: o.noNota ?? "" }))
+  );
   const [catatan, setCatatan] = useState(inv?.catatan ?? "");
   const [files, setFiles] = useState<AttachFile[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const biaya = Number(biayaText.replace(/[^0-9]/g, "")) || 0;
+  const biayaUtama = Number(digitsOnly(biayaText)) || 0;
+  const operanTotal = operan.reduce((s, o) => s + (Number(digitsOnly(o.biayaText)) || 0), 0);
+  const biaya = biayaUtama + operanTotal; // TOTAL ongkir resi ini (pengiriman pertama + semua operan)
   const perKg = group.beratResi > 0 && biaya > 0 ? biaya / group.beratResi : 0;
   const diff = diffText(biaya, group.estimasiMaster);
   const hasNota = files.length > 0 || (inv?.notaCount ?? 0) > 0;
   const vendorNoResi = inv?.noResiAsli ?? group.noResi;
   const resiChanged = noResi.trim() !== vendorNoResi;
+  const updateOperan = (i: number, patch: Partial<OperanDraft>) => setOperan((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
 
   async function run(submitAfter: boolean) {
     if (busy) return;
     if (!noResi.trim()) return setError("No resi wajib diisi.");
-    if (biaya <= 0) return setError("Biaya ekspedisi harus lebih dari 0.");
+    if (biayaUtama <= 0) return setError(operan.length > 0 ? "Biaya pengiriman pertama harus lebih dari 0." : "Biaya ekspedisi harus lebih dari 0.");
+    for (const [i, o] of operan.entries()) {
+      if (!o.noResi.trim()) return setError(`No resi pengiriman operan ${i + 1} wajib diisi (atau hapus barisnya).`);
+      if ((Number(digitsOnly(o.biayaText)) || 0) <= 0) return setError(`Biaya pengiriman operan ${i + 1} harus lebih dari 0.`);
+    }
     if (submitAfter && !hasNota) return setError("Upload nota/lampiran ekspedisi dulu sebelum diajukan ke Finance.");
     setBusy(true);
     setError("");
     try {
       // Satu alur: simpan + unggah nota + (ajukan), satu kali ambil-ulang data di akhir (sebelumnya tiga langkah dengan tiga kali ambil-ulang, sehingga lama).
-      const res = await saveEkspedisiInvoice({ key: group.key, keys: group.keys, noResi: noResi.trim(), biaya, noNota: noNota.trim(), catatan: catatan.trim(), submit: submitAfter }, files);
+      const res = await saveEkspedisiInvoice(
+        {
+          key: group.key,
+          keys: group.keys,
+          noResi: noResi.trim(),
+          biaya: biayaUtama,
+          operan: operan.map((o) => ({ noResi: o.noResi.trim(), ekspedisi: o.ekspedisi.trim(), biaya: Number(digitsOnly(o.biayaText)) || 0, noNota: o.noNota.trim() })),
+          noNota: noNota.trim(),
+          catatan: catatan.trim(),
+          submit: submitAfter,
+        },
+        files
+      );
       if (res.extraError) {
         setError("Biaya tersimpan, tetapi langkah berikutnya gagal: " + res.extraError);
         return;
@@ -156,11 +185,11 @@ function EkspedisiInvoiceModal({ group, onClose }: { group: EkspedisiResiGroup; 
               />
             </label>
             <label className="col-span-2 flex flex-col gap-1 font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">
-              Biaya ekspedisi aktual, total resi ini (Rp)
+              {operan.length > 0 ? "Biaya pengiriman pertama / resi vendor (Rp)" : "Biaya ekspedisi aktual, total resi ini (Rp)"}
               <span className="flex items-stretch gap-2">
                 <input
-                  value={biayaText ? Number(biayaText.replace(/[^0-9]/g, "")).toLocaleString("id-ID") : ""}
-                  onChange={(e) => setBiayaText(e.target.value.replace(/[^0-9]/g, ""))}
+                  value={biayaText ? Number(digitsOnly(biayaText)).toLocaleString("id-ID") : ""}
+                  onChange={(e) => setBiayaText(digitsOnly(e.target.value))}
                   inputMode="numeric"
                   placeholder="0"
                   className="min-w-0 flex-1 rounded-md border border-[#DDE4EB] px-3 py-2 font-mono text-[14px] font-semibold normal-case tracking-normal text-text-primary"
@@ -169,18 +198,19 @@ function EkspedisiInvoiceModal({ group, onClose }: { group: EkspedisiResiGroup; 
                   <button
                     type="button"
                     onClick={() => setBiayaText(String(Math.round(group.estimasiMaster)))}
-                    disabled={biaya === Math.round(group.estimasiMaster)}
+                    disabled={biayaUtama === Math.round(group.estimasiMaster)}
                     title="Isi biaya dengan estimasi tarif master x berat resi, kalau nota ekspedisi sesuai tarif master"
                     className="flex-none rounded-md border border-action-primary bg-white px-3 font-sans text-[11.5px] font-semibold normal-case tracking-normal text-action-primary hover:bg-info-bg disabled:cursor-default disabled:border-[#CBD5DF] disabled:bg-[#F2F5F8] disabled:text-success-fg"
                   >
-                    {biaya === Math.round(group.estimasiMaster) ? "✓ Sesuai estimasi master" : `Valid sesuai master (${formatRupiah(group.estimasiMaster)})`}
+                    {biayaUtama === Math.round(group.estimasiMaster) ? "✓ Sesuai estimasi master" : `Valid sesuai master (${formatRupiah(group.estimasiMaster)})`}
                   </button>
                 )}
               </span>
               <span className="font-sans text-[11px] font-normal normal-case tracking-normal text-text-muted">
                 {perKg > 0 ? (
                   <>
-                    Setara <span className="font-mono">{formatRupiah(Math.round(perKg))}/kg</span>
+                    {operan.length > 0 ? "Total semua pengiriman setara " : "Setara "}
+                    <span className="font-mono">{formatRupiah(Math.round(perKg))}/kg</span>
                     {diff && (
                       <>
                         {" · selisih dari estimasi master: "}
@@ -193,6 +223,86 @@ function EkspedisiInvoiceModal({ group, onClose }: { group: EkspedisiResiGroup; 
                 )}
               </span>
             </label>
+            <div className="col-span-2 flex flex-col gap-2 rounded-md border border-[#E4E9EE] bg-[#FAFBFC] p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Pengiriman operan (resi kedua dst.)</div>
+                <button
+                  type="button"
+                  onClick={() => setOperan((rows) => [...rows, { noResi: "", ekspedisi: "", biayaText: "", noNota: "" }])}
+                  disabled={operan.length >= MAX_OPERAN}
+                  className="flex-none rounded-md border border-action-primary bg-white px-3 py-1 font-sans text-[11.5px] font-semibold normal-case tracking-normal text-action-primary hover:bg-info-bg disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  + Tambah pengiriman operan
+                </button>
+              </div>
+              {operan.length === 0 ? (
+                <div className="font-sans text-[11px] font-normal normal-case tracking-normal text-text-muted">
+                  Kalau barang dioper ke ekspedisi lain sehingga terbit resi kedua, tambahkan di sini. Ongkirnya dijumlahkan dengan pengiriman pertama dan dibagi ke semua koli resi ini.
+                </div>
+              ) : (
+                operan.map((o, i) => (
+                  <div key={i} className="grid grid-cols-2 gap-2 rounded-md border border-[#E4E9EE] bg-white p-2.5">
+                    <div className="col-span-2 flex items-center justify-between font-sans text-[11.5px] font-semibold normal-case tracking-normal text-[#31414F]">
+                      <span>Pengiriman operan {i + 1}</span>
+                      <button type="button" onClick={() => setOperan((rows) => rows.filter((_, idx) => idx !== i))} className="font-sans text-[11px] font-semibold text-danger-fg underline">
+                        Hapus
+                      </button>
+                    </div>
+                    <label className="flex flex-col gap-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+                      No resi operan
+                      <input
+                        value={o.noResi}
+                        onChange={(e) => updateOperan(i, { noResi: e.target.value })}
+                        maxLength={80}
+                        className="rounded-md border border-[#DDE4EB] px-3 py-2 font-mono text-[12.5px] normal-case tracking-normal text-text-primary"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+                      Ekspedisi operan (opsional)
+                      <input
+                        value={o.ekspedisi}
+                        onChange={(e) => updateOperan(i, { ekspedisi: e.target.value })}
+                        list="ekspedisi-operan-options"
+                        maxLength={80}
+                        className="rounded-md border border-[#DDE4EB] px-3 py-2 font-sans text-[12.5px] normal-case tracking-normal text-text-primary"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+                      Biaya pengiriman operan (Rp)
+                      <input
+                        value={o.biayaText ? Number(digitsOnly(o.biayaText)).toLocaleString("id-ID") : ""}
+                        onChange={(e) => updateOperan(i, { biayaText: digitsOnly(e.target.value) })}
+                        inputMode="numeric"
+                        placeholder="0"
+                        className="rounded-md border border-[#DDE4EB] px-3 py-2 font-mono text-[13px] font-semibold normal-case tracking-normal text-text-primary"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">
+                      No nota operan (opsional)
+                      <input
+                        value={o.noNota}
+                        onChange={(e) => updateOperan(i, { noNota: e.target.value })}
+                        maxLength={80}
+                        className="rounded-md border border-[#DDE4EB] px-3 py-2 font-mono text-[12.5px] normal-case tracking-normal text-text-primary"
+                      />
+                    </label>
+                  </div>
+                ))
+              )}
+              <datalist id="ekspedisi-operan-options">
+                {ekspedisiRates.map((r) => (
+                  <option key={r.id} value={r.nama} />
+                ))}
+              </datalist>
+              {operan.length > 0 && (
+                <div className="flex items-center justify-between rounded-md bg-info-bg px-3 py-2 font-sans text-[12px] normal-case tracking-normal text-info-fg">
+                  <span>
+                    Total ongkir (pertama + {operan.length} operan): <span className="font-mono font-semibold">{formatRupiah(biayaUtama)}</span> + <span className="font-mono font-semibold">{formatRupiah(operanTotal)}</span>
+                  </span>
+                  <span className="font-mono text-[14px] font-semibold">{formatRupiah(biaya)}</span>
+                </div>
+              )}
+            </div>
             <label className="col-span-2 flex flex-col gap-1 font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">
               Catatan (opsional)
               <input
@@ -205,7 +315,9 @@ function EkspedisiInvoiceModal({ group, onClose }: { group: EkspedisiResiGroup; 
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Nota / lampiran ekspedisi (wajib sebelum diajukan)</div>
+            <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">
+              Nota / lampiran ekspedisi (wajib sebelum diajukan){operan.length > 0 ? " — termasuk resi pengiriman operan" : ""}
+            </div>
             {(inv?.notaCount ?? 0) > 0 && (
               <div className="flex items-center gap-2 font-sans text-[11.5px] text-[#31414F]">
                 <span>{inv?.notaCount} file sudah diunggah.</span>
@@ -262,6 +374,29 @@ function GabunganPengirimanList({ g }: { g: EkspedisiResiGroup }) {
           <span className="flex-none font-mono">{ks.length} koli</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Rincian ongkir per pengiriman kalau invoice punya pengiriman operan: pengiriman pertama (resi vendor) + tiap operan, dan totalnya. */
+function OperanList({ inv, ekspedisi }: { inv: NonNullable<EkspedisiResiGroup["invoice"]>; ekspedisi: string }) {
+  const operan = inv.operan ?? [];
+  const rows = [{ label: "Pengiriman pertama", noResi: inv.noResi, ekspedisi, biaya: inv.biayaUtama ?? inv.biaya - operan.reduce((s, o) => s + o.biaya, 0) }, ...operan.map((o, i) => ({ label: `Operan ${i + 1}`, noResi: o.noResi, ekspedisi: o.ekspedisi ?? "—", biaya: o.biaya }))];
+  return (
+    <div className="overflow-hidden rounded-md border border-[#E4E9EE] bg-white">
+      <div className="border-b border-[#E4E9EE] bg-[#F2F5F8] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Ongkir per pengiriman (operan dijumlahkan)</div>
+      {rows.map((r) => (
+        <div key={r.label} className="flex items-center gap-x-4 border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+          <span className="w-[130px] flex-none font-semibold">{r.label}</span>
+          <span className="w-[140px] flex-none font-mono">{r.noResi}</span>
+          <span className="min-w-0 flex-1">{r.ekspedisi}</span>
+          <span className="flex-none font-mono">{formatRupiah(r.biaya)}</span>
+        </div>
+      ))}
+      <div className="flex items-center justify-between px-3 py-1.5 font-sans text-[11.5px] font-semibold text-[#31414F]">
+        <span>Total ongkir resi</span>
+        <span className="font-mono">{formatRupiah(inv.biaya)}</span>
+      </div>
     </div>
   );
 }
@@ -343,7 +478,15 @@ export function EkspedisiInvoicePanel() {
       default: true,
       align: "right",
       // Selisih terhadap estimasi master (teks merah "+Rp ... (+x%)") dihapus dari sel ini (owner 2026-11-06); selisihnya tetap terlihat di dialog Validasi/Ubah.
-      render: (g) => (g.invoice ? <div className="font-mono font-semibold">{formatRupiah(g.invoice.biaya)}</div> : <span className="text-text-muted">—</span>),
+      render: (g) =>
+        g.invoice ? (
+          <div className="flex flex-col items-end">
+            <span className="font-mono font-semibold">{formatRupiah(g.invoice.biaya)}</span>
+            {(g.invoice.operan?.length ?? 0) > 0 && <span className="font-sans text-[10px] text-info-fg">termasuk {g.invoice.operan?.length} operan</span>}
+          </div>
+        ) : (
+          <span className="text-text-muted">—</span>
+        ),
     },
     {
       key: "lampiranVendor",
@@ -431,7 +574,7 @@ export function EkspedisiInvoicePanel() {
         columns={columns}
         rows={groups}
         keyOf={(g) => g.key}
-        search={{ placeholder: "Cari no resi, no koli, no MRP, vendor…", getText: (g) => [g.noResi, g.invoice?.noResi, g.invoice?.noNota, g.noKolis.join(" "), g.mrpIds.join(" "), vendorName(g.vendorProduksi), g.ekspedisi].filter(Boolean).join(" ") }}
+        search={{ placeholder: "Cari no resi, no koli, no MRP, vendor…", getText: (g) => [g.noResi, g.invoice?.noResi, g.invoice?.noNota, ...(g.invoice?.operan ?? []).flatMap((o) => [o.noResi, o.noNota]), g.noKolis.join(" "), g.mrpIds.join(" "), vendorName(g.vendorProduksi), g.ekspedisi].filter(Boolean).join(" ") }}
         filterDefs={[
           { label: "No MRP", options: Array.from(new Set(groups.flatMap((g) => g.mrpIds))).sort().reverse(), test: (g, v) => g.mrpIds.includes(v) },
           { label: "Vendor", options: Array.from(new Set(groups.map((g) => vendorName(g.vendorProduksi)))).sort(), test: (g, v) => vendorName(g.vendorProduksi) === v },
@@ -445,12 +588,14 @@ export function EkspedisiInvoicePanel() {
           <span className="flex flex-col">
             <span className="font-mono font-medium">{g.invoice?.noResi ?? g.noResi}</span>
             {g.invoice?.noResiAsli && <span className="font-sans text-[10px] text-warning-fg">diubah dari {g.invoice.noResiAsli}</span>}
+            {(g.invoice?.operan?.length ?? 0) > 0 && <span className="font-mono text-[10.5px] text-info-fg">+ operan {g.invoice?.operan?.map((o) => o.noResi).join(", ")}</span>}
           </span>
         )}
         // Daftar "gabungan N pengiriman" dipindah ke sini: tampil hanya saat baris dibuka (dulu teks biru di bawah nomor resi).
         renderExpanded={(g) => (
           <div className="flex flex-col gap-2">
             {g.keys.length > 1 && <GabunganPengirimanList g={g} />}
+            {g.invoice && (g.invoice.operan?.length ?? 0) > 0 && <OperanList inv={g.invoice} ekspedisi={g.ekspedisi} />}
             <ResiKoliDetail kolis={g.kolis} onExport={() => downloadKoliExcel(g)} />
           </div>
         )}

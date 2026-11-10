@@ -141,12 +141,17 @@ export function PaymentEkspedisiPanel() {
 
   const searchDef = {
     placeholder: "Cari no resi, no koli, no MRP, vendor…",
-    getText: (g: EkspedisiResiGroup) => [g.invoice?.noResi, g.invoice?.noNota, g.noKolis.join(" "), g.mrpIds.join(" "), vendorName(g.vendorProduksi), g.ekspedisi].filter(Boolean).join(" "),
+    getText: (g: EkspedisiResiGroup) => [g.invoice?.noResi, g.invoice?.noNota, ...(g.invoice?.operan ?? []).map((o) => o.noResi), g.noKolis.join(" "), g.mrpIds.join(" "), vendorName(g.vendorProduksi), g.ekspedisi].filter(Boolean).join(" "),
   };
   const firstCol = (g: EkspedisiResiGroup) => (
     <span className="flex flex-col">
       <span className="font-mono font-medium">{g.invoice?.noResi ?? g.noResi}</span>
       {g.invoice?.noResiAsli && <span className="font-sans text-[10px] text-warning-fg">diubah dari {g.invoice.noResiAsli}</span>}
+      {(g.invoice?.operan?.length ?? 0) > 0 && (
+        <span className="font-mono text-[10.5px] text-info-fg">
+          + operan {g.invoice?.operan?.map((o) => `${o.noResi} (${formatRupiah(o.biaya)})`).join(", ")}
+        </span>
+      )}
     </span>
   );
   const filterFor = (rows: EkspedisiResiGroup[]) => [

@@ -561,6 +561,16 @@ export type DeliveryKoli = {
 /** Status Invoice Ekspedisi: DRAFT = tersimpan/divalidasi Procurement (HPP sudah memakai biayanya), SUBMITTED = diajukan ke Finance, PAID = lunas. */
 export type EkspedisiInvoiceStatus = "DRAFT" | "SUBMITTED" | "PAID";
 
+/** Satu pengiriman operan (resi kedua dst.) pada Invoice Ekspedisi. */
+export type EkspedisiOperan = {
+  noResi: string;
+  /** Ekspedisi yang membawa pengiriman operan ini (bebas, boleh kosong). */
+  ekspedisi?: string;
+  /** Biaya pengiriman operan ini (Rp). */
+  biaya: number;
+  noNota?: string;
+};
+
 export type EkspedisiInvoice = {
   status: EkspedisiInvoiceStatus;
   /** Terisi kalau invoice ini MENGGABUNGKAN lebih dari satu pengiriman (grup resi) vendor yang bernomor resi sama (satu resi fisik yang dicatat vendor beberapa kali).
@@ -571,8 +581,14 @@ export type EkspedisiInvoice = {
   noResi: string;
   /** No resi yang diisi vendor, hanya terisi kalau Procurement mengubahnya. */
   noResiAsli?: string;
-  /** TOTAL biaya aktual resi ini (Rp), dari nota ekspedisi. Dipakai sebagai ongkir HPP resi ini. */
+  /** TOTAL biaya aktual resi ini (Rp), dari nota ekspedisi. Dipakai sebagai ongkir HPP resi ini. Kalau ada pengiriman operan (`operan`), ini = `biayaUtama` + jumlah biaya
+   *  semua operan, jadi HPP, Finance, dan gerbang WOS tetap membaca satu angka ini tanpa perubahan. */
   biaya: number;
+  /** Biaya pengiriman PERTAMA (resi dari vendor) saja; hanya terisi kalau ada `operan`. */
+  biayaUtama?: number;
+  /** Pengiriman operan (owner 2026-11-10): barang dioper ke ekspedisi lain sehingga terbit resi kedua (dst.). Vendor hanya mengunggah resi pertama; Procurement menambahkan
+   *  resi operan di sini dan ongkirnya DIJUMLAHKAN ke `biaya`. Lampiran/nota resi operan diunggah bersama nota ekspedisi (satu daftar file). */
+  operan?: EkspedisiOperan[];
   /** Tarif per kg Master Data saat disimpan (info pembanding saja, tidak dipakai menghitung). */
   tarifMasterPerKg?: number;
   /** Berat total resi (kg) saat disimpan. */

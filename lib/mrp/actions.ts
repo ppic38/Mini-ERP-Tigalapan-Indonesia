@@ -50,7 +50,7 @@ import { loadWeightTolerancePct, WEIGHT_TOLERANCE_KEY } from "./weightToleranceS
 import { assertRollCodesUnique } from "./rollCodeServer";
 import { normalizeProposal, validateProposal } from "./proposal";
 import { detachBatchExtras, normalizeExtras, persistBatchExtras, removeBatchExtras, saveBatchExtraFg } from "./cuttingExtras";
-import type { CuttingExtra, CuttingExtraStored, EkspedisiInvoice } from "./types";
+import type { CuttingExtra, CuttingExtraStored, EkspedisiInvoice, EkspedisiOperan } from "./types";
 import { isEkspedisiBerbiaya } from "./ekspedisiInvoice";
 import {
   localDateString,
@@ -6271,17 +6271,51 @@ const rupiahText = (n: number) => "Rp " + Math.round(n).toLocaleString("id-ID");
  *  SATU panggilan untuk kasus umum: `nota` (file nota pertama, MENGGANTI nota lama) ikut disimpan, dan `submit` langsung mengajukan ke Finance. Server Action satu browser
  *  berjalan berurutan, jadi menggabungkan langkah-langkah ini menghindari antrean beberapa kali ambil-ulang data (dulu simpan, unggah, ajukan = 3 panggilan + 3 snapshot).
  *  File nota ke-2 dan seterusnya (jarang) menyusul lewat `addEkspedisiInvoiceFileAction`. */
+const EKSPEDISI_MAX_OPERAN = 5;
+
+/** Rapikan dan periksa pengiriman operan dari klien: no resi wajib, biaya > 0, tidak boleh kembar satu sama lain atau dengan resi utama. */
+function normalizeEkspedisiOperan(raw: { noResi: string; ekspedisi?: string; biaya: number; noNota?: string }[] | undefined, noResiUtama: string): EkspedisiOperan[] {
+  const list = raw ?? [];
+  if (list.length > EKSPEDISI_MAX_OPERAN) throw new Error(`Maksimal ${EKSPEDISI_MAX_OPERAN} pengiriman operan.`);
+  const seen = new Set<string>([noResiUtama.trim().toLowerCase()]);
+  return list.map((o, i) => {
+    const noResi = (o.noResi ?? "").trim();
+    const biaya = Math.round(Number(o.biaya));
+    if (!noResi) throw new Error(`No resi pengiriman operan ${i + 1} wajib diisi.`);
+    if (noResi.length > 80) throw new Error(`No resi pengiriman operan ${i + 1} terlalu panjang.`);
+    if (!Number.isFinite(biaya) || biaya <= 0) throw new Error(`Biaya pengiriman operan ${i + 1} harus lebih dari 0.`);
+    if (biaya > 10_000_000_000) throw new Error(`Biaya pengiriman operan ${i + 1} tidak masuk akal -- periksa lagi angkanya.`);
+    const k = noResi.toLowerCase();
+    if (seen.has(k)) throw new Error(`No resi ${noResi} dipakai lebih dari sekali di invoice ekspedisi ini.`);
+    seen.add(k);
+    return { noResi, ekspedisi: (o.ekspedisi ?? "").trim().slice(0, 80) || undefined, biaya, noNota: (o.noNota ?? "").trim().slice(0, 80) || undefined };
+  });
+}
+
 export async function saveEkspedisiInvoiceAction(
-  input: { key: string; keys?: string[]; noResi: string; biaya: number; noNota?: string; catatan?: string; submit?: boolean },
+  input: {
+    key: string;
+    keys?: string[];
+    noResi: string;
+    /** Biaya pengiriman PERTAMA (resi vendor). Kalau ada `operan`, total yang tersimpan = biaya ini + jumlah biaya operan. */
+    biaya: number;
+    operan?: { noResi: string; ekspedisi?: string; biaya: number; noNota?: string }[];
+    noNota?: string;
+    catatan?: string;
+    submit?: boolean;
+  },
   nota?: AttachmentFileInput
 ): Promise<ActionResult<void>> {
   return toActionResult(async () => {
     const actor = await requireInternalRoleWithActor("procurement");
     const noResi = (input.noResi ?? "").trim();
-    const biaya = Math.round(Number(input.biaya));
+    const biayaUtama = Math.round(Number(input.biaya));
     if (!noResi) throw new Error("No resi wajib diisi.");
     if (noResi.length > 80) throw new Error("No resi terlalu panjang.");
-    if (!Number.isFinite(biaya) || biaya <= 0) throw new Error("Biaya ekspedisi harus lebih dari 0.");
+    if (!Number.isFinite(biayaUtama) || biayaUtama <= 0) throw new Error("Biaya ekspedisi harus lebih dari 0.");
+    const operan = normalizeEkspedisiOperan(input.operan, noResi);
+    // `biaya` tersimpan = TOTAL semua pengiriman (utama + operan): HPP, Finance, dan gerbang WOS membaca angka ini apa adanya.
+    const biaya = biayaUtama + operan.reduce((s, o) => s + o.biaya, 0);
     if (biaya > 10_000_000_000) throw new Error("Biaya ekspedisi tidak masuk akal -- periksa lagi angkanya.");
     const noNota = (input.noNota ?? "").trim().slice(0, 80);
     const catatan = (input.catatan ?? "").trim().slice(0, 500);
@@ -6318,6 +6352,8 @@ export async function saveEkspedisiInvoiceAction(
       noResi,
       noResiAsli: noResi !== noResiVendor ? noResiVendor : undefined,
       biaya,
+      biayaUtama: operan.length > 0 ? biayaUtama : undefined,
+      operan: operan.length > 0 ? operan : undefined,
       tarifMasterPerKg: rate?.price_per_kg == null ? undefined : Number(rate.price_per_kg),
       beratResi,
       noNota: noNota || undefined,
@@ -6334,7 +6370,8 @@ export async function saveEkspedisiInvoiceAction(
     if (merging && otherKeys.length > 0) await db.from("attachment_files").delete().in("kind", [ekspedisiFileKind("NOTA"), ekspedisiFileKind("BUKTI")]).in("ref_id", otherKeys);
     const resiNote = next.noResiAsli ? ` (no resi vendor ${next.noResiAsli} diubah)` : "";
     const mergeNote = merging ? ` [gabungan ${keys.length} pengiriman, ${rows.length} koli]` : "";
-    await logInternalAction(actor, `${input.submit ? "Validasi dan ajukan" : "Validasi"} invoice ekspedisi resi ${noResi}: ${rupiahText(biaya)}${resiNote}${mergeNote}`, "delivery_kolis", input.key);
+    const operanNote = operan.length > 0 ? ` [+${operan.length} operan: ${operan.map((o) => `${o.noResi} ${rupiahText(o.biaya)}`).join(", ")}]` : "";
+    await logInternalAction(actor, `${input.submit ? "Validasi dan ajukan" : "Validasi"} invoice ekspedisi resi ${noResi}: ${rupiahText(biaya)}${resiNote}${mergeNote}${operanNote}`, "delivery_kolis", input.key);
     if (input.submit) await insertNotification(notif(`Invoice ekspedisi resi ${noResi} (${rupiahText(biaya)}) menunggu pembayaran Finance`, ["finance"]));
     // Integrasi WOS (2026-11-06): resi yang ongkirnya baru tervalidasi -- termasuk semua pengiriman yang digabung dalam invoice ini -- dikirim ke tab ERP_INCOMING
     // sekarang; resi yang sudah pernah terkirim (atau sudah antre) dilewati. Setelah respons selesai dan BEST-EFFORT.
