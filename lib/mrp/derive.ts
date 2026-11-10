@@ -4256,6 +4256,12 @@ export function setWarnaAliasesForPricing(rows: { mrpWarna: string; skuWarna: st
   pricingWarnaAliases = new Map(rows.map((r) => [r.mrpWarna, r.skuWarna]));
 }
 
+/** Nama warna di Master Data SKU (Mapping Warna: mis. "FUCHSIA 24S" -> "FANTA 24S"); sama dengan nama MRP kalau tidak ada mapping. Dipakai kolom "Item (MOKA)" di Excel Warehouse
+ *  (owner 2026-11-10): nama item MOKA mengikuti nama warna di SKU, bukan nama warna di MRP. */
+export function skuWarnaFor(warna: string): string {
+  return pricingWarnaAliases.get(warna) ?? warna;
+}
+
 export function hppRowsForInvoice(
   inv: VendorInvoice,
   ongkirTotal: number,

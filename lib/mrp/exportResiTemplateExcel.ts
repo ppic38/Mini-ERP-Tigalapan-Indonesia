@@ -19,7 +19,7 @@ const FMT_INT = "#,##0";
 const FMT_RP = '"Rp" #,##0';
 export const ETA_HARI = LT_TIBA_DEFAULT; // owner: ETA = tanggal kirim + 7
 
-/** `itemMoka` = nama item format MOKA: "WARNA PDK/PJG SIZE" (mis. "BURGUNDY 24S PJG 2XL"), tanpa nama Master SKU. */
+/** `itemMoka` = nama item format MOKA: "WARNA PDK/PJG SIZE" (mis. "BURGUNDY 24S PJG 2XL"), tanpa nama Master SKU. WARNA = nama di Master Data SKU lewat Mapping Warna (FUCHSIA 24S -> FANTA 24S), diisi pemanggil. */
 export type ResiSheetRow = {
   noKoli: string;
   itemName: string;

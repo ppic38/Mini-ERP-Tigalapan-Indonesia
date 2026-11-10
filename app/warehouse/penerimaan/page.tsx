@@ -11,7 +11,7 @@ import { KpiCard } from "@/components/ui/kpi-card";
 import { Button } from "@/components/ui/button";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatDate, formatPcs, formatRupiah, localDateString, warehouseReceivableGroups, type WarehouseReceivableGroup } from "@/lib/mrp/derive";
+import { formatDate, formatPcs, formatRupiah, localDateString, skuWarnaFor, warehouseReceivableGroups, type WarehouseReceivableGroup } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 
 /** Panel item read-only + form "Bongkar Koli" -- TIDAK ADA input qty manual (Q5 final, konsisten
@@ -243,8 +243,10 @@ export default function WarehousePenerimaanPage() {
         for (const it of g.items) {
           const type = it.kind === "FG" ? "FINISH GOOD" : it.kind === "REWORK" ? "REWORK" : "REJECT";
           const noKoli = it.noKoli ?? it.deliveryKoliId;
-          const itemMoka = `${it.warna} ${it.lengan === "PENDEK" ? "PDK" : "PJG"} ${it.size}`;
-          const itemName = nameByKey.get(`${it.warna}|${it.lengan}|${it.size}`) ?? itemMoka;
+          // Item (MOKA): warna memakai nama di Master Data SKU lewat Mapping Warna (mis. FUCHSIA 24S -> FANTA 24S). Nama item (Master SKU) dicari dengan nama warna ERP lalu nama warna SKU.
+          const skuWarna = skuWarnaFor(it.warna);
+          const itemMoka = `${skuWarna} ${it.lengan === "PENDEK" ? "PDK" : "PJG"} ${it.size}`;
+          const itemName = nameByKey.get(`${it.warna}|${it.lengan}|${it.size}`) ?? nameByKey.get(`${skuWarna}|${it.lengan}|${it.size}`) ?? itemMoka;
           const key = [noKoli, itemName, type].join("|");
           const cur = merged.get(key);
           if (cur) cur.qty += it.qty;

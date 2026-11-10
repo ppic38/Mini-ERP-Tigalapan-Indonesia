@@ -1,11 +1,12 @@
 import type { CellFormulaValue, CellValue as XlsxCellValue, Workbook, Worksheet } from "exceljs";
 import { VENDOR_PRODUKSI } from "./seed";
-import type { WarehouseReceivableGroup } from "./derive";
+import { skuWarnaFor, type WarehouseReceivableGroup } from "./derive";
 
 // Unduh Excel per resi (Warehouse > Penerimaan, owner 2026-11-04): satu file per batch pengiriman (resi) berisi dua sheet --
 //  - "Rincian Item": satu baris per isi koli (koli, warna, lengan, size, jenis, qty, HPP/item, nilai HPP), blok info resi di atas.
 //  - "Ringkasan Item": satu baris per warna · lengan · size, dijumlahkan lewat rumus SUMIFS dari sheet Rincian.
-// Kolom "Item (MOKA)" (owner 2026-11-09) = nama item format MOKA "WARNA PDK/PJG SIZE", di samping kanan kolom Warna di kedua sheet.
+// Kolom "Item (MOKA)" (owner 2026-11-09) = nama item format MOKA "WARNA PDK/PJG SIZE", di samping kanan kolom Warna di kedua sheet. Sejak 2026-11-10 WARNA-nya memakai nama di Master Data SKU lewat
+// Mapping Warna (mis. FUCHSIA 24S -> FANTA 24S); kolom Warna tetap nama warna di ERP.
 // Header berwarna biru (sama dengan tema ERP), baris berselang-seling, angka berformat. Nilai HPP, total, dan ringkasan ditulis sebagai rumus
 // Excel supaya bisa ditelusuri; nilai tersimpan di tiap rumus sama dengan hasil hitung aplikasi. HPP/item berasal dari data HPP Finance
 // (hppRowsForInvoicePerRoll) -- "Estimasi" = roll bahan belum ditutup.
@@ -32,7 +33,7 @@ const sizeRank = (s: string) => {
 const cmpSize = (a: string, b: string) => sizeRank(a) - sizeRank(b) || a.localeCompare(b, "id-ID", { numeric: true });
 const cmpLengan = (a: string, b: string) => (a === b ? 0 : a === "PENDEK" ? -1 : 1);
 const lenganLabel = (l: string) => (l === "PENDEK" ? "Pendek" : "Panjang");
-const itemMokaOf = (warna: string, lengan: string, size: string) => `${warna} ${lengan === "PENDEK" ? "PDK" : "PJG"} ${size}`;
+const itemMokaOf = (warna: string, lengan: string, size: string) => `${skuWarnaFor(warna)} ${lengan === "PENDEK" ? "PDK" : "PJG"} ${size}`;
 const jenisLabel = (k: string) => (k === "FG" ? "Finish Good" : k === "REWORK" ? "Rework" : "Reject");
 
 type CellValue = string | number | null | { formula: string; result: string | number | null };

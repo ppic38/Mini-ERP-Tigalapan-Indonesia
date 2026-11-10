@@ -1,5 +1,13 @@
 # Migrasi Project — Status & Riwayat
 
+## Excel Warehouse: kolom "Item (MOKA)" memakai nama warna dari Mapping Warna (2026-11-10, tanpa migration)
+Owner: kolom Item (MOKA) di export Warehouse harus bersumber dari Master Data > Mapping Warna (nama di MRP -> nama di SKU, mis. FUCHSIA 24S -> FANTA 24S, FUCHSIA 24S KID -> FANTA KID 24S), sementara nama item (ITEM NAME dari Master SKU) dan kolom Warna tetap.
+- `lib/mrp/derive.ts`: fungsi baru `skuWarnaFor(warna)` = nama warna SKU lewat peta Mapping Warna yang sudah dimuat store untuk harga jual (`setWarnaAliasesForPricing`, cocok persis nama MRP); tanpa mapping dipakai nama MRP apa adanya.
+- `app/warehouse/penerimaan/page.tsx` (Excel per resi template BY38, `downloadResiSheets`): Item (MOKA) = `{skuWarnaFor(warna)} PDK|PJG {size}` (mis. "FANTA 24S PDK L"). Tambahan kecil: nama item Master SKU kini dicari dengan nama warna ERP, lalu nama warna SKU hasil mapping, baru cadangan "WARNA PDK/PJG SIZE" (dulu hanya nama warna ERP, jadi warna yang namanya beda di SKU jatuh ke cadangan).
+- `lib/mrp/exportResiExcel.ts` (Excel rincian per resi: sheet Rincian Item dan Ringkasan Item): Item (MOKA) memakai `skuWarnaFor` juga; kolom Warna tetap nama ERP dan rumus SUMIFS ringkasan tetap memakai kolom Warna / Lengan / Size, jadi hitungan tidak berubah.
+- Tidak diubah: kolom Item (MOKA) di Template HPP + Biaya Tambahan (Laporan HPP Finance, `exportHppTambahanExcel.ts`) masih nama warna ERP; hanya dua unduhan Warehouse yang diminta.
+- Diuji: tsc bersih; data tiruan dengan mapping FUCHSIA 24S / FUCHSIA 24S KID menghasilkan "FANTA 24S PDK L" dan "FANTA KID 24S PDK M", warna tanpa mapping tidak berubah. eslint: satu error `react-hooks/set-state-in-effect` di page.tsx baris 180 sudah ada sebelum perubahan ini (terbukti di versi HEAD). Belum dicoba di browser dengan data produksi.
+
 ## Login lebih cepat: halaman login tidak lagi memuat snapshot (2026-11-10, tanpa migration)
 Keluhan owner: login dan "Memuat data..." sangat lama. Salah satu penyebab: `StoreHydrator` (root layout) ikut mengambil snapshot 4-5 MB di halaman login kalau browser masih punya cookie sesi modul lain; karena Server Action satu browser berjalan berurutan, klik "Masuk" antre di belakangnya.
 - `components/shell/store-hydrator.tsx`: di `/` dan `/vendor-maklon/login` tidak ada fetch dan polling. Login sukses sudah memanggil `refresh()` sendiri (`internal-auth-store.ts`, `vendor-auth-store.ts`); pindah ke halaman non-publik tanpa login langsung mengambil data. Kalau store sudah terisi, hanya cek versi (bukan snapshot penuh).
