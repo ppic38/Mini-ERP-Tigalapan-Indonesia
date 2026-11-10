@@ -433,42 +433,65 @@ export async function exportMaterialPoExcel(pos: MaterialPO[], mrpDetails: MrpDe
 // Material yang dipilih digabung jadi SATU lembar landscape -- baris tiap PO diberi kolom No. PO, Vendor Tujuan
 // (vendor produksi) dan Supplier. Isi & aturan variant SAMA dengan lembar per-PO (tanpa harga); kotak persetujuan
 // tidak dibuat karena status tiap PO bisa berbeda -- cetak per PO kalau butuh lembar tanda tangan.
-const SINGLE_WIDTHS = [6, 32, 22, 14, 16, 28, 10, 13, 26];
-const SINGLE_COLS = SINGLE_WIDTHS.length;
+// Revisi 2026-11-10 (owner): (1) kolom Entitas dilebarkan supaya nama entitas terpanjang muat satu baris (dulu terlalu sempit, teks terpotong); (2) Rincian Bahan dan
+// Permintaan RIB/KERAH/MANSET digabung jadi SATU tabel: kolom Kg (bahan) diikuti kolom Total RIB (kg) -- dan KERAH/MANSET hanya kalau ada isinya di PO yang dipilih.
+const SINGLE_BASE_WIDTHS = [6, 32, 22, 14, 16, 28, 10, 13];
+const SINGLE_EXTRA_WIDTH = 16;
+const SINGLE_ENTITAS_WIDTH = 36;
+const KG_DASH = '#,##0.00;-#,##0.00;"-"';
 
 export async function exportMaterialPoExcelSingleSheet(pos: MaterialPO[], mrpDetails: MrpDetail[], fileName: string, variant: PoExportVariant = "internal") {
   if (pos.length === 0) return;
   const { wb, logo } = await newWorkbook();
   const ws = wb.addWorksheet("PO Material");
-  setupSheet(ws, SINGLE_WIDTHS, "landscape");
   const vendorOf = (po: MaterialPO) => VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi;
   const kategoriOf = (po: MaterialPO) => mrpDetailFor(po.mrpId, mrpDetails)?.mrp.kategori ?? "—";
   const entOf = (po: MaterialPO, e?: string) => (po.approved ? (e ?? po.entity) : "—");
 
-  // Rincian bahan per PO (variant eksternal: PENDEK+PANJANG warna sama digabung, sama seperti lembar per-PO).
-  const bahan: (string | number)[][] = [];
-  let totalRoll = 0;
+  // Satu baris per PO x warna (x lengan untuk variant internal): bahan (roll, kg) dan kebutuhan RIB / KERAH / MANSET dalam kg.
+  type Line = { po: MaterialPO; warna: string; lengan?: string; roll: number; kg: number; rib: number; kerah: number; manset: number; entitas: string };
+  const lines: Line[] = [];
   for (const po of pos) {
+    const mrpDetail = mrpDetailFor(po.mrpId, mrpDetails);
+    const raw: Line[] = po.colorBreakdown.map((c) => {
+      const group = mrpDetail?.lenganGroups.find((g) => g.warna === c.warna && g.lengan === c.lengan);
+      const perRoll = (kind: AduanMaterialKind) => (group ? materialKgPerRollForGroup(group, kind) : 0) * c.rollCount;
+      return { po, warna: c.warna, lengan: c.lengan, roll: c.rollCount, kg: c.rollCount * ROLL_KG_ESTIMATE, rib: perRoll("rib"), kerah: perRoll("kerah"), manset: perRoll("manset"), entitas: entOf(po, c.entitas) };
+    });
+    // variant eksternal: PENDEK + PANJANG warna yang sama digabung jadi satu baris (sama seperti lembar per-PO).
     const list =
       variant === "internal"
-        ? po.colorBreakdown
+        ? raw
         : Array.from(
-            po.colorBreakdown.reduce((map, c) => {
-              const key = `${c.warna}|${c.entitas ?? ""}`;
+            raw.reduce((map, x) => {
+              const key = `${x.warna}|${x.entitas}`;
               const cur = map.get(key);
-              if (cur) cur.rollCount += c.rollCount;
-              else map.set(key, { ...c });
+              if (cur) {
+                cur.roll += x.roll;
+                cur.kg += x.kg;
+                cur.rib += x.rib;
+                cur.kerah += x.kerah;
+                cur.manset += x.manset;
+              } else map.set(key, { ...x, lengan: undefined });
               return map;
-            }, new Map<string, (typeof po.colorBreakdown)[number]>()).values()
+            }, new Map<string, Line>()).values()
           );
-    for (const c of list) {
-      totalRoll += c.rollCount;
-      bahan.push([bahan.length + 1, po.id, vendorOf(po), po.supplier, kategoriOf(po), variant === "internal" && c.lengan ? `${c.warna} · ${c.lengan}` : c.warna, c.rollCount, c.rollCount * ROLL_KG_ESTIMATE, entOf(po, c.entitas)]);
-    }
+    lines.push(...list);
   }
+  const totalRoll = lines.reduce((s, x) => s + x.roll, 0);
   const totalKg = totalRoll * ROLL_KG_ESTIMATE;
+  // Kolom RIB selalu tampil kalau ada kebutuhan RIB; KERAH / MANSET hanya kalau ada isinya (supaya tabel tidak penuh kolom kosong).
+  const kinds = ([
+    ["rib", "RIB"],
+    ["kerah", "KERAH"],
+    ["manset", "MANSET"],
+  ] as [AduanMaterialKind, string][]).filter(([kind]) => lines.some((x) => x[kind] > 0));
 
-  let r = drawHeader(wb, ws, logo, "PROPOSAL PURCHASE ORDER MATERIAL BAHAN", SINGLE_COLS);
+  const widths = [...SINGLE_BASE_WIDTHS, ...kinds.map(() => SINGLE_EXTRA_WIDTH), SINGLE_ENTITAS_WIDTH];
+  const cols = widths.length;
+  setupSheet(ws, widths, "landscape");
+
+  let r = drawHeader(wb, ws, logo, "PROPOSAL PURCHASE ORDER MATERIAL BAHAN", cols);
   const mrpIds = Array.from(new Set(pos.map((p) => p.mrpId))).join(", ");
   const info: [string, string, string, string][] = [
     ["No. MRP", mrpIds, "Jumlah PO", String(pos.length)],
@@ -478,7 +501,7 @@ export async function exportMaterialPoExcelSingleSheet(pos: MaterialPO[], mrpDet
   for (const [l1, v1, l2, v2] of info) {
     ws.mergeCells(r, 1, r, 2);
     ws.mergeCells(r, 3, r, 5);
-    ws.mergeCells(r, 7, r, 9);
+    ws.mergeCells(r, 7, r, cols);
     const cells: [number, string, boolean][] = [[1, l1, true], [3, v1, false], [6, l2, true], [7, v2, false]];
     for (const [c, v, isLabel] of cells) {
       const cell = ws.getCell(r, c);
@@ -486,67 +509,31 @@ export async function exportMaterialPoExcelSingleSheet(pos: MaterialPO[], mrpDet
       cell.font = { name: FONT, size: 10, bold: isLabel, color: { argb: isLabel ? GRAY : INK } };
       cell.alignment = { vertical: "middle", horizontal: "left", wrapText: true, indent: 1 };
     }
-    for (let c = 1; c <= SINGLE_COLS; c++) ws.getCell(r, c).border = BORDER;
+    for (let c = 1; c <= cols; c++) ws.getCell(r, c).border = BORDER;
     ws.getRow(r).height = String(v1).length > 60 ? 34 : 22;
     r++;
   }
   r++;
 
-  r = drawSection(ws, r, "1. Rincian Bahan", SINGLE_COLS);
+  r = drawSection(ws, r, kinds.length > 0 ? `1. Rincian Bahan dan Permintaan ${kinds.map(([, label]) => label).join(" / ")}` : "1. Rincian Bahan", cols);
   r = drawTable(ws, r, {
-    head: ["No", "No. PO", "Vendor Tujuan", "Supplier", "Kategori", "Warna", "Roll", "Kg", "Entitas"],
-    body: bahan,
-    foot: ["", "", "", "", "", "TOTAL", totalRoll, totalKg, ""],
-    numFmt: [undefined, undefined, undefined, undefined, undefined, undefined, "#,##0.0", "#,##0.0", undefined],
-    align: ["center", "left", "left", "left", "left", "left", "right", "right", "left"],
+    head: ["No", "No. PO", "Vendor Tujuan", "Supplier", "Kategori", "Warna", "Roll", "Kg", ...kinds.map(([, label]) => `Total ${label} (kg)`), "Entitas"],
+    body: lines.map((x, i) => [
+      i + 1,
+      x.po.id,
+      vendorOf(x.po),
+      x.po.supplier,
+      kategoriOf(x.po),
+      variant === "internal" && x.lengan ? `${x.warna} · ${x.lengan}` : x.warna,
+      x.roll,
+      x.kg,
+      ...kinds.map(([kind]) => x[kind]),
+      x.entitas,
+    ]),
+    foot: ["", "", "", "", "", "TOTAL", totalRoll, totalKg, ...kinds.map(([kind]) => Math.round(lines.reduce((s, x) => s + x[kind], 0) * 1000) / 1000), ""],
+    numFmt: [undefined, undefined, undefined, undefined, undefined, undefined, "#,##0.0", "#,##0.0", ...kinds.map(() => KG_DASH), undefined],
+    align: ["center", "left", "left", "left", "left", "left", "right", "right", ...kinds.map(() => "right" as const), "left"],
   });
-
-  // Permintaan RIB / KERAH / MANSET, digabung semua PO (kolom sama dengan tabel di atas supaya lebar kolom pas).
-  const kinds: [AduanMaterialKind, string][] = [["rib", "RIB"], ["kerah", "KERAH"], ["manset", "MANSET"]];
-  let section = 1;
-  for (const [kind, label] of kinds) {
-    const rows: (string | number)[][] = [];
-    let kindRoll = 0;
-    let kindKg = 0;
-    for (const po of pos) {
-      const mrpDetail = mrpDetailFor(po.mrpId, mrpDetails);
-      const rawList = po.colorBreakdown.map((c) => {
-        const group = mrpDetail?.lenganGroups.find((g) => g.warna === c.warna && g.lengan === c.lengan);
-        const kgPerRoll = group ? materialKgPerRollForGroup(group, kind) : 0;
-        return { warna: c.warna, lengan: c.lengan, roll: c.rollCount, kg: kgPerRoll * c.rollCount, entitas: entOf(po, c.entitas) };
-      });
-      const list =
-        variant === "internal"
-          ? rawList
-          : Array.from(
-              rawList.reduce((map, x) => {
-                const key = `${x.warna}|${x.entitas}`;
-                const cur = map.get(key);
-                if (cur) {
-                  cur.roll += x.roll;
-                  cur.kg += x.kg;
-                } else map.set(key, { ...x });
-                return map;
-              }, new Map<string, (typeof rawList)[number]>()).values()
-            );
-      for (const x of list) {
-        if (x.kg <= 0) continue;
-        kindRoll += x.roll;
-        kindKg += x.kg;
-        rows.push([rows.length + 1, po.id, vendorOf(po), po.supplier, kategoriOf(po), variant === "internal" && x.lengan ? `${x.warna} · ${x.lengan}` : x.warna, x.roll, x.kg, x.entitas]);
-      }
-    }
-    if (rows.length === 0) continue;
-    section++;
-    r = drawSection(ws, r, `${section}. Permintaan ${label}`, SINGLE_COLS);
-    r = drawTable(ws, r, {
-      head: ["No", "No. PO", "Vendor Tujuan", "Supplier", "Kategori", "Warna", "Roll", `Total ${label} (kg)`, "Entitas"],
-      body: rows,
-      foot: ["", "", "", "", "", "TOTAL", kindRoll, kindKg, ""],
-      numFmt: [undefined, undefined, undefined, undefined, undefined, undefined, "#,##0.0", "#,##0.00", undefined],
-      align: ["center", "left", "left", "left", "left", "left", "right", "right", "left"],
-    });
-  }
   await download(wb, fileName);
 }
 
