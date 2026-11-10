@@ -379,14 +379,37 @@ async function fetchFlowRowsFast(db: SupabaseClient, skipMaster: boolean): Promi
   return { tables, masterIncluded };
 }
 
+// Pemutus sirkuit (2026-11-10): data pg_stat_statements menunjukkan RPC snapshot hampir selalu kena batas waktu 8 dtk (fungsi dengan 32 tabel makin
+// berat seiring data bertambah): ~126 muat data berakhir di jalur per-tabel dan hanya 4 RPC yang selesai. Percobaan RPC + ulang tetap membuang
+// 8 + ~1 + 8 dtk SEBELUM jalur per-tabel (yang hanya ~1-3 dtk) dijalankan. Begitu RPC kena timeout, RPC dilewati sementara dan muat data
+// langsung memakai jalur per-tabel (dibaca per halaman, paralel; data tetap segar, bukan salinan lama). Setelah jeda, satu percobaan RPC lagi.
+const RPC_BREAKER_MS = 5 * 60_000;
+let rpcSlowUntil = 0;
+function rpcBreakerOpen(): boolean {
+  return Date.now() < rpcSlowUntil;
+}
+function isTimeoutError(err: unknown): boolean {
+  const e = err as { code?: string; message?: string } | null;
+  if (!e) return false;
+  return e.code === "57014" || /statement timeout|canceling statement|timed? ?out/i.test(e.message ?? "");
+}
+
 async function fetchFlowRows(db: SupabaseClient, skipMaster: boolean, opts?: { noLegacy?: boolean }): Promise<{ tables: RawTables; masterIncluded: boolean }> {
+  if (rpcBreakerOpen() && !opts?.noLegacy) return { tables: await fetchFlowRowsLegacy(db), masterIncluded: true };
   let failure: unknown;
   try {
     return await fetchFlowRowsFast(db, skipMaster);
   } catch (err) {
     failure = err;
   }
-  // Timeout/database sibuk (bukan "RPC belum ada"): coba SEKALI lagi setelah jeda acak yang pendek -- biasanya lonjakan sesaat dan percobaan kedua
+  // RPC kena timeout: jangan diulang (mengulang = 8 dtk lagi sia-sia); buka pemutus dan serahkan ke jalur per-tabel.
+  if (isTimeoutError(failure)) {
+    rpcSlowUntil = Date.now() + RPC_BREAKER_MS;
+    console.warn("getFlowSnapshot: RPC snapshot timeout, dilewati " + RPC_BREAKER_MS / 60_000 + " menit —", failure instanceof Error ? failure.message : failure);
+    if (opts?.noLegacy) throw failure;
+    return { tables: await fetchFlowRowsLegacy(db), masterIncluded: true };
+  }
+  // Database sibuk (bukan timeout, bukan "RPC belum ada"): coba SEKALI lagi setelah jeda acak yang pendek -- biasanya lonjakan sesaat dan percobaan kedua
   // selesai dalam ~1 detik. Sebelumnya langsung jatuh ke ~35 query per tabel yang menambah beban saat database justru sedang lambat (2026-11-02:
   // 181 dari ~1.400 muat data berakhir di jalur itu).
   if (!isMissingFunctionError(failure)) {
@@ -430,7 +453,8 @@ async function fetchFlowRowsCached(db: SupabaseClient, skipMaster: boolean, vers
   if (hit && hit.version === version && (skipMaster || hit.wantsMaster) && now - hit.at < FLOW_CACHE_MAX_AGE_MS) {
     return { ...(await hit.promise), servedVersion: version };
   }
-  const promise = fetchFlowRows(db, skipMaster, { noLegacy: true });
+  // Pemutus RPC terbuka -> fetchFlowRows langsung ke jalur per-tabel (hasilnya segar dan ikut di-cache per versi di bawah).
+  const promise = fetchFlowRows(db, skipMaster, { noLegacy: !rpcBreakerOpen() });
   const entry: FlowCacheEntry = { version, wantsMaster: !skipMaster, at: now, promise };
   flowCache = entry;
   try {
@@ -439,6 +463,14 @@ async function fetchFlowRowsCached(db: SupabaseClient, skipMaster: boolean, vers
     return { ...fetched, servedVersion: version };
   } catch (err) {
     if (flowCache === entry) flowCache = null;
+    // RPC baru saja kena timeout (pemutus terbuka): baca segar lewat jalur per-tabel, JANGAN salinan lama -- salinan lama membuat
+    // perubahan milik pengguna sendiri tidak tampil sampai salinan itu kedaluwarsa.
+    if (isTimeoutError(err) && rpcBreakerOpen()) {
+      const fetched: FlowFetch = { tables: await fetchFlowRowsLegacy(db), masterIncluded: true };
+      flowLastGood = { version, masterIncluded: true, at: Date.now(), fetched };
+      flowCache = { version, wantsMaster: true, at: Date.now(), promise: Promise.resolve(fetched) };
+      return { ...fetched, servedVersion: version };
+    }
     // Database sedang kewalahan: pakai salinan terakhir yang berhasil (versi LAMA dilaporkan apa adanya supaya browser
     // mengambil ulang pada pengecekan berikutnya), kalau tidak ada baru jatuh ke jalur per-tabel yang berat.
     const good = flowLastGood;
