@@ -1,5 +1,11 @@
 # Migrasi Project — Status & Riwayat
 
+## Login lebih cepat: halaman login tidak lagi memuat snapshot (2026-11-10, tanpa migration)
+Keluhan owner: login dan "Memuat data..." sangat lama. Salah satu penyebab: `StoreHydrator` (root layout) ikut mengambil snapshot 4-5 MB di halaman login kalau browser masih punya cookie sesi modul lain; karena Server Action satu browser berjalan berurutan, klik "Masuk" antre di belakangnya.
+- `components/shell/store-hydrator.tsx`: di `/` dan `/vendor-maklon/login` tidak ada fetch dan polling. Login sukses sudah memanggil `refresh()` sendiri (`internal-auth-store.ts`, `vendor-auth-store.ts`); pindah ke halaman non-publik tanpa login langsung mengambil data. Kalau store sudah terisi, hanya cek versi (bukan snapshot penuh).
+- `lib/auth/actions.ts` (`loginInternalAction`): query akun bernama dan hash password modul dijalankan bersamaan (satu putaran, dulu dua berurutan).
+- Belum: halaman modul tetap memuat snapshot penuh (RPC `get_flow_snapshot_core` rata-rata 1,2-2,6 dtk, maks ~8 dtk). Perbaikan lanjutan: snapshot per modul (butuh migration) dan cek region/compute Supabase (region Vercel `icn1`). tsc bersih; belum dicoba di browser.
+
 ## Warehouse Excel per resi (template BY38): nomor resi sama digabung jadi satu sheet, koli berurutan (2026-11-10, tanpa migration)
 Owner mengunduh resi 12338 dan mendapat empat sheet ("12338", "12338-2", "12338-3", "12338-4", urutan koli 4, 3, 2, 1) padahal harapannya satu sheet dengan koli 1, 2, 3, 4. Penyebabnya: vendor mencatat satu resi fisik sebagai empat pengiriman (satu koli per pengiriman, tanggal kirim 27 dan 28/10) sehingga ada empat grup resi bernomor sama, dan unduhan membuat satu sheet per GRUP resi.
 - `lib/mrp/exportResiTemplateExcel.ts`: `mergeResiSheetsByNumber` menggabungkan sheet bernomor resi sama (tanpa beda huruf besar/kecil dan spasi) menjadi satu; dipanggil di awal `buildResiTemplateWorkbook`. Baris tiap pengiriman membawa tanggal kirimnya sendiri (`ResiSheetRow.deliveredAt`, dipakai kolom Tgl Kirim dan ETA = tanggal kirim + 7), "Start" = tanggal kirim paling awal, NO PO digabung. Baris diurutkan koli naik (`sortResiRows`, sudah ada) di seluruh sheet gabungan.

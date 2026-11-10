@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { usePathname } from "next/navigation";
 import { useMrpStore } from "@/lib/mrp/store";
 
 // Refetch snapshot penuh (~30 tabel) paling sering tiap ini banyak detik -- mencegah beberapa
@@ -53,7 +54,16 @@ const MAX_VERSION_CHECK_INTERVAL_MS = 600_000;
  *
  *  Di halaman publik (mis. "/" atau "/vendor-maklon/login") belum tentu ada sesi login -- error
  *  "Unauthorized" dari getFlowSnapshotAction di situ SENGAJA ditelan diam-diam, bukan bug. */
+// Halaman login publik: TIDAK memuat snapshot di sini. Dulu snapshot 4-5 MB ikut diambil di halaman login kalau browser
+// masih punya cookie sesi modul lain (mis. tab lain sudah login), dan karena Server Action satu browser berjalan satu
+// per satu, klik "Masuk" ikut antre di belakangnya (terasa seperti login macet di "Memeriksa..."). Login sukses sudah
+// memicu refresh() sendiri (lib/internal-auth-store.ts, lib/mrp/vendor-auth-store.ts); effect di bawah juga langsung
+// mengambil data begitu pengguna pindah ke halaman non-publik tanpa lewat login (mis. tautan "kembali ke modul").
+const PUBLIC_HYDRATE_SKIP = ["/", "/vendor-maklon/login"];
+
 export function StoreHydrator() {
+  const pathname = usePathname();
+  const onPublicPage = PUBLIC_HYDRATE_SKIP.includes(pathname);
   // Fix (feedback batch 2026-09-10, item 6/10 "tombol ngeflick"): dulu fetch di sini LANGSUNG
   // manggil getFlowSnapshotAction() + hydrate() (set() mentah) -- sama sekali di luar guard
   // `inFlightWriteCount` yang dipakai jalur backgroundRefresh (lib/mrp/store.ts) untuk mencegah
@@ -70,6 +80,7 @@ export function StoreHydrator() {
   refreshIfChangedRef.current = refreshIfChanged;
 
   useEffect(() => {
+    if (onPublicPage) return;
     // Fix (feedback batch 2026-09-10): `cancelled` guard yang dulu ada di sini cuma menjaga
     // supaya hydrate(snapshot) (set() mentah) tidak dipanggil setelah unmount -- sekarang
     // refresh() itu sendiri yang melakukan fetch+set (lihat lib/mrp/store.ts), jadi tidak ada lagi
@@ -108,7 +119,8 @@ export function StoreHydrator() {
         .then(() => performance.now() - startedAt);
     }
 
-    fetchNow(true);
+    // Data sudah terisi (mis. dari refresh() setelah login) -> cukup tanya versi; belum terisi -> snapshot penuh.
+    fetchNow(true, useMrpStore.getState().hydrated);
     const onFocus = () => fetchNow(false, true);
     const onVisibility = () => {
       if (document.visibilityState === "visible") fetchNow(false, true);
@@ -140,7 +152,7 @@ export function StoreHydrator() {
       if (versionTimer) clearTimeout(versionTimer);
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, []);
+  }, [onPublicPage]);
 
   return null;
 }

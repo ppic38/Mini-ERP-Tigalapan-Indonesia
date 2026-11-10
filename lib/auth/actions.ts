@@ -48,14 +48,19 @@ export async function loginInternalAction(role: InternalRole, password: string):
   // masing, supaya tiap aksi tercatat atas nama orangnya): selama modul punya MINIMAL 1 akun bernama
   // aktif, login lewat password bersama (tanpa username) DITOLAK -- kecuali Sysadmin. Kalau semua akun
   // bernama dinonaktifkan/dihapus, otomatis kembali boleh (jalur darurat).
-  if (await roleUsesNamedAccounts(role)) return { ok: false, error: "Modul ini memakai akun masing-masing. Masukkan username Anda." };
+  // Kedua query (akun bernama & hash password modul) dijalankan BERSAMAAN: satu putaran ke database, bukan dua berurutan.
+  const [usesNamed, dbAccountRes] = await Promise.all([
+    roleUsesNamedAccounts(role),
+    supabaseServer().from("internal_accounts").select("password_hash").eq("role", role).maybeSingle(),
+  ]);
+  if (usesNamed) return { ok: false, error: "Modul ini memakai akun masing-masing. Masukkan username Anda." };
 
   // Migrasi password modul internal dari env var ke database (migration 0056, Sysadmin) -- kalau
   // Sysadmin SUDAH pernah set password lewat portalnya, baris `internal_accounts` untuk role ini
   // ada & itu yang dipakai (bcrypt hash). Kalau belum pernah (baris tidak ada), FALLBACK ke env var
   // lama (INTERNAL_PASSWORD_<ROLE>) supaya login tidak mendadak putus untuk role yang belum
   // di-migrasi manual satu per satu.
-  const { data: dbAccount } = await supabaseServer().from("internal_accounts").select("password_hash").eq("role", role).maybeSingle();
+  const dbAccount = dbAccountRes.data;
   if (dbAccount) {
     const ok = await bcrypt.compare(password, dbAccount.password_hash);
     if (!ok) return { ok: false, error: "Password salah." };
