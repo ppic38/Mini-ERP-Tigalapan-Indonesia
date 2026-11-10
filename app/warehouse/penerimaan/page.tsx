@@ -5,6 +5,8 @@ import { Download } from "lucide-react";
 import { exportResiExcel } from "@/lib/mrp/exportResiExcel";
 import { exportResiTemplateExcel, type ResiSheet, type ResiSheetRow } from "@/lib/mrp/exportResiTemplateExcel";
 import { ResiDownloadDialog } from "@/components/warehouse/resi-download-dialog";
+import { MokaPoDialog } from "@/components/warehouse/moka-po-dialog";
+import { buildMokaPoCsv, downloadCsv, type MokaPoItem } from "@/lib/mrp/exportMokaPo";
 import { alertDialog } from "@/components/ui/confirm-dialog";
 import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
@@ -190,6 +192,7 @@ export default function WarehousePenerimaanPage() {
   const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
   const [downloadOpen, setDownloadOpen] = useState(false);
+  const [poOpen, setPoOpen] = useState(false);
 
   if (!mounted) return null;
 
@@ -272,6 +275,53 @@ export default function WarehousePenerimaanPage() {
       await exportResiTemplateExcel(sheets, `Pengiriman-per-Resi-${localDateString(new Date())}.xlsx`);
     } catch (e) {
       await alertDialog({ title: "Gagal membuat Excel", message: e instanceof Error ? e.message : "Terjadi kesalahan saat membuat file Excel.", tone: "danger" });
+    }
+  }
+
+  /** Download PO (owner 2026-11-10): isi template Moka "Import - Items Purchase Order" dari resi terpilih. Item digabung per Item (MOKA) (qty dijumlah, HPP rata-rata tertimbang); reject tidak ikut (tanpa HPP). */
+  async function downloadMokaPo(selected: WarehouseReceivableGroup[], supplierEmail: string, templateText: string) {
+    try {
+      const skuByKey = new Map<string, { sku: string | null; itemName: string }>();
+      for (const r of itemSellingPrices) {
+        const key = `${r.warna}|${r.lengan}|${r.size}`;
+        if (!skuByKey.has(key)) skuByKey.set(key, { sku: r.sku, itemName: r.itemName });
+      }
+      const acc = new Map<string, MokaPoItem & { nilai: number; qtyCost: number }>();
+      for (const g of selected) {
+        for (const it of g.items) {
+          if (it.kind === "REJECT") continue;
+          const skuWarna = skuWarnaFor(it.warna);
+          const itemMoka = `${skuWarna} ${it.lengan === "PENDEK" ? "PDK" : "PJG"} ${it.size}`;
+          const master = skuByKey.get(`${it.warna}|${it.lengan}|${it.size}`) ?? skuByKey.get(`${skuWarna}|${it.lengan}|${it.size}`);
+          const cur = acc.get(itemMoka) ?? { itemMoka, itemName: master?.itemName ?? null, sku: master?.sku ?? null, qty: 0, hppPerItem: null, nilai: 0, qtyCost: 0 };
+          cur.qty += it.qty;
+          if (it.hppPerItem > 0) {
+            cur.nilai += it.qty * it.hppPerItem;
+            cur.qtyCost += it.qty;
+          }
+          acc.set(itemMoka, cur);
+        }
+      }
+      const items: MokaPoItem[] = Array.from(acc.values()).map((x) => ({ itemMoka: x.itemMoka, itemName: x.itemName, sku: x.sku, qty: x.qty, hppPerItem: x.qtyCost > 0 ? x.nilai / x.qtyCost : null }));
+      const res = buildMokaPoCsv(templateText, supplierEmail, items);
+      if (res.error) {
+        await alertDialog({ title: "Template tidak bisa dipakai", message: res.error, tone: "danger" });
+        return;
+      }
+      if (res.filledRows === 0) {
+        await alertDialog({ title: "Tidak ada item yang cocok", message: "Tidak satu pun item resi terpilih ditemukan di template Moka (dicocokkan lewat kolom Items Name), jadi file tidak dibuat.", tone: "danger" });
+        return;
+      }
+      downloadCsv(res.csv, `PO-Moka-${localDateString(new Date())}.csv`);
+      const list = (xs: MokaPoItem[]) => Array.from(new Set(xs.map((x) => x.itemMoka))).slice(0, 12).join(", ");
+      const warnings: string[] = [];
+      if (res.notFound.length > 0) warnings.push(`${res.notFound.length} item tidak ditemukan di template Moka dan TIDAK ikut file: ${list(res.notFound)}${res.notFound.length > 12 ? ", …" : ""}.`);
+      if (res.noCost.length > 0) warnings.push(`${res.noCost.length} item belum punya HPP, kolom Unit Cost dikosongkan: ${list(res.noCost)}${res.noCost.length > 12 ? ", …" : ""}.`);
+      if (warnings.length > 0) {
+        await alertDialog({ title: `File PO dibuat (${res.filledRows} item, ${res.filledQty.toLocaleString("id-ID")} pcs)`, message: warnings.join("\n\n") });
+      }
+    } catch (e) {
+      await alertDialog({ title: "Gagal membuat file PO", message: e instanceof Error ? e.message : "Terjadi kesalahan saat membuat file PO.", tone: "danger" });
     }
   }
 
@@ -362,9 +412,14 @@ export default function WarehousePenerimaanPage() {
         title="Batch Pengiriman (Resi)"
         subtitle="Klik baris untuk lihat rincian item & tombol Bongkar"
         headerActions={
-          <Button onClick={() => setDownloadOpen(true)} variant="ghost" size="md" disabled={groups.length === 0} title="Excel pengiriman: satu sheet per resi, pilih resi yang diunduh">
-            Download Excel
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => setPoOpen(true)} variant="ghost" size="md" disabled={groups.length === 0} title="Isi template Import PO Moka (supplier, order = qty, unit cost = HPP) dari resi yang dipilih">
+              Download PO
+            </Button>
+            <Button onClick={() => setDownloadOpen(true)} variant="ghost" size="md" disabled={groups.length === 0} title="Excel pengiriman: satu sheet per resi, pilih resi yang diunduh">
+              Download Excel
+            </Button>
+          </div>
         }
         nowrap
         columns={columns}
@@ -388,6 +443,7 @@ export default function WarehousePenerimaanPage() {
         renderExpanded={(g) => <ReceivableGroupPanel group={g} />}
         emptyText="Belum ada koli yang siap/menunggu diterima."
       />
+      {poOpen && <MokaPoDialog groups={groups} vendorName={vendorName} onDownload={downloadMokaPo} onClose={() => setPoOpen(false)} />}
       {downloadOpen && <ResiDownloadDialog groups={groups} vendorName={vendorName} onDownload={downloadResiSheets} onClose={() => setDownloadOpen(false)} />}
     </AppShell>
   );

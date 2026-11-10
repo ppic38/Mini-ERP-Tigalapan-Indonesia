@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { formatDate, type WarehouseReceivableGroup } from "@/lib/mrp/derive";
@@ -15,11 +15,22 @@ export function ResiDownloadDialog({
   vendorName,
   onDownload,
   onClose,
+  title = "Download Excel Pengiriman per Resi",
+  note = "Satu file, satu sheet per nomor resi (pengiriman bernomor resi sama digabung jadi satu sheet, koli berurutan dari nomor terkecil). Kolom: No Koli, Item Name, Qty, Type, Tgl Kirim, AWB (no resi), dan ETA (tanggal kirim + 7 hari).",
+  extraFields,
+  extraReady = true,
+  showSheetCount = true,
 }: {
   groups: WarehouseReceivableGroup[];
   vendorName: (g: WarehouseReceivableGroup) => string;
   onDownload: (selected: WarehouseReceivableGroup[]) => Promise<void>;
   onClose: () => void;
+  /** Download PO memakai popup yang sama: judul, catatan, dan isian tambahan (supplier, template) diganti lewat props ini. */
+  title?: string;
+  note?: ReactNode;
+  extraFields?: ReactNode;
+  extraReady?: boolean;
+  showSheetCount?: boolean;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -76,9 +87,10 @@ export function ResiDownloadDialog({
       <div className="flex max-h-[90vh] w-full max-w-[520px] flex-col overflow-hidden rounded-[9px] bg-surface-card shadow-[0_12px_32px_rgba(11,19,27,.28)]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2.5 bg-info-bg px-5 py-3">
           <span className="h-2 w-2 rounded-full bg-accent-blue" />
-          <span className="font-sans text-xs font-semibold text-info-fg">Download Excel Pengiriman per Resi</span>
+          <span className="font-sans text-xs font-semibold text-info-fg">{title}</span>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {extraFields && <div className="mb-4 flex flex-col gap-3 border-b border-[#EEF1F4] pb-4">{extraFields}</div>}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={label}>No. MRP</label>
@@ -170,19 +182,17 @@ export function ResiDownloadDialog({
               {visible.length === 0 && <div className="px-3 py-4 text-center font-sans text-[11.5px] text-text-muted">Tidak ada resi yang cocok.</div>}
             </div>
           </div>
-          <p className="mt-2 font-sans text-[10.5px] text-text-muted">
-            Satu file, satu sheet per nomor resi (pengiriman bernomor resi sama digabung jadi satu sheet, koli berurutan dari nomor terkecil). Kolom: No Koli, Item Name, Qty, Type, Tgl Kirim, AWB (no resi), dan ETA (tanggal kirim + 7 hari).
-          </p>
+          <p className="mt-2 font-sans text-[10.5px] text-text-muted">{note}</p>
         </div>
         <div className="flex items-center justify-between gap-2 border-t border-[#EEF1F4] px-5 py-3">
           <span className="font-sans text-[11px] text-text-muted">
-            {totals.sheets} sheet · {totals.koli} koli · {totals.pcs.toLocaleString("id-ID")} pcs
+            {showSheetCount ? `${totals.sheets} sheet · ` : `${selected.length} resi · `}{totals.koli} koli · {totals.pcs.toLocaleString("id-ID")} pcs
           </span>
           <div className="flex gap-2">
             <Button onClick={onClose} variant="ghost" size="md">
               Batal
             </Button>
-            <Button onClick={() => void download()} variant="primary" size="md" disabled={busy || selected.length === 0}>
+            <Button onClick={() => void download()} variant="primary" size="md" disabled={busy || selected.length === 0 || !extraReady}>
               {busy ? "Menyiapkan…" : "Download"}
             </Button>
           </div>
