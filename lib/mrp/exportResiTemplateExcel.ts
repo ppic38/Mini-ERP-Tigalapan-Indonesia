@@ -30,12 +30,14 @@ export type ResiSheetRow = {
   hppPerItem: number | null;
   /** HPP masih estimasi (roll bahan belum ditutup atau invoice vendor belum ada). */
   estimasi?: boolean;
+  /** Tanggal kirim baris ini (YYYY-MM-DD). Diisi kalau satu sheet menggabungkan beberapa pengiriman bernomor resi sama (tanggal kirimnya bisa berbeda); kosong = tanggal sheet. */
+  deliveredAt?: string;
 };
 export type ResiSheet = {
   noResi: string;
   /** Nomor PO Produksi (maklon) MRP + vendor resi ini; kosong = "-". */
   noPo: string;
-  /** Tanggal kirim YYYY-MM-DD. */
+  /** Tanggal kirim YYYY-MM-DD (kalau beberapa pengiriman digabung: yang paling awal, dipakai untuk "Start"). */
   deliveredAt?: string;
   rows: ResiSheetRow[];
 };
@@ -58,6 +60,31 @@ function sheetName(raw: string, used: Set<string>): string {
   return name;
 }
 
+/** Gabungkan sheet yang nomor resinya sama (tanpa beda huruf besar/kecil dan spasi) jadi SATU sheet: satu resi fisik kadang dicatat vendor sebagai beberapa pengiriman
+ *  (mis. satu koli per pengiriman, resi 12338). Baris tiap pengiriman membawa tanggal kirimnya sendiri, "Start" = tanggal kirim paling awal, NO PO digabung. Urutan sheet
+ *  mengikuti kemunculan pertama; urutan baris (koli naik) diatur saat sheet ditulis. */
+export function mergeResiSheetsByNumber(sheets: ResiSheet[]): ResiSheet[] {
+  const out: ResiSheet[] = [];
+  const byNo = new Map<string, ResiSheet>();
+  for (const s of sheets) {
+    const rows = s.rows.map((r) => ({ ...r, deliveredAt: r.deliveredAt ?? s.deliveredAt }));
+    const k = s.noResi.trim().toLowerCase();
+    const cur = k ? byNo.get(k) : undefined;
+    if (!cur) {
+      const first: ResiSheet = { ...s, rows };
+      out.push(first);
+      if (k) byNo.set(k, first);
+      continue;
+    }
+    cur.rows.push(...rows);
+    if (s.deliveredAt && (!cur.deliveredAt || s.deliveredAt < cur.deliveredAt)) cur.deliveredAt = s.deliveredAt;
+    const pos = new Set(cur.noPo.split(", ").filter(Boolean));
+    for (const p of s.noPo.split(", ").filter(Boolean)) pos.add(p);
+    cur.noPo = Array.from(pos).join(", ");
+  }
+  return out;
+}
+
 export function sortResiRows(rows: ResiSheetRow[]): ResiSheetRow[] {
   return [...rows].sort((a, b) => compareNoKoli(a.noKoli, b.noKoli) || a.itemName.localeCompare(b.itemName, "id-ID", { numeric: true }) || a.type.localeCompare(b.type));
 }
@@ -70,7 +97,7 @@ export async function buildResiTemplateWorkbook(sheets: ResiSheet[]): Promise<Wo
   wb.calcProperties.fullCalcOnLoad = true;
   const used = new Set<string>();
 
-  for (const s of sheets) {
+  for (const s of mergeResiSheetsByNumber(sheets)) {
     const ws = wb.addWorksheet(sheetName(s.noResi, used), { views: [{ state: "frozen", ySplit: 4, showGridLines: true }] });
     ws.columns = [{ width: 9 }, { width: 40 }, { width: 9 }, { width: 18 }, { width: 11 }, { width: 14 }, { width: 11 }, { width: 34 }, { width: 14 }, { width: 16 }, { width: 22 }];
     const rows = sortResiRows(s.rows);
@@ -138,14 +165,15 @@ export async function buildResiTemplateWorkbook(sheets: ResiSheet[]): Promise<Wo
     }
     rows.forEach((r, i) => {
       const n = FIRST + i;
+      const rowKirim = r.deliveredAt ? dateOf(r.deliveredAt) : kirim;
       const vals: (string | number | Date | null | { formula: string; result: number | string })[] = [
         asNumberIfDigits(r.noKoli),
         r.itemName,
         r.qty,
         r.type,
-        kirim,
+        rowKirim,
         awb,
-        { formula: `IF(E${n}="","",E${n}+${ETA_HARI})`, result: kirim ? serialOf(kirim) + ETA_HARI : "" },
+        { formula: `IF(E${n}="","",E${n}+${ETA_HARI})`, result: rowKirim ? serialOf(rowKirim) + ETA_HARI : "" },
         r.itemMoka,
         r.hppPerItem,
         r.hppPerItem != null ? { formula: `C${n}*I${n}`, result: r.qty * r.hppPerItem } : null,

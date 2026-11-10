@@ -49,7 +49,12 @@ export function ResiDownloadDialog({
   const selected = useMemo(() => inScope.filter((g) => !off.has(g.resiGroupId)), [inScope, off]);
   const allVisible = visible.length > 0 && visible.every((g) => !off.has(g.resiGroupId));
   const totals = useMemo(
-    () => ({ koli: selected.reduce((s, g) => s + g.koliIds.length, 0), pcs: selected.reduce((s, g) => s + g.totalQty, 0) }),
+    () => ({
+      // Resi bernomor sama digabung jadi satu sheet, jadi jumlah sheet = jumlah nomor resi yang berbeda.
+      sheets: new Set(selected.map((g) => (resiOf(g) ?? "").trim().toLowerCase() || g.resiGroupId)).size,
+      koli: selected.reduce((s, g) => s + g.koliIds.length, 0),
+      pcs: selected.reduce((s, g) => s + g.totalQty, 0),
+    }),
     [selected]
   );
 
@@ -166,12 +171,12 @@ export function ResiDownloadDialog({
             </div>
           </div>
           <p className="mt-2 font-sans text-[10.5px] text-text-muted">
-            Satu file, satu sheet per resi. Kolom: No Koli, Item Name, Qty, Type, Tgl Kirim, AWB (no resi), dan ETA (tanggal kirim + 7 hari).
+            Satu file, satu sheet per nomor resi (pengiriman bernomor resi sama digabung jadi satu sheet, koli berurutan dari nomor terkecil). Kolom: No Koli, Item Name, Qty, Type, Tgl Kirim, AWB (no resi), dan ETA (tanggal kirim + 7 hari).
           </p>
         </div>
         <div className="flex items-center justify-between gap-2 border-t border-[#EEF1F4] px-5 py-3">
           <span className="font-sans text-[11px] text-text-muted">
-            {selected.length} resi · {totals.koli} koli · {totals.pcs.toLocaleString("id-ID")} pcs
+            {totals.sheets} sheet · {totals.koli} koli · {totals.pcs.toLocaleString("id-ID")} pcs
           </span>
           <div className="flex gap-2">
             <Button onClick={onClose} variant="ghost" size="md">
