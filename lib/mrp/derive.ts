@@ -4260,12 +4260,22 @@ export function setWarnaAliasesForPricing(rows: { mrpWarna: string; skuWarna: st
 
 /** Nama warna di Master Data SKU (Mapping Warna: mis. "FUCHSIA 24S" -> "FANTA 24S"); sama dengan nama MRP kalau tidak ada mapping. Dipakai kolom "Item (MOKA)" di Excel Warehouse
  *  (owner 2026-11-10): nama item MOKA mengikuti nama warna di SKU, bukan nama warna di MRP. */
-export function skuWarnaFor(warna: string): string {
-  const mapped = pricingWarnaAliases.get(warna);
-  if (mapped) return mapped;
-  // Warna Kids tanpa mapping: penamaan Moka menyisipkan KID sebelum angka benang ("ABU MUDA 24S KID" -> "ABU MUDA KID 24S").
-  const kid = /^(.*\S)\s+(\d+S)\s+KID$/.exec(warna);
-  return kid ? `${kid[1]} KID ${kid[2]}` : warna;
+export function skuWarnaFor(warna: string, usia?: Usia | null): string {
+  const isKid = /\sKID$/.test(warna);
+  if (!isKid && usia !== "KIDS") return pricingWarnaAliases.get(warna) ?? warna;
+  // Varian Kids: mapping eksplisit "{warna} KID" menang; kalau tidak ada, turunkan dari nama dewasa di SKU (hasil mapping warna dasarnya), mis.
+  // "BENHUR SPECIAL 24S" (Kids) -> dewasa "BENHUR 24S" -> "BENHUR KID 24S".
+  const base = isKid ? warna.slice(0, -4) : warna;
+  return pricingWarnaAliases.get(isKid ? warna : `${warna} KID`) ?? kidVariantOf(pricingWarnaAliases.get(base) ?? base);
+}
+
+/** Nama varian Kids di Moka dari nama dewasa di SKU: "X 24S" -> "X KID 24S"; "X 30S" -> "X KID" (Kids 30S di Moka tanpa angka benang, kategori KIDS); "X + RIB" -> "X KID + RIB". */
+function kidVariantOf(base: string): string {
+  const rib = /^(.*\S)\s+\+\s+RIB$/.exec(base);
+  if (rib) return `${rib[1]} KID + RIB`;
+  const m = /^(.*\S)\s+(\d+S)$/.exec(base);
+  if (m) return m[2] === "30S" ? `${m[1]} KID` : `${m[1]} KID ${m[2]}`;
+  return `${base} KID`;
 }
 
 /** Warna sebuah item koli untuk tujuan nama item/SKU: item Kids di ERP memakai nama warna dewasa ("BEIGE 24S") dan dibedakan lewat penanda usia (KIDS), sedangkan

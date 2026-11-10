@@ -47,6 +47,8 @@ export type MokaPoItem = {
   itemMoka: string;
   /** Nama item Master SKU kalau ada (cadangan pencocokan). */
   itemName?: string | null;
+  /** Nama alternatif untuk dicocokkan (mis. item RIB di Moka tanpa PDK/PJG: "BENHUR KID + RIB XS"). */
+  alt?: string[];
   /** Kode SKU Master SKU kalau ada (cadangan pencocokan). */
   sku?: string | null;
   qty: number;
@@ -151,6 +153,7 @@ export function buildMokaPoCsv(templateText: string, supplierEmail: string, item
     if (!(it.qty > 0)) continue;
     let r = byName.get(norm(it.itemMoka));
     if (r === undefined && it.itemName) r = byName.get(norm(it.itemName));
+    for (const a of it.alt ?? []) if (r === undefined) r = byName.get(norm(a));
     if (r === undefined && it.sku) {
       const s = norm(it.sku);
       if (!skuDup.has(s)) r = bySku.get(s);

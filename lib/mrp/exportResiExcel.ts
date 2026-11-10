@@ -33,7 +33,7 @@ const sizeRank = (s: string) => {
 const cmpSize = (a: string, b: string) => sizeRank(a) - sizeRank(b) || a.localeCompare(b, "id-ID", { numeric: true });
 const cmpLengan = (a: string, b: string) => (a === b ? 0 : a === "PENDEK" ? -1 : 1);
 const lenganLabel = (l: string) => (l === "PENDEK" ? "Pendek" : "Panjang");
-const itemMokaOf = (warna: string, lengan: string, size: string) => `${skuWarnaFor(warna)} ${lengan === "PENDEK" ? "PDK" : "PJG"} ${size}`;
+const itemMokaOf = (warna: string, usia: string | undefined, lengan: string, size: string) => `${skuWarnaFor(warna, usia as "KIDS" | "DEWASA" | undefined)} ${lengan === "PENDEK" ? "PDK" : "PJG"} ${size}`;
 const jenisLabel = (k: string) => (k === "FG" ? "Finish Good" : k === "REWORK" ? "Rework" : "Reject");
 
 type CellValue = string | number | null | { formula: string; result: string | number | null };
@@ -159,7 +159,7 @@ export async function buildResiWorkbook(group: WarehouseReceivableGroup): Promis
     const vals: CellValue[] = [
       "Koli " + (it.noKoli ?? it.deliveryKoliId),
       warnaWithUsia(it.warna, it.usia),
-      itemMokaOf(warnaWithUsia(it.warna, it.usia), it.lengan, it.size),
+      itemMokaOf(it.warna, it.usia, it.lengan, it.size),
       lenganLabel(it.lengan),
       it.size,
       jenisLabel(it.kind),
@@ -209,11 +209,11 @@ export async function buildResiWorkbook(group: WarehouseReceivableGroup): Promis
     { text: "Total HPP", numeric: true },
     { text: "HPP / item rata-rata", numeric: true },
   ]);
-  const groups = new Map<string, { warna: string; lengan: string; size: string; fg: number; rw: number; rj: number; nilai: number }>();
+  const groups = new Map<string, { warna: string; usia?: string; lengan: string; size: string; fg: number; rw: number; rj: number; nilai: number }>();
   for (const it of items) {
     const warna = warnaWithUsia(it.warna, it.usia);
     const k = warna + "|" + it.lengan + "|" + it.size;
-    const g = groups.get(k) ?? { warna, lengan: it.lengan, size: it.size, fg: 0, rw: 0, rj: 0, nilai: 0 };
+    const g = groups.get(k) ?? { warna, usia: it.usia, lengan: it.lengan, size: it.size, fg: 0, rw: 0, rj: 0, nilai: 0 };
     if (it.kind === "FG") g.fg += it.qty;
     else if (it.kind === "REWORK") g.rw += it.qty;
     else g.rj += it.qty;
@@ -230,7 +230,7 @@ export async function buildResiWorkbook(group: WarehouseReceivableGroup): Promis
     const hppPcs = g.fg + g.rw > 0 ? g.nilai / (g.fg + g.rw) : 0;
     const vals: CellValue[] = [
       g.warna,
-      itemMokaOf(g.warna, g.lengan, g.size),
+      itemMokaOf(g.warna, g.usia, g.lengan, g.size),
       lenganLabel(g.lengan),
       g.size,
       f(`SUMIFS(${rng("G")},${crit},${rng("F")},"Finish Good")`, g.fg),

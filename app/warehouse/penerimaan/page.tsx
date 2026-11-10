@@ -249,7 +249,7 @@ export default function WarehousePenerimaanPage() {
           // Item (MOKA): warna memakai nama di Master Data SKU lewat Mapping Warna (mis. FUCHSIA 24S -> FANTA 24S). Nama item (Master SKU) dicari dengan nama warna ERP lalu nama warna SKU.
           // Item Kids: nama varian Kids ("BEIGE 24S" + Kids -> "BEIGE 24S KID" -> mapping "BEIGE KID 24S"), supaya tidak tertukar dengan item dewasa warna yang sama.
           const warna = warnaWithUsia(it.warna, it.usia);
-          const skuWarna = skuWarnaFor(warna);
+          const skuWarna = skuWarnaFor(it.warna, it.usia);
           const itemMoka = `${skuWarna} ${it.lengan === "PENDEK" ? "PDK" : "PJG"} ${it.size}`;
           const itemName = nameByKey.get(`${warna}|${it.lengan}|${it.size}`) ?? nameByKey.get(`${skuWarna}|${it.lengan}|${it.size}`) ?? itemMoka;
           const key = [noKoli, itemName, type].join("|");
@@ -293,10 +293,12 @@ export default function WarehousePenerimaanPage() {
         for (const it of g.items) {
           if (it.kind === "REJECT") continue;
           const warna = warnaWithUsia(it.warna, it.usia);
-          const skuWarna = skuWarnaFor(warna);
+          const skuWarna = skuWarnaFor(it.warna, it.usia);
           const itemMoka = `${skuWarna} ${it.lengan === "PENDEK" ? "PDK" : "PJG"} ${it.size}`;
           const master = skuByKey.get(`${warna}|${it.lengan}|${it.size}`) ?? skuByKey.get(`${skuWarna}|${it.lengan}|${it.size}`);
-          const cur = acc.get(itemMoka) ?? { itemMoka, itemName: master?.itemName ?? null, sku: master?.sku ?? null, qty: 0, hppPerItem: null, nilai: 0, qtyCost: 0 };
+          // Item RIB di Moka tidak memuat PDK/PJG ("BENHUR KID + RIB XS", "HITAM + RIB L"): cadangan pencocokan tanpa lengan.
+          const alt = skuWarna.includes("+ RIB") ? [`${skuWarna} ${it.size}`] : undefined;
+          const cur = acc.get(itemMoka) ?? { itemMoka, itemName: master?.itemName ?? null, alt, sku: master?.sku ?? null, qty: 0, hppPerItem: null, nilai: 0, qtyCost: 0 };
           cur.qty += it.qty;
           if (it.hppPerItem > 0) {
             cur.nilai += it.qty * it.hppPerItem;
@@ -305,7 +307,7 @@ export default function WarehousePenerimaanPage() {
           acc.set(itemMoka, cur);
         }
       }
-      const items: MokaPoItem[] = Array.from(acc.values()).map((x) => ({ itemMoka: x.itemMoka, itemName: x.itemName, sku: x.sku, qty: x.qty, hppPerItem: x.qtyCost > 0 ? x.nilai / x.qtyCost : null }));
+      const items: MokaPoItem[] = Array.from(acc.values()).map((x) => ({ itemMoka: x.itemMoka, itemName: x.itemName, alt: x.alt, sku: x.sku, qty: x.qty, hppPerItem: x.qtyCost > 0 ? x.nilai / x.qtyCost : null }));
       const res = buildMokaPoCsv(templateText, supplierEmail, items);
       if (res.error) {
         await alertDialog({ title: "Template tidak bisa dipakai", message: res.error, tone: "danger" });
