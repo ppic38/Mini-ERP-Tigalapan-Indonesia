@@ -42,3 +42,6 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# pengaturan izin lokal Claude Code (khusus komputer ini)
+.claude/settings.local.json
