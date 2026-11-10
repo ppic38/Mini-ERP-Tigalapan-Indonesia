@@ -102,11 +102,17 @@ function batchNeedsCuttingInput(b: ProductionBatch): boolean {
   return Object.values(b.sizeQty).every((v) => !v || v <= 0);
 }
 
-/** Aturan owner 2026-11-10 (menggantikan aturan 2026-10-23 "terkunci begitu Finish Good > 0"): hasil cutting sebuah roll baru terkunci kalau roll itu sudah ditutup atau
- *  sudah masuk resi pengiriman. Selama belum, cutting boleh diedit walau Finish Good sudah diisi, asal tiap size tidak lebih kecil dari Finish Good-nya
- *  (cek di modal dan di server, updateBatchesToCuttingImpl). */
+/** Aturan owner 2026-11-10 (menggantikan aturan 2026-10-23 "terkunci begitu Finish Good > 0 atau roll ditutup"): hasil cutting sebuah roll baru terkunci kalau roll itu sudah masuk
+ *  resi pengiriman. Selama belum, cutting boleh diedit walau Finish Good sudah diisi atau roll sudah ditutup (mis. ada sisa kain sehingga hasil cutting bertambah),
+ *  asal tiap size tidak lebih kecil dari Finish Good-nya (cek di modal dan di server, updateBatchesToCuttingImpl). */
 function batchCuttingLocked(b: ProductionBatch, inResi: Set<string>): boolean {
-  return !!b.closedAt || inResi.has(b.id);
+  return inResi.has(b.id);
+}
+
+/** Alasan kunci untuk ditampilkan: roll sudah masuk resi pengiriman. */
+function batchLockReasonText(batches: ProductionBatch[], inResi: Set<string>): string {
+  const resi = batches.filter((bt) => inResi.has(bt.id)).length;
+  return resi > 0 ? `${resi} roll sudah masuk resi pengiriman` : "";
 }
 
 type AduanGroup = { kode: string; lengan: Lengan; rows: (AduanPolaRow & { available: number })[]; totalQty: number; totalAvailable: number; totalStarted: number; totalMissing: number };
@@ -1306,14 +1312,17 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         <span className="flex items-center gap-1.5">
                           {formatDateTime(earliestCuttingAt ?? g.restingAt)}
                           {(() => {
-                            const lockedCount = g.batches.filter((b) => batchCuttingLocked(b, rollsInResiSet)).length;
+                            const lockedBatches = g.batches.filter((b) => batchCuttingLocked(b, rollsInResiSet));
+                            const lockedCount = lockedBatches.length;
+                            const lockReason = batchLockReasonText(lockedBatches, rollsInResiSet);
                             if (lockedCount === g.batches.length) {
                               return (
                                 <span
-                                  title="Roll sudah masuk resi pengiriman atau sudah ditutup, jadi hasil cutting tidak bisa diedit lagi."
-                                  className="font-sans text-[10.5px] font-semibold text-text-muted"
+                                  title="Hasil cutting tidak bisa diedit lagi: roll sudah masuk resi pengiriman."
+                                  className="flex flex-col font-sans text-[10.5px] font-semibold text-text-muted"
                                 >
-                                  Terkunci 🔒
+                                  <span>Terkunci 🔒</span>
+                                  <span className="text-[10px] font-normal">{lockReason}</span>
                                 </span>
                               );
                             }
@@ -1327,8 +1336,8 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                                   Edit ✎
                                 </button>
                                 {lockedCount > 0 && (
-                                  <span title="Roll yang sudah masuk resi pengiriman atau sudah ditutup tidak bisa diedit hasil cuttingnya." className="font-sans text-[10px] text-text-muted">
-                                    {lockedCount} roll terkunci
+                                  <span title={`Tidak bisa diedit: ${lockReason}.`} className="font-sans text-[10px] text-text-muted">
+                                    {lockedCount} roll terkunci ({lockReason})
                                   </span>
                                 )}
                               </>
@@ -1807,7 +1816,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                     <span className="max-md:hidden">Waktu cutting dicatat otomatis saat Simpan</span>
                     {lockedInSession > 0 && (
                       <span className="text-warning-fg">
-                        {lockedInSession} roll tidak ditampilkan: sudah masuk resi pengiriman atau sudah ditutup
+                        {lockedInSession} roll tidak ditampilkan ({batchLockReasonText(session.batches.filter((b) => batchCuttingLocked(b, rollsInResiSet)), rollsInResiSet)})
                       </span>
                     )}
                   </div>
@@ -1835,6 +1844,9 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                                 <span className="font-mono text-[11px] text-text-muted max-md:text-[12.5px]">
                                   {actualTotal} / {targetTotal} pcs
                                 </span>
+                                {b.closedAt && (
+                                  <span className="font-sans text-[10.5px] text-text-muted">Roll sudah ditutup: kalau cutting bertambah, Finish Good tambahannya diinput lewat Edit FG</span>
+                                )}
                                 {Object.values(b.fgSizeQty ?? {}).some((q) => q > 0) && (
                                   <span className="font-sans text-[10.5px] text-warning-fg">
                                     FG sudah diisi ({Object.entries(b.fgSizeQty ?? {}).filter(([, q]) => q > 0).map(([sz, q]) => `${sz} ${q}`).join(", ")}): cutting tiap size tidak boleh di bawah itu

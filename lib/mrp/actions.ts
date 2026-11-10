@@ -2905,8 +2905,9 @@ async function updateBatchesToCuttingImpl(
   }
   if (batchRows.some((b) => b.vendor_produksi !== actor.vendorId)) throw new Error("Sebagian roll bukan milik vendor Anda.");
   // Aturan owner 2026-11-10 (menggantikan aturan 2026-10-23 "terkunci begitu Finish Good > 0"): hasil cutting sebuah roll baru terkunci kalau roll itu
-  // sudah ditutup atau sudah masuk RESI pengiriman (ada item-nya di koli yang sudah punya resi/tanggal kirim, atau koli level-koli lama). Selama belum,
-  // cutting boleh diedit walau Finish Good sudah diisi, asal tiap size tidak lebih kecil dari Finish Good-nya (FG tidak boleh melebihi cutting).
+  // sudah masuk RESI pengiriman (ada item-nya di koli yang sudah punya resi/tanggal kirim, atau koli level-koli lama). Selama belum, cutting boleh diedit
+  // walau Finish Good sudah diisi ATAU roll sudah ditutup (mis. ada sisa kain sehingga hasil cutting bertambah), asal tiap size tidak lebih kecil dari
+  // Finish Good-nya (FG tidak boleh melebihi cutting).
   {
     const [fgRes, koliItemRes, legacyRes, extraRes] = await Promise.all([
       db.from("production_batch_fg_sizes").select("production_batch_id,size,qty").in("production_batch_id", batchIds).gt("qty", 0),
@@ -2924,12 +2925,9 @@ async function updateBatchesToCuttingImpl(
     const inResi = new Set<string>();
     for (const r of koliItemRes.data ?? []) if (koliInResi.has(r.delivery_koli_id as string)) inResi.add(r.source_batch_id as string);
     for (const r of legacyRes.data ?? []) inResi.add(r.production_batch_id as string);
-    const locked = batchRows.filter((b) => b.closed_at || inResi.has(b.id));
+    const locked = batchRows.filter((b) => inResi.has(b.id));
     if (locked.length > 0) {
-      throw new Error(
-        `Hasil cutting roll ${locked.map((b) => b.code_roll || b.id).join(", ")} tidak bisa diedit karena roll sudah ditutup atau sudah masuk resi pengiriman. ` +
-          `Kalau roll ditutup, buka lagi dulu; kalau sudah masuk resi, perubahan harus lewat Sysadmin.`
-      );
+      throw new Error(`Hasil cutting roll ${locked.map((b) => b.code_roll || b.id).join(", ")} tidak bisa diedit karena sudah masuk resi pengiriman. Perubahan harus lewat Sysadmin.`);
     }
     // Hasil tambahan sisa kain yang sudah punya Finish Good dibuat ulang saat cutting disimpan, jadi tidak boleh disentuh selama FG-nya ada.
     const extraWithFg = batchRows.filter((b) => {
@@ -2945,6 +2943,28 @@ async function updateBatchesToCuttingImpl(
       const next = Number(sizeQtyByBatchId[r.production_batch_id as string]?.[r.size as string] ?? 0);
       if (b && next < Number(r.qty)) {
         throw new Error(`Roll ${b.code_roll || b.id} size ${r.size}: hasil cutting ${next} pcs tidak boleh kurang dari Finish Good yang sudah diinput (${Number(r.qty)} pcs). Koreksi Finish Good-nya (Edit FG) dulu kalau memang salah.`);
+      }
+    }
+    // Roll yang sudah ditutup: hasil cutting boleh BERTAMBAH (sisa kain). Kalau reject grupnya sudah sempat dirework/dibuang, hasil cutting tidak boleh
+    // BERKURANG (reject dasar yang dipakai deduksi rework akan hilang); reject otomatis grup dihitung ulang di bawah seperti biasa.
+    const closedBatches = batchRows.filter((b) => b.closed_at);
+    if (closedBatches.length > 0) {
+      const oldSizeRes = await db.from("production_batch_sizes").select("production_batch_id,size,qty").in("production_batch_id", closedBatches.map((b) => b.id));
+      if (oldSizeRes.error) throw new Error(oldSizeRes.error.message);
+      const checked = new Map<string, boolean>();
+      for (const b of closedBatches) {
+        const groupKey = `${b.mrp_id}|${b.warna}|${b.lengan}`;
+        if (!checked.has(groupKey)) {
+          const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at").eq("group_key", groupKey).eq("vendor_produksi", b.vendor_produksi).maybeSingle();
+          checked.set(groupKey, !!meta?.fg_confirmed_at && (await groupHasReworkOrWaste(db, groupKey, b.vendor_produksi)));
+        }
+        if (!checked.get(groupKey)) continue;
+        for (const r of (oldSizeRes.data ?? []).filter((x) => x.production_batch_id === b.id)) {
+          const next = Number(sizeQtyByBatchId[b.id]?.[r.size as string] ?? 0);
+          if (next < Number(r.qty)) {
+            throw new Error(`Roll ${b.code_roll || b.id} size ${r.size}: reject warna ini sudah dirework/dibuang, jadi hasil cutting roll yang sudah ditutup hanya boleh bertambah (sekarang ${Number(r.qty)} pcs, tidak boleh jadi ${next}).`);
+          }
+        }
       }
     }
   }
