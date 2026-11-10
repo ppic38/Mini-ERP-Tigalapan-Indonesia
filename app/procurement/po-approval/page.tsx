@@ -10,6 +10,7 @@ import { VendorSwitchModal } from "@/components/mrp/vendor-switch-modal";
 import { MaklonPoWarnaLenganTable } from "@/components/mrp/maklon-po-warna-lengan-table";
 import type { ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
+import { aduanRowsOfPo } from "@/lib/mrp/exportPoExcel";
 import {
   aduanRowsForVendor,
   formatDate,
@@ -345,7 +346,7 @@ export default function PoApprovalPage() {
         // closePoWithReason/transferMaterial, angka p.amount sendiri sudah benar (pola "rate
         // efektif dipertahankan", lihat lib/mrp/store.ts) tapi rincian di sini bisa sedikit
         // meleset dari histori aslinya — tetap berguna sebagai gambaran umum.
-        const aduanRows = mrpDetailFor(p.mrpId, mrpDetails)?.aduanRows.filter((a) => a.vendor === p.vendorProduksi) ?? [];
+        const aduanRows = aduanRowsOfPo(mrpDetailFor(p.mrpId, mrpDetails), p, maklonPOs);
         return <RateBadge explanation={maklonRateExplanation(hargaMaklon, p.vendorProduksi, aduanRows)} />;
       },
     },
@@ -1180,7 +1181,7 @@ export default function PoApprovalPage() {
                                   <MaklonPoWarnaLenganTable
                                     vendorProduksi={p.vendorProduksi}
                                     amount={p.amount}
-                                    aduanRows={mrpDetailFor(p.mrpId, mrpDetails)?.aduanRows.filter((a) => a.vendor === p.vendorProduksi) ?? []}
+                                    aduanRows={aduanRowsOfPo(mrpDetailFor(p.mrpId, mrpDetails), p, maklonPOs)}
                                     hargaMaklon={hargaMaklon}
                                   />
                                   {p.cancelledLines.length > 0 && (

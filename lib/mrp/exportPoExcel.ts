@@ -2,7 +2,7 @@ import type { Workbook, Worksheet } from "exceljs";
 import { formatDate, localDateString, materialKgPerRollForGroup, mrpDetailFor, SIZE_ORDER, type AduanMaterialKind } from "./derive";
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "./seed";
 import type { MrpDetail } from "./store";
-import type { MaklonPO, MaterialPO } from "./types";
+import type { AduanPolaRow, MaklonPO, MaterialPO } from "./types";
 import { poApprovalSignBoxes, type PoApprovalSignBox } from "./poApproval";
 import type { PoExportVariant } from "./exportPoPdf";
 
@@ -340,12 +340,12 @@ function materialSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: Mater
   drawApproval(ws, r + 1, poApprovalSignBoxes(po, mrpDetail?.dates.poSent, mrpDetail?.dates.poApproved));
 }
 
-function maklonSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: MaklonPO, mrpDetails: MrpDetail[], variant: PoExportVariant = "internal") {
+function maklonSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: MaklonPO, mrpDetails: MrpDetail[], variant: PoExportVariant = "internal", allPos: MaklonPO[] = [po]) {
   setupSheet(ws);
   const vendorName = VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi;
   const detail = mrpDetailFor(po.mrpId, mrpDetails);
   const kategori = detail?.mrp.kategori ?? "—";
-  const aduanRows = detail?.aduanRows.filter((a) => a.vendor === po.vendorProduksi) ?? [];
+  const aduanRows = aduanRowsOfPo(detail, po, allPos);
   const byWarna = new Map<string, { warna: string; pdk: number; pjg: number }>();
   for (const a of aduanRows) {
     const cur = byWarna.get(a.warna) ?? { warna: a.warna, pdk: 0, pjg: 0 };
@@ -538,10 +538,10 @@ export async function exportMaterialPoExcelSingleSheet(pos: MaterialPO[], mrpDet
 }
 
 /** 1 PO Produksi (maklon) = 1 sheet; banyak PO = banyak sheet dalam 1 file. No-op kalau `pos` kosong. */
-export async function exportMaklonPoExcel(pos: MaklonPO[], mrpDetails: MrpDetail[], fileName: string, variant: PoExportVariant = "internal") {
+export async function exportMaklonPoExcel(pos: MaklonPO[], mrpDetails: MrpDetail[], fileName: string, variant: PoExportVariant = "internal", allPos: MaklonPO[] = pos) {
   if (pos.length === 0) return;
   const { wb, logo } = await newWorkbook();
-  for (const po of pos) maklonSheet(wb, wb.addWorksheet(sheetName(wb, `PO ${po.id.replace(/^PO-(MKL-)?/, "")}`)), logo, po, mrpDetails, variant);
+  for (const po of pos) maklonSheet(wb, wb.addWorksheet(sheetName(wb, `PO ${po.id.replace(/^PO-(MKL-)?/, "")}`)), logo, po, mrpDetails, variant, allPos);
   await download(wb, fileName);
 }
 
@@ -588,6 +588,17 @@ function poPartIndexOfGroup(detail: MrpDetail | undefined, parts: MaklonPO[], le
     }
   });
   return best;
+}
+
+/** Aduan Pola milik SATU PO produksi. Kalau vendor ini hanya punya satu PO di MRP itu: semua Aduan Pola vendor di MRP itu. Kalau ada PO awal + susulan:
+ *  hanya warna yang terkirim bersama PO ini (lihat poPartIndexOfGroup). `allPos` = daftar PO di store (tanpa itu, PO dianggap satu-satunya). */
+export function aduanRowsOfPo(detail: MrpDetail | undefined, po: MaklonPO, allPos: MaklonPO[] = [po]): AduanPolaRow[] {
+  const rows = detail?.aduanRows.filter((a) => a.vendor === po.vendorProduksi) ?? [];
+  const parts = poPartsOfVendor(po, allPos);
+  if (parts.length < 2) return rows;
+  const idx = parts.findIndex((p) => p.id === po.id);
+  if (idx < 0) return rows;
+  return rows.filter((a) => poPartIndexOfGroup(detail, parts, a.lenganGroupId) === idx);
 }
 
 function poPartLabel(parts: MaklonPO[], i: number): string {

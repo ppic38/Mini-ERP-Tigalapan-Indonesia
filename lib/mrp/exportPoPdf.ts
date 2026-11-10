@@ -6,6 +6,7 @@ import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "./seed";
 import type { MrpDetail } from "./store";
 import type { MaklonPO, MaterialPO, PaymentProposal, VendorInvoice } from "./types";
 import { poApprovalSignBoxes, type PoApprovalSignBox } from "./poApproval";
+import { aduanRowsOfPo } from "./exportPoExcel";
 
 // Revisi 2026-09-28 (owner: "versi internal pake sekarang dan versi eksternal (untuk ke supplier
 // dan vendor produksi) itu bedanya tidak ada dibagi yang pendek dan panjang, langsung totalan") --
@@ -487,11 +488,11 @@ export function exportMaterialPoPdfBatch(pos: MaterialPO[], mrpDetails: MrpDetai
 /** Generate & download PDF Proposal Purchase Order Produksi (maklon vendor), rincian per warna
  *  menampilkan Qty PDK/PJG -- dihitung dari aduanRows MRP terkait untuk vendor ini, bukan langsung dari
  *  MaklonPO. Tidak ada nominal harga/biaya maklon di dokumen ini. */
-function renderMaklonPoPage(doc: jsPDF, po: MaklonPO, mrpDetails: MrpDetail[], variant: PoExportVariant = "internal") {
+function renderMaklonPoPage(doc: jsPDF, po: MaklonPO, mrpDetails: MrpDetail[], variant: PoExportVariant = "internal", allPos: MaklonPO[] = [po]) {
   const vendorName = VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi;
   const detail = mrpDetailFor(po.mrpId, mrpDetails);
   const kategori = detail?.mrp.kategori ?? "—";
-  const aduanRows = detail?.aduanRows.filter((a) => a.vendor === po.vendorProduksi) ?? [];
+  const aduanRows = aduanRowsOfPo(detail, po, allPos);
 
   const byWarna = new Map<string, { warna: string; pdk: number; pjg: number }>();
   for (const a of aduanRows) {
@@ -558,20 +559,20 @@ function renderMaklonPoPage(doc: jsPDF, po: MaklonPO, mrpDetails: MrpDetail[], v
   drawApprovalBoxesSafe(doc, y, poApprovalSignBoxes(po, detail?.dates.poSent, detail?.dates.poApproved));
 }
 
-export function exportMaklonPoPdf(po: MaklonPO, mrpDetails: MrpDetail[], variant: PoExportVariant = "internal") {
+export function exportMaklonPoPdf(po: MaklonPO, mrpDetails: MrpDetail[], variant: PoExportVariant = "internal", allPos: MaklonPO[] = [po]) {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
-  renderMaklonPoPage(doc, po, mrpDetails, variant);
+  renderMaklonPoPage(doc, po, mrpDetails, variant, allPos);
   doc.save(`PO-${po.id}${variant === "external" ? "-eksternal" : ""}.pdf`);
 }
 
 /** Semua `pos` (PO produksi satu MRP) digambar ke SATU dokumen, 1 halaman per PO -- pasangan
  *  exportMaterialPoPdfBatch untuk tombol "Download PO" di baris MRP tabel PO Produksi. */
-export function exportMaklonPoPdfBatch(pos: MaklonPO[], mrpDetails: MrpDetail[], fileName: string, variant: PoExportVariant = "internal") {
+export function exportMaklonPoPdfBatch(pos: MaklonPO[], mrpDetails: MrpDetail[], fileName: string, variant: PoExportVariant = "internal", allPos: MaklonPO[] = pos) {
   if (pos.length === 0) return;
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   pos.forEach((po, i) => {
     if (i > 0) doc.addPage();
-    renderMaklonPoPage(doc, po, mrpDetails, variant);
+    renderMaklonPoPage(doc, po, mrpDetails, variant, allPos);
   });
   doc.save(fileName);
 }

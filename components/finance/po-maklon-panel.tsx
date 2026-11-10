@@ -4,6 +4,7 @@ import { Fragment, useEffect, useState } from "react";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Button } from "@/components/ui/button";
 import { MaklonPoWarnaLenganTable } from "@/components/mrp/maklon-po-warna-lengan-table";
+import { aduanRowsOfPo } from "@/lib/mrp/exportPoExcel";
 import { poApprovalState } from "@/lib/mrp/poApproval";
 import { ApprovalChain } from "@/components/mrp/po-approval-queue";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -279,7 +280,7 @@ export function PoMaklonPanel() {
                                     <MaklonPoWarnaLenganTable
                                       vendorProduksi={po.vendorProduksi}
                                       amount={po.amount}
-                                      aduanRows={mrpDetails.find((d) => d.mrp.id === po.mrpId)?.aduanRows.filter((a) => a.vendor === po.vendorProduksi) ?? []}
+                                      aduanRows={aduanRowsOfPo(mrpDetails.find((d) => d.mrp.id === po.mrpId), po, maklonPOs)}
                                       hargaMaklon={hargaMaklon}
                                     />
                                   </td>
@@ -456,7 +457,7 @@ export function PoMaklonPanel() {
                                             <MaklonPoWarnaLenganTable
                                               vendorProduksi={p.vendorProduksi}
                                               amount={p.amount}
-                                              aduanRows={mrpDetails.find((d) => d.mrp.id === p.mrpId)?.aduanRows.filter((a) => a.vendor === p.vendorProduksi) ?? []}
+                                              aduanRows={aduanRowsOfPo(mrpDetails.find((d) => d.mrp.id === p.mrpId), p, maklonPOs)}
                                               hargaMaklon={hargaMaklon}
                                             />
                                           </td>

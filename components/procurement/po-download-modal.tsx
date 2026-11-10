@@ -39,13 +39,13 @@ export function PoDownloadModal({ request, mrpDetails, onClose }: { request: PoD
         if (request.kind === "material") {
           if (count === 1) exportMaterialPoPdf(request.pos[0], mrpDetails, variant);
           else exportMaterialPoPdfBatch(request.pos, mrpDetails, `${request.baseName}${suffix}.pdf`, variant);
-        } else if (count === 1) exportMaklonPoPdf(request.pos[0], mrpDetails, variant);
-        else exportMaklonPoPdfBatch(request.pos, mrpDetails, `${request.baseName}${suffix}.pdf`, variant);
+        } else if (count === 1) exportMaklonPoPdf(request.pos[0], mrpDetails, variant, allMaklonPOs);
+        else exportMaklonPoPdfBatch(request.pos, mrpDetails, `${request.baseName}${suffix}.pdf`, variant, allMaklonPOs);
       } else if (request.kind === "material") {
         if (layout === "single" && count > 1) await exportMaterialPoExcelSingleSheet(request.pos, mrpDetails, `${request.baseName}${suffix}-satu-sheet.xlsx`, variant);
         else await exportMaterialPoExcel(request.pos, mrpDetails, `${request.baseName}${suffix}.xlsx`, variant);
       }
-      else await exportMaklonPoExcel(request.pos, mrpDetails, `${request.baseName}${suffix}.xlsx`, variant);
+      else await exportMaklonPoExcel(request.pos, mrpDetails, `${request.baseName}${suffix}.xlsx`, variant, allMaklonPOs);
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Gagal membuat file.");

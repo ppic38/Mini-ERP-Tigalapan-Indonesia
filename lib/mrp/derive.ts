@@ -1074,15 +1074,17 @@ export function poInvoiceDates(poId: string, invoices: RawMaterialInvoice[]) {
 }
 
 export function maklonFeeForColorLine(po: MaterialPO, entry: ColorBreakdown, maklonPOs: MaklonPO[], mrpDetails: MrpDetail[]): number {
-  const maklon = maklonPOs.find((m) => m.mrpId === po.mrpId && m.vendorProduksi === po.vendorProduksi);
-  if (!maklon) return 0;
+  // PO awal + PO susulan (id -2, -3 ...) vendor yang sama di MRP yang sama: nilai semuanya dijumlah, karena pembaginya (totalVendorQty) juga qty gabungan seluruh Aduan Pola vendor.
+  const maklons = maklonPOs.filter((m) => m.mrpId === po.mrpId && m.vendorProduksi === po.vendorProduksi && !m.isFob);
+  if (maklons.length === 0) return 0;
+  const maklonAmount = maklons.reduce((s, m) => s + m.amount, 0);
   const detail = mrpDetailFor(po.mrpId, mrpDetails);
   if (!detail) return 0;
   const totalVendorQty = detail.aduanRows.filter((a) => a.vendor === po.vendorProduksi).reduce((s, a) => s + a.qty, 0);
   const lineQty = detail.aduanRows
     .filter((a) => a.vendor === po.vendorProduksi && a.warna === entry.warna && a.lengan === entry.lengan)
     .reduce((s, a) => s + a.qty, 0);
-  return totalVendorQty > 0 ? maklon.amount * (lineQty / totalVendorQty) : 0;
+  return totalVendorQty > 0 ? maklonAmount * (lineQty / totalVendorQty) : 0;
 }
 
 export function formatDecimal(n: number, decimals = 2): string {
