@@ -1,5 +1,15 @@
 # Migrasi Project — Status & Riwayat
 
+## Edit hasil cutting: terkunci saat roll masuk resi, bukan saat Finish Good diisi (2026-11-10, tanpa migration)
+Owner: vendor sering mengubah hasil cutting setelah Finish Good diisi, dan owner harus membetulkan lewat SQL manual. Aturan lama (2026-10-23): cutting roll terkunci begitu FG > 0 atau roll ditutup. Aturan baru: terkunci hanya kalau roll sudah ditutup atau sudah MASUK RESI pengiriman.
+- "Masuk resi" = ada item roll itu di koli yang sudah punya grup resi (`resi_group_id`) atau tanggal kirim (`delivered_at`), atau roll tercatat lewat koli level-koli lama (`delivery_koli_batches` / `sourceBatchIds`, dianggap terkirim utuh). Koli yang baru dibuat tanpa resi TIDAK mengunci.
+- Selama belum terkunci, cutting boleh diedit walau FG sudah diisi, dengan lantai per size: hasil cutting baru (termasuk alih size) tidak boleh kurang dari FG yang sudah diinput (invarian FG <= cutting tetap terjaga). FG yang sudah masuk koli selalu <= FG, jadi ikut terlindungi.
+- Roll dengan hasil tambahan sisa kain yang sudah punya FG tetap ditolak (hasil tambahan dibuat ulang saat cutting disimpan, FG-nya ikut dibuat ulang).
+- Server: `updateBatchesToCuttingImpl` (`lib/mrp/actions.ts`) menggantikan blok "FG > 0 atau ditutup" dengan tiga cek di atas (terkunci, hasil tambahan ber-FG, lantai per size). Klien: `batchCuttingLocked(b, inResi)` + `rollsInResi(kolis)` (`lib/mrp/derive.ts`) di `components/mrp/production-cutting-tab.tsx`; modal Edit menampilkan catatan FG per roll dan menolak simpan di bawah FG; teks kunci diganti "sudah masuk resi pengiriman atau sudah ditutup".
+- Dampak HPP: roll terbuka memakai hasil cutting sebagai pembagi, jadi edit cutting setelah FG menggeser HPP estimasi roll itu sampai ditutup; roll tertutup memakai FG aktual dan tetap terkunci. Reject otomatis dihitung ulang oleh kode yang sudah ada kalau FG grup sudah dikonfirmasi.
+- Tidak diubah: koreksi cutting Sysadmin (`sysadminActions.ts`, hanya untuk roll tanpa FG), aturan Edit FG, kunci "Selesai Produksi".
+- Diuji: tsc bersih; `rollsInResi` pada data tiruan (koli tanpa resi tidak mengunci; koli beresi, koli berpenanda tanggal kirim, dan koli lama mengunci). Cek server belum diuji pada database sungguhan.
+
 ## Item Kids: nama item Moka memakai varian Kids ("BEIGE 24S" + Kids -> "BEIGE KID 24S") (2026-11-10, tanpa migration)
 Owner: item Kids di Excel Warehouse / Download PO tidak ikut Mapping Warna padahal ada di template Moka ("BEIGE KID 24S PJG XS", kategori KIDS 24S; mapping "BEIGE 24S KID" -> "BEIGE KID 24S"). Penyebab: di koli, item Kids bernama warna dewasa ("BEIGE 24S") dan hanya dibedakan lewat penanda `usia` = KIDS, sementara pencarian mapping memakai nama warna saja ("BEIGE 24S"), sehingga Kids dan dewasa tertukar dan nama Kids tidak pernah ketemu.
 - `lib/mrp/derive.ts`: `WarehouseReceivableItem.usia` (diisi dari item koli); `warnaWithUsia(warna, usia)` = warna + " KID" untuk Kids (kalau belum berakhiran KID); `skuWarnaFor` kini punya cadangan untuk warna Kids tanpa mapping ("ABU MUDA 24S KID" -> "ABU MUDA KID 24S", penamaan Moka); mapping eksplisit tetap menang.

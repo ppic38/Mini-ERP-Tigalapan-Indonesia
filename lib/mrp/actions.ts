@@ -2904,18 +2904,48 @@ async function updateBatchesToCuttingImpl(
     }
   }
   if (batchRows.some((b) => b.vendor_produksi !== actor.vendorId)) throw new Error("Sebagian roll bukan milik vendor Anda.");
-  // Aturan owner 2026-10-23: hasil cutting roll yang SUDAH punya Finish Good (>0) atau sudah ditutup tidak bisa diubah lagi,
-  // supaya angka cutting tidak bertentangan dengan Finish Good yang tercatat (mis. cutting diedit lebih kecil dari FG).
+  // Aturan owner 2026-11-10 (menggantikan aturan 2026-10-23 "terkunci begitu Finish Good > 0"): hasil cutting sebuah roll baru terkunci kalau roll itu
+  // sudah ditutup atau sudah masuk RESI pengiriman (ada item-nya di koli yang sudah punya resi/tanggal kirim, atau koli level-koli lama). Selama belum,
+  // cutting boleh diedit walau Finish Good sudah diisi, asal tiap size tidak lebih kecil dari Finish Good-nya (FG tidak boleh melebihi cutting).
   {
-    const { data: fgRows, error: fgErr } = await db.from("production_batch_fg_sizes").select("production_batch_id").in("production_batch_id", batchIds).gt("qty", 0);
-    if (fgErr) throw new Error(fgErr.message);
-    const withFg = new Set((fgRows ?? []).map((r) => r.production_batch_id as string));
-    const locked = batchRows.filter((b) => b.closed_at || withFg.has(b.id));
+    const [fgRes, koliItemRes, legacyRes, extraRes] = await Promise.all([
+      db.from("production_batch_fg_sizes").select("production_batch_id,size,qty").in("production_batch_id", batchIds).gt("qty", 0),
+      db.from("delivery_koli_items").select("source_batch_id,delivery_koli_id").in("source_batch_id", batchIds),
+      db.from("delivery_koli_batches").select("production_batch_id").in("production_batch_id", batchIds),
+      db.from("production_batches").select("id,extra_results").in("id", batchIds),
+    ]);
+    if (fgRes.error) throw new Error(fgRes.error.message);
+    if (koliItemRes.error) throw new Error(koliItemRes.error.message);
+    if (legacyRes.error) throw new Error(legacyRes.error.message);
+    const koliIds = Array.from(new Set((koliItemRes.data ?? []).map((r) => r.delivery_koli_id as string)));
+    const koliRes = koliIds.length > 0 ? await db.from("delivery_kolis").select("id,resi_group_id,delivered_at").in("id", koliIds) : { data: [], error: null };
+    if (koliRes.error) throw new Error(koliRes.error.message);
+    const koliInResi = new Set((koliRes.data ?? []).filter((k) => k.resi_group_id || k.delivered_at).map((k) => k.id as string));
+    const inResi = new Set<string>();
+    for (const r of koliItemRes.data ?? []) if (koliInResi.has(r.delivery_koli_id as string)) inResi.add(r.source_batch_id as string);
+    for (const r of legacyRes.data ?? []) inResi.add(r.production_batch_id as string);
+    const locked = batchRows.filter((b) => b.closed_at || inResi.has(b.id));
     if (locked.length > 0) {
       throw new Error(
-        `Hasil cutting roll ${locked.map((b) => b.code_roll || b.id).join(", ")} tidak bisa diedit karena Finish Good-nya sudah diisi atau roll sudah ditutup. ` +
-          `Buka lagi roll dan koreksi Finish Good-nya (Edit FG) di halaman Finish Good dulu, baru edit hasil cutting.`
+        `Hasil cutting roll ${locked.map((b) => b.code_roll || b.id).join(", ")} tidak bisa diedit karena roll sudah ditutup atau sudah masuk resi pengiriman. ` +
+          `Kalau roll ditutup, buka lagi dulu; kalau sudah masuk resi, perubahan harus lewat Sysadmin.`
       );
+    }
+    // Hasil tambahan sisa kain yang sudah punya Finish Good dibuat ulang saat cutting disimpan, jadi tidak boleh disentuh selama FG-nya ada.
+    const extraWithFg = batchRows.filter((b) => {
+      const list = ((extraRes.data ?? []).find((x) => x.id === b.id)?.extra_results ?? []) as { fgQty?: number }[];
+      return Array.isArray(list) && list.some((e) => (e.fgQty ?? 0) > 0);
+    });
+    if (extraWithFg.length > 0) {
+      throw new Error(`Hasil cutting roll ${extraWithFg.map((b) => b.code_roll || b.id).join(", ")} tidak bisa diedit karena hasil tambahan sisa kainnya sudah punya Finish Good.`);
+    }
+    // Lantai per size: hasil cutting baru (sudah termasuk alih size) tidak boleh di bawah Finish Good yang sudah diinput.
+    for (const r of fgRes.data ?? []) {
+      const b = batchRows.find((x) => x.id === r.production_batch_id);
+      const next = Number(sizeQtyByBatchId[r.production_batch_id as string]?.[r.size as string] ?? 0);
+      if (b && next < Number(r.qty)) {
+        throw new Error(`Roll ${b.code_roll || b.id} size ${r.size}: hasil cutting ${next} pcs tidak boleh kurang dari Finish Good yang sudah diinput (${Number(r.qty)} pcs). Koreksi Finish Good-nya (Edit FG) dulu kalau memang salah.`);
+      }
     }
   }
   // Revisi 2026-09-19 (bug: "tidak bisa input hasil cutting"): modal Input Hasil Cutting bekerja

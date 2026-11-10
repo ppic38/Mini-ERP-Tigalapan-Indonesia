@@ -4278,6 +4278,18 @@ function kidVariantOf(base: string): string {
   return `${base} KID`;
 }
 
+/** Id roll (ProductionBatch) yang sudah MASUK RESI pengiriman (owner 2026-11-10: hasil cutting roll terkunci saat itu, bukan lagi saat Finish Good diisi): ada item-nya di koli yang
+ *  sudah punya grup resi atau tanggal kirim, atau roll itu tercatat lewat koli level-koli lama (sourceBatchIds, dianggap terkirim utuh). Koli yang baru dibuat tanpa resi tidak dihitung. */
+export function rollsInResi(kolis: DeliveryKoli[]): Set<string> {
+  const out = new Set<string>();
+  for (const k of kolis) {
+    for (const id of k.sourceBatchIds ?? []) out.add(id);
+    if (!k.resiGroupId && !k.deliveredAt) continue;
+    for (const it of k.items) if (it.sourceBatchId) out.add(it.sourceBatchId);
+  }
+  return out;
+}
+
 /** Warna sebuah item koli untuk tujuan nama item/SKU: item Kids di ERP memakai nama warna dewasa ("BEIGE 24S") dan dibedakan lewat penanda usia (KIDS), sedangkan
  *  Mapping Warna dan Moka memakai nama varian Kids ("BEIGE 24S KID" -> "BEIGE KID 24S"). Item Kids diberi akhiran " KID" (kalau belum ada); dewasa tidak berubah. */
 export function warnaWithUsia(warna: string, usia?: Usia | null): string {

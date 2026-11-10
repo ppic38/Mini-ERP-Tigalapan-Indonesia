@@ -1,7 +1,7 @@
 "use client";
 
 import { PicText } from "@/components/mrp/actor-tag";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Info } from "lucide-react";
 import { NumberInput } from "@/components/mrp/number-input";
 import { StatusPill } from "@/components/ui/status-pill";
@@ -28,6 +28,7 @@ import {
   restingCandidateRolls,
   restingMinutes,
   restingSessionGroups,
+  rollsInResi,
   SIZE_ORDER,
   KIDS_SIZES,
   sizeIndex,
@@ -101,11 +102,11 @@ function batchNeedsCuttingInput(b: ProductionBatch): boolean {
   return Object.values(b.sizeQty).every((v) => !v || v <= 0);
 }
 
-/** Aturan owner 2026-10-23: hasil cutting sebuah roll hanya bisa diedit selama roll itu BELUM punya Finish Good (>0) dan BELUM
- *  ditutup. Setelah itu terkunci supaya angka cutting dan Finish Good tidak bertentangan -- untuk mengubahnya, buka lagi roll
- *  dan koreksi Finish Good-nya di halaman Finish Good dulu. Ditegakkan juga di server (updateBatchesToCuttingImpl). */
-function batchCuttingLocked(b: ProductionBatch): boolean {
-  return !!b.closedAt || Object.values(b.fgSizeQty ?? {}).some((q) => q > 0);
+/** Aturan owner 2026-11-10 (menggantikan aturan 2026-10-23 "terkunci begitu Finish Good > 0"): hasil cutting sebuah roll baru terkunci kalau roll itu sudah ditutup atau
+ *  sudah masuk resi pengiriman. Selama belum, cutting boleh diedit walau Finish Good sudah diisi, asal tiap size tidak lebih kecil dari Finish Good-nya
+ *  (cek di modal dan di server, updateBatchesToCuttingImpl). */
+function batchCuttingLocked(b: ProductionBatch, inResi: Set<string>): boolean {
+  return !!b.closedAt || inResi.has(b.id);
 }
 
 type AduanGroup = { kode: string; lengan: Lengan; rows: (AduanPolaRow & { available: number })[]; totalQty: number; totalAvailable: number; totalStarted: number; totalMissing: number };
@@ -148,6 +149,9 @@ function uniqueNames(xs: (string | undefined)[]): string | undefined {
 
 export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
+  const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
+  // Roll yang sudah masuk resi pengiriman: hasil cuttingnya tidak bisa diedit lagi (lihat batchCuttingLocked).
+  const rollsInResiSet = useMemo(() => rollsInResi(deliveryKolis), [deliveryKolis]);
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
   const invoices = useMrpStore((s) => s.invoices);
   const productionBatches = useMrpStore((s) => s.productionBatches);
@@ -625,7 +629,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
   // tersimpan. Alur input baru mulai KOSONG (tidak lagi terisi otomatis dengan target).
   function openCuttingGroupModal(sessionKey: string, editAll = false) {
     const session = sessionGroups.find((g) => g.key === sessionKey);
-    const groupBatches = editAll ? (session?.batches ?? []).filter((b) => !batchCuttingLocked(b)) : (session?.batches ?? []).filter(batchNeedsCuttingInput);
+    const groupBatches = editAll ? (session?.batches ?? []).filter((b) => !batchCuttingLocked(b, rollsInResiSet)) : (session?.batches ?? []).filter(batchNeedsCuttingInput);
     // Keadaan roll yang DILIHAT pemakai saat mulai mengedit -- dikirim ke server saat Simpan supaya hasil cutting yang
     // baru diisi tim lain tidak tertimpa (lihat assertBatchesUnchanged di actions.ts).
     setCuttingBase(Object.fromEntries(groupBatches.map((b) => [b.id, { cuttingAt: b.cuttingAt ?? null, sizeQty: { ...(b.sizeQty ?? {}) } }])));
@@ -1302,11 +1306,11 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                         <span className="flex items-center gap-1.5">
                           {formatDateTime(earliestCuttingAt ?? g.restingAt)}
                           {(() => {
-                            const lockedCount = g.batches.filter(batchCuttingLocked).length;
+                            const lockedCount = g.batches.filter((b) => batchCuttingLocked(b, rollsInResiSet)).length;
                             if (lockedCount === g.batches.length) {
                               return (
                                 <span
-                                  title="Finish Good roll sudah diisi atau roll sudah ditutup. Untuk mengedit hasil cutting: Buka lagi roll dan koreksi Finish Good-nya (Edit FG) di halaman Finish Good dulu."
+                                  title="Roll sudah masuk resi pengiriman atau sudah ditutup, jadi hasil cutting tidak bisa diedit lagi."
                                   className="font-sans text-[10.5px] font-semibold text-text-muted"
                                 >
                                   Terkunci 🔒
@@ -1323,7 +1327,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                                   Edit ✎
                                 </button>
                                 {lockedCount > 0 && (
-                                  <span title="Roll yang Finish Good-nya sudah diisi atau sudah ditutup tidak bisa diedit hasil cuttingnya." className="font-sans text-[10px] text-text-muted">
+                                  <span title="Roll yang sudah masuk resi pengiriman atau sudah ditutup tidak bisa diedit hasil cuttingnya." className="font-sans text-[10px] text-text-muted">
                                     {lockedCount} roll terkunci
                                   </span>
                                 )}
@@ -1719,7 +1723,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
           const session = sessionGroups.find((g) => g.key === activeCuttingGroupKey);
           if (!session) return null;
           const { kode, lengan, partNo, partTotal } = session;
-          const groupBatches = cuttingGroupEditAll ? session.batches.filter((b) => !batchCuttingLocked(b)) : session.batches.filter(batchNeedsCuttingInput);
+          const groupBatches = cuttingGroupEditAll ? session.batches.filter((b) => !batchCuttingLocked(b, rollsInResiSet)) : session.batches.filter(batchNeedsCuttingInput);
           const lockedInSession = cuttingGroupEditAll ? session.batches.length - groupBatches.length : 0;
           if (groupBatches.length === 0) return null;
           const byWarna = new Map<string, typeof groupBatches>();
@@ -1755,6 +1759,13 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               const effectiveCuttingAt =
                 existing.length === groupBatches.length ? existing.reduce((min, c) => (Date.parse(c) < Date.parse(min) ? c : min)) : new Date().toISOString();
               const sizeQtyByBatchId = Object.fromEntries(groupBatches.map((b) => [b.id, mergedSizeQty(b)]));
+              // Selama belum masuk resi, cutting boleh diedit walau Finish Good sudah diisi, tetapi tiap size tidak boleh di bawah Finish Good-nya.
+              for (const b of groupBatches) {
+                for (const [size, fgQty] of Object.entries(b.fgSizeQty ?? {})) {
+                  const next = sizeQtyByBatchId[b.id]?.[size] ?? 0;
+                  if (fgQty > 0 && next < fgQty) throw new Error(`Roll ${b.codeRoll || b.id} size ${size}: hasil cutting ${next} pcs tidak boleh kurang dari Finish Good yang sudah diinput (${fgQty} pcs).`);
+                }
+              }
               const sizeShiftsByBatchId = Object.fromEntries(groupBatches.map((b) => [b.id, effectiveShifts(b)]));
               const extrasByBatchId = Object.fromEntries(groupBatches.map((b) => [b.id, (cuttingExtraDraft[b.id] ?? []).filter((x) => x.size && x.qty > 0)]));
               // Opsi A ("tidak ada loading, kerja di belakang layar"): updateBatchesToCutting SENGAJA
@@ -1796,7 +1807,7 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                     <span className="max-md:hidden">Waktu cutting dicatat otomatis saat Simpan</span>
                     {lockedInSession > 0 && (
                       <span className="text-warning-fg">
-                        {lockedInSession} roll tidak ditampilkan: Finish Good sudah diisi atau roll sudah ditutup
+                        {lockedInSession} roll tidak ditampilkan: sudah masuk resi pengiriman atau sudah ditutup
                       </span>
                     )}
                   </div>
@@ -1824,6 +1835,11 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
                                 <span className="font-mono text-[11px] text-text-muted max-md:text-[12.5px]">
                                   {actualTotal} / {targetTotal} pcs
                                 </span>
+                                {Object.values(b.fgSizeQty ?? {}).some((q) => q > 0) && (
+                                  <span className="font-sans text-[10.5px] text-warning-fg">
+                                    FG sudah diisi ({Object.entries(b.fgSizeQty ?? {}).filter(([, q]) => q > 0).map(([sz, q]) => `${sz} ${q}`).join(", ")}): cutting tiap size tidak boleh di bawah itu
+                                  </span>
+                                )}
                               </div>
                               {sizes.length === 0 ? (
                                 <span className="font-sans text-[11px] text-text-muted">Aduan pola untuk roll ini tidak punya rincian size.</span>
