@@ -559,26 +559,74 @@ const RASIO_HEAD = [
 const RASIO_WIDTHS = [14, 22, 30, 24, 8, 9, 14, 10, 12, 16, 14, 10, 11, 11, 11, 11, 12, 12];
 const ORANGE = "FFFFC000";
 const KIDS_FILL = "FFFFF2CC";
+const SUSULAN_FILL = "FFBDD7EE";
 
-function rasioSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
+/** PO Produksi satu vendor di satu MRP bisa terbit lebih dari sekali (PO awal + PO susulan: warna yang vendor materialnya baru dipilih belakangan dikirim di
+ *  pengiriman PO berikutnya, id berakhiran -2, -3, dst). Form Rasio menggabungkan semuanya dalam satu sheet dan menandai baris susulan. Urut dari yang terawal dikirim. */
+export function poPartsOfVendor(po: MaklonPO, allPos: MaklonPO[]): MaklonPO[] {
+  if (po.isFob) return [po];
+  const same = allPos.filter((p) => !p.isFob && p.mrpId === po.mrpId && p.vendorProduksi === po.vendorProduksi);
+  if (same.length === 0) same.push(po);
+  return same.sort((a, b) => (a.approvalSubmittedAt ?? "").localeCompare(b.approvalSubmittedAt ?? "") || a.id.localeCompare(b.id, "id-ID", { numeric: true }));
+}
+
+/** PO mana (indeks di `parts`) yang memuat grup warna·lengan ini: PO yang waktu pengirimannya paling dekat dengan waktu baris material grup itu ditandai terkirim (sentToPoAt). */
+function poPartIndexOfGroup(detail: MrpDetail | undefined, parts: MaklonPO[], lenganGroupId: string): number {
+  if (parts.length < 2) return 0;
+  const sentAt = detail?.materialRows.find((m) => m.lenganGroupId === lenganGroupId)?.sentToPoAt;
+  const t = sentAt ? Date.parse(sentAt) : NaN;
+  if (!Number.isFinite(t)) return 0;
+  let best = 0;
+  let bestD = Infinity;
+  parts.forEach((p, i) => {
+    const pt = p.approvalSubmittedAt ? Date.parse(p.approvalSubmittedAt) : NaN;
+    if (!Number.isFinite(pt)) return;
+    const d = Math.abs(t - pt);
+    if (d < bestD) {
+      best = i;
+      bestD = d;
+    }
+  });
+  return best;
+}
+
+function poPartLabel(parts: MaklonPO[], i: number): string {
+  if (i === 0) return "PO awal";
+  const at = parts[i].approvalSubmittedAt ? new Date(parts[i].approvalSubmittedAt as string) : null;
+  return "SUSULAN " + parts[i].id.replace(/^PO-(MKL-)?/, "") + (at && !Number.isNaN(at.getTime()) ? " (" + formatDate(localDateString(at)) + ")" : "");
+}
+
+function poPartsNote(parts: MaklonPO[]): string {
+  return "Gabungan " + parts.length + " PO: " + parts.map((p, i) => p.id + (i === 0 ? " (awal)" : " (susulan)")).join(" + ") + ". Baris biru = warna PO susulan.";
+}
+
+function rasioSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[], parts: MaklonPO[] = [po]) {
+  const multi = parts.length > 1;
   // Header (baris 4) dibekukan: topLeftCell/activeCell eksplisit supaya Excel menggambar baris header dengan benar saat digulir.
   ws.views = [{ showGridLines: false, state: "frozen", xSplit: 0, ySplit: 4, topLeftCell: "A5", activeCell: "A5" }];
   ws.pageSetup = { paperSize: 9, orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
   RASIO_WIDTHS.forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  if (multi) ws.getColumn(RASIO_HEAD.length + 1).width = 26;
   const vendorName = VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi;
   const detail = mrpDetailFor(po.mrpId, mrpDetails);
 
   ws.mergeCells(1, 1, 1, 8);
   const t = ws.getCell(1, 1);
-  t.value = "FORM RASIO PO PRODUKSI  |  " + po.id + "  |  " + po.mrpId;
+  t.value = "FORM RASIO PO PRODUKSI  |  " + parts.map((p) => p.id).join(" + ") + "  |  " + po.mrpId;
   t.font = { name: FONT, size: 13, bold: true, color: { argb: INK } };
   ws.mergeCells(2, 1, 2, 8);
   const sub = ws.getCell(2, 1);
   sub.value = "Vendor: " + vendorName + "   |   Total qty: " + po.qty.toLocaleString("id-ID") + " pcs   |   Tanggal cetak: " + formatDate(localDateString(new Date()));
   sub.font = { name: FONT, size: 10, color: { argb: GRAY } };
 
+  if (multi) {
+    ws.mergeCells(3, 1, 3, 12);
+    const note = ws.getCell(3, 1);
+    note.value = poPartsNote(parts);
+    note.font = { name: FONT, size: 10, italic: true, color: { argb: INK } };
+  }
   const hr = 4;
-  RASIO_HEAD.forEach((h, i) => {
+  (multi ? [...RASIO_HEAD, "PO"] : RASIO_HEAD).forEach((h, i) => {
     const c = ws.getCell(hr, i + 1);
     c.value = h;
     c.font = { name: FONT, size: 10, bold: true, color: { argb: INK } };
@@ -617,6 +665,7 @@ function rasioSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
     for (const g of ofWarna) {
       const gStart = r;
       const lenganShort = g.lengan === "PENDEK" ? "PDK" : "PJG";
+      const partIdx = poPartIndexOfGroup(detail, parts, g.id);
       // Hanya Aduan Pola milik vendor PO ini: satu warna·lengan bisa dikerjakan beberapa vendor, dan `g.sizes` memuat SEMUA baris Excel grup itu (semua vendor,
       // size yang sama bisa muncul beberapa kali). Qty per size vendor ini diambil dari Aduan Pola-nya sendiri, supaya total sama dengan qty PO (`po.qty`).
       const aduan = (detail?.aduanRows ?? []).filter((a) => a.lenganGroupId === g.id && a.vendor === po.vendorProduksi);
@@ -649,6 +698,7 @@ function rasioSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
         put(r, 9, withSize.length > 0 ? withSize.map((a) => a.kode).join(", ") : "-", { align: "center", fill });
         put(r, 10, vendorName, { fill });
         put(r, 11, ribPerItem, { align: "right", fmt: "0.00", fill });
+        if (multi) put(r, RASIO_HEAD.length + 1, poPartLabel(parts, partIdx), { align: "center", bold: partIdx > 0, fill: partIdx > 0 ? SUSULAN_FILL : undefined });
         sumRoll += rollPerItem;
         sumRib += ribPerItem;
         r++;
@@ -690,7 +740,8 @@ function rasioSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
 }
 
 /** Sheet detail Aduan Pola vendor PO ini: satu baris per Aduan Pola (kode pola) dengan jumlah roll, qty per size (total), dan rasio per roll (pcs per size per 1 roll). */
-function aduanSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
+function aduanSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[], parts: MaklonPO[] = [po]) {
+  const multi = parts.length > 1;
   const vendorName = VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi;
   const detail = mrpDetailFor(po.mrpId, mrpDetails);
   const rows = (detail?.aduanRows ?? []).filter((a) => a.vendor === po.vendorProduksi);
@@ -702,19 +753,19 @@ function aduanSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
   });
   const nSize = sizes.length;
-  // Kolom: No, Warna, Lengan, Kode Aduan Pola, Roll, [size...] Total Qty, [size per roll...], Pcs/Roll
-  const fixed = 5;
+  // Kolom: No, Warna, Lengan, Kode Aduan Pola, Roll, [PO kalau gabungan], [size...] Total Qty, [size per roll...], Pcs/Roll
+  const fixed = multi ? 6 : 5;
   const totalCol = fixed + nSize + 1;
   const perRollStart = totalCol + 1;
   const lastCol = perRollStart + nSize;
   ws.views = [{ showGridLines: false, state: "frozen", xSplit: 0, ySplit: 5, topLeftCell: "A6", activeCell: "A6" }];
   ws.pageSetup = { paperSize: 9, orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
-  [5, 22, 10, 16, 8].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  (multi ? [5, 22, 10, 16, 8, 24] : [5, 22, 10, 16, 8]).forEach((w, i) => (ws.getColumn(i + 1).width = w));
   for (let c = fixed + 1; c <= lastCol; c++) ws.getColumn(c).width = c === totalCol || c === lastCol ? 11 : 9;
 
   ws.mergeCells(1, 1, 1, 8);
   const t = ws.getCell(1, 1);
-  t.value = "DETAIL ADUAN POLA PER ROLL  |  " + po.id + "  |  " + po.mrpId;
+  t.value = "DETAIL ADUAN POLA PER ROLL  |  " + parts.map((p) => p.id).join(" + ") + "  |  " + po.mrpId;
   t.font = { name: FONT, size: 13, bold: true, color: { argb: INK } };
   ws.mergeCells(2, 1, 2, 8);
   const sub = ws.getCell(2, 1);
@@ -730,7 +781,7 @@ function aduanSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
     c.border = BORDER;
   };
   // Baris 4 = judul kelompok kolom, baris 5 = judul kolom.
-  ["NO", "WARNA", "LENGAN", "KODE ADUAN POLA", "ROLL"].forEach((h, i) => {
+  (multi ? ["NO", "WARNA", "LENGAN", "KODE ADUAN POLA", "ROLL", "PO"] : ["NO", "WARNA", "LENGAN", "KODE ADUAN POLA", "ROLL"]).forEach((h, i) => {
     head(4, i + 1, h);
     head(5, i + 1, "");
     ws.mergeCells(4, i + 1, 5, i + 1);
@@ -766,6 +817,11 @@ function aduanSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
     put(r, 3, a.lengan === "PENDEK" ? "Pendek" : "Panjang", { align: "center" });
     put(r, 4, a.kode, { align: "center" });
     put(r, 5, a.qtyRoll, { align: "right", fmt: "#,##0.##" });
+    if (multi) {
+      const pi = poPartIndexOfGroup(detail, parts, a.lenganGroupId);
+      const c = put(r, 6, poPartLabel(parts, pi), { align: "center", bold: pi > 0 });
+      if (pi > 0) c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: SUSULAN_FILL } };
+    }
     const total = sizes.reduce((s, sz) => s + (a.sizes.filter((x) => x.size === sz).reduce((q, x) => q + x.qty, 0)), 0);
     sizes.forEach((sz, i) => {
       const q = a.sizes.filter((x) => x.size === sz).reduce((s, x) => s + x.qty, 0);
@@ -790,6 +846,7 @@ function aduanSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
   put(r, 2, "TOTAL", { bold: true });
   put(r, 3, "", {});
   put(r, 4, "", {});
+  if (multi) put(r, 6, "", {});
   const colLetter = (c: number) => ws.getCell(1, c).address.replace(/\d+/, "");
   const sumCol = (c: number, fmt: string, result: number) =>
     put(r, c, { formula: `SUM(${colLetter(c)}6:${colLetter(c)}${r - 1})`, result }, { align: "right", fmt, bold: true });
@@ -801,13 +858,19 @@ function aduanSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[]) {
 }
 
 /** Form Rasio PO Produksi: 1 PO = 2 sheet (rasio + detail Aduan Pola per roll, landscape), banyak PO = banyak sheet dalam 1 file. No-op kalau `pos` kosong. */
-export async function exportMaklonPoRasioExcel(pos: MaklonPO[], mrpDetails: MrpDetail[], fileName: string) {
+export async function exportMaklonPoRasioExcel(pos: MaklonPO[], mrpDetails: MrpDetail[], fileName: string, allPos: MaklonPO[] = pos) {
   if (pos.length === 0) return;
   const { wb } = await newWorkbook();
-  for (const po of pos) {
+  // PO awal + PO susulan vendor yang sama di MRP yang sama digabung jadi satu sheet (baris susulan ditandai).
+  const done = new Set<string>();
+  for (const picked of pos) {
+    const parts = poPartsOfVendor(picked, allPos);
+    if (parts.some((p) => done.has(p.id))) continue;
+    for (const p of parts) done.add(p.id);
+    const po: MaklonPO = parts.length > 1 ? { ...parts[0], qty: parts.reduce((s, p) => s + p.qty, 0), amount: parts.reduce((s, p) => s + p.amount, 0) } : parts[0];
     const tag = po.id.replace(/^PO-(MKL-)?/, "");
-    rasioSheet(wb.addWorksheet(sheetName(wb, "Rasio " + tag)), po, mrpDetails);
-    aduanSheet(wb.addWorksheet(sheetName(wb, "Aduan " + tag)), po, mrpDetails);
+    rasioSheet(wb.addWorksheet(sheetName(wb, "Rasio " + tag)), po, mrpDetails, parts);
+    aduanSheet(wb.addWorksheet(sheetName(wb, "Aduan " + tag)), po, mrpDetails, parts);
   }
   await download(wb, fileName);
 }

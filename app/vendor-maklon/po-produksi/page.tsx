@@ -4,7 +4,7 @@ import { useState } from "react";
 import { alertDialog } from "@/components/ui/confirm-dialog";
 import Link from "next/link";
 import { ChevronDown, ChevronRight, Download } from "lucide-react";
-import { exportMaklonPoRasioExcel } from "@/lib/mrp/exportPoExcel";
+import { exportMaklonPoRasioExcel, poPartsOfVendor } from "@/lib/mrp/exportPoExcel";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill, type PillTone } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
@@ -384,6 +384,9 @@ function KategoriTargetPanel({ rows, detail, vendorId, mrpId }: { rows: AduanPol
   );
 }
 
+/** Baris tabel PO Produksi vendor: satu PO, atau gabungan PO awal + susulan (qty & nilai sudah dijumlah, `parts` = PO aslinya urut kirim). */
+type MergedPO = MaklonPO & { parts: MaklonPO[] };
+
 function PoProduksiContent({ vendorId }: { vendorId: string }) {
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
@@ -407,13 +410,28 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
     }
   }
 
+  // PO bertanda dispensasi Sysadmin (migration 0090: bahan sudah ada di vendor sebelum approval PO selesai) juga tampil, lengkap dengan Form Rasio.
+  const visiblePOs = maklonPOs.filter((p) => p.vendorProduksi === vendorId && (p.approved || p.earlyRelease));
+  // PO awal + PO susulan (id berakhiran -2, -3 ...) vendor yang sama di MRP yang sama digabung jadi satu baris (owner 2026-11-10): qty & nilai dijumlah.
+  // Baris susulan baru kelihatan di Form Rasio (ditandai di sana). PO FOB tidak digabung.
+  const mergedPOs: MergedPO[] = [];
+  const mergedSeen = new Set<string>();
+  for (const p of visiblePOs) {
+    if (mergedSeen.has(p.id)) continue;
+    const parts = poPartsOfVendor(p, visiblePOs);
+    for (const x of parts) mergedSeen.add(x.id);
+    mergedPOs.push({
+      ...parts[0],
+      qty: parts.reduce((s, x) => s + x.qty, 0),
+      amount: parts.reduce((s, x) => s + x.amount, 0),
+      cancelledLines: parts.flatMap((x) => x.cancelledLines),
+      parts,
+    });
+  }
   // Terbaru di atas (revisi 2026-10-18): urut Tanggal PO menurun, lalu No MRP menurun.
-  const myPOs = maklonPOs
-    // PO bertanda dispensasi Sysadmin (migration 0090: bahan sudah ada di vendor sebelum approval PO selesai) juga tampil, lengkap dengan Form Rasio.
-    .filter((p) => p.vendorProduksi === vendorId && (p.approved || p.earlyRelease))
-    .sort((a, b) => compareNewestFirst(mrpDetailFor(a.mrpId, mrpDetails)?.dates.poSent, a.mrpId, mrpDetailFor(b.mrpId, mrpDetails)?.dates.poSent, b.mrpId));
+  const myPOs = mergedPOs.sort((a, b) => compareNewestFirst(mrpDetailFor(a.mrpId, mrpDetails)?.dates.poSent, a.mrpId, mrpDetailFor(b.mrpId, mrpDetails)?.dates.poSent, b.mrpId));
   // Badge sidebar "PO Produksi Saya" hilang begitu halaman ini dibuka (lib/shell/seen-po.ts).
-  useMarkPoSeen(seenPoKey(vendorId, "po-produksi"), myPOs.map((p) => p.id));
+  useMarkPoSeen(seenPoKey(vendorId, "po-produksi"), visiblePOs.map((p) => p.id));
   // Revisi 2026-09-06: kapasitas produksi PER MINGGU vendor ini sendiri (data asli dari
   // spreadsheet Procurement, lihat migration 0019_vendor_kapasitas_asli.sql) -- dipakai di kolom
   // "Qty vs Kapasitas" di bawah supaya vendor bisa lihat seberapa besar tiap PO dibanding
@@ -421,10 +439,11 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
   const weeklyCapacity = vendorProduksiList.find((v) => v.id === vendorId)?.weeklyCapacity ?? 0;
 
   const [rasioBusyId, setRasioBusyId] = useState<string | null>(null);
-  async function downloadRasio(p: MaklonPO) {
+  async function downloadRasio(p: MergedPO) {
     setRasioBusyId(p.id);
     try {
-      await exportMaklonPoRasioExcel([p], mrpDetails, `Form-Rasio-${p.id}.xlsx`);
+      // Semua PO gabungan ikut: satu sheet, baris PO susulan ditandai.
+      await exportMaklonPoRasioExcel([p.parts[0]], mrpDetails, `Form-Rasio-${p.mrpId}-${p.vendorProduksi}.xlsx`, p.parts);
     } catch (err) {
       void alertDialog({ title: "Gagal membuat file", message: err instanceof Error ? err.message : String(err), tone: "danger" });
     } finally {
@@ -432,8 +451,8 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
     }
   }
 
-  const columns: ColumnDef<MaklonPO>[] = [
-    { key: "noPo", label: "No PO", default: false, render: (p) => <span className="font-mono font-medium">{p.id}</span> },
+  const columns: ColumnDef<MergedPO>[] = [
+    { key: "noPo", label: "No PO", default: false, render: (p) => <span className="font-mono font-medium">{p.parts.map((x) => x.id).join(" + ")}</span> },
     { key: "qty", label: "Qty", default: true, align: "right", render: (p) => formatPcs(p.qty) + " pcs" },
     // Revisi 2026-09-06: qty PO ini dibanding kapasitas produksi mingguan vendor sendiri (BUKAN
     // qty yang sudah selesai diproduksi -- itu progress, ini ukuran besar-kecil PO) -- supaya
@@ -610,10 +629,15 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
         rows={myPOs}
         keyOf={(p) => p.id}
         firstColumnLabel="No. MRP"
-        firstColumnRender={(p) => <span className="font-mono">{p.mrpId}</span>}
+        firstColumnRender={(p) => (
+          <span className="font-mono">
+            {p.mrpId}
+            {p.parts.length > 1 && <span className="ml-1.5 font-sans text-[10px] text-text-muted">gabungan {p.parts.length} PO</span>}
+          </span>
+        )}
         filterDefs={[
           { label: "No MRP", options: Array.from(new Set(myPOs.map((p) => p.mrpId))), test: (p, v) => p.mrpId === v },
-          { label: "No PO", options: Array.from(new Set(myPOs.map((p) => p.id))), test: (p, v) => p.id === v },
+          { label: "No PO", options: Array.from(new Set(myPOs.flatMap((p) => p.parts.map((x) => x.id)))), test: (p, v) => p.parts.some((x) => x.id === v) },
           {
             label: "Status",
             options: Array.from(new Set(myPOs.map((p) => (maklonMaterialStageBadge(p, vendorInvoices, materialPOs, invoices) ?? maklonPoBadgeWithApproval(p, vendorInvoices)).label))),

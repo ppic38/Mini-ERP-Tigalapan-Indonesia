@@ -174,7 +174,7 @@ export default function MrpListPage() {
     if (pos.length === 0) return;
     setRasioBusy(true);
     try {
-      await exportMaklonPoRasioExcel(pos, mrpDetails, `Form-Rasio-${rasioMrpId}.xlsx`);
+      await exportMaklonPoRasioExcel(pos, mrpDetails, `Form-Rasio-${rasioMrpId}.xlsx`, maklonPOs);
       setRasioMrpId(null);
     } catch (err) {
       void alertDialog({ title: "Gagal membuat file", message: err instanceof Error ? err.message : String(err), tone: "danger" });

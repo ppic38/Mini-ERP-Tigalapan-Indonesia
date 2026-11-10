@@ -1,5 +1,13 @@
 # Migrasi Project — Status & Riwayat
 
+## PO Produksi vendor: PO awal + PO susulan digabung, Form Rasio menandai baris susulan (2026-11-10, tanpa migration)
+Owner: vendor BAYU melihat dua baris W43 (`PO-MKL-W43-BAYU` 17.981 pcs, dikirim 4 Nov, dan `PO-MKL-W43-BAYU-2` 1.448 pcs, dikirim 6 Nov). Penyebab: `sendPoToFinanceAction` hanya mengirim warna yang vendor materialnya sudah dipilih; warna yang menyusul dikirim di pengiriman PO berikutnya dan membuat PO baru (id akhiran -2). Bukan data salah.
+- `app/vendor-maklon/po-produksi/page.tsx`: PO non-FOB satu vendor + satu MRP digabung jadi satu baris (qty dan nilai dijumlah, catatan perubahan digabung, penanda "gabungan N PO" di kolom No. MRP, filter No PO mengenali kedua id). Badge "baru" di sidebar tetap memakai semua id PO asli.
+- `lib/mrp/exportPoExcel.ts`: `poPartsOfVendor` mengelompokkan PO awal + susulan; Form Rasio memakai SATU sheet Rasio + SATU sheet Aduan untuk gabungannya, dengan kolom tambahan "PO" ("PO awal" / "SUSULAN W43-BAYU-2 (06/11/2026)", sel biru untuk susulan) dan catatan di baris 3. Baris dimiliki PO yang waktu kirimnya paling dekat dengan `material_rows.sent_to_po_at` grup warna itu. Kalau PO tunggal, isi file sama seperti sebelumnya. `exportMaklonPoRasioExcel` dapat argumen ke-4 `allPos` (daftar PO untuk mencari PO susulan); halaman PPIC dan modal download Procurement kini ikut menggabungkan.
+- Perbaikan sampingan: sebelumnya Form Rasio tiap PO memuat SEMUA warna vendor di MRP itu, padahal judulnya hanya menulis qty PO tsb (mis. 17.981 padahal barisnya 19.429). Kini total di judul = jumlah baris.
+- Batasan: status dan badge baris gabungan mengikuti PO awal; bila PO susulan sudah beda tahap (mis. sudah diinvoice), barisnya tetap menampilkan status PO awal. Penugasan baris ke PO bergantung pada `sent_to_po_at`; bila kosong (data lama) dianggap PO awal.
+- Diuji: tsc bersih; data tiruan (2 PO, 2 warna dikirim berbeda hari) menghasilkan satu sheet, warna pertama "PO awal", warna kedua "SUSULAN W43-BAYU-2 (06/11/2026)", total 150 pcs. Belum dicoba di browser dengan data produksi.
+
 ## Excel Warehouse: kolom "Item (MOKA)" memakai nama warna dari Mapping Warna (2026-11-10, tanpa migration)
 Owner: kolom Item (MOKA) di export Warehouse harus bersumber dari Master Data > Mapping Warna (nama di MRP -> nama di SKU, mis. FUCHSIA 24S -> FANTA 24S, FUCHSIA 24S KID -> FANTA KID 24S), sementara nama item (ITEM NAME dari Master SKU) dan kolom Warna tetap.
 - `lib/mrp/derive.ts`: fungsi baru `skuWarnaFor(warna)` = nama warna SKU lewat peta Mapping Warna yang sudah dimuat store untuk harga jual (`setWarnaAliasesForPricing`, cocok persis nama MRP); tanpa mapping dipakai nama MRP apa adanya.

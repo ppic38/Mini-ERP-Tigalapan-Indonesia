@@ -4,7 +4,7 @@ import { useState } from "react";
 import { exportMaklonPoExcel, exportMaklonPoRasioExcel } from "@/lib/mrp/exportPoExcel";
 import { exportMaterialPoExcel, exportMaterialPoExcelSingleSheet } from "@/lib/mrp/exportPoExcel";
 import { exportMaklonPoPdf, exportMaklonPoPdfBatch, exportMaterialPoPdf, exportMaterialPoPdfBatch, type PoExportVariant } from "@/lib/mrp/exportPoPdf";
-import type { MrpDetail } from "@/lib/mrp/store";
+import { useMrpStore, type MrpDetail } from "@/lib/mrp/store";
 import type { MaklonPO, MaterialPO } from "@/lib/mrp/types";
 
 export type PoDownloadRequest =
@@ -20,6 +20,7 @@ export type PoDownloadRequest =
  *  "Versi" (Internal/Eksternal) DI ATAS pilihan format, berlaku untuk PDF maupun Excel. Lihat
  *  PoExportVariant (lib/mrp/exportPoPdf.ts) untuk penjelasan lengkap bedanya. */
 export function PoDownloadModal({ request, mrpDetails, onClose }: { request: PoDownloadRequest; mrpDetails: MrpDetail[]; onClose: () => void }) {
+  const allMaklonPOs = useMrpStore((s) => s.maklonPOs);
   const [variant, setVariant] = useState<PoExportVariant>("internal");
   const [busy, setBusy] = useState<"pdf" | "excel" | "rasio" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +34,7 @@ export function PoDownloadModal({ request, mrpDetails, onClose }: { request: PoD
     setError(null);
     try {
       if (format === "rasio") {
-        if (request.kind === "maklon") await exportMaklonPoRasioExcel(request.pos, mrpDetails, `${request.baseName}-rasio.xlsx`);
+        if (request.kind === "maklon") await exportMaklonPoRasioExcel(request.pos, mrpDetails, `${request.baseName}-rasio.xlsx`, allMaklonPOs);
       } else if (format === "pdf") {
         if (request.kind === "material") {
           if (count === 1) exportMaterialPoPdf(request.pos[0], mrpDetails, variant);
