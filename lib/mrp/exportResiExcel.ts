@@ -1,6 +1,6 @@
 import type { CellFormulaValue, CellValue as XlsxCellValue, Workbook, Worksheet } from "exceljs";
 import { VENDOR_PRODUKSI } from "./seed";
-import { skuWarnaFor, type WarehouseReceivableGroup } from "./derive";
+import { skuWarnaFor, warnaWithUsia, type WarehouseReceivableGroup } from "./derive";
 
 // Unduh Excel per resi (Warehouse > Penerimaan, owner 2026-11-04): satu file per batch pengiriman (resi) berisi dua sheet --
 //  - "Rincian Item": satu baris per isi koli (koli, warna, lengan, size, jenis, qty, HPP/item, nilai HPP), blok info resi di atas.
@@ -158,8 +158,8 @@ export async function buildResiWorkbook(group: WarehouseReceivableGroup): Promis
     const note = it.kind === "REJECT" ? "Reject (tanpa HPP)" : hpp == null ? "HPP belum tersedia" : it.sementara ? "Estimasi" : "";
     const vals: CellValue[] = [
       "Koli " + (it.noKoli ?? it.deliveryKoliId),
-      it.warna,
-      itemMokaOf(it.warna, it.lengan, it.size),
+      warnaWithUsia(it.warna, it.usia),
+      itemMokaOf(warnaWithUsia(it.warna, it.usia), it.lengan, it.size),
       lenganLabel(it.lengan),
       it.size,
       jenisLabel(it.kind),
@@ -211,8 +211,9 @@ export async function buildResiWorkbook(group: WarehouseReceivableGroup): Promis
   ]);
   const groups = new Map<string, { warna: string; lengan: string; size: string; fg: number; rw: number; rj: number; nilai: number }>();
   for (const it of items) {
-    const k = it.warna + "|" + it.lengan + "|" + it.size;
-    const g = groups.get(k) ?? { warna: it.warna, lengan: it.lengan, size: it.size, fg: 0, rw: 0, rj: 0, nilai: 0 };
+    const warna = warnaWithUsia(it.warna, it.usia);
+    const k = warna + "|" + it.lengan + "|" + it.size;
+    const g = groups.get(k) ?? { warna, lengan: it.lengan, size: it.size, fg: 0, rw: 0, rj: 0, nilai: 0 };
     if (it.kind === "FG") g.fg += it.qty;
     else if (it.kind === "REWORK") g.rw += it.qty;
     else g.rj += it.qty;

@@ -4261,7 +4261,17 @@ export function setWarnaAliasesForPricing(rows: { mrpWarna: string; skuWarna: st
 /** Nama warna di Master Data SKU (Mapping Warna: mis. "FUCHSIA 24S" -> "FANTA 24S"); sama dengan nama MRP kalau tidak ada mapping. Dipakai kolom "Item (MOKA)" di Excel Warehouse
  *  (owner 2026-11-10): nama item MOKA mengikuti nama warna di SKU, bukan nama warna di MRP. */
 export function skuWarnaFor(warna: string): string {
-  return pricingWarnaAliases.get(warna) ?? warna;
+  const mapped = pricingWarnaAliases.get(warna);
+  if (mapped) return mapped;
+  // Warna Kids tanpa mapping: penamaan Moka menyisipkan KID sebelum angka benang ("ABU MUDA 24S KID" -> "ABU MUDA KID 24S").
+  const kid = /^(.*\S)\s+(\d+S)\s+KID$/.exec(warna);
+  return kid ? `${kid[1]} KID ${kid[2]}` : warna;
+}
+
+/** Warna sebuah item koli untuk tujuan nama item/SKU: item Kids di ERP memakai nama warna dewasa ("BEIGE 24S") dan dibedakan lewat penanda usia (KIDS), sedangkan
+ *  Mapping Warna dan Moka memakai nama varian Kids ("BEIGE 24S KID" -> "BEIGE KID 24S"). Item Kids diberi akhiran " KID" (kalau belum ada); dewasa tidak berubah. */
+export function warnaWithUsia(warna: string, usia?: Usia | null): string {
+  return usia === "KIDS" && !/\sKID$/.test(warna) ? `${warna} KID` : warna;
 }
 
 export function hppRowsForInvoice(
@@ -5038,6 +5048,8 @@ export type WarehouseReceivableItem = {
   warna: string;
   lengan: Lengan;
   size: string;
+  /** Penanda usia item koli (KIDS/DEWASA); item Kids memakai nama warna dewasa di ERP (lihat `warnaWithUsia`). */
+  usia?: Usia;
   kind: DeliveryItemKind;
   qty: number;
   sourceBatchId?: string;
@@ -5212,7 +5224,7 @@ export function warehouseReceivableGroups(
       for (const it of koli.items) {
         if (it.kind === "REJECT") {
           // Reject (owner 2026-10-23): hanya dicatat -- tanpa HPP, tidak ikut gate invoice, tidak dikirim ke WMS.
-          items.push({ deliveryKoliId: koli.id, noKoli: koli.noKoli, warna: it.warna, lengan: it.lengan, size: it.size, kind: it.kind, qty: it.qty, sourceBatchId: it.sourceBatchId, hppPerItem: 0 });
+          items.push({ deliveryKoliId: koli.id, noKoli: koli.noKoli, warna: it.warna, lengan: it.lengan, size: it.size, usia: it.usia, kind: it.kind, qty: it.qty, sourceBatchId: it.sourceBatchId, hppPerItem: 0 });
           continue;
         }
         const isRework = it.kind === "REWORK";
@@ -5230,7 +5242,7 @@ export function warehouseReceivableGroups(
             else invoiceIdSet.add(r.invoiceId);
           }
         }
-        items.push({ deliveryKoliId: koli.id, noKoli: koli.noKoli, warna: it.warna, lengan: it.lengan, size: it.size, kind: it.kind, qty: it.qty, sourceBatchId: it.sourceBatchId, hppPerItem, sementara: matches.some((r) => r.sementara || estimateIds.has(r.invoiceId)) || undefined });
+        items.push({ deliveryKoliId: koli.id, noKoli: koli.noKoli, warna: it.warna, lengan: it.lengan, size: it.size, usia: it.usia, kind: it.kind, qty: it.qty, sourceBatchId: it.sourceBatchId, hppPerItem, sementara: matches.some((r) => r.sementara || estimateIds.has(r.invoiceId)) || undefined });
       }
     }
 
