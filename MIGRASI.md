@@ -1,5 +1,11 @@
 # Migrasi Project — Status & Riwayat
 
+## Tabel "Input Resting dan Cutting": menu Kolom tampil/sembunyi, PIC disembunyikan bawaan (2026-11-10, tanpa migration)
+Owner: tambahkan fitur kolom untuk menampilkan atau menyembunyikan kolom, dan sembunyikan PIC Resting dan PIC Cutting. `components/mrp/production-cutting-tab.tsx`: tombol "⊞ Kolom" (komponen bersama `components/ui/column-menu.tsx`, pilihan diingat di localStorage `cutting-sesi-kolom-v1`) di kanan judul kartu. Bisa diatur: Warna, Roll, Resting, PIC Resting, PIC Cutting, Durasi Resting, Hasil Aduan / Yield; bawaan tampil semua kecuali kedua PIC. Kode Aduan, Cutting (tombol input/edit) dan Detail selalu tampil.
+- `SESSION_COLS` menggantikan konstanta lebar `CUTTING_SESSION_COLUMNS`: kolom grid dan lebar minimum tabel (`sessionMinW` = jumlah lebar minimum kolom tampil, minimal 1230px untuk sub-tabel per roll) dihitung dari kolom yang tampil, jadi menyembunyikan kolom juga mengurangi gulir ke samping (dulu tetap 1480px).
+- Hanya berlaku di layar lebar (>= 1024px): di tampilan HP kartu tetap seperti semula (kolom yang dipakai kartu HP disembunyikan dengan `lg:hidden`, bukan dibuang). Sub-tabel per roll tidak berubah.
+- Diuji: tsc dan eslint bersih. Belum dicoba di browser dengan data sungguhan.
+
 ## Edit hasil cutting: terkunci hanya saat roll masuk resi (2026-11-10, tanpa migration)
 Owner: vendor sering mengubah hasil cutting (mis. ada sisa kain sehingga hasil cutting bertambah) dan owner harus membetulkan lewat SQL manual. Aturan lama (2026-10-23): cutting roll terkunci begitu FG > 0 atau roll ditutup. Aturan baru: terkunci HANYA kalau roll sudah MASUK RESI pengiriman; Finish Good yang sudah diisi dan roll yang sudah ditutup tidak lagi mengunci.
 - "Masuk resi" = ada item roll itu di koli yang sudah punya grup resi (`resi_group_id`) atau tanggal kirim (`delivered_at`), atau roll tercatat lewat koli level-koli lama (`delivery_koli_batches` / `sourceBatchIds`, dianggap terkirim utuh). Koli yang baru dibuat tanpa resi TIDAK mengunci.
