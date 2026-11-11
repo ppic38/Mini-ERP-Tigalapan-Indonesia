@@ -1512,6 +1512,15 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                   : 0;
               const fgPct = fgTargetPo > 0 ? Math.min(100, Math.round((total / fgTargetPo) * 100)) : 0;
               const fgTone = fgTargetPo > 0 && total > fgTargetPo ? "over" : fgPct >= 100 ? "done" : "active";
+              // Keterangan di bawah bar (owner 2026-11-11: "kenapa bisa lebih"): dari mana total FG dan target berasal. Baris FG hasil tambahan sisa kain
+              // bercatatan berawalan "Sisa kain", hasil rework "Rework dari"; sisanya FG roll (termasuk koreksi).
+              const qtyOfRow = (r: (typeof rows)[number]) => Object.values(r.sizeQty).reduce((a, b) => a + b, 0);
+              const fgSisaKain = kind === "FG" ? rows.filter((r) => r.note?.startsWith("Sisa kain")).reduce((s, r) => s + qtyOfRow(r), 0) : 0;
+              const fgRework = kind === "FG" ? rows.filter((r) => r.note?.startsWith("Rework dari")).reduce((s, r) => s + qtyOfRow(r), 0) : 0;
+              const fgRoll = total - fgSisaKain - fgRework;
+              const fgCutting = fgTargetPo - extraTargetPo;
+              const fgBreakdown = [`roll ${fgRoll}`, ...(fgRework !== 0 ? [`rework ${fgRework}`] : []), ...(fgSisaKain !== 0 ? [`sisa kain ${fgSisaKain}`] : [])].join(" + ");
+              const showFgNote = kind === "FG" && (fgSisaKain !== 0 || fgRework !== 0 || extraTargetPo > 0 || total > fgTargetPo);
               return (
                 <div key={poId}>
                   <div
@@ -1538,12 +1547,24 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                         />
                       </>
                     ) : (
-                      <span data-label="Progres FG" className="flex items-center gap-2 max-md:col-span-2">
-                        <span className="font-mono">
-                          {total} / {fgTargetPo} pcs
+                      <span data-label="Progres FG" className="flex flex-col gap-1 max-md:col-span-2">
+                        <span className="flex items-center gap-2">
+                          <span className="font-mono">
+                            {total} / {fgTargetPo} pcs
+                          </span>
+                          <ProgressBar pct={Math.min(100, fgPct)} tone={fgTone} className="w-[80px]" />
+                          <span className="font-mono text-[10.5px] text-text-muted">{fgPct}%</span>
                         </span>
-                        <ProgressBar pct={Math.min(100, fgPct)} tone={fgTone} className="w-[80px]" />
-                        <span className="font-mono text-[10.5px] text-text-muted">{fgPct}%</span>
+                        {showFgNote && (
+                          <span
+                            className="font-sans text-[10.5px] leading-snug text-text-muted"
+                            title="Sisa kain = kain roll yang masih bersisa setelah target tercapai, dipakai memotong baju tambahan (lengan, usia, atau size lain). Pcs ini tidak ada di rencana PO, tetapi FG-nya dihitung dan hasil cutting-nya ikut dihitung sebagai target."
+                          >
+                            FG {total} = {fgBreakdown}
+                            {extraTargetPo > 0 && ` · Target ${fgTargetPo} = cutting ${fgCutting} + hasil tambahan sisa kain ${extraTargetPo}`}
+                            {total > fgTargetPo && <span className="font-semibold text-danger-fg"> · melebihi target {total - fgTargetPo} pcs — periksa Edit FG / hasil cutting</span>}
+                          </span>
+                        )}
                       </span>
                     )}
                     <span className="text-right">
