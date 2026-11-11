@@ -1,5 +1,10 @@
 # Migrasi Project — Status & Riwayat
 
+## Bar progres "Riwayat & Hasil Finish Good — by PO": target ikut menghitung hasil tambahan sisa kain (2026-11-11, tanpa migration)
+Owner: bar W40 (9.932 / 9.917) dan W41 (7.928 / 7.919) merah ("lebih"). Hasil query (vendor CE): W40 cutting 9.917, FG roll 9.904 + rework 4 + sisa kain 24 = 9.932; W41 cutting 7.919, FG roll 7.914 + sisa kain 14 = 7.928. Tanpa sisa kain FG tidak melebihi cutting, jadi kelebihannya murni FG hasil tambahan sisa kain (migration 0084, FG tanpa target) yang qty cutting-nya tidak dihitung di target bar.
+- `components/mrp/production-result-panel.tsx`: target bar (`fgTargetPo`) kini ditambah `qty` semua `extraResults` roll yang sudah dicutting untuk MRP + vendor itu (`extraTargetPo`), sama dengan `expectedRejectGrossForGroup` (derive.ts) yang sudah menghitung `qty` hasil tambahan sebagai target dan `fgQty` sebagai FG. Merah ("over") sekarang hanya bila FG benar-benar melebihi cutting + hasil tambahan. Angka "total / target pcs" ikut menampilkan target baru; bar bisa tampak di bawah 100% bila reject belum dikerjakan (wajar).
+- Tidak ada data yang berubah. Diuji: tsc bersih; belum dicoba di browser dengan data produksi (perlu dicek W40 dan W41 CE tidak lagi merah).
+
 ## Vendor Pengiriman: nomor koli angka saja tanpa 0 di depan, resi terbaru di atas, 5 resi per halaman (2026-11-11, tanpa migration)
 Owner (monitoring Riwayat Pengiriman vendor): nama koli hanya angka (1, 2, ... 10, ... 100; tanpa 001/01), urut dari angka terkecil, resi terbaru di paling atas, halaman maksimal 5 resi.
 - `lib/mrp/derive.ts`: `formatNoKoli()` (tampilan: "001" -> "1", "027" -> "27", data lama "koli 001" -> "1"; tanpa tepat satu rangkaian angka dikembalikan apa adanya). `compareNoKoli()` kini membandingkan nilai hasil `formatNoKoli`, jadi "koli 001" terurut sebagai 1 (dulu jatuh ke paling bawah) -- berlaku juga untuk pemakai lain (Excel resi Warehouse dkk).

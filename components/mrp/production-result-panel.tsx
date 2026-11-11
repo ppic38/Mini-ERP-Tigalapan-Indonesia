@@ -1495,12 +1495,20 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
               // Item 17: denominator progres FG = total hasil cutting AKTUAL (cuttingSizesForGroup,
               // sudah termasuk grup tujuan rework lintas lengan lewat warnaLenganGroupsWithFg) dari
               // SEMUA warna/lengan mrpId row ini, bukan cuma yang tercatat di PO ini saja.
+              // Hasil tambahan dari sisa kain (migration 0084): qty cutting-nya juga jadi target, persis seperti di expectedRejectGrossForGroup (derive.ts);
+              // tanpa ini FG hasil tambahan (fgQty) selalu dianggap kelebihan dan bar jadi merah walau cutting + sisa kain belum terpenuhi.
+              const extraTargetPo =
+                kind === "FG"
+                  ? productionBatches
+                      .filter((b) => b.mrpId === mrpId && b.vendorProduksi === vendorId && b.cuttingAt)
+                      .reduce((sum, b) => sum + (b.extraResults ?? []).reduce((s, x) => s + x.qty, 0), 0)
+                  : 0;
               const fgTargetPo =
                 kind === "FG"
                   ? warnaLenganGroupsWithFg(mrpId, vendorId, productionBatches, productionResults).reduce(
                       (sum, g) => sum + Object.values(cuttingSizesForGroup(mrpId, g.warna, g.lengan, mrpDetails, productionBatches)).reduce((a, b) => a + b, 0),
                       0
-                    )
+                    ) + extraTargetPo
                   : 0;
               const fgPct = fgTargetPo > 0 ? Math.min(100, Math.round((total / fgTargetPo) * 100)) : 0;
               const fgTone = fgTargetPo > 0 && total > fgTargetPo ? "over" : fgPct >= 100 ? "done" : "active";
