@@ -5148,6 +5148,72 @@ function isReworkHppRow(r: HppRow): boolean {
   return r.item.includes("Rework");
 }
 
+/** Resi (kunci `resiNumberKey`) milik satu vendor yang sudah TERBAYAR: setiap item tagih koli-kolinya (selain reject) bisa ditelusuri ke baris invoice vendor, dan SEMUA invoice
+ *  yang menaunginya berstatus PAID. Penelusuran memakai alokasi yang sama dengan gate Warehouse (`hppRowsForInvoicePerRoll`), jadi tidak ada aturan baru. Dipakai label
+ *  "Terbayarkan" di Riwayat Pengiriman vendor (owner 2026-11-11). Tanpa satu pun invoice PAID untuk vendor ini, hasilnya langsung kosong (tanpa hitung). */
+export function paidResiKeysForVendor(
+  vendorProduksi: string,
+  deliveryKolis: DeliveryKoli[],
+  vendorInvoices: VendorInvoice[],
+  mrpDetails: MrpDetail[],
+  staticMrps: Mrp[],
+  productionBatches: ProductionBatch[],
+  productionResults: ProductionResult[],
+  productionGroupMeta: ProductionGroupMeta[],
+  rawInvoices: RawMaterialInvoice[],
+  ekspedisiRates: EkspedisiRateRow[],
+  itemSellingPrices: ItemSellingPriceRow[],
+  /** Penelusur baris HPP per invoice; bawaannya yang dipakai Warehouse. Hanya diganti untuk pengujian. */
+  hppRowsFor: typeof hppRowsForInvoicePerRoll = hppRowsForInvoicePerRoll
+): Set<string> {
+  const paidKeys = new Set<string>();
+  const mine = vendorInvoices.filter((i) => i.vendorProduksi === vendorProduksi);
+  if (!mine.some((i) => i.status === "PAID")) return paidKeys;
+  const nonRevision = vendorInvoices.filter((i) => i.status !== "REVISION");
+  const invoiceById = new Map(vendorInvoices.map((i) => [i.id, i]));
+  const rowsByKoli = new Map<string, HppRow[]>();
+  for (const inv of mine) {
+    for (const r of hppRowsFor(inv, nonRevision, mrpDetails, staticMrps, productionBatches, productionResults, productionGroupMeta, rawInvoices, deliveryKolis, ekspedisiRates, itemSellingPrices)) {
+      if (!r.koliId) continue;
+      const arr = rowsByKoli.get(r.koliId);
+      if (arr) arr.push(r);
+      else rowsByKoli.set(r.koliId, [r]);
+    }
+  }
+  const byKey = new Map<string, DeliveryKoli[]>();
+  for (const k of deliveryKolis) {
+    if (k.vendorProduksi !== vendorProduksi || !k.deliveredAt) continue;
+    const key = resiNumberKey(k);
+    const arr = byKey.get(key);
+    if (arr) arr.push(k);
+    else byKey.set(key, [k]);
+  }
+  for (const [key, kolis] of byKey) {
+    const invoiceIds = new Set<string>();
+    let traceable = true;
+    let billable = false;
+    for (const koli of kolis) {
+      for (const it of koli.items) {
+        if (it.kind === "REJECT") continue;
+        billable = true;
+        const isRework = it.kind === "REWORK";
+        const matches = (rowsByKoli.get(koli.id) ?? []).filter(
+          (r) => r.warna === it.warna && r.lengan === it.lengan && r.jenis.slice(r.lengan.length + 1) === it.size && isReworkHppRow(r) === isRework
+        );
+        if (matches.length === 0) {
+          traceable = false;
+          break;
+        }
+        for (const m of matches) invoiceIds.add(m.invoiceId);
+      }
+      if (!traceable) break;
+    }
+    if (!billable || !traceable || invoiceIds.size === 0) continue;
+    if (Array.from(invoiceIds).every((id) => invoiceById.get(id)?.status === "PAID")) paidKeys.add(key);
+  }
+  return paidKeys;
+}
+
 /** Spec Portal Warehouse, requirement 15 -- daftar batch pengiriman (resi group) siap dibongkar,
  *  dibangun dengan memanggil `hppRowsForInvoicePerRoll` APA ADANYA (fungsi & alokasi FIFO yang
  *  SAMA dipakai Laporan HPP & invoiceKoliBreakdown, TIDAK dihitung ulang) lalu regroup per
