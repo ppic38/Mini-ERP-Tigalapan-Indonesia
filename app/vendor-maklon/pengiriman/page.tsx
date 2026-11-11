@@ -1,7 +1,7 @@
 "use client";
 
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { NumberInput } from "@/components/mrp/number-input";
@@ -22,7 +22,6 @@ import {
   formatDate,
   formatDecimal,
   koliQtyTotals,
-  paidResiKeysForVendor,
   compareNoKoli,
   formatNoKoli,
   mrpIdsWithClosedRolls,
@@ -144,12 +143,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   const ekspedisiRates = useMrpStore((s) => s.ekspedisiRates);
   const productionGroupMeta = useMrpStore((s) => s.productionGroupMeta);
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
-  // Untuk label Terbayarkan di Riwayat pengiriman (lihat paidResiKeysForVendor).
-  const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
-  const mrpDetails = useMrpStore((s) => s.mrpDetails);
-  const staticMrps = useMrpStore((s) => s.staticMrps);
-  const rawInvoices = useMrpStore((s) => s.invoices);
-  const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
   const createDeliveryKoli = useMrpStore((s) => s.createDeliveryKoli);
   const updateDeliveryKoli = useMrpStore((s) => s.updateDeliveryKoli);
   const deleteDeliveryKoli = useMrpStore((s) => s.deleteDeliveryKoli);
@@ -221,20 +214,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   const [histEkspedisiFilter, setHistEkspedisiFilter] = useState("");
   // Halaman Riwayat pengiriman (owner 2026-11-11: maksimal 5 resi per halaman).
   const [histPage, setHistPage] = useState(1);
-  // Resi yang rinciannya sedang dibuka di Riwayat (desktop): awalnya semua tertutup, hanya daftar resi.
-  const [expandedResi, setExpandedResi] = useState<Set<string>>(new Set());
-  function toggleResiExpanded(key: string) {
-    setExpandedResi((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
-  const paidResiKeys = useMemo(
-    () => paidResiKeysForVendor(vendorId, deliveryKolis, vendorInvoices, mrpDetails, staticMrps, productionBatches, productionResults, productionGroupMeta, rawInvoices, ekspedisiRates, itemSellingPrices),
-    [vendorId, deliveryKolis, vendorInvoices, mrpDetails, staticMrps, productionBatches, productionResults, productionGroupMeta, rawInvoices, ekspedisiRates, itemSellingPrices]
-  );
   // HP: resi yang rinciannya sedang dibuka di popup (kunci grup resi); null = tertutup.
   const [resiPopupKey, setResiPopupKey] = useState<string | null>(null);
   // Klik baris "Koli belum dikirim"/"Riwayat pengiriman" untuk expand/collapse rincian isi koli
@@ -1329,126 +1308,6 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
               // Aksi Sysadmin bekerja per kelompok resi (resi_group_id) milik koli pertama, jadi hanya koli kelompok itu yang dikirim ke sana.
               const firstGroupKolis = kolis.filter((k) => resiKeyFor(k) === resiKeyFor(first));
               const qtyTotals = koliQtyTotals(kolis);
-              // Status resi: Terbayarkan (semua invoice-nya Lunas) > Sudah diinvoice > Sebagian diinvoice > Belum diinvoice.
-              const paid = paidResiKeys.has(groupKey);
-              const isOpen = expandedResi.has(groupKey);
-              const statusPill = (hint: boolean) => {
-                if (paid) return <span className="rounded-full bg-success-fg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-white">✓ Terbayarkan</span>;
-                if (alreadyInvoiced) return <span className="rounded-full bg-success-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-success-fg">Sudah diinvoice</span>;
-                return (
-                  <span className="rounded-full bg-warning-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-warning-fg">
-                    {partlyInvoiced ? "Sebagian diinvoice" : "Belum diinvoice"}
-                    {hint && <span className="max-md:hidden">{partlyInvoiced ? " — sisanya diajukan di Invoice & Payment" : " — ajukan di Invoice & Payment"}</span>}
-                  </span>
-                );
-              };
-              const thCls = "border border-[#1E293B] px-3 py-2.5 text-center font-sans text-[11px] font-semibold uppercase tracking-wider text-white";
-              const tdCls = "border border-[#E4E8EE] px-3 py-2.5 text-center align-middle";
-              // Desktop: daftar resi saja (tertutup); klik baris membuka rincian + tabel koli. HP memakai kartu + popup di bawah.
-              const desktopBlock = (
-                <div className="overflow-hidden rounded-md border border-border-subtle bg-white max-md:hidden">
-                  <button
-                    type="button"
-                    onClick={() => toggleResiExpanded(groupKey)}
-                    aria-expanded={isOpen}
-                    className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-[#F7F9FB]"
-                  >
-                    {isOpen ? <ChevronDown className="h-4 w-4 flex-none text-text-muted" /> : <ChevronRight className="h-4 w-4 flex-none text-text-muted" />}
-                    <span className="font-mono text-[13px] font-semibold text-text-primary">{first.noResi || "—"}</span>
-                    <span className="font-sans text-[11.5px] text-text-muted">{kolis.length} koli</span>
-                    <span className="ml-auto">{statusPill(false)}</span>
-                  </button>
-                  {isOpen && (
-                    <div className="border-t border-border-subtle">
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 bg-[#F7F9FB] px-4 py-2 font-sans text-[11.5px] text-[#31414F]">
-                        <span>
-                          Ekspedisi: <span className="font-medium">{first.ekspedisi}</span>
-                        </span>
-                        <span>
-                          Total berat: <span className="font-mono">{formatDecimal(totalWeight)} kg</span>
-                        </span>
-                        <span>
-                          Total qty: <span className="font-mono font-semibold">{qtyTotals.billable.toLocaleString("id-ID")} pcs</span>
-                          <span className="text-text-muted"> · {kolis.length} koli</span>
-                          {qtyTotals.reject > 0 && <span className="text-text-muted"> · + {qtyTotals.reject.toLocaleString("id-ID")} reject (tidak ditagihkan)</span>}
-                        </span>
-                        <span className="font-mono text-[11px] text-text-muted">{formatDate(first.deliveredAt)}</span>
-                        {first.ekspedisiNoteAt && (
-                          <button onClick={() => viewEkspedisiPhoto(first.id)} className="font-semibold text-action-primary underline">
-                            Lihat / Download foto
-                          </button>
-                        )}
-                        <span className="ml-auto flex items-center gap-2">
-                          <SysadminActionsBar actions={koliShipmentCorrections(firstGroupKolis, warehouseReceipts)} />
-                        </span>
-                      </div>
-                      {first.ekspedisiNote && <div className="border-t border-[#F1F4F7] px-4 py-1.5 font-sans text-[10.5px] text-text-muted">Catatan: {first.ekspedisiNote}</div>}
-                      <div className="overflow-x-auto px-4 py-3">
-                        <table className="w-full border-collapse font-sans text-xs text-[#31414F]">
-                          <thead>
-                            <tr className="bg-[#0F172A]">
-                              <th className={thCls}>No MRP</th>
-                              <th className={thCls}>No Koli</th>
-                              <th className={thCls}>PIC Buat</th>
-                              <th className={thCls}>PIC Kirim</th>
-                              <th className={thCls}>Isi</th>
-                              <th className={thCls}>Berat (kg)</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {kolis.map((k, i) => {
-                              const koliOpen = expandedKoli.has(k.id);
-                              return (
-                                <Fragment key={k.id}>
-                                  <tr className={i % 2 === 1 ? "bg-[#F7F9FB]" : "bg-white"}>
-                                    <td className={tdCls + " font-mono"}>{k.mrpId}</td>
-                                    <td className={tdCls + " font-mono font-medium"}>{formatNoKoli(k.noKoli)}</td>
-                                    <td className={tdCls}>
-                                      <PicText label={k.createdBy} />
-                                    </td>
-                                    <td className={tdCls}>
-                                      <PicText label={k.shippedBy} />
-                                    </td>
-                                    <td className={tdCls}>
-                                      <button
-                                        onClick={() => toggleKoliExpanded(k.id)}
-                                        className="inline-flex items-center justify-center gap-1 font-sans text-xs text-[#31414F] hover:text-action-primary"
-                                        title="Klik untuk lihat rincian isi koli per item"
-                                      >
-                                        {koliOpen ? <ChevronDown className="h-3.5 w-3.5 flex-none text-text-muted" /> : <ChevronRight className="h-3.5 w-3.5 flex-none text-text-muted" />}
-                                        {summarizeItems(k.items)}
-                                      </button>
-                                    </td>
-                                    <td className={tdCls + " font-mono"}>{formatDecimal(k.beratKoli ?? 0)}</td>
-                                  </tr>
-                                  {koliOpen && (
-                                    <tr>
-                                      <td colSpan={6} className="border border-[#E4E8EE] bg-[#FAFBFC] px-3 py-3 text-left">
-                                        <ItemsDetailPanel items={k.items} />
-                                      </td>
-                                    </tr>
-                                  )}
-                                </Fragment>
-                              );
-                            })}
-                          </tbody>
-                          <tfoot>
-                            <tr className="border-t-2 border-accent-blue bg-info-bg font-semibold text-info-fg">
-                              <td className="border border-[#E4E8EE] px-3 py-2.5 text-center" colSpan={4}>
-                                Total · {kolis.length} koli
-                              </td>
-                              <td className="border border-[#E4E8EE] px-3 py-2.5 text-center font-mono">
-                                {qtyTotals.billable.toLocaleString("id-ID")} pcs{qtyTotals.reject > 0 ? ` + ${qtyTotals.reject.toLocaleString("id-ID")} reject` : ""}
-                              </td>
-                              <td className="border border-[#E4E8EE] px-3 py-2.5 text-center font-mono">{formatDecimal(totalWeight)}</td>
-                            </tr>
-                          </tfoot>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
               // HP: tiap resi jadi kartu ringkas, rincian koli terbuka sebagai popup (inModal). Desktop tetap menampilkan rincian langsung.
               const groupBlock = (inModal: boolean) => (
                 <div className={"overflow-hidden rounded-md border border-border-subtle bg-white" + (inModal ? "" : " max-md:hidden")}>
@@ -1477,7 +1336,17 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                         (tab Invoice Vendor) -- di sini cukup status ringkas. */}
                     <span className="vp-resi-status ml-auto flex items-center gap-2">
                       <SysadminActionsBar actions={koliShipmentCorrections(firstGroupKolis, warehouseReceipts)} />
-                      {statusPill(true)}
+                      {alreadyInvoiced ? (
+                        <span className="rounded-full bg-success-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-success-fg">Sudah diinvoice</span>
+                      ) : partlyInvoiced ? (
+                        <span className="rounded-full bg-warning-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-warning-fg">
+                          Sebagian diinvoice<span className="max-md:hidden"> — sisanya diajukan di Invoice &amp; Payment</span>
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-warning-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-warning-fg">
+                          Belum diinvoice<span className="max-md:hidden"> — ajukan di Invoice &amp; Payment</span>
+                        </span>
+                      )}
                     </span>
                   </div>
                   {first.ekspedisiNote && <div className="border-b border-[#F1F4F7] px-3 py-1.5 font-sans text-[10.5px] text-text-muted">Catatan: {first.ekspedisiNote}</div>}
@@ -1523,7 +1392,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
               );
               return (
                 <Fragment key={groupKey}>
-                  {desktopBlock}
+                  {groupBlock(false)}
                   <button
                     onClick={() => setResiPopupKey(groupKey)}
                     className="vp-resi-card flex w-full items-center gap-3 rounded-xl border border-border-subtle bg-white px-4 py-3.5 text-left shadow-[0_1px_2px_rgba(17,24,39,0.04)] active:bg-info-bg md:hidden"
@@ -1531,7 +1400,11 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center justify-between gap-2">
                         <span className="truncate font-mono text-[15px] font-semibold text-text-primary">{first.noResi || "—"}</span>
-                        <span className="flex-none">{statusPill(false)}</span>
+                        {alreadyInvoiced ? (
+                          <span className="flex-none rounded-full bg-success-bg px-2.5 py-1 font-sans text-[10px] font-semibold text-success-fg">Sudah diinvoice</span>
+                        ) : (
+                          <span className="flex-none rounded-full bg-warning-bg px-2.5 py-1 font-sans text-[10px] font-semibold text-warning-fg">{partlyInvoiced ? "Sebagian diinvoice" : "Belum diinvoice"}</span>
+                        )}
                       </span>
                       <span className="mt-1 block truncate font-sans text-[12px] text-text-muted">{first.ekspedisi}</span>
                       <span className="mt-2 flex items-baseline justify-between gap-2 font-sans text-[12px] text-[#31414F]">
