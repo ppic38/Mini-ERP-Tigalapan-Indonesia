@@ -51,6 +51,48 @@ async function lockedGroups(db: Db, vendor: string, keys: string[]): Promise<str
   return (metas ?? []).filter((m) => m.fg_confirmed_at || m.done_at).map((m) => String(m.group_key).split("|").slice(1).join(" · "));
 }
 
+/** FG hasil tambahan sisa kain langsung bisa dikirim begitu diinput (owner 2026-11-11, tanpa menunggu grup tujuan Selesai), jadi Finish Good-nya tidak boleh dikurangi atau dihapus
+ *  di bawah qty yang sudah masuk koli. Qty terkirim = item koli non-roll (source_batch_id kosong) dengan kunci warna·lengan·size·usia yang sama; FG lain di kunci itu (bukan hasil
+ *  tambahan roll ini, bukan penutupan roll/rework) boleh menanggung sebagian. `newFg` = Finish Good baru hasil tambahan ini (0 = dihapus). */
+async function assertExtraFgNotBelowShipped(
+  db: Db,
+  batch: BatchRef,
+  x: { lengan: string; usia: string; size: string; resultId?: string },
+  newFg: number
+): Promise<void> {
+  const { data: kolis } = await db.from("delivery_kolis").select("id").eq("mrp_id", batch.mrp_id).eq("vendor_produksi", batch.vendor_produksi);
+  const koliIds = (kolis ?? []).map((k) => k.id as string);
+  if (koliIds.length === 0) return;
+  const { data: items } = await db
+    .from("delivery_koli_items")
+    .select("qty,kind,usia")
+    .in("delivery_koli_id", koliIds)
+    .eq("warna", batch.warna)
+    .eq("lengan", x.lengan)
+    .eq("size", x.size)
+    .is("source_batch_id", null);
+  const shipped = (items ?? []).filter((i) => (i.kind ?? "FG") === "FG" && (i.usia ?? "") === x.usia).reduce((s, i) => s + Number(i.qty), 0);
+  if (shipped <= 0) return;
+  const { data: rs } = await db
+    .from("production_results")
+    .select("id,note,production_result_sizes(size,qty)")
+    .eq("mrp_id", batch.mrp_id)
+    .eq("vendor_produksi", batch.vendor_produksi)
+    .eq("warna", batch.warna)
+    .eq("lengan", x.lengan)
+    .eq("kind", "FG")
+    .eq("usia", x.usia);
+  const other = (rs ?? [])
+    .filter((r) => r.id !== x.resultId && !(r.note ?? "").startsWith("Roll ") && !(r.note ?? "").startsWith("Rework dari"))
+    .reduce((sum, r) => sum + (r.production_result_sizes ?? []).filter((z) => z.size === x.size).reduce((a, z) => a + Number(z.qty), 0), 0);
+  const minAllowed = Math.max(0, shipped - other);
+  if (newFg < minAllowed) {
+    throw new Error(
+      `Finish Good hasil tambahan ${x.size} (${x.usia === "KIDS" ? "Kids" : "Dewasa"}) tidak boleh kurang dari ${minAllowed} pcs karena sudah masuk koli pengiriman. Keluarkan dari koli (Hapus koli) dulu kalau memang salah.`
+    );
+  }
+}
+
 /** Lepas hasil tambahan roll-roll ini sebelum diganti/dibatalkan: Finish Good hasilnya dihapus dan kolom dikosongkan. Mengembalikan daftar
  *  lama per roll (untuk mempertahankan fgQty kalau hasil tambahan yang sama disimpan ulang). Ditolak kalau Finish Good yang sudah diinput
  *  ada di grup tujuan yang sudah dikonfirmasi Selesai Produksi. Tidak melempar error kalau kolom belum ada (migration 0084 belum jalan). */
@@ -74,6 +116,14 @@ export async function detachBatchExtras(db: Db, batches: BatchRef[]): Promise<Ma
   const locked = resultIds.length > 0 ? await lockedGroups(db, batches[0].vendor_produksi, Array.from(groupKeys)) : [];
   if (locked.length > 0) {
     throw new Error(`Hasil tambahan sisa kain tidak bisa diubah karena Finish Good grup ${locked.join(", ")} sudah dikonfirmasi Selesai Produksi. Buka kuncinya dulu di tab Finish Good.`);
+  }
+  // FG hasil tambahan yang sudah masuk koli tidak boleh dihapus (lihat assertExtraFgNotBelowShipped).
+  for (const row of data ?? []) {
+    const b = batches.find((x) => x.id === row.id);
+    if (!b) continue;
+    for (const e of (row.extra_results as CuttingExtraStored[] | null) ?? []) {
+      if (e.resultId) await assertExtraFgNotBelowShipped(db, b, e, 0);
+    }
   }
   await deleteResults(db, resultIds);
   await db.from("production_batches").update({ extra_results: null }).in("id", batches.map((b) => b.id));
@@ -138,6 +188,8 @@ export async function saveBatchExtraFg(db: Db, batch: BatchRef, entries: { lenga
     if (!x) throw new Error(`Roll ${label}: hasil tambahan ${e.size} (${e.usia}) tidak ditemukan.`);
     if (!Number.isInteger(e.fgQty) || e.fgQty < 0) throw new Error(`Roll ${label}: Finish Good hasil tambahan harus bilangan bulat 0 atau lebih.`);
     if (e.fgQty > x.qty) throw new Error(`Roll ${label}: Finish Good ${e.size} (${e.fgQty}) melebihi hasil cutting-nya (${x.qty}).`);
+    // FG hasil tambahan langsung bisa dikirim, jadi tidak boleh dikurangi di bawah yang sudah masuk koli.
+    await assertExtraFgNotBelowShipped(db, batch, x, e.fgQty);
     touched.push(x);
   }
   const locked = await lockedGroups(db, batch.vendor_produksi, Array.from(new Set(touched.map((x) => `${batch.mrp_id}|${batch.warna}|${x.lengan}`))));

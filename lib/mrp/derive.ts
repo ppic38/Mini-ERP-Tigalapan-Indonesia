@@ -3119,10 +3119,25 @@ function resultMatchesShippableKind(r: ProductionResult, source: ShippableKind):
   return r.kind === "FG" && !isReworkResult(r) && !isRollClosureResult(r);
 }
 
-export function fgProducedBySize(mrpId: string, vendorProduksi: string, results: ProductionResult[], source: ShippableKind = "FG"): Map<string, number> {
+/** Catatan FG hasil tambahan sisa kain (migration 0084) -- sama dengan EXTRA_NOTE_PREFIX di lib/mrp/cuttingExtras.ts (file server-only, jadi tidak diimpor di sini). */
+export const EXTRA_FG_NOTE_PREFIX = "Sisa kain";
+function isExtraFgResult(r: ProductionResult): boolean {
+  return r.kind === "FG" && !!r.note && r.note.startsWith(EXTRA_FG_NOTE_PREFIX);
+}
+
+/** `extras`: "include" (bawaan) = semua FG; "only" = hanya FG hasil tambahan sisa kain; "exclude" = semua kecuali hasil tambahan sisa kain. */
+export function fgProducedBySize(
+  mrpId: string,
+  vendorProduksi: string,
+  results: ProductionResult[],
+  source: ShippableKind = "FG",
+  extras: "include" | "only" | "exclude" = "include"
+): Map<string, number> {
   const map = new Map<string, number>();
   for (const r of results) {
     if (r.mrpId !== mrpId || r.vendorProduksi !== vendorProduksi || !resultMatchesShippableKind(r, source)) continue;
+    if (extras === "only" && !isExtraFgResult(r)) continue;
+    if (extras === "exclude" && isExtraFgResult(r)) continue;
     for (const [size, qty] of Object.entries(r.sizeQty)) {
       const key = r.warna + "|" + r.lengan + "|" + size + "|" + (r.usia ?? "");
       map.set(key, (map.get(key) ?? 0) + qty);
@@ -3205,13 +3220,18 @@ export function availableFgToShip(
   const maklonPO = maklonPOs.find((p) => p.mrpId === mrpId && p.vendorProduksi === vendorProduksi);
   if (maklonPO?.closedAt) return [];
   if (source === "REJECT") return availableRejectToShip(mrpId, vendorProduksi, results, kolis, productionGroupMeta, excludeKoliId);
-  const produced = fgProducedBySize(mrpId, vendorProduksi, results, source);
+  // Owner 2026-11-11: FG hasil tambahan sisa kain (size tambahan, catatan "Sisa kain ...") langsung bisa dikirim begitu diinput, seperti FG roll biasa --
+  // TIDAK menunggu grup tujuannya "Finish Good Selesai". FG lainnya di kolam ini (rework, FG lama) tetap menunggu tahap 1 (fgConfirmedAt).
+  const producedGated = fgProducedBySize(mrpId, vendorProduksi, results, source, "exclude");
+  const producedExtras = source === "FG" ? fgProducedBySize(mrpId, vendorProduksi, results, source, "only") : new Map<string, number>();
   const packed = fgPackedBySize(mrpId, vendorProduksi, kolis, excludeKoliId, source);
   const out: AvailableFgRow[] = [];
-  for (const [key, producedQty] of produced.entries()) {
+  const keys = new Set<string>([...producedGated.keys(), ...producedExtras.keys()]);
+  for (const key of keys) {
     const [warna, lengan, size, usia] = key.split("|");
     // Tahap 1 saja (fgConfirmedAt) sudah cukup untuk shippable -- lihat catatan di atas fungsi ini.
-    if (!productionGroupMetaFor(mrpId + "|" + warna + "|" + lengan, productionGroupMeta, vendorProduksi)?.fgConfirmedAt) continue;
+    const confirmed = !!productionGroupMetaFor(mrpId + "|" + warna + "|" + lengan, productionGroupMeta, vendorProduksi)?.fgConfirmedAt;
+    const producedQty = (confirmed ? producedGated.get(key) ?? 0 : 0) + (producedExtras.get(key) ?? 0);
     const available = producedQty - (packed.get(key) ?? 0);
     if (available > 0) {
       out.push({ warna, lengan: lengan as Lengan, size, usia: (usia || undefined) as Usia | undefined, available });
