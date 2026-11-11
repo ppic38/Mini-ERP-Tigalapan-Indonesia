@@ -24,6 +24,7 @@ import {
   productionYieldByWarna,
   productionYieldBySize,
   resiGroupInvoiceLines,
+  resiNumberKey,
   vendorCumulativeQtyByTipe,
   vendorInvoiceAdjustmentTotal,
   vendorInvoiceBadge,
@@ -32,10 +33,11 @@ import {
 } from "@/lib/mrp/derive";
 import type { Lengan, Usia } from "@/lib/mrp/types";
 
-function groupByResi<T extends { resiGroupId?: string; id: string }>(items: T[]): [string, T[]][] {
+/** Satu NOMOR resi = satu kelompok = satu invoice (owner 2026-11-11), walau koli-kolinya tersimpan di beberapa resi_group_id (lihat resiNumberKey). */
+function groupByResi<T extends { noResi?: string; resiGroupId?: string; id: string }>(items: T[]): [string, T[]][] {
   const map = new Map<string, T[]>();
   for (const it of items) {
-    const key = it.resiGroupId ?? it.id;
+    const key = resiNumberKey(it);
     if (!map.has(key)) map.set(key, []);
     map.get(key)!.push(it);
   }
@@ -101,7 +103,10 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
   const recon = shipmentInvoiceReconciliation(vendorId, deliveryKolis, vendorInvoices);
   const reconMismatch = recon.some((r) => r.mismatches.length > 0);
   // Resi yang HANYA berisi reject tidak ditagihkan (owner 2026-10-23) -- tidak muncul sebagai "siap diajukan invoice".
-  const readyGroups = groupByResi(deliveredMine).filter(([, kolis]) => kolis.every((k) => !k.resiInvoicedAt) && kolis.some((k) => k.items.some(isBillableKoliItem)));
+  // Hanya koli yang BELUM diinvoice di tiap nomor resi yang ditawarkan (resi yang sebagian kolinya sudah diinvoice cuma menagih sisanya).
+  const readyGroups = groupByResi(deliveredMine)
+    .map(([key, kolis]): [string, typeof kolis] => [key, kolis.filter((k) => !k.resiInvoicedAt)])
+    .filter(([, kolis]) => kolis.length > 0 && kolis.some((k) => k.items.some(isBillableKoliItem)));
 
   const [invoiceDialogKoliIds, setInvoiceDialogKoliIds] = useState<string[] | null>(null);
   const [invoiceSubmitting, setInvoiceSubmitting] = useState(false);

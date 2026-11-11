@@ -78,6 +78,7 @@ import {
   KIDS_SIZES,
   rollRemainingBySizeForMrp,
   resiGroupInvoiceLines,
+  resiNumberKey,
   warehouseReceivableGroups,
   hargaMaklonLineRate,
   maklonTipeForWarna,
@@ -5844,12 +5845,13 @@ export async function submitResiGroupInvoiceAction(koliIds: string[]): Promise<v
   const vendorId = await requireVendorSession();
   if (koliIds.length === 0) return;
   const db = supabaseServer();
-  const { data: rows } = await db.from("delivery_kolis").select("id,vendor_produksi,delivered_at,resi_invoiced_at,resi_group_id").in("id", koliIds);
+  const { data: rows } = await db.from("delivery_kolis").select("id,vendor_produksi,delivered_at,resi_invoiced_at,resi_group_id,no_resi").in("id", koliIds);
   if (!rows || rows.length !== koliIds.length) throw new Error("Sebagian koli tidak ditemukan.");
   if (rows.some((r) => r.vendor_produksi !== vendorId)) throw new Error("Forbidden: sebagian koli bukan milik vendor Anda.");
   if (rows.some((r) => !r.delivered_at)) throw new Error("Semua koli dalam grup ini harus sudah Delivery dulu sebelum submit invoice.");
   if (rows.some((r) => r.resi_invoiced_at)) throw new Error("Grup pengiriman ini sudah pernah diajukan invoice-nya.");
-  const groupIds = new Set(rows.map((r) => r.resi_group_id ?? r.id));
+  // Satu NOMOR resi = satu invoice (owner 2026-11-11): koli dari beberapa resi_group_id boleh digabung selama nomor resinya sama.
+  const groupIds = new Set(rows.map((r) => resiNumberKey({ noResi: r.no_resi, resiGroupId: r.resi_group_id, id: r.id })));
   if (groupIds.size > 1) throw new Error("Koli yang dipilih bukan dari grup resi yang sama.");
 
   const snapshot = await getFlowSnapshot();

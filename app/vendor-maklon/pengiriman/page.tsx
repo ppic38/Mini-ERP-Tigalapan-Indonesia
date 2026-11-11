@@ -25,6 +25,7 @@ import {
   compareNoKoli,
   mrpIdsWithClosedRolls,
   mrpIdsWithUnpackedFg,
+  resiNumberKey,
   rollRemainingBySizeForMrp,
 } from "@/lib/mrp/derive";
 import { countPengirimanPendingForMrp, pendingMarker } from "@/lib/shell/badges";
@@ -670,7 +671,8 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   const pendingWithoutEkspedisi = pending.filter((k) => !k.resiGroupId);
   const pendingWithEkspedisi = pending.filter((k) => k.resiGroupId);
   const pendingGroups = Array.from(groupByKey(pendingWithEkspedisi, resiKeyFor).entries());
-  const deliveredGroups = Array.from(groupByKey(delivered, resiKeyFor).entries());
+  // Riwayat: satu NOMOR resi = satu kartu, walau data lama menyimpannya di beberapa kelompok resi (lihat resiNumberKey).
+  const deliveredGroups = Array.from(groupByKey(delivered, resiNumberKey).entries());
   const historyEkspedisiOptions = Array.from(new Set(deliveredGroups.map(([, kolis]) => kolis[0].ekspedisi).filter((e): e is string => !!e))).sort((a, b) => a.localeCompare(b, "id-ID"));
   const activeHistEkspedisi = historyEkspedisiOptions.includes(histEkspedisiFilter) ? histEkspedisiFilter : "";
   const histResiQuery = histResiFilter.trim().toLowerCase();
@@ -1280,7 +1282,10 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
             {visibleDeliveredGroups.map(([groupKey, kolis]) => {
               const first = kolis[0];
               const totalWeight = kolis.reduce((s, k) => s + (k.beratKoli ?? 0), 0);
-              const alreadyInvoiced = kolis.some((k) => k.resiInvoicedAt);
+              const alreadyInvoiced = kolis.every((k) => k.resiInvoicedAt);
+              const partlyInvoiced = !alreadyInvoiced && kolis.some((k) => k.resiInvoicedAt);
+              // Aksi Sysadmin bekerja per kelompok resi (resi_group_id) milik koli pertama, jadi hanya koli kelompok itu yang dikirim ke sana.
+              const firstGroupKolis = kolis.filter((k) => resiKeyFor(k) === resiKeyFor(first));
               const qtyTotals = koliQtyTotals(kolis);
               // HP: tiap resi jadi kartu ringkas, rincian koli terbuka sebagai popup (inModal). Desktop tetap menampilkan rincian langsung.
               const groupBlock = (inModal: boolean) => (
@@ -1309,9 +1314,13 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     {/* Revisi 2026-09-23 (owner): tombol "Submit Invoice" pindah ke halaman Invoice & Payment
                         (tab Invoice Vendor) -- di sini cukup status ringkas. */}
                     <span className="vp-resi-status ml-auto flex items-center gap-2">
-                      <SysadminActionsBar actions={koliShipmentCorrections(kolis, warehouseReceipts)} />
+                      <SysadminActionsBar actions={koliShipmentCorrections(firstGroupKolis, warehouseReceipts)} />
                       {alreadyInvoiced ? (
                         <span className="rounded-full bg-success-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-success-fg">Sudah diinvoice</span>
+                      ) : partlyInvoiced ? (
+                        <span className="rounded-full bg-warning-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-warning-fg">
+                          Sebagian diinvoice<span className="max-md:hidden"> — sisanya diajukan di Invoice &amp; Payment</span>
+                        </span>
                       ) : (
                         <span className="rounded-full bg-warning-bg px-2.5 py-1 font-sans text-[10.5px] font-semibold text-warning-fg">
                           Belum diinvoice<span className="max-md:hidden"> — ajukan di Invoice &amp; Payment</span>
@@ -1373,7 +1382,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                         {alreadyInvoiced ? (
                           <span className="flex-none rounded-full bg-success-bg px-2.5 py-1 font-sans text-[10px] font-semibold text-success-fg">Sudah diinvoice</span>
                         ) : (
-                          <span className="flex-none rounded-full bg-warning-bg px-2.5 py-1 font-sans text-[10px] font-semibold text-warning-fg">Belum diinvoice</span>
+                          <span className="flex-none rounded-full bg-warning-bg px-2.5 py-1 font-sans text-[10px] font-semibold text-warning-fg">{partlyInvoiced ? "Sebagian diinvoice" : "Belum diinvoice"}</span>
                         )}
                       </span>
                       <span className="mt-1 block truncate font-sans text-[12px] text-text-muted">{first.ekspedisi}</span>

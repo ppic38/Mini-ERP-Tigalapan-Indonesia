@@ -3366,6 +3366,14 @@ export function deliveredQtyByMrp(vendorProduksi: string, kolis: DeliveryKoli[])
   return Array.from(map.values());
 }
 
+/** Kunci pengelompokan resi di sisi vendor (halaman Pengiriman dan pengajuan invoice) -- owner 2026-11-11: satu NOMOR resi = satu kelompok = satu invoice, walau koli-kolinya
+ *  tersimpan di beberapa `resi_group_id` (data lama dari sebelum nomor resi dibuat unik, 2026-11-06). Huruf besar/kecil dan spasi di ujung tidak dibedakan. Tanpa nomor
+ *  resi: `resiGroupId`, lalu id koli (kelakuan lama). */
+export function resiNumberKey(k: { noResi?: string | null; resiGroupId?: string | null; id: string }): string {
+  const no = (k.noResi ?? "").trim().toLowerCase();
+  return no ? "no:" + no : (k.resiGroupId ?? k.id);
+}
+
 /** Item 2026-09-11 (feedback: "ketika sudah final pengiriman nanti akan ada button submit
  *  invoice", migration 0026) -- agregasi `DeliveryKoliItem[]` SEMUA koli dalam `koliIds` (1 grup
  *  resi), dikelompokkan per (mrpId,warna,lengan,usia) SEMUA kind (pola SAMA `deliveredQtyByMrp`
