@@ -23,6 +23,7 @@ import {
   formatDecimal,
   koliQtyTotals,
   compareNoKoli,
+  formatNoKoli,
   mrpIdsWithClosedRolls,
   mrpIdsWithUnpackedFg,
   resiNumberKey,
@@ -172,7 +173,8 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   const noKoliWarnTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   function onNoKoliInput(raw: string) {
     const digits = raw.replace(/\D/g, "");
-    setNoKoli(digits);
+    // Hanya angka, tanpa angka 0 di depan (1, 2, ... 10, ... 100; bukan 001).
+    setNoKoli(digits.replace(/^0+/, ""));
     if (digits !== raw) {
       setNoKoliWarn(true);
       if (noKoliWarnTimer.current) clearTimeout(noKoliWarnTimer.current);
@@ -210,6 +212,8 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   // Filter "Riwayat pengiriman" (hanya tampilan): cari No Resi (mengandung teks) dan pilih Ekspedisi (kosong = semua).
   const [histResiFilter, setHistResiFilter] = useState("");
   const [histEkspedisiFilter, setHistEkspedisiFilter] = useState("");
+  // Halaman Riwayat pengiriman (owner 2026-11-11: maksimal 5 resi per halaman).
+  const [histPage, setHistPage] = useState(1);
   // HP: resi yang rinciannya sedang dibuka di popup (kunci grup resi); null = tertutup.
   const [resiPopupKey, setResiPopupKey] = useState<string | null>(null);
   // Klik baris "Koli belum dikirim"/"Riwayat pengiriman" untuk expand/collapse rincian isi koli
@@ -394,7 +398,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   function editKoli(k: (typeof deliveryKolis)[number]) {
     setEditingKoliId(k.id);
     setMrpId(k.mrpId);
-    setNoKoli(k.noKoli);
+    setNoKoli(formatNoKoli(k.noKoli).replace(/\D/g, ""));
     setNoKoliWarn(false);
     setQtyDraft(Object.fromEntries(k.items.filter((it) => !it.sourceBatchId).map((it) => [rowKey(it.kind ?? "FG", it), it.qty])));
     // Qty roll yang SUDAH ada di koli ini (item ber-sourceBatchId), diagregasi kembali ke draft
@@ -424,7 +428,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
     const MAX_LINES = 12;
     const shown = lines.length > MAX_LINES ? [...lines.slice(0, MAX_LINES), `Serta ${lines.length - MAX_LINES} rincian lainnya`] : lines;
     const longMessage =
-      `Koli ${k.noKoli} belum dikirim sehingga dapat dihapus.\n` +
+      `Koli ${formatNoKoli(k.noKoli)} belum dikirim sehingga dapat dihapus.\n` +
       `Apabila dihapus, seluruh isi koli ini, dengan total ${total} pieces, akan dikembalikan ke daftar item yang belum dikemas ` +
       `(Finish Good, Rework, dan Reject) dan dapat dimasukkan kembali ke koli lain. Penghapusan ini tidak dapat dibatalkan.`;
     // HP: peringatan singkat -- isi per warna·lengan dalam satu baris (size + qty); rincian panjang hanya di desktop.
@@ -437,7 +441,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
       short.set(key, sizes);
     }
     const ok = await confirmDialog({
-      title: `Hapus koli ${k.noKoli}?`,
+      title: `Hapus koli ${formatNoKoli(k.noKoli)}?`,
       message: (
         <>
           <span className="max-md:hidden">{longMessage}</span>
@@ -623,7 +627,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
     return deliveryKolis.find((k) => k.vendorProduksi === vendorId && !ekspedisiDialogKoliIds.includes(k.id) && (k.noResi ?? "").trim().toLowerCase() === v) ?? null;
   })();
   function resiDupMessage(k: { noKoli?: string; id: string; mrpId: string }): string {
-    return `No resi "${noResiDraft.trim()}" sudah dipakai untuk koli ${k.noKoli ?? k.id} (MRP ${k.mrpId}). Nomor resi tidak boleh sama. Kalau beberapa koli dikirim dengan satu resi, centang semua koli itu lalu isi resi satu kali saja.`;
+    return `No resi "${noResiDraft.trim()}" sudah dipakai untuk koli ${formatNoKoli(k.noKoli) || k.id} (MRP ${k.mrpId}). Nomor resi tidak boleh sama. Kalau beberapa koli dikirim dengan satu resi, centang semua koli itu lalu isi resi satu kali saja.`;
   }
   async function warnDuplicateResi() {
     const key = noResiDraft.trim().toLowerCase();
@@ -672,7 +676,13 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   const pendingWithEkspedisi = pending.filter((k) => k.resiGroupId);
   const pendingGroups = Array.from(groupByKey(pendingWithEkspedisi, resiKeyFor).entries());
   // Riwayat: satu NOMOR resi = satu kartu, walau data lama menyimpannya di beberapa kelompok resi (lihat resiNumberKey).
-  const deliveredGroups = Array.from(groupByKey(delivered, resiNumberKey).entries());
+  // Resi terbaru di paling atas (owner 2026-11-11): tanggal kirim terbaru dulu; pada tanggal yang sama, resi yang dibuat belakangan (nomor RESI-xxxxx terbesar) dulu.
+  const resiSeq = (k: DeliveryKoli) => Number(((k.resiGroupId ?? k.id).match(/(\d+)$/) ?? [])[1] ?? 0);
+  const latestDelivered = (kolis: DeliveryKoli[]) => kolis.reduce((m, k) => (k.deliveredAt && k.deliveredAt > m ? k.deliveredAt : m), "");
+  const latestSeq = (kolis: DeliveryKoli[]) => kolis.reduce((m, k) => Math.max(m, resiSeq(k)), 0);
+  const deliveredGroups = Array.from(groupByKey(delivered, resiNumberKey).entries()).sort(
+    ([, a], [, b]) => latestDelivered(b).localeCompare(latestDelivered(a)) || latestSeq(b) - latestSeq(a)
+  );
   const historyEkspedisiOptions = Array.from(new Set(deliveredGroups.map(([, kolis]) => kolis[0].ekspedisi).filter((e): e is string => !!e))).sort((a, b) => a.localeCompare(b, "id-ID"));
   const activeHistEkspedisi = historyEkspedisiOptions.includes(histEkspedisiFilter) ? histEkspedisiFilter : "";
   const histResiQuery = histResiFilter.trim().toLowerCase();
@@ -683,6 +693,10 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
     return true;
   });
   const historyFiltered = !!activeHistEkspedisi || !!histResiQuery;
+  const HIST_PAGE_SIZE = 5;
+  const histPageCount = Math.max(1, Math.ceil(visibleDeliveredGroups.length / HIST_PAGE_SIZE));
+  const histPageSafe = Math.min(histPage, histPageCount);
+  const pagedDeliveredGroups = visibleDeliveredGroups.slice((histPageSafe - 1) * HIST_PAGE_SIZE, histPageSafe * HIST_PAGE_SIZE);
 
   // Item 2026-09-11 (migration 0026, owner: "berat dan delivery itu digabung jadi satu aksi ...
   // yang dibayarkan itu adalah berat total koli yang dikirimkan ke satu ekspedisi"): SATU tombol
@@ -740,7 +754,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
               value={noKoli}
               onChange={(e) => onNoKoliInput(e.target.value)}
               inputMode="numeric"
-              placeholder="Contoh: 001"
+              placeholder="Contoh: 1"
               aria-invalid={noKoliWarn}
               className={"input mt-1 " + (noKoliWarn ? "!border-danger !bg-danger-bg/40" : "")}
             />
@@ -1078,7 +1092,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                         <span className="vp-koli-mrp font-mono">{k.mrpId}</span>
                         <span className="vp-koli-no font-mono font-medium">
                           <span className="md:hidden">Koli </span>
-                          {k.noKoli}
+                          {formatNoKoli(k.noKoli)}
                         </span>
                         <PicText label={k.createdBy} />
                         <button
@@ -1182,7 +1196,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                             <span className="vp-koli-mrp font-mono">{k.mrpId}</span>
                             <span className="vp-koli-no font-mono font-medium">
                               <span className="md:hidden">Koli </span>
-                              {k.noKoli}
+                              {formatNoKoli(k.noKoli)}
                             </span>
                             <PicText label={k.createdBy} />
                             <button
@@ -1241,12 +1255,18 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
               <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted max-md:hidden">No resi</span>
               <input
                 value={histResiFilter}
-                onChange={(e) => setHistResiFilter(e.target.value)}
+                onChange={(e) => {
+                  setHistResiFilter(e.target.value);
+                  setHistPage(1);
+                }}
                 placeholder="Cari no resi…"
                 className="input w-[170px] max-md:w-full max-md:min-w-0"
               />
               <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted max-md:hidden">Ekspedisi</span>
-              <select value={activeHistEkspedisi} onChange={(e) => setHistEkspedisiFilter(e.target.value)} className="input w-[240px] max-md:w-full max-md:min-w-0">
+              <select value={activeHistEkspedisi} onChange={(e) => {
+                setHistEkspedisiFilter(e.target.value);
+                setHistPage(1);
+              }} className="input w-[240px] max-md:w-full max-md:min-w-0">
                 <option value="">Semua ekspedisi</option>
                 {historyEkspedisiOptions.map((e) => (
                   <option key={e} value={e}>
@@ -1263,6 +1283,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                     onClick={() => {
                       setHistResiFilter("");
                       setHistEkspedisiFilter("");
+                      setHistPage(1);
                     }}
                     className="font-sans text-[11px] font-semibold text-action-primary underline"
                   >
@@ -1279,7 +1300,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
           <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Tidak ada pengiriman yang cocok dengan filter.</div>
         ) : (
           <div className="flex flex-col gap-3 px-4 py-3">
-            {visibleDeliveredGroups.map(([groupKey, kolis]) => {
+            {pagedDeliveredGroups.map(([groupKey, kolis]) => {
               const first = kolis[0];
               const totalWeight = kolis.reduce((s, k) => s + (k.beratKoli ?? 0), 0);
               const alreadyInvoiced = kolis.every((k) => k.resiInvoicedAt);
@@ -1345,7 +1366,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                           <span className="vp-koli-mrp font-mono">{k.mrpId}</span>
                           <span className="vp-koli-no font-mono font-medium">
                             <span className="md:hidden">Koli </span>
-                            {k.noKoli}
+                            {formatNoKoli(k.noKoli)}
                           </span>
                           <PicText label={k.createdBy} />
                           <PicText label={k.shippedBy} />
@@ -1414,6 +1435,32 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
             })}
           </div>
         )}
+        {visibleDeliveredGroups.length > HIST_PAGE_SIZE && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle px-4 py-3 font-sans text-[11.5px] text-text-muted">
+            <span>
+              Resi {(histPageSafe - 1) * HIST_PAGE_SIZE + 1}–{Math.min(histPageSafe * HIST_PAGE_SIZE, visibleDeliveredGroups.length)} dari {visibleDeliveredGroups.length}
+            </span>
+            <span className="flex items-center gap-2">
+              <button
+                onClick={() => setHistPage(histPageSafe - 1)}
+                disabled={histPageSafe <= 1}
+                className="rounded-md border border-[#CBD5DF] bg-white px-3 py-1.5 font-semibold text-action-primary disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                ‹ Sebelumnya
+              </button>
+              <span className="font-mono text-text-primary">
+                {histPageSafe} / {histPageCount}
+              </span>
+              <button
+                onClick={() => setHistPage(histPageSafe + 1)}
+                disabled={histPageSafe >= histPageCount}
+                className="rounded-md border border-[#CBD5DF] bg-white px-3 py-1.5 font-semibold text-action-primary disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Berikutnya ›
+              </button>
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Item 2026-09-11 (migration 0026): dialog "Set Ekspedisi & Resi" -- sekarang beroperasi
@@ -1458,7 +1505,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                   />
                   {resiDupKoli && (
                     <div className="mt-1 font-sans text-[10.5px] text-danger-fg">
-                      No resi ini sudah dipakai untuk koli {resiDupKoli.noKoli ?? resiDupKoli.id} (MRP {resiDupKoli.mrpId}). Nomor resi tidak boleh sama.
+                      No resi ini sudah dipakai untuk koli {formatNoKoli(resiDupKoli.noKoli) || resiDupKoli.id} (MRP {resiDupKoli.mrpId}). Nomor resi tidak boleh sama.
                     </div>
                   )}
                 </div>
@@ -1479,9 +1526,9 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                   const koli = deliveryKolis.find((k) => k.id === id);
                   return (
                     <div key={id} className="flex items-center gap-3 border-b border-[#F1F4F7] px-3 py-1.5 last:border-b-0">
-                      <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-[#31414F] max-md:flex-none max-md:font-sans max-md:text-[13.5px] max-md:font-semibold" title={koli?.noKoli}>
+                      <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-[#31414F] max-md:flex-none max-md:font-sans max-md:text-[13.5px] max-md:font-semibold" title={formatNoKoli(koli?.noKoli)}>
                         <span className="md:hidden">Koli </span>
-                        {koli?.noKoli ?? id}
+                        {formatNoKoli(koli?.noKoli) || id}
                       </span>
                       <span className="whitespace-nowrap font-sans text-[10.5px] text-text-muted max-md:min-w-0 max-md:flex-1 max-md:truncate max-md:text-[11.5px]">{koli ? summarizeItems(koli.items) : ""}</span>
                       <NumberInput

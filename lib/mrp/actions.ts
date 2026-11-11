@@ -3080,6 +3080,7 @@ export async function updateDeliveryKoliAction(koliId: string, patch: { ekspedis
 }
 
 async function updateDeliveryKoliImpl(koliId: string, patch: { ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }): Promise<void> {
+  const noKoli = normalizeNoKoliOrThrow(patch.noKoli);
   const vendorId = await requireVendorSession();
   const db = supabaseServer();
   const { data: koli } = await db.from("delivery_kolis").select("delivered_at,mrp_id,vendor_produksi,ekspedisi,no_koli").eq("id", koliId).maybeSingle();
@@ -3091,7 +3092,7 @@ async function updateDeliveryKoliImpl(koliId: string, patch: { ekspedisi: string
   // LAMA sebelum edit) sebagai "sudah terpakai", supaya qty yang sudah ada di koli ini bisa
   // dipertahankan/diedit bebas (bukan cuma bisa berkurang).
   const items = await clampDeliveryItemsBySourceBatch(patch.items, koli.mrp_id, koli.vendor_produksi, koliId);
-  await db.from("delivery_kolis").update({ ekspedisi: patch.ekspedisi, no_koli: patch.noKoli }).eq("id", koliId);
+  await db.from("delivery_kolis").update({ ekspedisi: patch.ekspedisi, no_koli: noKoli }).eq("id", koliId);
   await db.from("delivery_koli_items").delete().eq("delivery_koli_id", koliId);
   if (items.length > 0) {
     // BUG FIX SEKALIAN (ditemukan saat menambah `source_batch_id`, migration 0024): insert ini dulu
@@ -5545,9 +5546,14 @@ async function clampDeliveryItemsBySourceBatch(items: DeliveryKoliItem[], mrpId:
  *  addVendorInvoiceAdjustment/store.ts) supaya store.ts bisa langsung nge-patch state DARI HASIL
  *  NYATA ini (pola sama updateBatchToCuttingAction/sendPoToFinanceAction), TANPA menunggu
  *  backgroundRefresh (snapshot 32-tabel) cuma untuk koli baru ini muncul di daftar. */
-/** Nomor koli hanya boleh angka (owner 2026-10-27); dicek juga di server, bukan hanya di kolom isian. */
-function assertNoKoliNumeric(noKoli: string): void {
-  if (!/^\d+$/.test(noKoli.trim())) throw new Error("Nomor koli hanya boleh berisi angka (mis. 001).");
+/** Nomor koli hanya boleh angka (owner 2026-10-27) dan tanpa angka 0 di depan (owner 2026-11-11: 1, 2, ... 10, ... 100, bukan 001); dicek dan dinormalkan di server, bukan hanya
+ *  di kolom isian. Mengembalikan nomor yang disimpan ("007" -> "7"). */
+function normalizeNoKoliOrThrow(noKoli: string): string {
+  const s = noKoli.trim();
+  if (!/^\d+$/.test(s)) throw new Error("Nomor koli hanya boleh berisi angka (mis. 1, 2, 10).");
+  const n = s.replace(/^0+/, "");
+  if (!n) throw new Error("Nomor koli harus 1 atau lebih.");
+  return n;
 }
 
 /** Pemeriksaan SESUDAH simpan koli (owner 2026-11-06, kasus W40 PUTIH BLUISH 2XL: dua koli tersimpan berurutan memakai asal roll yang sama, 230 pcs
@@ -5601,14 +5607,14 @@ export async function createDeliveryKoliAction(input: { mrpId: string; vendorPro
 }
 
 async function createDeliveryKoliImpl(input: { mrpId: string; vendorProduksi: string; ekspedisi: string; noKoli: string; items: DeliveryKoliItem[] }): Promise<DeliveryKoli> {
-  assertNoKoliNumeric(input.noKoli);
+  const noKoli = normalizeNoKoliOrThrow(input.noKoli);
   const actor = await requireVendorSessionWithActor();
   assertSameVendor(actor.vendorId, input.vendorProduksi, "Koli ini");
   const db = supabaseServer();
   const items = await clampDeliveryItemsBySourceBatch(input.items, input.mrpId, input.vendorProduksi, undefined);
   const id = await nextReadableId("KOLI");
   const createdAt = today();
-  const { error } = await db.from("delivery_kolis").insert({ id, mrp_id: input.mrpId, vendor_produksi: input.vendorProduksi, ekspedisi: input.ekspedisi, no_koli: input.noKoli, created_at: createdAt });
+  const { error } = await db.from("delivery_kolis").insert({ id, mrp_id: input.mrpId, vendor_produksi: input.vendorProduksi, ekspedisi: input.ekspedisi, no_koli: noKoli, created_at: createdAt });
   if (error) throw new Error(error.message);
   if (items.length > 0) {
     // BUG FIX SEKALIAN (ditemukan saat menambah `source_batch_id`, migration 0024): insert ini dulu
@@ -5632,8 +5638,8 @@ async function createDeliveryKoliImpl(input: { mrpId: string; vendorProduksi: st
     }
   }
   await stampActor(db, "delivery_kolis", [id], { created_by: actor.actorLabel });
-  await logVendorAction(actor, `Buat koli ${input.noKoli} (${items.length} item)`, "delivery_kolis", id);
-  return { id, mrpId: input.mrpId, vendorProduksi: input.vendorProduksi, ekspedisi: input.ekspedisi, noKoli: input.noKoli, items, createdAt, createdBy: actor.actorLabel };
+  await logVendorAction(actor, `Buat koli ${noKoli} (${items.length} item)`, "delivery_kolis", id);
+  return { id, mrpId: input.mrpId, vendorProduksi: input.vendorProduksi, ekspedisi: input.ekspedisi, noKoli, items, createdAt, createdBy: actor.actorLabel };
 }
 
 /** Item 2026-09-11 (feedback: "Checkbox Koli yang mau dikirim (disamakan ekspedisinya - jadi satu

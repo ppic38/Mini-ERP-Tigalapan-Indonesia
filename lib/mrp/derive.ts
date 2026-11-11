@@ -2421,12 +2421,21 @@ export function availableCodeRollsForColor(
     .map((r) => r.codeRoll);
 }
 
-/** Pembanding nomor koli: angka dibandingkan sebagai angka (2 sebelum 10, "0010" sama dengan 10), yang bukan angka (data lama) menurut urutan natural. */
+/** Nomor koli untuk TAMPILAN (owner 2026-11-11: hanya angka, tanpa angka 0 di depan): "001" -> "1", "027" -> "27", data lama "koli 001" -> "1". Kalau nama tidak mengandung
+ *  tepat satu rangkaian angka (mis. kosong atau "1-2"), dikembalikan apa adanya. Data di database tidak diubah oleh fungsi ini. */
+export function formatNoKoli(raw?: string | null): string {
+  const s = (raw ?? "").trim();
+  const runs = s.match(/\d+/g);
+  if (!runs || runs.length !== 1) return s;
+  return runs[0].replace(/^0+(?=\d)/, "");
+}
+
+/** Pembanding nomor koli: angka dibandingkan sebagai angka (2 sebelum 10, "0010" dan "koli 010" sama dengan 10), yang bukan angka (data lama) menurut urutan natural. */
 export function compareNoKoli(a?: string, b?: string): number {
-  const x = (a ?? "").trim();
-  const y = (b ?? "").trim();
+  const x = formatNoKoli(a);
+  const y = formatNoKoli(b);
   const numeric = /^\d+$/;
-  if (numeric.test(x) && numeric.test(y)) return Number(x) - Number(y) || x.length - y.length;
+  if (numeric.test(x) && numeric.test(y)) return Number(x) - Number(y);
   return x.localeCompare(y, undefined, { numeric: true });
 }
 
