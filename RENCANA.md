@@ -4,6 +4,13 @@
 > memperbaruinya sebelum selesai. Riwayat fitur yang SUDAH jadi tetap dicatat di MIGRASI.md.
 > Terakhir diperbarui: 2026-11-12.
 
+## TITIK LANJUT BERIKUTNYA (baca ini dulu)
+Satu hal yang menahan semuanya: **owner mengisi `LIVE_DB_URL=` di `.env.db-sync`** (Supabase > Connect >
+Session pooler, dengan password database, karakter khusus di-encode). JANGAN minta password dikirim ke chat,
+JANGAN tampilkan isi file `.env*`. Begitu terisi, lanjutkan bagian 1 langkah 4 ke bawah:
+`bash scripts/dev/db-sync.sh all` -> ganti `.env.local` ke lokal -> jalankan app lokal -> baru boleh mulai bagian 2.
+Supabase lokal sudah jalan dan database lokalnya masih KOSONG (0 tabel) sampai db-sync dijalankan.
+
 ## Konteks penting (dibaca sebelum mengambil keputusan apa pun)
 - Ini **web kantor yang LIVE dan dipakai operasional harian**. Aplikasi rusak = pekerjaan kantor berhenti.
 - **Tim IT owner update setiap hari ke live**, kode MAUPUN struktur database. Terukur dari riwayat git:
@@ -19,18 +26,25 @@
 - **Laptop lain / Claude web:** pekerjaan harus di-commit dan di-push dulu ke GitHub
   (`ppic38/Mini-ERP-Tigalapan-Indonesia`); yang belum di-push tidak terlihat dari sana.
 - Branch: untuk pekerjaan redesign dipakai **satu branch per modul, umur maksimal 2-3 hari** (lihat bagian 2).
-  Branch `pengembangan` ada secara lokal dan isinya masih identik dengan `main` (commit `6c2840b`), belum pernah
-  di-push. Jangan push ke `main` tanpa persetujuan owner: push ke `main` langsung ter-deploy ke aplikasi online.
-- Catatan teknis laptop ini: nama folder memuat `&`, jadi `npx`/`npm run` gagal. Jalankan lewat node langsung, mis.
-  `node node_modules/typescript/bin/tsc --noEmit`, `node node_modules/next/dist/bin/next dev`,
-  `node node_modules/supabase/dist/supabase.js <perintah>`.
+  Status `pengembangan` per 2026-11-12 sore: **2 commit di depan `main`, BELUM DI-PUSH** --
+  `4fb6951` (Posisi Stok) dan `b036813` (lingkungan uji lokal + RENCANA.md). `main` tetap di `6c2840b`.
+  Jangan push ke `main` tanpa persetujuan owner: push ke `main` langsung ter-deploy ke aplikasi online.
+- Catatan teknis laptop ini:
+  - Nama folder memuat `&`, jadi `npx`/`npm run` gagal. Jalankan lewat node langsung, mis.
+    `node node_modules/typescript/bin/tsc --noEmit`, `node node_modules/next/dist/bin/next dev`,
+    `node node_modules/supabase/dist/supabase.js <perintah>`.
+  - **Git belum punya identitas di laptop ini** (tidak ada `~/.gitconfig`), jadi `git commit` biasa GAGAL dengan
+    "Author identity unknown". Sampai owner menjalankan `git config --global user.name/user.email` sendiri,
+    commit harus memakai identitas yang sama dengan seluruh riwayat repo lewat opsi per-perintah:
+    `git -c user.name="ppic38" -c user.email="ppic3803@gmail.com" commit -m "..."`.
+    JANGAN menulis `git config` tanpa diminta owner.
 
 ## 1. Lingkungan lokal (Supabase di Docker) -- SEDANG DIKERJAKAN, PRASYARAT REDESIGN
 Tujuan owner: perubahan kode dan database diuji di laptop dulu, tidak langsung ke data/aplikasi live.
 Bagian 2 (redesign) TIDAK BOLEH dimulai sebelum bagian ini selesai, khususnya langkah 5
 (`.env.local` masih menunjuk LIVE = setiap klik di app lokal menulis ke data operasional kantor).
 
-Sudah (belum di-commit):
+Sudah (SUDAH di-commit di `b036813`, branch `pengembangan`, belum di-push):
 - Supabase CLI `2.122.0` dipasang sebagai devDependency (`package.json`, `package-lock.json`).
 - `supabase/config.toml` dibuat (`supabase init`): migrations dan seed DIMATIKAN (struktur + data disalin dari live),
   realtime, edge_runtime, analytics dimatikan. Port: API 54321, DB 54322, Studio 54323.
@@ -179,7 +193,8 @@ Kalau sedang di tengah branch modul, tambahkan `git merge main` SETIAP HARI. Kon
 - Fase 1-5: belum dimulai.
 - Modul yang sedang dirombak saat ini: (belum ada).
 
-## 3. Halaman Finance > Posisi Stok -- KODE SELESAI, BELUM DIUJI DENGAN DATA ASLI, BELUM DI-COMMIT
+## 3. Halaman Finance > Posisi Stok -- KODE SELESAI & DI-COMMIT, BELUM DIUJI DENGAN DATA ASLI
+Di-commit sebagai `4fb6951` di branch `pengembangan` (belum di-push, belum masuk `main`, jadi belum tayang).
 File: `app/finance/posisi-stok/page.tsx`, `lib/mrp/stockPosition.ts`, menu di `lib/shell/nav.ts`; entri MIGRASI.md
 "Posisi Stok di Finance (2026-11-06)". tsc bersih, uji data buatan lulus.
 Berikutnya: setelah lingkungan lokal jalan, login Finance di app lokal dan cocokkan angka (total dibeli = total invoice,
