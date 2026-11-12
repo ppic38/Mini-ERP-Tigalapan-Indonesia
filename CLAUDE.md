@@ -1,2 +1,3 @@
 @AGENTS.md
+@RENCANA.md
 @MIGRASI.md

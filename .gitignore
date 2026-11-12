@@ -45,3 +45,6 @@ next-env.d.ts
 
 # pengaturan izin lokal Claude Code (khusus komputer ini)
 .claude/settings.local.json
+
+# hasil skrip scripts/dev/db-sync.sh (salinan database, jangan di-commit)
+/.db-sync/
