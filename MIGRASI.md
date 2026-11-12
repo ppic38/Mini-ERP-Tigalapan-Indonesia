@@ -1,5 +1,11 @@
 # Migrasi Project — Status & Riwayat
 
+## Antrean Approval PO (tab PO Material): kolom "Qty Produksi (pcs)" (2026-11-12, tanpa migration)
+SCM (owner): tab PO Material hanya menampilkan roll, tidak ada pcs yang akan dihasilkan. `components/mrp/po-approval-queue.tsx` (dipakai portal Procurement, SCM, dan GM): tab PO Material kini punya kolom "Qty (roll)" lalu "Qty Produksi (pcs)" di baris MRP (jumlah) dan di baris supplier; tab PO Produksi tidak berubah (sudah pcs). "Lihat detail": kartu "Qty produksi (est.)" dan kolom "Pcs (est.)" per warna dan lengan.
+- Hitungan `materialPoColorPcs` / `materialPoPcs` (`lib/mrp/derive.ts`): per warna dan lengan di PO = jumlah roll PO x (total pcs aduan pola vendor produksi yang sama ÷ total roll aduan warna dan lengan itu), dibulatkan per warna. Ini target pcs dari rencana MRP (aduan pola), bukan hasil produksi aktual karena PO belum berjalan di produksi. Warna tanpa aduan yang cocok dihitung 0.
+- Halaman Finance (`po-material-panel.tsx`) memakai tabel sendiri dan tidak diubah.
+- Diuji: tsc dan eslint bersih; hitungan pada data tiruan (dua aduan warna sama digabung, PO sebagian roll diprorata, vendor lain tidak ikut, warna tanpa aduan = 0).
+
 ## FG hasil tambahan (sisa kain) langsung bisa dikirim, tidak menunggu grup tujuan "Selesai" (2026-11-11, tanpa migration)
 Owner: FG size tambahan (mis. XS Kids Panjang 14 pcs dari roll R2610008303, W41 CECEP) tidak muncul di Pengiriman karena grup tujuannya (`W41|PUTIH BLUISH 24S|PANJANG`, belum Selesai) menahan semua FG non-roll; diminta "konsep seperti biasa": FG yang diinput langsung masuk Pengiriman. Query: hanya satu FG sisa kain di seluruh sistem yang tertahan (W41 CE PUTIH BLUISH 24S PANJANG XS Kids 14).
 - `lib/mrp/derive.ts`: `fgProducedBySize(..., extras: "include" | "only" | "exclude")` dan `EXTRA_FG_NOTE_PREFIX = "Sisa kain"`; `availableFgToShip` menghitung FG sisa kain tanpa syarat `fgConfirmedAt` grup tujuan, sedangkan FG kolam lain (FG lama, rework) tetap menunggu "Finish Good Selesai". Berlaku juga untuk badge/dropdown "belum dikemas" (fungsi yang sama). Rework tidak berubah.

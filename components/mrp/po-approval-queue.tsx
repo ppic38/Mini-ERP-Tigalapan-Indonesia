@@ -11,7 +11,7 @@ import { maklonPoCorrections, materialPoCorrections } from "@/components/sysadmi
 import { useMrpStore } from "@/lib/mrp/store";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
-import { compareNewestFirst, formatPcs, formatRupiah, formatDate, mrpDetailFor } from "@/lib/mrp/derive";
+import { compareNewestFirst, formatPcs, formatRupiah, formatDate, materialPoColorPcs, materialPoPcs, mrpDetailFor } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI, ROLL_KG_ESTIMATE } from "@/lib/mrp/seed";
 import {
   APPROVAL_LEVEL_TABLE,
@@ -194,6 +194,7 @@ function DetailModal({ item, onClose }: { item: Item; onClose: () => void }) {
   const boxes = approvalBoxes(item.po, st);
   const members = item.members ?? [item];
   const totalRoll = item.type === "MATERIAL" ? members.reduce((sum, m) => sum + (m.po as MaterialPO).rollCount, 0) : 0;
+  const totalPcs = item.type === "MATERIAL" ? members.reduce((sum, m) => sum + materialPoPcs(m.po as MaterialPO, detail?.aduanRows ?? []), 0) : 0;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={onClose}>
       <div className="flex max-h-[88vh] w-full max-w-[760px] flex-col rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.2)]" onClick={(e) => e.stopPropagation()}>
@@ -208,12 +209,13 @@ function DetailModal({ item, onClose }: { item: Item; onClose: () => void }) {
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <div className={"grid grid-cols-2 gap-3 " + (item.type === "MATERIAL" ? "md:grid-cols-5" : "md:grid-cols-4")}>
             {[
               ["Nilai PO", formatRupiah(item.amount)],
               ["Level approval", st.legacy || st.level == null ? "Alur lama" : `Level ${st.level}`],
               ["Tanggal PO", detail?.dates.poSent ? formatDate(detail.dates.poSent) : "—"],
               [item.type === "MATERIAL" ? "Total roll" : "Total qty", item.type === "MATERIAL" ? `${totalRoll.toLocaleString("id-ID", { maximumFractionDigits: 1 })} roll` : `${(item.po as MaklonPO).qty.toLocaleString("id-ID")} pcs`],
+              ...(item.type === "MATERIAL" ? [["Qty produksi (est.)", `${totalPcs.toLocaleString("id-ID")} pcs`]] : []),
             ].map(([k, v]) => (
               <div key={k} className="rounded-md border border-[#E4E8EE] bg-[#FBFCFD] px-3 py-2">
                 <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">{k}</div>
@@ -275,6 +277,7 @@ function DetailModal({ item, onClose }: { item: Item; onClose: () => void }) {
                           <th className="px-3 py-1 font-medium">Warna · lengan</th>
                           <th className="px-3 py-1 text-right font-medium">Roll</th>
                           <th className="px-3 py-1 text-right font-medium">Kg (est.)</th>
+                          <th className="px-3 py-1 text-right font-medium">Pcs (est.)</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -285,6 +288,9 @@ function DetailModal({ item, onClose }: { item: Item; onClose: () => void }) {
                             </td>
                             <td className="px-3 py-1 text-right font-mono">{c.rollCount.toLocaleString("id-ID", { maximumFractionDigits: 1 })}</td>
                             <td className="px-3 py-1 text-right font-mono">{(c.rollCount * ROLL_KG_ESTIMATE).toLocaleString("id-ID", { maximumFractionDigits: 0 })}</td>
+                            <td className="px-3 py-1 text-right font-mono">
+                              {(materialPoColorPcs(m.po as MaterialPO, detail?.aduanRows ?? []).find((x) => x.warna === c.warna && x.lengan === c.lengan)?.pcs ?? 0).toLocaleString("id-ID")}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -451,6 +457,11 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
   // Tabel antrean (gaya sama tabel "Semua PO Vendor Produksi" Finance): baris MRP (ringkasan) -> baris vendor/supplier (aksi per PO).
   const qtyOfItem = (it: Item): number => (it.type === "MAKLON" ? (it.po as MaklonPO).qty : (it.members ?? [it]).reduce((s, m) => s + (m.po as MaterialPO).rollCount, 0));
   const qtyLabel = (n: number) => (tab === "MAKLON" ? `${formatPcs(n)} pcs` : `${formatPcs(n)} roll`);
+  // Tab PO Material: kolom tambahan "Qty Produksi (pcs)" = estimasi pcs dari roll PO (aduan pola, lihat materialPoPcs); PO Produksi sudah dalam pcs.
+  const showPcs = tab === "MATERIAL";
+  const colCount = showPcs ? 6 : 5;
+  const pcsOfItem = (it: Item): number =>
+    it.type === "MAKLON" ? (it.po as MaklonPO).qty : (it.members ?? [it]).reduce((s, m) => s + materialPoPcs(m.po as MaterialPO, mrpDetailFor(m.mrpId, mrpDetails)?.aduanRows ?? []), 0);
 
   function renderGroups(section: string, list: Item[], rowActions?: (it: Item) => React.ReactNode, groupApprove = false) {
     if (list.length === 0) return null;
@@ -466,7 +477,12 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
           <thead>
             <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
               <th className="px-5 py-[9px] text-left">No MRP / {tab === "MATERIAL" ? "Supplier" : "Vendor Produksi"} / No PO</th>
-              <th className="px-3 py-[9px] text-right">Qty</th>
+              <th className="px-3 py-[9px] text-right">{showPcs ? "Qty (roll)" : "Qty"}</th>
+              {showPcs && (
+                <th className="px-3 py-[9px] text-right" title="Estimasi pcs dari roll PO ini: jumlah roll x pcs per roll di aduan pola vendor produksi yang sama (target rencana MRP).">
+                  Qty Produksi (pcs)
+                </th>
+              )}
               <th className="px-3 py-[9px] text-right">Nilai</th>
               <th className="px-3 py-[9px] text-left">Status Approval</th>
               <th className="px-3 py-[9px] text-right">Aksi</th>
@@ -489,6 +505,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
                       {overdue > 0 && <span className="ml-2 rounded-full bg-danger-bg px-2 py-0.5 text-[10px] font-semibold text-danger-fg">⚠ {overdue} lewat SLA</span>}
                     </td>
                     <td className="px-3 py-[11px] text-right font-mono tabular-nums">{qtyLabel(its.reduce((s, i) => s + qtyOfItem(i), 0))}</td>
+                    {showPcs && <td className="px-3 py-[11px] text-right font-mono tabular-nums">{formatPcs(its.reduce((s, i) => s + pcsOfItem(i), 0))} pcs</td>}
                     <td className="px-3 py-[11px] text-right font-mono font-medium tabular-nums">{formatRupiah(its.reduce((s, i) => s + i.amount, 0))}</td>
                     <td className="px-3 py-[11px]">
                       <StatusPill tone="neutral">{poCount} PO</StatusPill>
@@ -533,6 +550,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
             </div>
           </td>
           <td className="px-3 py-[10px] text-right font-mono tabular-nums">{qtyLabel(qtyOfItem(item))}</td>
+          {showPcs && <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatPcs(pcsOfItem(item))} pcs</td>}
           <td className="px-3 py-[10px] text-right font-mono font-medium tabular-nums">{formatRupiah(item.amount)}</td>
           <td className="px-3 py-[10px]">
             <ApprovalProgress po={item.po} state={st} />
@@ -554,7 +572,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
         </tr>
         {st.rejected && st.rejectNote && (
           <tr className="border-b border-[#F1F4F7] bg-[#FBFCFD]">
-            <td colSpan={5} className="pb-2 pl-12 pr-4">
+            <td colSpan={colCount} className="pb-2 pl-12 pr-4">
               <div className="rounded-md border border-[#EFC9C4] bg-danger-bg px-3 py-1.5 font-sans text-[11px] text-danger-fg">
                 Ditolak {st.rejectedBy ? APPROVAL_ROLE_LABEL[st.rejectedBy] : ""}: {st.rejectNote}
               </div>
@@ -565,7 +583,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
            Baris hanya dirender di Mode Sysadmin supaya tidak ada baris kosong. */}
         {sysadminMode && (
           <tr className="border-b border-[#F1F4F7] bg-[#FBFCFD]">
-            <td colSpan={5} className="pb-2 pl-12 pr-4">
+            <td colSpan={colCount} className="pb-2 pl-12 pr-4">
               {item.type === "MATERIAL" ? (item.members ?? [item]).map((m) => <SysadminPanel key={m.id} actions={materialPoCorrections(m.po as MaterialPO)} />) : <SysadminPanel actions={maklonPoCorrections(item.po as MaklonPO)} />}
             </td>
           </tr>

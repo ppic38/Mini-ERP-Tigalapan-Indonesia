@@ -4315,6 +4315,21 @@ function kidVariantOf(base: string): string {
   return `${base} KID`;
 }
 
+/** Estimasi pcs yang dihasilkan sebuah PO Material (owner 2026-11-12, antrean Approval PO): untuk tiap warna dan lengan di PO, jumlah roll x pcs per roll dari aduan pola vendor produksi
+ *  yang sama (total pcs aduan dibagi total roll aduan warna dan lengan itu). Ini target pcs dari rencana MRP, bukan hasil produksi aktual (PO belum berjalan di produksi). */
+export function materialPoColorPcs(po: MaterialPO, aduanRows: AduanPolaRow[]): { warna: string; lengan: Lengan; pcs: number }[] {
+  return po.colorBreakdown.map((c) => {
+    const rows = aduanRows.filter((a) => a.vendor === po.vendorProduksi && a.warna === c.warna && a.lengan === c.lengan);
+    const roll = rows.reduce((sum, a) => sum + a.qtyRoll, 0);
+    const pcs = rows.reduce((sum, a) => sum + a.qty, 0);
+    return { warna: c.warna, lengan: c.lengan, pcs: roll > 0 ? Math.round((c.rollCount * pcs) / roll) : 0 };
+  });
+}
+
+export function materialPoPcs(po: MaterialPO, aduanRows: AduanPolaRow[]): number {
+  return materialPoColorPcs(po, aduanRows).reduce((sum, x) => sum + x.pcs, 0);
+}
+
 /** Id roll (ProductionBatch) yang sudah MASUK RESI pengiriman (owner 2026-11-10: hasil cutting roll terkunci saat itu, bukan lagi saat Finish Good diisi): ada item-nya di koli yang
  *  sudah punya grup resi atau tanggal kirim, atau roll itu tercatat lewat koli level-koli lama (sourceBatchIds, dianggap terkirim utuh). Koli yang baru dibuat tanpa resi tidak dihitung. */
 export function rollsInResi(kolis: DeliveryKoli[]): Set<string> {
