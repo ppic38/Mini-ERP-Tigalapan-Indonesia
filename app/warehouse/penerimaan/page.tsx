@@ -13,7 +13,7 @@ import { KpiCard } from "@/components/ui/kpi-card";
 import { Button } from "@/components/ui/button";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatDate, formatPcs, formatRupiah, localDateString, skuWarnaFor, warehouseReceivableGroups, warnaWithUsia, type WarehouseReceivableGroup } from "@/lib/mrp/derive";
+import { formatDate, formatPcs, formatRupiah, localDateString, skuKategoriLookup, skuWarnaFor, warehouseReceivableGroups, warnaWithUsia, type WarehouseReceivableGroup } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 
 /** Panel item read-only + form "Bongkar Koli" -- TIDAK ADA input qty manual (Q5 final, konsisten
@@ -27,6 +27,7 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
   const [koliFilter, setKoliFilter] = useState("");
   const [hppFilter, setHppFilter] = useState("");
   const [downloading, setDownloading] = useState(false);
+  const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
 
   // HPP per item selalu tampil begitu ada baris HPP-nya (dari mesin HPP yang sama dengan Laporan HPP Finance: master data harga
   // maklon + biaya bahan + ongkir), TIDAK menunggu Finance membayar invoice. Selama roll belum ditutup nilainya diberi tanda
@@ -49,7 +50,7 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
     setError("");
     try {
       const safe = String(group.noResi ?? group.resiGroupId).replace(/[^A-Za-z0-9_-]+/g, "_");
-      await exportResiExcel(group, `Resi-${safe}.xlsx`);
+      await exportResiExcel(group, `Resi-${safe}.xlsx`, { kategoriOf: skuKategoriLookup(itemSellingPrices) });
     } catch (err) {
       setError("Gagal membuat file Excel: " + (err instanceof Error ? err.message : String(err)));
     } finally {

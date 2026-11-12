@@ -4330,6 +4330,20 @@ export function materialPoPcs(po: MaterialPO, aduanRows: AduanPolaRow[]): number
   return materialPoColorPcs(po, aduanRows).reduce((sum, x) => sum + x.pcs, 0);
 }
 
+/** Kategori item (Master SKU / MOKA, mis. "COMBED 24S", "KIDS 24S") untuk sebuah item koli, dicari lewat Master SKU dengan nama warna ERP (varian Kids diberi akhiran KID) lalu nama warna hasil
+ *  Mapping Warna, sama dengan pencarian nama item di unduhan Warehouse. Kosong kalau item tidak ada di Master SKU. */
+export function skuKategoriLookup(rows: ItemSellingPriceRow[]): (warna: string, usia: string | undefined, lengan: string, size: string) => string {
+  const byKey = new Map<string, string>();
+  for (const r of rows) {
+    const key = `${r.warna}|${r.lengan}|${r.size}`;
+    if (r.kategori && !byKey.has(key)) byKey.set(key, r.kategori);
+  }
+  return (warna, usia, lengan, size) => {
+    const u = usia as Usia | undefined;
+    return byKey.get(`${warnaWithUsia(warna, u)}|${lengan}|${size}`) ?? byKey.get(`${skuWarnaFor(warna, u)}|${lengan}|${size}`) ?? "";
+  };
+}
+
 /** Id roll (ProductionBatch) yang sudah MASUK RESI pengiriman (owner 2026-11-10: hasil cutting roll terkunci saat itu, bukan lagi saat Finish Good diisi): ada item-nya di koli yang
  *  sudah punya grup resi atau tanggal kirim, atau roll itu tercatat lewat koli level-koli lama (sourceBatchIds, dianggap terkirim utuh). Koli yang baru dibuat tanpa resi tidak dihitung. */
 export function rollsInResi(kolis: DeliveryKoli[]): Set<string> {

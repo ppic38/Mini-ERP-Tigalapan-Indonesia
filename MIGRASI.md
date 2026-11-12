@@ -1,5 +1,12 @@
 # Migrasi Project — Status & Riwayat
 
+## Excel per resi (panel baris Penerimaan): kolom Kategori dan Jenis Lengan dan Ukuran (2026-11-12, tanpa migration)
+Owner mengirim contoh unduhan `Resi-12388.xlsx` (sheet Rincian Item dan Ringkasan Item) dan file Moka `BY39 REG` (kolom KATEGORI, ITEM, JENIS LENGAN DAN UKURAN, QTY, COGS), lalu meminta kolom tambahan dari file kedua; owner memilih unduhan tombol "Download Excel" di PANEL baris resi (bukan unduhan di kepala tabel). `lib/mrp/exportResiExcel.ts`: dua kolom baru di ujung kanan (K dan L) kedua sheet, supaya semua rumus SUMIFS yang memakai huruf kolom tidak bergeser:
+- "Kategori": kategori item di Master SKU (mis. COMBED 24S, KIDS 24S), dicari lewat `skuKategoriLookup(itemSellingPrices)` (`lib/mrp/derive.ts`) dengan nama warna ERP (varian Kids diberi akhiran KID) lalu nama warna hasil Mapping Warna, sama dengan pencarian nama item Warehouse. Kosong kalau item tidak ada di Master SKU.
+- "Jenis Lengan dan Ukuran": "PENDEK M" / "PANJANG XL", dari lengan dan size.
+- `buildResiWorkbook(group, { kategoriOf })` dan `exportResiExcel(group, fileName, opts)`; `app/warehouse/penerimaan/page.tsx` (panel) memberi `kategoriOf`. Merge judul, filter, dan lebar kolom diperluas ke 12 kolom; rumus tidak berubah. Unduhan template BY38 (kepala tabel) tidak diubah.
+- Diuji pada data tiruan: Kategori terisi untuk dewasa, Kids (lewat nama varian Kids), dan warna hasil Mapping; item di luar Master SKU kosong; nilai SUMIFS Ringkasan tetap benar. tsc bersih.
+
 ## Antrean Approval PO (tab PO Material): kolom "Qty Produksi (pcs)" (2026-11-12, tanpa migration)
 SCM (owner): tab PO Material hanya menampilkan roll, tidak ada pcs yang akan dihasilkan. `components/mrp/po-approval-queue.tsx` (dipakai portal Procurement, SCM, dan GM): tab PO Material kini punya kolom "Qty (roll)" lalu "Qty Produksi (pcs)" di baris MRP (jumlah) dan di baris supplier; tab PO Produksi tidak berubah (sudah pcs). "Lihat detail": kartu "Qty produksi (est.)" dan kolom "Pcs (est.)" per warna dan lengan.
 - Hitungan `materialPoColorPcs` / `materialPoPcs` (`lib/mrp/derive.ts`): per warna dan lengan di PO = jumlah roll PO x (total pcs aduan pola vendor produksi yang sama ÷ total roll aduan warna dan lengan itu), dibulatkan per warna. Ini target pcs dari rencana MRP (aduan pola), bukan hasil produksi aktual karena PO belum berjalan di produksi. Warna tanpa aduan yang cocok dihitung 0.
