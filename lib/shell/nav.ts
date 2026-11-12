@@ -52,6 +52,7 @@ export const NAV: Record<RoleKey, RoleNav> = {
       // dihapus. Halaman /finance/ledger sendiri TIDAK disentuh (masih ada, tetap bisa diakses
       // langsung lewat URL kalau memang dibutuhkan) -- panggil lagi kalau mau dimunculkan ulang.
       // { label: "Ledger", href: "/finance/ledger" },
+      { label: "Posisi Stok", href: "/finance/posisi-stok" },
       { label: "Laporan HPP", href: "/finance/laporan-hpp" },
       { label: "Master Data", href: "/finance/master-data" },
     ],
