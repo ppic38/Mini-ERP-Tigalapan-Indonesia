@@ -81,6 +81,11 @@ export type WipRow = {
   noKoli: string;
   kirimAt?: string;
   tibaAt?: string;
+  /** Hasil cutting AKTUAL roll x size ini (beda dari Target Qty = target aduan). Kosong kalau roll belum dicutting, baris perencanaan, atau rework. */
+  cut: number | null;
+  /** Qty roll x size ini di koli yang SUDAH dikirim (Delivery), per baris koli; baris tanpa koli = 0, baris perencanaan kosong. Jumlah per roll x size dibatasi
+   *  tidak lebih dari Qty FG dan hasil cutting. */
+  qtyDelivery: number | null;
   /** Hanya untuk urutan. */
   lengan: Lengan;
   /** Baris perencanaan MRP (totalan tanpa roll, atau roll sudah diterima tapi belum masuk produksi). Hanya untuk urutan. */
@@ -91,7 +96,7 @@ export type WipRow = {
 const LT_KIRIM_KE_TIBA = 7;
 
 type KoliEntry = { koliId: string; noKoli: string; qty: number; deliveredAt?: string };
-const NO_KOLI = { koliQty: null, noKoli: "", kirimAt: undefined, tibaAt: undefined } as const;
+const NO_KOLI = { koliQty: null, noKoli: "", kirimAt: undefined, tibaAt: undefined, qtyDelivery: 0 } as const;
 const koliNo = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true });
 
 type Moved = { delivered: number; inKoli: number };
@@ -183,12 +188,16 @@ export function wipRows(input: TrackingExportInput): WipRow[] {
     }
   }
   // Satu baris per koli (lihat catatan di atas); tanpa koli: satu baris apa adanya.
-  const withKoli = (base: WipRow, p: ReturnType<typeof wipParts>, entries: KoliEntry[], koliEst: string | undefined, restEst: string | undefined): WipRow[] => {
+  // `cap` = batas Qty Delivery roll x size ini: tidak boleh lebih dari Qty FG dan hasil cutting (data koli yang kelebihan dipotong di sini, koli diurutkan nomor naik).
+  const withKoli = (base: WipRow, p: ReturnType<typeof wipParts>, entries: KoliEntry[], koliEst: string | undefined, restEst: string | undefined, cap: number): WipRow[] => {
     if (entries.length === 0) return [base];
     const rows: WipRow[] = [];
+    let capLeft = Math.max(0, cap);
     for (const e of [...entries].sort((a, b) => koliNo(a.noKoli, b.noKoli))) {
       const sent = !!e.deliveredAt;
-      rows.push({ ...base, wip: sent ? 0 : e.qty, estimasi: sent ? undefined : koliEst, status: sent ? "SUDAH DIKIRIM" : "DI KOLI, BELUM DIKIRIM", koliQty: e.qty, noKoli: e.noKoli, kirimAt: e.deliveredAt, tibaAt: plusDays(e.deliveredAt, LT_KIRIM_KE_TIBA) });
+      const delivered = sent ? Math.min(e.qty, capLeft) : 0;
+      capLeft -= delivered;
+      rows.push({ ...base, wip: sent ? 0 : e.qty, estimasi: sent ? undefined : koliEst, status: sent ? "SUDAH DIKIRIM" : "DI KOLI, BELUM DIKIRIM", koliQty: e.qty, noKoli: e.noKoli, kirimAt: e.deliveredAt, tibaAt: plusDays(e.deliveredAt, LT_KIRIM_KE_TIBA), qtyDelivery: delivered });
     }
     const restWip = p.belumCutting + p.cutting + p.fgPart;
     if (restWip > 0) {
@@ -214,7 +223,7 @@ export function wipRows(input: TrackingExportInput): WipRow[] {
       // Roll tanpa aduan yang bisa dibaca dan belum ada hasil per size: satu baris tanpa size supaya roll tetap terlihat.
       out.push({
         item: `${b.warna} ${lenganShort(b.lengan)}`, mrp: b.mrpId, vendor: vendorName(b.vendorProduksi), kategori, warna: b.warna, size: "", roll, target: null, grAt: grByRoll.get(`${b.mrpId}|${b.vendorProduksi}|${roll}`),
-        cuttingAt, fgFirstAt: undefined, fg: 0, wip: null, statusRoll: hasCut ? "Sudah cutting" : "Resting", estimasi: undefined, status: hasCut ? "TIDAK ADA HASIL CUTTING" : "BELUM CUTTING", ...NO_KOLI, lengan: b.lengan,
+        cuttingAt, fgFirstAt: undefined, fg: 0, wip: null, statusRoll: hasCut ? "Sudah cutting" : "Resting", estimasi: undefined, status: hasCut ? "TIDAK ADA HASIL CUTTING" : "BELUM CUTTING", ...NO_KOLI, cut: null, lengan: b.lengan,
       });
       continue;
     }
@@ -236,12 +245,13 @@ export function wipRows(input: TrackingExportInput): WipRow[] {
         ...withKoli(
           {
             item: itemNameOf(b.warna, b.lengan, size), mrp: b.mrpId, vendor: vendorName(b.vendorProduksi), kategori, warna: b.warna, size, roll, target, grAt: grOf(size), cuttingAt, fgFirstAt: fd?.first, fg,
-            wip: p.wip, statusRoll: closed ? "Roll ditutup" : fg > 0 ? "FG berjalan" : hasCut ? "Sudah cutting" : "Resting", estimasi: p.wip > 0 ? est : undefined, status: p.status, ...NO_KOLI, lengan: b.lengan,
+            wip: p.wip, statusRoll: closed ? "Roll ditutup" : fg > 0 ? "FG berjalan" : hasCut ? "Sudah cutting" : "Resting", estimasi: p.wip > 0 ? est : undefined, status: p.status, ...NO_KOLI, cut: hasCut ? cut : null, lengan: b.lengan,
           },
           p,
           rollKolis.get(`${b.id}|${size}`) ?? [],
           fgEst,
-          restEst
+          restEst,
+          hasCut ? Math.min(fg, cut) : 0
         )
       );
     }
@@ -310,7 +320,7 @@ export function wipRows(input: TrackingExportInput): WipRow[] {
       const grUse = remRolls > 0 ? [...(grRolls.get(g) ?? [])].sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true })).slice(0, remRolls) : [];
       const used = usedTarget.get(g) ?? {};
       const kategori = kategoriOf(mrp, vendor, warna, lengan);
-      const base = { mrp, vendor: vendorName(vendor), kategori, warna, target: 0, cuttingAt: undefined, fgFirstAt: undefined, fg: 0, estimasi: undefined, ...NO_KOLI, lengan: lengan as Lengan, plan: true };
+      const base = { mrp, vendor: vendorName(vendor), kategori, warna, target: 0, cuttingAt: undefined, fgFirstAt: undefined, fg: 0, estimasi: undefined, ...NO_KOLI, cut: null, qtyDelivery: null, lengan: lengan as Lengan, plan: true };
       for (const size of Object.keys(alloc).sort((a, b) => sizeRank(a) - sizeRank(b) || a.localeCompare(b))) {
         const rem = Math.max(0, alloc[size] - (used[size] ?? 0));
         if (rem === 0) continue;
@@ -344,12 +354,13 @@ export function wipRows(input: TrackingExportInput): WipRow[] {
       ...withKoli(
         {
           item: itemNameOf(warna, lengan as Lengan, size), mrp, vendor: vendorName(vendor), kategori: cell.kategori, warna, size, roll: "(rework)", target: 0, grAt: undefined, cuttingAt: undefined, fgFirstAt: rw.first,
-          fg: rw.qty, wip: p.wip, statusRoll: "Rework", estimasi: p.wip > 0 ? rwEst : undefined, status: p.status, ...NO_KOLI, lengan: lengan as Lengan,
+          fg: rw.qty, wip: p.wip, statusRoll: "Rework", estimasi: p.wip > 0 ? rwEst : undefined, status: p.status, ...NO_KOLI, cut: null, lengan: lengan as Lengan,
         },
         p,
         reworkKolis.get(key) ?? [],
         rwEst,
-        rwEst
+        rwEst,
+        rw.qty
       )
     );
   }
@@ -408,6 +419,9 @@ export async function buildTrackingWorkbook(input: TrackingExportInput): Promise
     { head: "No. Koli", width: 9, kind: "text", value: (r) => r.noKoli },
     { head: "Tanggal Kirim", width: 12, kind: "date", value: (r) => dateOf(r.kirimAt), note: "Tanggal koli dikirim (tanggal kirim di resi). Kosong kalau koli belum dikirim." },
     { head: "Estimasi Tiba", width: 12, kind: "date", value: (r) => dateOf(r.tibaAt), note: `Tanggal kirim + ${LT_KIRIM_KE_TIBA} hari (sama dengan ETA di Excel pengiriman Warehouse).` },
+    // Dua kolom di ujung kanan (ditambah 2026-11-13) supaya huruf kolom template yang sudah ada tidak bergeser.
+    { head: "Target (Hasil Cutting)", width: 14, kind: "int", value: (r) => r.cut, note: "Hasil cutting AKTUAL roll ini per size (beda dari Target Qty yang dari aduan). Kosong kalau roll belum dicutting, baris perencanaan, dan item rework. Diulang di tiap baris koli roll x size yang sama." },
+    { head: "Qty Delivery", width: 11, kind: "int", value: (r) => r.qtyDelivery, note: "Qty roll dan size ini di koli yang SUDAH dikirim (Delivery) pada baris ini; koli belum dikirim = 0. Jumlah per roll x size tidak pernah melebihi Qty FG dan hasil cutting (kelebihan data koli dipotong)." },
   ];
   ws.columns = cols.map((c) => ({ width: c.width }));
   cols.forEach((c, i) => {

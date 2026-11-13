@@ -1,5 +1,11 @@
 # Migrasi Project — Status & Riwayat
 
+## Export Excel Tracking Item: kolom "Target (Hasil Cutting)" dan "Qty Delivery" (2026-11-13, tanpa migration)
+Owner: tambahkan Target (Hasil Cutting) dan Qty Delivery; Qty Delivery tidak boleh lebih dari total Finish Good (dan cutting). Dua kolom ditaruh di UJUNG KANAN (kolom U dan V) supaya huruf 20 kolom template yang sudah ada tidak bergeser.
+- `lib/mrp/exportTrackingExcel.ts`: "Target (Hasil Cutting)" = hasil cutting aktual roll x size (`ProductionBatch.sizeQty`), beda dari Target Qty (target aduan); kosong kalau roll belum dicutting, baris perencanaan, dan rework; diulang di tiap baris koli roll x size yang sama. "Qty Delivery" = qty di koli yang SUDAH dikirim pada baris itu (koli belum dikirim = 0, baris tanpa koli = 0, baris perencanaan kosong).
+- Batas: jumlah Qty Delivery per roll x size dipotong supaya tidak melebihi min(Qty FG, hasil cutting) (koli diurutkan nomor naik; rework: FG rework). Ini hanya memotong angka di Excel kalau data koli kelebihan; data di database tidak diubah dan Qty Koli tetap apa adanya. Kalau pemotongan terjadi berarti ada koli yang isinya melebihi FG roll itu dan perlu dikoreksi di sumbernya.
+- Diuji: tsc dan eslint bersih; data tiruan (FG = cutting 62 dengan koli 58 + 4; FG 50 dengan koli terkirim 40 + 20 jadi 40 + 10; koli kedua belum dikirim; tanpa koli).
+
 ## Payment Maklon (Finance): penanda "Transaksi sudah dibuat" (sudah transfer) pada invoice vendor produksi — migration 0091 (2026-11-13)
 Owner: fitur tandai sudah transfer atau belum yang sudah ada di Payment Material (0071) ditambahkan ke Payment Maklon. Penanda murni informasi: status invoice tidak berubah, invoice tetap di tabel "Invoice vendor siap dibayar" sampai Bayar Penuh dengan bukti.
 - **Migration** `0091_vendor_invoice_txn_created.sql` (owner menjalankan manual; aman diulang): kolom `vendor_invoices.txn_created_at` (timestamptz) dan `txn_created_by` (text). Ikut snapshot otomatis (`to_jsonb`), fungsi snapshot tidak diubah. Kode tetap jalan tanpa migration: kolom hanya ditulis saat Finance mengklik; kalau belum dijalankan, pesan error meminta migration 0091.
