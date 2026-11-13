@@ -5355,6 +5355,40 @@ function isReworkHppRow(r: HppRow): boolean {
   return r.item.includes("Rework");
 }
 
+/** HPP ESTIMASI untuk item koli hasil tambahan sisa kain (owner 2026-11-13): item ini tidak punya roll asal (`sourceBatchId` kosong, `usia` terisi), jadi tidak punya baris HPP
+ *  per roll dan dulu membuat gate Bongkar Warehouse menolak resi ("HPP item ini tidak bisa ditelusuri ke koli"). Nilainya = COGS bahan per pcs rata-rata tertimbang baris roll
+ *  warna yang sama di MRP + vendor itu (cadangan: semua warna MRP itu), ditambah tarif maklon baris invoice vendor untuk kunci MRP·warna·lengan·usia yang sama (cadangan: rata-rata
+ *  maklon baris roll), ditambah ongkir per pcs koli. Selalu ditandai estimasi. `invoiceId` terisi kalau ada baris invoice vendor (bukan REVISION) untuk kunci itu; kosong = belum
+ *  ada invoice, sehingga gate memberi alasan "Sebagian item resi ini belum ada invoice vendor". */
+export function extraKoliItemHpp(
+  vendorHppRows: HppRow[],
+  invoices: VendorInvoice[],
+  koli: DeliveryKoli,
+  it: DeliveryKoliItem,
+  allKolis: DeliveryKoli[],
+  ekspedisiRates: EkspedisiRateRow[]
+): { hppPerItem: number; invoiceId?: string } {
+  const rollRows = vendorHppRows.filter((r) => r.mrpId === koli.mrpId && !isReworkHppRow(r) && r.fg > 0 && r.cogsBahanPerItem > 0);
+  const sameWarna = rollRows.filter((r) => r.warna === it.warna);
+  const pool = sameWarna.length > 0 ? sameWarna : rollRows;
+  const fgSum = pool.reduce((s, r) => s + r.fg, 0);
+  const cogs = fgSum > 0 ? pool.reduce((s, r) => s + r.cogsBahanPerItem * r.fg, 0) / fgSum : 0;
+  let rate = fgSum > 0 ? pool.reduce((s, r) => s + r.biayaProduksiPerItem * r.fg, 0) / fgSum : 0;
+  let invoiceId: string | undefined;
+  for (const inv of invoices) {
+    if (inv.vendorProduksi !== koli.vendorProduksi || inv.status === "REVISION") continue;
+    const line = inv.lines.find((l) => l.mrpId === koli.mrpId && l.warna === it.warna && l.lengan === it.lengan && (l.usia ?? "") === (it.usia ?? "") && l.qty > 0);
+    if (line) {
+      invoiceId = inv.id;
+      rate = line.ratePerPc;
+      break;
+    }
+  }
+  const pcs = koli.items.filter(isBillableKoliItem).reduce((s, i) => s + i.qty, 0);
+  const ongkir = pcs > 0 ? koliOngkirShare(koli, allKolis, ekspedisiRates) / pcs : 0;
+  return { hppPerItem: cogs + rate + ongkir, invoiceId };
+}
+
 /** Spec Portal Warehouse, requirement 15 -- daftar batch pengiriman (resi group) siap dibongkar,
  *  dibangun dengan memanggil `hppRowsForInvoicePerRoll` APA ADANYA (fungsi & alokasi FIFO yang
  *  SAMA dipakai Laporan HPP & invoiceKoliBreakdown, TIDAK dihitung ulang) lalu regroup per
@@ -5478,6 +5512,14 @@ export function warehouseReceivableGroups(
           (r) => r.koliId === koli.id && r.warna === it.warna && r.lengan === it.lengan && r.jenis.slice(r.lengan.length + 1) === it.size && isReworkHppRow(r) === isRework
         );
         let hppPerItem = 0;
+        // Hasil tambahan sisa kain (tanpa roll asal, berusia) tidak punya baris HPP per roll: pakai HPP estimasi, jangan dianggap "tidak bisa ditelusuri".
+        if (matches.length === 0 && !isRework && !it.sourceBatchId && it.usia) {
+          const ex = extraKoliItemHpp(hppRowsForVendor(vendorProduksi), nonRevisionInvoices, koli, it, deliveryKolis, ekspedisiRates);
+          if (ex.invoiceId) invoiceIdSet.add(ex.invoiceId);
+          else anyNoInvoice = true;
+          items.push({ deliveryKoliId: koli.id, noKoli: koli.noKoli, warna: it.warna, lengan: it.lengan, size: it.size, usia: it.usia, kind: it.kind, qty: it.qty, sourceBatchId: it.sourceBatchId, hppPerItem: ex.hppPerItem, sementara: true });
+          continue;
+        }
         if (matches.length === 0) {
           anyUntraceable = true;
         } else {
