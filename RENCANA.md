@@ -4,11 +4,17 @@
 > memperbaruinya sebelum selesai. Riwayat fitur yang SUDAH jadi tetap dicatat di MIGRASI.md.
 > Terakhir diperbarui: 2026-11-13.
 
-## Yang ingin dikerjakan owner (3 hal, dikonfirmasi 2026-11-13)
+## Yang ingin dikerjakan owner (dikonfirmasi 2026-11-13)
+Hanya DUA hal:
 1. **Perbaiki tampilan** -> bagian 2 (redesign 5 fase).
-2. **Sederhanakan alur login** -> bagian 3. Owner memilih lingkup "sederhanakan alur akun" (bukan sekadar
-   tampilan halaman login, bukan 2FA, bukan perbaikan kecepatan). PALING BERISIKO, kerjakan paling akhir.
-3. **Tambah modul dashboard** -> bagian 2 Fase 4.
+2. **Tambah modul dashboard** -> bagian 2 Fase 4.
+
+**Login TIDAK jadi diubah** (keputusan owner 2026-11-13 sore, setelah sempat dibahas). Analisisnya tetap
+disimpan di bagian 3 kalau suatu saat dibuka lagi, tapi JANGAN dikerjakan tanpa permintaan baru dari owner.
+
+Akibat lingkup yang mengecil ini: seluruh pekerjaan kini **murni kode**. Nol perubahan struktur database,
+nol pekerjaan data di live. Satu-satunya jalur ke live adalah git -> Vercel. Risiko terburuk sekarang hanya
+"tampilan jelek atau satu halaman error", bukan lagi "seluruh kantor tidak bisa login".
 Semua dikerjakan di lokal dulu, baru dinaikkan ke live bertahap.
 
 ## TITIK LANJUT BERIKUTNYA (baca ini dulu)
@@ -209,9 +215,12 @@ Kalau sedang di tengah branch modul, tambahkan `git merge main` SETIAP HARI. Kon
 - Fase 1-5: belum dimulai.
 - Modul yang sedang dirombak saat ini: (belum ada).
 
-## 3. Sederhanakan alur login -- BELUM DIMULAI, PALING BERISIKO
-Owner (2026-11-13) memilih lingkup: **sederhanakan alur akun**, bukan sekadar mempercantik halaman login,
-bukan 2FA, bukan perbaikan kecepatan. Tujuan: kurangi kebingungan akibat empat jalur login yang berbeda.
+## 3. Sederhanakan alur login -- DIBATALKAN OWNER (2026-11-13), JANGAN DIKERJAKAN
+> **Owner memutuskan tidak mengubah metode login.** Bagian ini disimpan sebagai hasil analisis saja, kalau
+> suatu saat dibuka lagi. JANGAN mulai mengerjakannya tanpa permintaan baru dari owner. Lewati bagian ini.
+
+Lingkup yang sempat dipilih owner sebelum dibatalkan: **sederhanakan alur akun**, bukan sekadar mempercantik
+halaman login, bukan 2FA, bukan perbaikan kecepatan. Tujuan: kurangi kebingungan empat jalur login berbeda.
 
 ### PERINGATAN: ini area paling berbahaya di seluruh aplikasi
 Kalau halaman produksi rusak, satu halaman tidak bisa dipakai. Kalau LOGIN rusak, **seluruh kantor terkunci
