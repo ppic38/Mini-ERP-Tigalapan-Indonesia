@@ -5356,9 +5356,10 @@ function isReworkHppRow(r: HppRow): boolean {
 }
 
 /** HPP ESTIMASI untuk item koli hasil tambahan sisa kain (owner 2026-11-13): item ini tidak punya roll asal (`sourceBatchId` kosong, `usia` terisi), jadi tidak punya baris HPP
- *  per roll dan dulu membuat gate Bongkar Warehouse menolak resi ("HPP item ini tidak bisa ditelusuri ke koli"). Nilainya = COGS bahan per pcs rata-rata tertimbang baris roll
- *  warna yang sama di MRP + vendor itu (cadangan: semua warna MRP itu), ditambah tarif maklon baris invoice vendor untuk kunci MRP·warna·lengan·usia yang sama (cadangan: rata-rata
- *  maklon baris roll), ditambah ongkir per pcs koli. Selalu ditandai estimasi. `invoiceId` terisi kalau ada baris invoice vendor (bukan REVISION) untuk kunci itu; kosong = belum
+ *  per roll dan dulu membuat gate Bongkar Warehouse menolak resi ("HPP item ini tidak bisa ditelusuri ke koli"). Nilainya = COGS bahan per pcs rata-rata tertimbang baris
+ *  roll yang mencatat hasil tambahan itu (`extraResults`; cadangan: warna yang sama di MRP + vendor itu, lalu semua warna MRP itu), ditambah tarif maklon baris invoice vendor untuk kunci
+ *  MRP·warna·lengan·usia yang sama (cadangan: rata-rata maklon baris roll), ditambah ongkir per pcs koli. `sementara` (estimasi) = roll asal tidak ketemu, masih terbuka, atau HPP-nya
+ *  dari invoice estimasi. `invoiceId` terisi kalau ada baris invoice vendor (bukan REVISION) untuk kunci itu; kosong = belum
  *  ada invoice, sehingga gate memberi alasan "Sebagian item resi ini belum ada invoice vendor". */
 export function extraKoliItemHpp(
   vendorHppRows: HppRow[],
@@ -5366,11 +5367,23 @@ export function extraKoliItemHpp(
   koli: DeliveryKoli,
   it: DeliveryKoliItem,
   allKolis: DeliveryKoli[],
-  ekspedisiRates: EkspedisiRateRow[]
-): { hppPerItem: number; invoiceId?: string } {
+  ekspedisiRates: EkspedisiRateRow[],
+  batches: ProductionBatch[] = []
+): { hppPerItem: number; invoiceId?: string; sementara: boolean } {
   const rollRows = vendorHppRows.filter((r) => r.mrpId === koli.mrpId && !isReworkHppRow(r) && r.fg > 0 && r.cogsBahanPerItem > 0);
+  // Roll asal: roll yang mencatat hasil tambahan ini (`extraResults` dengan lengan·usia·size yang sama dan Finish Good terisi). Kalau rollnya punya baris HPP
+  // (sudah ikut kirim), bahan per pcs memakai baris roll itu saja; kalau tidak, rata-rata warna yang sama, lalu rata-rata semua warna MRP itu.
+  const extraRollIds = new Set(
+    batches
+      .filter((b) => b.mrpId === koli.mrpId && b.vendorProduksi === koli.vendorProduksi && b.warna === it.warna)
+      .filter((b) => (b.extraResults ?? []).some((x) => x.lengan === it.lengan && x.usia === it.usia && x.size === it.size && (x.fgQty ?? 0) > 0))
+      .map((b) => b.id)
+  );
+  const traced = rollRows.filter((r) => !!r.rollId && extraRollIds.has(r.rollId));
   const sameWarna = rollRows.filter((r) => r.warna === it.warna);
-  const pool = sameWarna.length > 0 ? sameWarna : rollRows;
+  const pool = traced.length > 0 ? traced : sameWarna.length > 0 ? sameWarna : rollRows;
+  // Estimasi kalau tidak bisa ditelusuri ke roll asal, atau roll asal masih terbuka / HPP-nya masih dari invoice estimasi.
+  const sementara = traced.length === 0 || traced.some((r) => r.sementara || r.invoiceId.startsWith("EST-"));
   const fgSum = pool.reduce((s, r) => s + r.fg, 0);
   const cogs = fgSum > 0 ? pool.reduce((s, r) => s + r.cogsBahanPerItem * r.fg, 0) / fgSum : 0;
   let rate = fgSum > 0 ? pool.reduce((s, r) => s + r.biayaProduksiPerItem * r.fg, 0) / fgSum : 0;
@@ -5386,7 +5399,7 @@ export function extraKoliItemHpp(
   }
   const pcs = koli.items.filter(isBillableKoliItem).reduce((s, i) => s + i.qty, 0);
   const ongkir = pcs > 0 ? koliOngkirShare(koli, allKolis, ekspedisiRates) / pcs : 0;
-  return { hppPerItem: cogs + rate + ongkir, invoiceId };
+  return { hppPerItem: cogs + rate + ongkir, invoiceId, sementara };
 }
 
 /** Spec Portal Warehouse, requirement 15 -- daftar batch pengiriman (resi group) siap dibongkar,
@@ -5514,10 +5527,10 @@ export function warehouseReceivableGroups(
         let hppPerItem = 0;
         // Hasil tambahan sisa kain (tanpa roll asal, berusia) tidak punya baris HPP per roll: pakai HPP estimasi, jangan dianggap "tidak bisa ditelusuri".
         if (matches.length === 0 && !isRework && !it.sourceBatchId && it.usia) {
-          const ex = extraKoliItemHpp(hppRowsForVendor(vendorProduksi), nonRevisionInvoices, koli, it, deliveryKolis, ekspedisiRates);
+          const ex = extraKoliItemHpp(hppRowsForVendor(vendorProduksi), nonRevisionInvoices, koli, it, deliveryKolis, ekspedisiRates, productionBatches);
           if (ex.invoiceId) invoiceIdSet.add(ex.invoiceId);
           else anyNoInvoice = true;
-          items.push({ deliveryKoliId: koli.id, noKoli: koli.noKoli, warna: it.warna, lengan: it.lengan, size: it.size, usia: it.usia, kind: it.kind, qty: it.qty, sourceBatchId: it.sourceBatchId, hppPerItem: ex.hppPerItem, sementara: true });
+          items.push({ deliveryKoliId: koli.id, noKoli: koli.noKoli, warna: it.warna, lengan: it.lengan, size: it.size, usia: it.usia, kind: it.kind, qty: it.qty, sourceBatchId: it.sourceBatchId, hppPerItem: ex.hppPerItem, sementara: ex.sementara || undefined });
           continue;
         }
         if (matches.length === 0) {
