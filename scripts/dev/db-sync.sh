@@ -40,7 +40,9 @@ DEV_DB_URL="${DEV_DB_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgre
 ref_of() {
   local u="$1" r
   if printf '%s' "$u" | grep -qE '@(127\.0\.0\.1|localhost)(:|/)'; then printf 'lokal'; return; fi
-  r=$(printf '%s' "$u" | sed -nE 's#^[a-z]+://postgres\.([a-z0-9]+):.*#\1#p')
+  # Pooler Supabase: user = "<role>.<ref>". Role tidak selalu "postgres" -- akun baca-saja khusus
+  # (mis. partner_ro dari tim IT) juga dipakai lewat pooler, jadi nama role apa pun diterima.
+  r=$(printf '%s' "$u" | sed -nE 's#^[a-z]+://[a-z0-9_]+\.([a-z0-9]+):.*#\1#p')
   [ -n "$r" ] || r=$(printf '%s' "$u" | sed -nE 's#.*@db\.([a-z0-9]+)\.supabase\.co.*#\1#p')
   printf '%s' "$r"
 }
@@ -79,10 +81,18 @@ dump_schema() { # $1 = url, $2 = file
 }
 
 ensure_roles() {
-  # Role khusus di live (mis. wms_integration_role) dibuat juga di UJI supaya GRANT tidak gagal. Tanpa login.
-  local roles r
-  roles=$(psql "$LIVE_DB_URL" -X -At -c "select rolname from pg_roles where rolname not like 'pg\_%' and rolname not in ('postgres','anon','authenticated','service_role','authenticator','supabase_admin','supabase_auth_admin','supabase_storage_admin','supabase_realtime_admin','supabase_replication_admin','supabase_read_only_user','supabase_etl_admin','supabase_functions_admin','dashboard_user','pgbouncer','pgsodium_keyholder','pgsodium_keyiduser','pgsodium_keymaker','supabase_privileged_role','cli_login_postgres')")
-  for r in $roles; do
+  # Role khusus di live (mis. wms_integration_role) harus ADA di UJI, kalau tidak penerapan struktur
+  # berhenti dengan ERROR: role "..." does not exist.
+  # Nama role dibaca dari FILE DUMP-nya sendiri (baris GRANT/REVOKE), bukan dari query pg_roles ke live --
+  # LIVE_DB_URL bisa memakai akun baca-saja khusus yang tidak boleh membaca daftar role.
+  local f="$1" r
+  for r in $( { grep -E '^GRANT '  "$f" | sed -E 's/.* TO //;   s/;[[:space:]]*$//'
+                grep -E '^REVOKE ' "$f" | sed -E 's/.* FROM //; s/;[[:space:]]*$//'
+              } | tr ',' '\n' | tr -d ' "' | sort -u || true ); do
+    case "$r" in
+      ""|PUBLIC|postgres|anon|authenticated|service_role|authenticator|dashboard_user|pgbouncer) continue ;;
+      supabase_*|pgsodium_*|pg_*|cli_login_*) continue ;;
+    esac
     dev_psql -c "do \$\$ begin if not exists (select from pg_roles where rolname = '$r') then create role \"$r\" nologin; end if; end \$\$;"
   done
 }
@@ -107,14 +117,29 @@ SQL
   fi
   echo "Membaca struktur LIVE…"
   dump_schema "$LIVE_DB_URL" "$OUT/live-schema.sql"
-  ensure_roles
+  # Schema public SELALU sudah ada di tujuan (bawaan Postgres, atau dibuat ulang oleh blok --reset di atas),
+  # sementara pg_dump >= 15 tetap menuliskan "CREATE SCHEMA public;" -- tanpa dibuang, penerapan berhenti
+  # dengan ERROR: schema "public" already exists.
+  sed -i -E '/^CREATE SCHEMA public;$/d; /^ALTER SCHEMA public OWNER TO /d' "$OUT/live-schema.sql"
+  # "ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin ..." ditolak di Supabase LOKAL (kita tersambung
+  # sebagai postgres, yang bukan anggota role internal Supabase cloud itu) -> "permission denied to change
+  # default privileges". Baris ini hanya mengatur hak objek yang dibuat KEMUDIAN, jadi tidak ada artinya
+  # untuk salinan uji: yang bukan milik role postgres dibuang.
+  sed -i -E '/^ALTER DEFAULT PRIVILEGES FOR ROLE /{/^ALTER DEFAULT PRIVILEGES FOR ROLE postgres /!d}' "$OUT/live-schema.sql"
+  ensure_roles "$OUT/live-schema.sql"
   echo "Menerapkan struktur ke UJI…"
   dev_psql --single-transaction -f "$OUT/live-schema.sql"
   echo "Struktur selesai: $(dev_psql -At -c "select count(*) from pg_tables where schemaname = 'public'") tabel."
 }
 
 do_data() {
-  local args=(--data-only --schema=public --no-owner -f "$OUT/live-data.sql")
+  # Sequence TIDAK ikut disalin: membaca nilainya butuh izin SELECT pada sequence, yang belum tentu
+  # diberikan ke akun baca-saja (LIVE_DB_URL). Posisinya disetel ulang di UJI setelah data masuk
+  # (lihat reset_sequences) -- hasilnya sama, tanpa minta izin tambahan ke tim IT.
+  # Yang bekerja: --exclude-table-data (buang DATA-nya). "-T public.*_seq" TIDAK bekerja, dan menyebut
+  # tabel satu per satu lewat -t juga tidak menolong -- pg_dump tetap ikut menyertakan sequence yang
+  # DIMILIKI kolom serial tabel terpilih.
+  local args=(--data-only --schema=public --no-owner --exclude-table-data='public.*_seq' -f "$OUT/live-data.sql")
   if [ "$WITH_FILES" = "0" ]; then for t in "${FILE_TABLES[@]}"; do args+=(--exclude-table-data="public.$t"); done; fi
   echo "Membaca data LIVE (sekali baca)…"
   pg_dump "$LIVE_DB_URL" "${args[@]}"
@@ -127,7 +152,32 @@ do_data() {
     echo "set session_replication_role = origin;"
   } > "$OUT/load-data.sql"
   dev_psql --single-transaction -f "$OUT/load-data.sql"
+  reset_sequences
   echo "Data selesai."
+}
+
+# Setel ulang tiap sequence yang dimiliki sebuah kolom (serial/identity) ke nilai tertinggi kolom itu,
+# supaya baris BARU yang dibuat saat menguji di UJI tidak bentrok id dengan data salinan.
+reset_sequences() {
+  echo "Menyetel ulang sequence…"
+  dev_psql <<'SQL'
+do $$
+declare r record; mx bigint;
+begin
+  for r in
+    select s.relname as seq, t.relname as tbl, a.attname as col
+      from pg_class s
+      join pg_namespace n on n.oid = s.relnamespace and n.nspname = 'public'
+      join pg_depend d on d.objid = s.oid and d.deptype = 'a'
+      join pg_class t on t.oid = d.refobjid
+      join pg_attribute a on a.attrelid = t.oid and a.attnum = d.refobjsubid
+     where s.relkind = 'S'
+  loop
+    execute format('select coalesce(max(%I), 0) from public.%I', r.col, r.tbl) into mx;
+    perform setval('public.' || quote_ident(r.seq), greatest(mx, 1), mx > 0);
+  end loop;
+end $$;
+SQL
 }
 
 do_diff() {
