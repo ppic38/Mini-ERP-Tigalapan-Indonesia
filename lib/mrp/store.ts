@@ -432,6 +432,8 @@ type FlowActions = {
   repriceVendorInvoices: () => Promise<number>;
   addVendorInvoiceAdjustment: (invoiceId: string, input: { kind: VendorInvoiceAdjustmentKind; label: string; amount: number; note?: string }) => Promise<void>;
   payVendorInvoices: (invoiceIds: string[], proof: { dataUrl: string; fileName?: string }) => Promise<void>;
+  /** Penanda Finance "transaksi sudah dibuat" pada invoice vendor produksi (migration 0091) -- optimistic, status invoice tidak berubah. */
+  setVendorInvoicesTxnCreated: (invoiceIds: string[], created: boolean) => Promise<void>;
   /** Proposal Pembayaran invoice vendor produksi (migration 0082): simpan/ubah dan hapus. */
   savePaymentProposal: (input: SavePaymentProposalInput) => Promise<void>;
   deletePaymentProposal: (no: string) => Promise<void>;
@@ -1689,6 +1691,26 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     } catch (err) {
       set({ vendorInvoices: previous });
       notifyError("Gagal membayar invoice vendor -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
+      throw err;
+    }
+    backgroundRefresh();
+  },
+  setVendorInvoicesTxnCreated: async (invoiceIds, created) => {
+    const idSet = new Set(invoiceIds);
+    const previous = get().vendorInvoices;
+    const nowIsoStr = new Date().toISOString();
+    set({
+      vendorInvoices: previous.map((i) => {
+        if (!idSet.has(i.id) || i.status !== "APPROVED") return i;
+        if (created) return i.txnCreatedAt ? i : { ...i, txnCreatedAt: nowIsoStr, txnCreatedBy: "Anda" };
+        return { ...i, txnCreatedAt: undefined, txnCreatedBy: undefined };
+      }),
+    });
+    try {
+      unwrapAction(await actions.setVendorInvoicesTxnCreatedAction(invoiceIds, created));
+    } catch (err) {
+      set({ vendorInvoices: previous });
+      notifyError("Gagal mengubah penanda transaksi -- perubahan dibatalkan. " + (err instanceof Error ? err.message : String(err)));
       throw err;
     }
     backgroundRefresh();

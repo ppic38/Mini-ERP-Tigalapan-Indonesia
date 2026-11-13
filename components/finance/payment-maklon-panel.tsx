@@ -6,6 +6,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { KoliEkspedisiCard, viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
 import { useMrpStore } from "@/lib/mrp/store";
+import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { readProofAsDataUrl } from "@/lib/mrp/clientFiles";
 import { MultiFileInput } from "@/components/mrp/multi-file-input";
 import { ProposalCell } from "@/components/finance/proposal-cell";
@@ -260,6 +261,8 @@ export function PaymentMaklonPanel() {
   const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
   const setVendorInvoiceDueDate = useMrpStore((s) => s.setVendorInvoiceDueDate);
   const payVendorInvoices = useMrpStore((s) => s.payVendorInvoices);
+  const setVendorInvoicesTxnCreated = useMrpStore((s) => s.setVendorInvoicesTxnCreated);
+  const sysadminView = useSysadminMode();
   const setVendorInvoicePaymentProof = useMrpStore((s) => s.setVendorInvoicePaymentProof);
   // Item 2026-09-10 (feedback: breakdown per size + info pengiriman/ekspedisi di detail invoice)
   // -- dibutuhkan `invoiceKoliBreakdown` (lihat InvoiceLinesDetail di atas).
@@ -452,6 +455,34 @@ export function PaymentMaklonPanel() {
         return <StatusPill tone={payment.tone}>{payment.label}</StatusPill>;
       },
     },
+    // Penanda Finance "transaksi sudah dibuat" (migration 0091, pola sama Payment Material): transaksi sudah dibuat di bank tetapi bukti bayar belum ada.
+    // Invoice TETAP di tabel ini sampai dibayar penuh dengan bukti.
+    {
+      key: "txnCreated",
+      label: "Transaksi",
+      default: true,
+      render: (inv) => {
+        const done = !!inv.txnCreatedAt;
+        const info = done ? `Transaksi dibuat${inv.txnCreatedBy ? ` oleh ${inv.txnCreatedBy}` : ""} pada ${formatDate(inv.txnCreatedAt!.slice(0, 10))}` : "Belum ditandai -- klik kalau transaksi (transfer) sudah dibuat";
+        return (
+          <button
+            type="button"
+            title={info}
+            disabled={sysadminView}
+            onClick={(e) => {
+              e.stopPropagation();
+              void setVendorInvoicesTxnCreated([inv.id], !done).catch(() => {});
+            }}
+            className={
+              "inline-flex items-center gap-1 rounded-md border px-2 py-[3px] font-sans text-[10.5px] font-semibold disabled:cursor-default " +
+              (done ? "border-[#B7DFC5] bg-[#EAF7EF] text-success-fg" : "border-[#CBD5DF] bg-white text-text-muted hover:border-accent-blue hover:text-action-primary")
+            }
+          >
+            {done ? "✓ Dibuat" : "Belum"}
+          </button>
+        );
+      },
+    },
     {
       key: "lampiranEkspedisi",
       label: "Lampiran Ekspedisi",
@@ -616,6 +647,26 @@ export function PaymentMaklonPanel() {
       {selected.size > 0 && (
         <div className="flex items-center gap-2 rounded-lg border border-[#CFE0EF] bg-info-bg px-5 py-[10px]">
           <span className="font-sans text-xs font-medium text-info-fg">{selected.size} dipilih</span>
+          {!sysadminView && (
+            <span className="flex items-center gap-2">
+              {selectedList.some((i) => !i.txnCreatedAt) && (
+                <button
+                  onClick={() => void setVendorInvoicesTxnCreated(selectedList.filter((i) => !i.txnCreatedAt).map((i) => i.id), true).catch(() => {})}
+                  className="rounded-md border border-[#B7DFC5] bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-semibold text-success-fg"
+                >
+                  ✓ Tandai transaksi dibuat ({selectedList.filter((i) => !i.txnCreatedAt).length})
+                </button>
+              )}
+              {selectedList.some((i) => !!i.txnCreatedAt) && (
+                <button
+                  onClick={() => void setVendorInvoicesTxnCreated(selectedList.filter((i) => !!i.txnCreatedAt).map((i) => i.id), false).catch(() => {})}
+                  className="rounded-md border border-[#CBD5DF] bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-semibold text-text-muted"
+                >
+                  Batal tandai ({selectedList.filter((i) => !!i.txnCreatedAt).length})
+                </button>
+              )}
+            </span>
+          )}
           <div className="flex items-start gap-2 font-sans text-[11.5px] text-info-fg">
             <span className="pt-1 font-semibold">Bukti pembayaran (wajib):</span>
             <div className="w-[260px]">
@@ -668,6 +719,7 @@ export function PaymentMaklonPanel() {
               options: Array.from(new Set(readyRows.map((inv) => vendorInvoicePaymentStatus(inv).label))),
               test: (inv, v) => vendorInvoicePaymentStatus(inv).label === v,
             },
+            { label: "Transaksi", options: ["Sudah dibuat", "Belum dibuat"], test: (inv, v) => (v === "Sudah dibuat" ? !!inv.txnCreatedAt : !inv.txnCreatedAt) },
           ]}
           firstColumnLabel="No Invoice"
           firstColumnRender={(inv) => (

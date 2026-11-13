@@ -6102,6 +6102,31 @@ export async function payVendorInvoicesAction(invoiceIds: string[], proof: { dat
   }
 }
 
+/** Tandai / batalkan penanda "transaksi sudah dibuat" (migration 0091) pada invoice vendor produksi yang sudah APPROVED Procurement (siap dibayar).
+ *  Hanya Finance. TIDAK mengubah status invoice. Yang sudah ditandai orang lain tidak ditimpa (nama dan waktu penanda pertama dipertahankan);
+ *  invoice yang sudah lunas dilewati. Pola sama setInvoicesTxnCreatedAction (invoice material). */
+export async function setVendorInvoicesTxnCreatedAction(invoiceIds: string[], created: boolean): Promise<ActionResult<void>> {
+  const MIGRATION_MISSING = "Jalankan migration 0091 (kolom txn_created_at/txn_created_by di vendor_invoices) di Supabase dulu.";
+  try {
+    const actor = await requireInternalRoleWithActor("finance");
+    const ids = Array.from(new Set(invoiceIds));
+    if (ids.length === 0) return { ok: true, data: undefined };
+    const db = supabaseServer();
+    const { data: rows, error: selErr } = await db.from("vendor_invoices").select("id,status,txn_created_at").in("id", ids);
+    if (selErr) throw new Error(selErr.message.includes("txn_created") ? MIGRATION_MISSING : selErr.message);
+    const open = (rows ?? []).filter((r) => r.status === "APPROVED");
+    const targets = created ? open.filter((r) => !r.txn_created_at) : open.filter((r) => !!r.txn_created_at);
+    if (targets.length === 0) return { ok: true, data: undefined };
+    const patch = created ? { txn_created_at: nowIso(), txn_created_by: actor.actorName } : { txn_created_at: null, txn_created_by: null };
+    const { error } = await db.from("vendor_invoices").update(patch).in("id", targets.map((r) => r.id));
+    if (error) throw new Error(error.message.includes("txn_created") ? MIGRATION_MISSING : error.message);
+    await logInternalAction(actor, `${created ? "Tandai transaksi dibuat" : "Batalkan tanda transaksi dibuat"} (invoice vendor): ${targets.map((r) => r.id).join(", ")}`, "vendor_invoices", targets[0].id);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /** Lampirkan / ganti bukti pembayaran untuk invoice vendor yang SUDAH lunas (mis. yang dibayar sebelum aturan bukti wajib berlaku). */
 export async function setVendorInvoicePaymentProofAction(invoiceIds: string[], proof: { dataUrl: string; fileName?: string }): Promise<ActionResult<void>> {
   try {
