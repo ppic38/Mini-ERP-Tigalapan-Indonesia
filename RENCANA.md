@@ -2,7 +2,14 @@
 
 > Dibaca otomatis setiap sesi (lewat CLAUDE.md). Sesi yang menyelesaikan atau mengubah rencana di sini WAJIB
 > memperbaruinya sebelum selesai. Riwayat fitur yang SUDAH jadi tetap dicatat di MIGRASI.md.
-> Terakhir diperbarui: 2026-11-12.
+> Terakhir diperbarui: 2026-11-13.
+
+## Yang ingin dikerjakan owner (3 hal, dikonfirmasi 2026-11-13)
+1. **Perbaiki tampilan** -> bagian 2 (redesign 5 fase).
+2. **Sederhanakan alur login** -> bagian 3. Owner memilih lingkup "sederhanakan alur akun" (bukan sekadar
+   tampilan halaman login, bukan 2FA, bukan perbaikan kecepatan). PALING BERISIKO, kerjakan paling akhir.
+3. **Tambah modul dashboard** -> bagian 2 Fase 4.
+Semua dikerjakan di lokal dulu, baru dinaikkan ke live bertahap.
 
 ## TITIK LANJUT BERIKUTNYA (baca ini dulu)
 Satu hal yang menahan semuanya: **owner mengisi `LIVE_DB_URL=` di `.env.db-sync`** (Supabase > Connect >
@@ -10,6 +17,13 @@ Session pooler, dengan password database, karakter khusus di-encode). JANGAN min
 JANGAN tampilkan isi file `.env*`. Begitu terisi, lanjutkan bagian 1 langkah 4 ke bawah:
 `bash scripts/dev/db-sync.sh all` -> ganti `.env.local` ke lokal -> jalankan app lokal -> baru boleh mulai bagian 2.
 Supabase lokal sudah jalan dan database lokalnya masih KOSONG (0 tabel) sampai db-sync dijalankan.
+Cara cek terisi/tidak yang BENAR (pola `.*` ikut cocok dengan nilai kosong, pernah salah lapor):
+`awk -F= '/^LIVE_DB_URL=/{v=substr($0,14); gsub(/\r/,"",v); print length(v)}' .env.db-sync` -- harus > 0.
+
+Status lingkungan dicek 2026-11-13 pagi: Docker mati setelah laptop restart, dinyalakan lewat
+`Start-Process "C:\Users\ASUS\AppData\Local\Programs\DockerDesktop\Docker Desktop.exe"`; 8 container Supabase
+hidup OTOMATIS bersama Docker (tidak perlu `supabase start` lagi). `LIVE_DB_URL` masih kosong,
+`.env.local` masih menunjuk LIVE, database lokal masih 0 tabel.
 
 ## Konteks penting (dibaca sebelum mengambil keputusan apa pun)
 - Ini **web kantor yang LIVE dan dipakai operasional harian**. Aplikasi rusak = pekerjaan kantor berhenti.
@@ -26,8 +40,10 @@ Supabase lokal sudah jalan dan database lokalnya masih KOSONG (0 tabel) sampai d
 - **Laptop lain / Claude web:** pekerjaan harus di-commit dan di-push dulu ke GitHub
   (`ppic38/Mini-ERP-Tigalapan-Indonesia`); yang belum di-push tidak terlihat dari sana.
 - Branch: untuk pekerjaan redesign dipakai **satu branch per modul, umur maksimal 2-3 hari** (lihat bagian 2).
-  Status `pengembangan` per 2026-11-12 sore: **2 commit di depan `main`, BELUM DI-PUSH** --
-  `4fb6951` (Posisi Stok) dan `b036813` (lingkungan uji lokal + RENCANA.md). `main` tetap di `6c2840b`.
+  Status `pengembangan` per 2026-11-13 pagi: **3 commit di depan DAN 2 commit di belakang `origin/main`,
+  BELUM DI-PUSH** -- punya kita `4fb6951` (Posisi Stok), `b036813` (lingkungan uji lokal), `01f40e1` (RENCANA.md);
+  tim IT sudah push `62c43f0` dan `281437b` pagi 13 Nov (menyentuh `derive.ts`, `actions.ts`, halaman Pengiriman
+  vendor, komponen baru `invoice-koli-tabs.tsx`). **Perlu `git merge origin/main` sebelum lanjut kerja.**
   Jangan push ke `main` tanpa persetujuan owner: push ke `main` langsung ter-deploy ke aplikasi online.
 - Catatan teknis laptop ini:
   - Nama folder memuat `&`, jadi `npx`/`npm run` gagal. Jalankan lewat node langsung, mis.
@@ -193,14 +209,65 @@ Kalau sedang di tengah branch modul, tambahkan `git merge main` SETIAP HARI. Kon
 - Fase 1-5: belum dimulai.
 - Modul yang sedang dirombak saat ini: (belum ada).
 
-## 3. Halaman Finance > Posisi Stok -- KODE SELESAI & DI-COMMIT, BELUM DIUJI DENGAN DATA ASLI
+## 3. Sederhanakan alur login -- BELUM DIMULAI, PALING BERISIKO
+Owner (2026-11-13) memilih lingkup: **sederhanakan alur akun**, bukan sekadar mempercantik halaman login,
+bukan 2FA, bukan perbaikan kecepatan. Tujuan: kurangi kebingungan akibat empat jalur login yang berbeda.
+
+### PERINGATAN: ini area paling berbahaya di seluruh aplikasi
+Kalau halaman produksi rusak, satu halaman tidak bisa dipakai. Kalau LOGIN rusak, **seluruh kantor terkunci
+dan tidak bisa bekerja sama sekali**. Aturan khusus untuk bagian ini:
+- Jalur login LAMA tidak boleh dihapus sebelum jalur baru terbukti dipakai semua orang. Keduanya hidup
+  berdampingan selama masa transisi.
+- Wajib diuji di lokal untuk SETIAP jenis akun (7 modul internal + Sysadmin + akun utama vendor + anggota tim
+  vendor + anggota tim internal) sebelum merge.
+- Merge paling akhir, setelah redesign lain selesai, dan di jam paling sepi.
+
+### Kondisi sekarang: empat jalur login terpisah (`lib/auth/actions.ts`)
+1. `loginInternalAction(role, password)` -- pilih modul dulu, lalu password BERSAMA satu modul
+   (`internal_accounts`, cadangan env var `INTERNAL_PASSWORD_*`). Tidak ada username, jadi tidak ketahuan siapa.
+2. `loginInternalUserAction(username, password)` -- akun bernama per modul (`internal_role_users`, migration 0060).
+3. `loginVendorAction(nameOrId, password)` -- akun utama vendor, ketik nama/kode vendor (`vendors_produksi`).
+4. `loginVendorUserAction(username, password)` -- anggota tim vendor (`vendor_users`, migration 0057),
+   username unik se-aplikasi, TIDAK perlu pilih vendor dulu. **Ini pola yang paling sederhana dan jadi acuan.**
+
+Sesi: dua cookie terpisah (`erp_internal_session` isinya ARRAY role aktif + actor per role, dan
+`erp_vendor_session`). Satu browser boleh memegang beberapa role internal sekaligus PLUS satu sesi vendor --
+inilah sumber bug "identitas aktif" yang pernah diperbaiki (MIGRASI.md 2026-09-30).
+
+### Arah yang dituju: satu pintu login
+Satu form: **username + password saja**. Server yang menentukan orang ini siapa (modul apa / vendor mana) lalu
+mengarahkan ke halaman yang sesuai. Pola ini SUDAH ADA dan terbukti jalan di jalur 4, tinggal diperluas.
+
+### Langkah (urut, jangan dilompati)
+1. **Inventaris** (butuh database lokal dulu): berapa orang per modul yang sudah punya akun bernama
+   (`internal_role_users`), dan modul mana yang masih bergantung pada password bersama. Ini menentukan besar
+   pekerjaan datanya.
+2. **Pastikan semua orang punya akun bernama.** Ini pekerjaan DATA, bukan struktur -- tabelnya sudah ada.
+   Sysadmin membuat akun lewat halaman yang sudah ada (`/sysadmin/accounts`). Kemungkinan besar NOL MIGRATION.
+3. **Tambah jalur login baru** (username + password, tanpa pilih modul) DI SAMPING yang lama. Belum ada yang
+   dihapus. Yang belum punya akun bernama tetap bisa masuk lewat cara lama.
+4. **Pindahkan pengguna** ke jalur baru, pantau beberapa hari.
+5. **Baru matikan password bersama modul** setelah dipastikan tidak ada lagi yang memakainya. Baris
+   `internal_accounts` tidak perlu dihapus, cukup tidak dipakai lagi.
+
+### Yang harus ikut diperiksa saat mengerjakan
+- `proxy.ts` -- aturan akses halaman membaca sesi; `vendor_users.allowed_pages` memakai path halaman
+  (lihat larangan mengubah URL di bagian 2 Fase 2).
+- `lib/auth/session.ts` -- bentuk cookie. Mengubah bentuk token = semua orang yang sedang login ter-logout.
+  Kalau bentuknya harus berubah, lakukan secara menambah (field baru opsional), bukan mengganti.
+- Store klien `internal-auth-store.ts` / `vendor-auth-store.ts` dan `activeIdentity` (penentu identitas aktif).
+- Catatan keamanan yang ditemukan sambil jalan (BUKAN bagian lingkup ini, laporkan saja ke owner): password
+  disimpan juga sebagai salinan terenkripsi yang bisa dibaca balik Sysadmin (`password_enc`, migration 0063/0065)
+  supaya ada fitur "Lihat Password". Itu kelemahan keamanan tersendiri, keputusan owner apakah mau diubah.
+
+## 4. Halaman Finance > Posisi Stok -- KODE SELESAI & DI-COMMIT, BELUM DIUJI DENGAN DATA ASLI
 Di-commit sebagai `4fb6951` di branch `pengembangan` (belum di-push, belum masuk `main`, jadi belum tayang).
 File: `app/finance/posisi-stok/page.tsx`, `lib/mrp/stockPosition.ts`, menu di `lib/shell/nav.ts`; entri MIGRASI.md
 "Posisi Stok di Finance (2026-11-06)". tsc bersih, uji data buatan lulus.
 Berikutnya: setelah lingkungan lokal jalan, login Finance di app lokal dan cocokkan angka (total dibeli = total invoice,
 tahap Belum produksi / Proses produksi masuk akal), cek tampilan HP. Belum ada Export Excel.
 
-## 4. Lain-lain tertunda
+## 5. Lain-lain tertunda
 - Migration 0087 (klasifikasi reject) ditunda owner; status 0088-0090 di live belum dikonfirmasi. Setelah ada database
   lokal, cek kolom/tabel yang belum ada di live lewat `db-sync.sh diff`.
 - File yang BUKAN bagian pekerjaan dan jangan ikut di-commit tanpa ditanya: `.claude/launch.json` (diubah supaya dev
