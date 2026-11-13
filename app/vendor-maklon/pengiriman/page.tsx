@@ -23,6 +23,7 @@ import {
   formatDecimal,
   koliQtyTotals,
   compareNoKoli,
+  duplicateKoliNumbers,
   formatNoKoli,
   mrpIdsWithClosedRolls,
   mrpIdsWithUnpackedFg,
@@ -589,8 +590,20 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
   // Nomor resi yang sudah pernah memunculkan popup "sudah ada" (huruf kecil) -- supaya popup tidak berulang untuk nomor yang sama.
   const [resiWarned, setResiWarned] = useState("");
 
+  // Owner 2026-11-13: nomor koli tidak boleh sama di dalam satu resi. Koli yang dicentang akan menjadi satu resi, jadi nomornya harus berbeda; yang kembar
+  // ditandai dan tombol "Set Ekspedisi & Resi" dinonaktifkan (server menolak juga). Nomor yang sama di resi berbeda tetap boleh.
+  const selectedDupNos = duplicateKoliNumbers(deliveryKolis.filter((k) => selectedForEkspedisi.has(k.id)).map((k) => ({ noKoli: k.noKoli, mrpId: k.mrpId })));
+  function dupKoliMessage(dups: { no: string; mrpIds: string[] }[]): string {
+    return `Nomor koli ${dups.map((d) => `${d.no}${d.mrpIds.length > 1 ? ` (MRP ${d.mrpIds.join(", ")})` : ""}`).join(", ")} dipilih lebih dari satu kali. Nomor koli tidak boleh sama dalam satu resi. Ubah nomor koli lewat Edit, atau kirim koli yang bernomor sama dengan resi terpisah.`;
+  }
+
   function openEkspedisiDialog(koliIds: string[]) {
     if (koliIds.length === 0) return;
+    const dups = duplicateKoliNumbers(deliveryKolis.filter((k) => koliIds.includes(k.id)).map((k) => ({ noKoli: k.noKoli, mrpId: k.mrpId })));
+    if (dups.length > 0) {
+      void alertDialog({ title: "Nomor koli kembar dalam satu resi", message: dupKoliMessage(dups), tone: "danger" });
+      return;
+    }
     setResiWarned("");
     setEkspedisiDialogKoliIds(koliIds);
     setDialogWeights(Object.fromEntries(koliIds.map((id) => [id, deliveryKolis.find((k) => k.id === id)?.beratKoli ?? 0])));
@@ -656,6 +669,7 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
       setEkspedisiError(msg);
       // Pemeriksaan server (termasuk resi milik vendor lain): tampilkan sebagai popup, bukan hanya teks kecil di dialog.
       if (msg.startsWith("No resi ")) await alertDialog({ title: "No resi sudah ada", message: msg, tone: "danger" });
+      else if (msg.startsWith("Nomor koli ")) await alertDialog({ title: "Nomor koli kembar dalam satu resi", message: msg, tone: "danger" });
     } finally {
       setEkspedisiSubmitting(false);
     }
@@ -1135,9 +1149,15 @@ function PengirimanContent({ vendorId }: { vendorId: string }) {
                 })}
               </div>
               <div className="mt-2">
+                {selectedDupNos.length > 0 && (
+                  <div className="mb-2 rounded-md border border-danger-fg/30 bg-danger-bg/40 px-3 py-2 font-sans text-[11.5px] text-danger-fg">
+                    Nomor koli {selectedDupNos.map((d) => `${d.no}${d.mrpIds.length > 1 ? ` (MRP ${d.mrpIds.join(", ")})` : ""}`).join(", ")} dipilih lebih dari satu kali. Nomor koli tidak boleh sama dalam satu resi: hilangkan centang salah satunya, atau ubah nomornya lewat Edit.
+                  </div>
+                )}
                 <button
                   onClick={() => openEkspedisiDialog(Array.from(selectedForEkspedisi))}
-                  disabled={selectedForEkspedisi.size === 0}
+                  disabled={selectedForEkspedisi.size === 0 || selectedDupNos.length > 0}
+                  title={selectedDupNos.length > 0 ? "Ada nomor koli yang sama di koli yang dicentang" : undefined}
                   className="rounded-md bg-action-primary px-3.5 py-2 font-sans text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11 max-md:w-full max-md:rounded-full max-md:text-[13px]"
                 >
                   Set Ekspedisi &amp; Resi ({selectedForEkspedisi.size} koli)

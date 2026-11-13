@@ -2439,6 +2439,24 @@ export function compareNoKoli(a?: string, b?: string): number {
   return x.localeCompare(y, undefined, { numeric: true });
 }
 
+/** Nomor koli yang kembar di antara koli yang akan dikirim dalam SATU resi (owner 2026-11-13: nomor koli tidak boleh sama di resi yang sama). Dibandingkan lewat
+ *  `formatNoKoli` ("007", "7", "koli 7" dianggap sama). Mengembalikan satu entri per nomor yang muncul lebih dari sekali, berurutan menurut nomor. Nomor kosong dilewati. */
+export function duplicateKoliNumbers(kolis: { noKoli?: string | null; mrpId?: string | null }[]): { no: string; count: number; mrpIds: string[] }[] {
+  const byNo = new Map<string, { count: number; mrpIds: string[] }>();
+  for (const k of kolis) {
+    const no = formatNoKoli(k.noKoli).toLowerCase();
+    if (!no) continue;
+    const cur = byNo.get(no) ?? { count: 0, mrpIds: [] };
+    cur.count += 1;
+    if (k.mrpId && !cur.mrpIds.includes(k.mrpId)) cur.mrpIds.push(k.mrpId);
+    byNo.set(no, cur);
+  }
+  return Array.from(byNo.entries())
+    .filter(([, v]) => v.count > 1)
+    .map(([no, v]) => ({ no, ...v }))
+    .sort((a, b) => compareNoKoli(a.no, b.no));
+}
+
 export function formatDateTime(iso?: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
