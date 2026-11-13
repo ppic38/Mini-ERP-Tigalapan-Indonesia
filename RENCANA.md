@@ -46,10 +46,11 @@ hidup OTOMATIS bersama Docker (tidak perlu `supabase start` lagi). `LIVE_DB_URL`
 - **Laptop lain / Claude web:** pekerjaan harus di-commit dan di-push dulu ke GitHub
   (`ppic38/Mini-ERP-Tigalapan-Indonesia`); yang belum di-push tidak terlihat dari sana.
 - Branch: untuk pekerjaan redesign dipakai **satu branch per modul, umur maksimal 2-3 hari** (lihat bagian 2).
-  Status `pengembangan` per 2026-11-13 pagi: **3 commit di depan DAN 2 commit di belakang `origin/main`,
-  BELUM DI-PUSH** -- punya kita `4fb6951` (Posisi Stok), `b036813` (lingkungan uji lokal), `01f40e1` (RENCANA.md);
-  tim IT sudah push `62c43f0` dan `281437b` pagi 13 Nov (menyentuh `derive.ts`, `actions.ts`, halaman Pengiriman
-  vendor, komponen baru `invoice-koli-tabs.tsx`). **Perlu `git merge origin/main` sebelum lanjut kerja.**
+  Status `pengembangan` per 2026-11-13 siang: **sudah memuat SEMUA pekerjaan tim IT** (`git merge origin/main`
+  dijalankan, bersih tanpa konflik, merge commit `43c52db`), di depan `origin/main` dan BELUM DI-PUSH.
+  **Belum ada satu pun pekerjaan redesign yang dimulai.** Isi commit kita sejauh ini: `4fb6951` Posisi Stok
+  (fitur warisan sesi lama yang tertinggal belum di-commit, bukan pekerjaan redesign), `b036813` lingkungan uji
+  lokal, sisanya pembaruan RENCANA.md saja.
   Jangan push ke `main` tanpa persetujuan owner: push ke `main` langsung ter-deploy ke aplikasi online.
 - Catatan teknis laptop ini:
   - Nama folder memuat `&`, jadi `npx`/`npm run` gagal. Jalankan lewat node langsung, mis.
@@ -171,6 +172,48 @@ perubahan visual; yang bertambah hanya "kosakata" desain untuk dipakai fase 4-5.
 ### Fase 4 -- Redesign Dashboard (file baru, nol konflik)
 Dashboard operasional + dashboard progres per role. File BARU = tidak mungkin bentrok dengan pekerjaan tim IT.
 Hanya baca (tanpa aksi tulis), angka dari fungsi turunan yang sudah ada, nol migration.
+
+#### Sumber angka: HANYA kasus A dan B (ditegaskan owner 2026-11-13)
+- **A. Sudah ada fungsinya** di `lib/mrp/derive.ts` (per 13 Nov: 5.556 baris, 211+ fungsi turunan) -> panggil saja.
+- **B. Datanya ada tapi terpencar** di beberapa tabel -> buat fungsi turunan BARU, tetap nol perubahan database.
+- **C. Data tidak pernah dicatat siapa pun** -> owner menyatakan kasus ini TIDAK ADA. Kalau suatu sesi merasa
+  menemukannya: **BERHENTI.** Jangan bikin kolom/tabel/migration, jangan karang angkanya. Laporkan ke owner
+  sebagai permintaan terpisah ke tim IT. Itu fitur baru, bukan dashboard.
+
+#### Aturan KONSISTEN (supaya angka dashboard sama dengan halaman aslinya)
+Bahaya terbesar dashboard: angkanya beda tipis dengan halaman aslinya (dashboard 1.000, Finance 998). Sekali itu
+terjadi, orang kantor berhenti percaya dan dashboard jadi sia-sia. Penyebabnya selalu sama: rumus ditulis dua kali.
+1. **Panggil fungsi yang sudah ada, JANGAN tulis ulang rumusnya.** Ini aturan nomor satu.
+2. Sebelum menulis hitungan apa pun, **cari dulu di `derive.ts`** (`grep -n "export function" lib/mrp/derive.ts`).
+   Kemungkinan besar sudah ada.
+3. Kalau memang harus bikin fungsi baru, **taruh di `derive.ts` juga**, bukan di dalam file halaman dashboard --
+   supaya halaman lain ikut memakainya dan tidak lahir rumus kembar.
+4. Tiap angka harus bisa ditelusuri: sebutkan nama fungsi sumbernya, supaya kalau ada yang protes "kok beda
+   dengan halaman X" bisa langsung dicek.
+5. **Uji silang sebelum merge**: buka dashboard dan halaman aslinya berdampingan di app lokal, cocokkan minimal
+   3 angka per dashboard. Kalau beda, cari sebabnya -- jangan dibiarkan "kira-kira wajar".
+
+#### Aturan CEPAT (supaya tidak memperlambat seluruh aplikasi)
+Aplikasi ini SUDAH berat memuat data: snapshot ~4-5 MB berisi 32+ tabel, RPC `get_flow_snapshot_core` rata-rata
+1,2-2,6 detik dan pernah kena timeout 8 detik, Supabase pernah memperingatkan Disk IO hampir habis
+(MIGRASI.md 2026-11-02, 2026-11-05, 2026-11-10). Dashboard yang rakus bisa memperlambat SEMUA halaman, bukan
+cuma dirinya sendiri.
+1. **NOL query baru ke database.** Dashboard hanya membaca data yang SUDAH dimuat store. Jangan bikin Server
+   Action, RPC, atau fetch baru. Data sudah ada di browser, jadi menghitung darinya praktis gratis.
+2. **Bungkus semua perhitungan dalam `useMemo`** dengan dependency data mentahnya, jangan dihitung ulang tiap
+   render. Laporan HPP pernah lambat persis karena ini dan sudah diperbaiki dengan pola yang sama
+   (MIGRASI.md 2026-11-02).
+3. **Jangan `.find()` di dalam loop.** Kalau butuh pencarian berulang, bangun `Map` sekali di luar loop (pola
+   `sellingPriceFor` di `derive.ts`).
+4. **Batasi cakupan bawaan**: tampilkan MRP aktif / periode berjalan saja, jangan seluruh riwayat sejak awal.
+   Sediakan filter untuk yang ingin melihat lebih banyak.
+5. **Dashboard = ringkasan, bukan tabel raksasa.** Jangan render ribuan baris; rincian lewat tautan ke halaman
+   yang sudah ada.
+6. Ukur dulu sebelum mengoptimasi lebih jauh -- jangan menebak bagian mana yang lambat.
+
+#### Yang TIDAK boleh di Fase 4
+Tabel/kolom/migration baru, materialized view, Server Action baru untuk membaca, dan aksi tulis apa pun
+(dashboard murni baca).
 
 ### Fase 5 -- Implementasi bertahap per modul
 Urutan yang disarankan, dari risiko terendah (berdasarkan seberapa sering tim IT menyentuhnya belakangan):
