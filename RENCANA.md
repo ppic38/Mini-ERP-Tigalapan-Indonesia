@@ -134,6 +134,35 @@ dinaikkan ke live secara aman dan bertahap.
 3. **Umur branch maksimal 2-3 hari.** Satu modul = satu branch = selesai = merge. Jangan pernah ada branch
    "redesign" yang hidup berminggu-minggu (lihat bukti kegagalan `ui-mobile/vendor-produksi` di Konteks di atas).
 
+### Keputusan owner yang mengikat (2026-11-13)
+**Boleh MENGHAPUS, bukan cuma menyembunyikan.** Owner mengizinkan menghapus menu/kolom/fitur yang tidak
+dipakai, dengan dasar kebutuhan user + rekomendasi dari hasil audit. Yang dihapus HANYA tampilan:
+- Kolom disembunyikan / definisi kolom dihapus / menu dihapus / file halaman dihapus -> **data di database UTUH**.
+- Satu-satunya yang menghapus data adalah migration DROP, dan itu memang dilarang di redesign ini.
+- Preseden yang sudah ada di repo: menu Ledger di `lib/shell/nav.ts` dimatikan (dikomentari) sementara
+  halamannya dibiarkan utuh dan tetap bisa dibuka lewat URL. Ikuti pola ini: **komentari dulu, jangan hapus
+  file halaman**, supaya gampang dikembalikan kalau ada yang protes.
+
+**Risiko sebenarnya bukan data hilang, tapi PROSES PUTUS.** Sebelum menghapus apa pun, pastikan:
+- Halaman itu BUKAN satu-satunya tempat menginput suatu data (kalau ya: data lama tetap ada, tapi tidak ada
+  data baru yang masuk lagi -- baru ketahuan berminggu-minggu kemudian).
+- Tombol itu BUKAN satu-satunya cara menjalankan suatu aksi/approval.
+Kalau duplikat dari tempat lain -> aman dihapus. Kalau satu-satunya -> TANYA OWNER DULU.
+Catatan: menyembunyikan menu BUKAN pengamanan -- halaman tetap bisa dibuka lewat URL; keamanan ada di `proxy.ts`.
+
+### Lingkup perangkat (owner 2026-11-13)
+- **Modul vendor produksi: JANGAN DISENTUH.** Sudah disederhanakan owner dan pas di HP (halaman Pengiriman
+  vendor punya 113 penanda responsif -- garapannya serius). Bukan bagian redesign ini.
+- **Modul internal: desktop/laptop**, KECUALI dua alur yang wajib jalan enak di HP:
+  1. **Approval** -- dipakai dari HP saat approver sedang di luar. Kondisi sekarang: `po-approval-queue.tsx`
+     hanya punya 3 penanda responsif (praktis belum digarap untuk HP). Komponen itu dipakai bersama oleh
+     **GM, SCM, dan Procurement** (satu pekerjaan menutup tiga role). **Finance TIDAK memakainya** -- punya
+     implementasi sendiri (`PoMaterialPanel`, `PoMaklonPanel`), jadi approval ada DUA versi di aplikasi ini.
+     Ini kandidat kuat "fungsi berulang" yang dikeluhkan owner: pertimbangkan menyatukannya lebih dulu.
+  2. **Dashboard baru (Fase 4)** -- rancang untuk HP SEJAK AWAL, jangan ditambal belakangan. File baru, jadi
+     biayanya nyaris nol kalau dipikirkan dari menit pertama.
+- Halaman internal lain: cukup tidak rusak di layar kecil, tidak perlu dioptimalkan.
+
 ### Fase 0 -- Amankan lingkungan kerja (WAJIB, sebelum apa pun)
 Sama dengan bagian 1 di atas. Yang paling mendesak: ganti `.env.local` ke Supabase lokal. Selama belum diganti,
 menjalankan app lokal berarti menulis ke data live kantor.
@@ -152,6 +181,30 @@ Hasilnya setiap branch dapat URL preview berisi salinan data nyata, bisa dilihat
 Inventaris seluruh menu, submenu, halaman, tabel. Sumber: `lib/shell/nav.ts` (menu per role) dan struktur folder
 `app/`. Keluaran: dokumen daftar halaman -- role, URL, tabel/form apa, masalah tampilannya apa.
 Tidak menyentuh kode, jadi bebas dikerjakan kapan saja tanpa memikirkan konflik.
+
+#### Temuan awal (sudah dicek 2026-11-13, sebelum audit penuh)
+- **Menu TIDAK banyak**: 2-8 menu per role (PPIC 4, Procurement 8, Finance 8, SCM 7, Produksi 4, Warehouse 2,
+  GM 2, Sysadmin 4, vendor 7). Jadi keluhan "menu makin banyak" kemungkinan BUKAN akar masalahnya.
+- **Kerumitan ada DI DALAM halaman**: Tracking Item 22 kolom, Payment Ekspedisi 15, Harga Kain PKS 14,
+  Input Resting & Cutting 14, Payment Material / Payment Maklon / Posisi Stok masing-masing 13.
+- **Pilihan kolom user TIDAK tersimpan**: `components/mrp/data-table.tsx` nol pemakaian `localStorage`, jadi
+  user yang menyembunyikan kolom harus mengulanginya SETIAP KALI halaman dibuka.
+- Riwayat MIGRASI.md menunjukkan sudah 6+ kali owner minta "kolom ini disembunyikan saja secara bawaan" di
+  halaman berbeda -> susunan kolom tidak pernah dirancang, melainkan menumpuk lalu dipangkas saat ada protes.
+- **Hipotesis kerja**: masalahnya bukan terlalu banyak halaman, tapi setiap halaman menampilkan segalanya ke
+  semua orang sepanjang waktu, dan melupakan pilihan user. Kalau benar, perbaikan besar bisa didapat dari
+  perubahan kecil yang aman (mis. menyimpan pilihan kolom per user -- satu komponen bersama, efeknya ke semua
+  tabel sekaligus). **Verifikasi dulu lewat audit, jangan langsung dikerjakan.**
+
+#### Masukan yang DIBUTUHKAN dari owner (tanpa ini auditnya menebak)
+1. **10 menit per role dengan user aslinya** (jawaban tertulis cukup, tidak perlu rapat). Tiga pertanyaan:
+   halaman mana yang dibuka tiap hari; apa yang paling bikin kesal / paling sering diulang; kolom atau tombol
+   mana yang tidak pernah dipakai. Satu orang per role sudah sangat membantu.
+2. **Tangkapan layar saat mereka benar-benar bekerja** (ada data aslinya), satu per role.
+3. **Data pemakaian dari aplikasi sendiri**: setelah database lokal ada, baca `internal_action_log` dan
+   `vendor_action_log`. Keterbatasan yang harus disebutkan saat melapor: hanya ~33 jenis aksi yang dicatat
+   (14 titik internal + 19 vendor di `lib/mrp/actions.ts`), dan hanya aksi MENULIS -- halaman yang sekadar
+   dibuka tidak tercatat. Jadi ini melengkapi wawancara, bukan menggantikan.
 
 ### Fase 2 -- Information Architecture (dokumen + satu commit kecil)
 **ATURAN KERAS: jangan mengubah URL halaman.** URL dipakai di tiga tempat sekaligus: aturan akses di `proxy.ts`,
