@@ -79,6 +79,7 @@ import {
   rollRemainingBySizeForMrp,
   resiGroupInvoiceLines,
   resiNumberKey,
+  duplicateKoliNumbers,
   warehouseReceivableGroups,
   hargaMaklonLineRate,
   maklonTipeForWarna,
@@ -5693,10 +5694,19 @@ async function setKoliEkspedisiResiGroupImpl(
 
   // Kepemilikan + belum delivered -- cegah vendor A menyentuh koli vendor B, & cegah ekspedisi/
   // resi koli yang SUDAH terkirim diubah lewat sini (harusnya sudah final).
-  const { data: rows } = await db.from("delivery_kolis").select("id,vendor_produksi,delivered_at,no_koli").in("id", koliIds);
+  const { data: rows } = await db.from("delivery_kolis").select("id,vendor_produksi,delivered_at,no_koli,mrp_id").in("id", koliIds);
   const validRows = (rows ?? []).filter((r) => r.vendor_produksi === vendorId && !r.delivered_at);
   const validIds = validRows.map((r) => r.id);
   if (validIds.length === 0) return;
+
+  // Owner 2026-11-13: nomor koli tidak boleh sama di dalam satu resi. Koli yang dicentang untuk satu resi (bisa dari beberapa MRP) harus bernomor berbeda; yang
+  // kembar ditolak sebelum ada yang ditulis. Nomor yang sama di resi BERBEDA tetap boleh.
+  const dupNos = duplicateKoliNumbers(validRows.map((r) => ({ noKoli: r.no_koli, mrpId: r.mrp_id })));
+  if (dupNos.length > 0) {
+    throw new Error(
+      `Nomor koli ${dupNos.map((d) => `${d.no}${d.mrpIds.length > 1 ? ` (MRP ${d.mrpIds.join(", ")})` : ""}`).join(", ")} dipakai lebih dari satu koli dalam resi ini. Nomor koli tidak boleh sama dalam satu resi. Ubah nomor koli lewat Edit, atau kirim koli yang bernomor sama dengan resi terpisah.`
+    );
+  }
 
   // Owner 2026-11-06: satu nomor resi hanya boleh dipakai SATU kali -- ditolak kalau sudah ada di koli lain (huruf besar/kecil dan spasi di
   // ujung tidak dibedakan). Semua koli yang memang satu resi harus dipilih bersamaan lalu di-set sekali. Dicek lintas SEMUA vendor (resi
