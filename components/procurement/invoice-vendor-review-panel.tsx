@@ -6,6 +6,7 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/mrp/number-input";
 import { viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
+import { InvoiceKoliTabs } from "@/components/mrp/invoice-koli-tabs";
 import { useMrpStore } from "@/lib/mrp/store";
 import { exportVendorInvoiceExcel } from "@/lib/mrp/exportVendorInvoiceExcel";
 import {
@@ -440,6 +441,9 @@ export function InvoiceVendorReviewPanel() {
                      qty (target/rencana MRP) x line.ratePerPc (rate per pc invoice ini) --
                      line.amount sendiri (subtotal semua size) dipertahankan di baris header
                      sebagai kontrol silang, seharusnya selalu sama dengan jumlah baris size. */}
+                  {/* Owner 2026-11-12: cek isi koli invoice ini (item dan qty) dalam dua tab, Per Warna (total semua koli) dan Per Koli. */}
+                  <InvoiceKoliTabs inv={inv} />
+
                   <div className="mt-3 font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Lampiran — detail per MRP</div>
                   {inv.lines.map((line) => {
                     const lineKey = inv.id + "|" + line.mrpId + "|" + line.warna + "|" + line.lengan + "|" + (line.usia ?? "");

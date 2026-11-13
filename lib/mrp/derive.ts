@@ -5118,6 +5118,146 @@ export function invoiceKoliBreakdown(
   return { groups, legacyRows };
 }
 
+/** Isi satu koli yang menjadi dasar sebuah invoice vendor (hanya bagian yang ditagihkan di invoice itu). */
+export type InvoiceKoliContent = {
+  koliId: string;
+  noKoli: string;
+  resiGroupId?: string;
+  noResi?: string;
+  ekspedisi: string;
+  deliveredAt?: string;
+  ekspedisiNoteAt?: string;
+  beratKoli?: number;
+  /** Item koli apa adanya (jenis produk, warna, lengan, size, usia, roll asal); qty = bagian yang masuk invoice ini. */
+  items: DeliveryKoliItem[];
+  totalQty: number;
+  totalNominal: number;
+};
+export type InvoiceWarnaSizeRow = { size: string; qty: number; ratePerPc: number; nilai: number; perKoli: { label: string; qty: number }[] };
+export type InvoiceWarnaGroup = {
+  key: string;
+  mrpId: string;
+  warna: string;
+  lengan: Lengan;
+  usia?: Usia;
+  /** Qty baris invoice (yang ditagih) dan qty yang berhasil ditelusuri ke koli (sama, kecuali ada data lama yang belum tertaut koli). */
+  invoiceQty: number;
+  qty: number;
+  ratePerPc: number;
+  nilai: number;
+  sizes: InvoiceWarnaSizeRow[];
+};
+export type InvoiceKoliItemsView = { kolis: InvoiceKoliContent[]; warna: InvoiceWarnaGroup[]; unallocated: { label: string; qty: number }[]; unallocatedQty: number };
+
+const SIZE_RANK = ["XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"];
+function sizeRank(size: string): number {
+  const i = SIZE_RANK.indexOf(size.trim().toUpperCase());
+  return i < 0 ? 99 : i;
+}
+
+/** Rincian isi koli per invoice vendor (owner 2026-11-12, tab "Per Warna" dan "Per Koli" di Paying Voucher Invoice Vendor): koli mana saja yang jadi dasar
+ *  invoice ini, item dan qty-nya, langsung dari item koli (bukan dari target MRP). Baris invoice per warna·lengan·usia dialokasikan FIFO ke item koli yang
+ *  sudah dikirim, dengan cara yang sama seperti alokasi HPP (invoice yang lebih dulu mengklaim urutan pertama; urutan koli = waktu koli diinvoice lalu dibuat),
+ *  jadi tidak butuh kolom baru di database. Item reject tidak ikut (tidak ditagihkan). Qty baris invoice yang tidak punya koli (data lama sebelum pelacakan
+ *  pengiriman) dikembalikan di `unallocated`. */
+export function invoiceKoliItemsView(inv: VendorInvoice, allVendorInvoices: VendorInvoice[], deliveryKolis: DeliveryKoli[]): InvoiceKoliItemsView {
+  const earlier = allVendorInvoices.filter(
+    (o) => o.id !== inv.id && o.status !== "REVISION" && o.vendorProduksi === inv.vendorProduksi && (o.submittedAt < inv.submittedAt || (o.submittedAt === inv.submittedAt && o.id < inv.id))
+  );
+  const pool = deliveryKolis
+    .filter((k) => k.vendorProduksi === inv.vendorProduksi && !!k.deliveredAt)
+    .sort((a, b) => {
+      const ra = a.resiInvoicedAt ?? "9999";
+      const rb = b.resiInvoicedAt ?? "9999";
+      if (ra !== rb) return ra < rb ? -1 : 1;
+      if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? -1 : 1;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+
+  type LineAgg = { mrpId: string; warna: string; lengan: Lengan; usia?: Usia; qty: number; amount: number };
+  const mine = new Map<string, LineAgg>();
+  for (const l of inv.lines) {
+    const key = invoiceLineKey(l.mrpId, l.warna, l.lengan, l.usia);
+    const cur = mine.get(key) ?? { mrpId: l.mrpId, warna: l.warna, lengan: l.lengan, usia: l.usia, qty: 0, amount: 0 };
+    cur.qty += l.qty;
+    cur.amount += l.amount;
+    mine.set(key, cur);
+  }
+
+  const koliMap = new Map<string, InvoiceKoliContent>();
+  const warna: InvoiceWarnaGroup[] = [];
+  const unallocated: { label: string; qty: number }[] = [];
+  for (const [key, agg] of mine) {
+    const ratePerPc = agg.qty > 0 ? agg.amount / agg.qty : 0;
+    const start = earlier.reduce((s, o) => s + o.lines.filter((l) => invoiceLineKey(l.mrpId, l.warna, l.lengan, l.usia) === key).reduce((a, l) => a + l.qty, 0), 0);
+    const end = start + agg.qty;
+    const sizeMap = new Map<string, { qty: number; perKoli: Map<string, number> }>();
+    let pos = 0;
+    let allocated = 0;
+    for (const k of pool) {
+      if (k.mrpId !== agg.mrpId) continue;
+      const koliLabel = formatNoKoli(k.noKoli) + (k.noResi ? " (resi " + k.noResi + ")" : "");
+      for (const it of k.items) {
+        if (!isBillableKoliItem(it) || !(it.qty > 0) || it.warna !== agg.warna || it.lengan !== agg.lengan || (it.usia ?? "") !== (agg.usia ?? "")) continue;
+        const itemStart = pos;
+        pos += it.qty;
+        const take = Math.min(end, pos) - Math.max(start, itemStart);
+        if (take <= 0) continue;
+        allocated += take;
+        let kc = koliMap.get(k.id);
+        if (!kc) {
+          kc = {
+            koliId: k.id,
+            noKoli: k.noKoli,
+            resiGroupId: k.resiGroupId,
+            noResi: k.noResi,
+            ekspedisi: k.ekspedisi,
+            deliveredAt: k.deliveredAt,
+            ekspedisiNoteAt: k.ekspedisiNoteAt,
+            beratKoli: k.beratKoli,
+            items: [],
+            totalQty: 0,
+            totalNominal: 0,
+          };
+          koliMap.set(k.id, kc);
+        }
+        kc.items.push({ ...it, qty: take });
+        kc.totalQty += take;
+        kc.totalNominal += take * ratePerPc;
+        const sz = sizeMap.get(it.size) ?? { qty: 0, perKoli: new Map<string, number>() };
+        sz.qty += take;
+        sz.perKoli.set(koliLabel, (sz.perKoli.get(koliLabel) ?? 0) + take);
+        sizeMap.set(it.size, sz);
+      }
+      if (pos >= end) break;
+    }
+    if (agg.qty > allocated) unallocated.push({ label: `${agg.warna} · ${agg.lengan}${agg.usia ? " · " + agg.usia : ""}`, qty: agg.qty - allocated });
+    warna.push({
+      key,
+      mrpId: agg.mrpId,
+      warna: agg.warna,
+      lengan: agg.lengan,
+      usia: agg.usia,
+      invoiceQty: agg.qty,
+      qty: allocated,
+      ratePerPc,
+      nilai: allocated * ratePerPc,
+      sizes: Array.from(sizeMap.entries())
+        .sort((a, b) => sizeRank(a[0]) - sizeRank(b[0]) || a[0].localeCompare(b[0]))
+        .map(([size, v]) => ({ size, qty: v.qty, ratePerPc, nilai: v.qty * ratePerPc, perKoli: Array.from(v.perKoli.entries()).map(([label, qty]) => ({ label, qty })) })),
+    });
+  }
+
+  const kolis = Array.from(koliMap.values())
+    .map((k) => ({
+      ...k,
+      items: [...k.items].sort((a, b) => a.warna.localeCompare(b.warna) || a.lengan.localeCompare(b.lengan) || sizeRank(a.size) - sizeRank(b.size) || a.size.localeCompare(b.size)),
+    }))
+    .sort((a, b) => (a.noResi ?? "").localeCompare(b.noResi ?? "", undefined, { numeric: true }) || compareNoKoli(a.noKoli, b.noKoli));
+  warna.sort((a, b) => a.mrpId.localeCompare(b.mrpId) || a.warna.localeCompare(b.warna) || a.lengan.localeCompare(b.lengan) || (a.usia ?? "").localeCompare(b.usia ?? ""));
+  return { kolis, warna, unallocated, unallocatedQty: unallocated.reduce((s, u) => s + u.qty, 0) };
+}
+
 // =========================================================================
 // Spec Portal Warehouse — Penerimaan & Bongkar koli barang jadi dari Vendor Produksi.
 // =========================================================================
