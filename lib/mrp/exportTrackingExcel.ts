@@ -6,9 +6,10 @@ import { VENDOR_PRODUKSI } from "./seed";
 import type { AduanPolaRow, DeliveryKoli, Lengan, MaterialPO, ProductionBatch, ProductionResult, RawMaterialInvoice } from "./types";
 
 // Export Excel Tracking Item (PPIC/SCM): SATU sheet "WIP" mengikuti template "WIP Download" owner (2026-11-09), satu baris per ROLL x SIZE:
-// Item, No. MRP, Vendor, Kategory, Warna, Size, Code Roll, Target Qty, Tgl good Receiving, Tgl Cutting, Tgl Awal FG, Qty FG, Qty WIP, Status Roll, Estimasi Tanggal Kirim, Status Roll,
-// Qty Koli, No. Koli, Tanggal Kirim, Estimasi Tiba. (Revisi 2026-11-11: template baru owner menambah empat kolom koli di kanan; kolom "Estimasi" jadi "Estimasi Tanggal Kirim"
-// dan kolom "Status" berjudul "Status Roll" juga, persis seperti template.)
+// Item, No. MRP, Vendor, Kategory, Warna, Size, Code Roll, Target Qty, Target (Hasil Cutting), Tgl good Receiving, Tgl Cutting, Tgl Awal FG, Qty FG, Qty WIP, Status Roll, Estimasi Tanggal Kirim, Status Roll,
+// Qty Koli, No. Koli, No. Resi, Qty Delivery, Tanggal Kirim, Estimasi Tiba. (Revisi 2026-11-11: template baru owner menambah empat kolom koli di kanan; kolom "Estimasi" jadi "Estimasi Tanggal Kirim"
+// dan kolom "Status" berjudul "Status Roll" juga, persis seperti template. Revisi 2026-11-13: Target (Hasil Cutting), No. Resi, dan Qty Delivery ditambahkan dan disisipkan berurutan menurut alur
+// proses: hasil cutting di samping Target Qty, lalu koli -> resi -> qty delivery -> tanggal kirim -> estimasi tiba.)
 // Roll x size yang isinya sudah masuk koli tampil SATU BARIS PER KOLI (Qty Koli, No. Koli, Tanggal Kirim = tanggal koli dikirim, Estimasi Tiba = tanggal kirim + 7 hari seperti ETA Excel
 // pengiriman Warehouse); Target, tanggal, Qty FG dan Status Roll roll diulang di tiap baris. Qty WIP baris koli = qty koli itu yang belum dikirim (0 kalau koli sudah dikirim); sisa WIP yang
 // belum masuk koli jadi baris sendiri tanpa data koli. Jumlah Qty WIP semua baris tetap sama dengan satu baris per roll x size.
@@ -79,6 +80,8 @@ export type WipRow = {
   /** Data koli (satu baris per koli): qty roll+size ini di koli itu, nomor koli, tanggal koli dikirim, dan estimasi tiba (kirim + 7 hari). Kosong kalau baris bukan baris koli. */
   koliQty: number | null;
   noKoli: string;
+  /** Nomor resi koli itu (kosong kalau koli belum diberi resi atau baris bukan baris koli). */
+  noResi: string;
   kirimAt?: string;
   tibaAt?: string;
   /** Hasil cutting AKTUAL roll x size ini (beda dari Target Qty = target aduan). Kosong kalau roll belum dicutting, baris perencanaan, atau rework. */
@@ -95,8 +98,8 @@ export type WipRow = {
 /** Hari yang ditambahkan ke tanggal kirim koli untuk estimasi tiba di DC (sama dengan ETA di Excel pengiriman Warehouse). */
 const LT_KIRIM_KE_TIBA = 7;
 
-type KoliEntry = { koliId: string; noKoli: string; qty: number; deliveredAt?: string };
-const NO_KOLI = { koliQty: null, noKoli: "", kirimAt: undefined, tibaAt: undefined, qtyDelivery: 0 } as const;
+type KoliEntry = { koliId: string; noKoli: string; noResi: string; qty: number; deliveredAt?: string };
+const NO_KOLI = { koliQty: null, noKoli: "", noResi: "", kirimAt: undefined, tibaAt: undefined, qtyDelivery: 0 } as const;
 const koliNo = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true });
 
 type Moved = { delivered: number; inKoli: number };
@@ -177,7 +180,7 @@ export function wipRows(input: TrackingExportInput): WipRow[] {
     const list = entries.get(key) ?? [];
     const e = list.find((x) => x.koliId === k.id);
     if (e) e.qty += qty;
-    else list.push({ koliId: k.id, noKoli: k.noKoli, qty, deliveredAt: dayKey(k.deliveredAt) });
+    else list.push({ koliId: k.id, noKoli: k.noKoli, noResi: k.noResi ?? "", qty, deliveredAt: dayKey(k.deliveredAt) });
     entries.set(key, list);
   };
   for (const k of kolis) {
@@ -197,7 +200,7 @@ export function wipRows(input: TrackingExportInput): WipRow[] {
       const sent = !!e.deliveredAt;
       const delivered = sent ? Math.min(e.qty, capLeft) : 0;
       capLeft -= delivered;
-      rows.push({ ...base, wip: sent ? 0 : e.qty, estimasi: sent ? undefined : koliEst, status: sent ? "SUDAH DIKIRIM" : "DI KOLI, BELUM DIKIRIM", koliQty: e.qty, noKoli: e.noKoli, kirimAt: e.deliveredAt, tibaAt: plusDays(e.deliveredAt, LT_KIRIM_KE_TIBA), qtyDelivery: delivered });
+      rows.push({ ...base, wip: sent ? 0 : e.qty, estimasi: sent ? undefined : koliEst, status: sent ? "SUDAH DIKIRIM" : "DI KOLI, BELUM DIKIRIM", koliQty: e.qty, noKoli: e.noKoli, noResi: e.noResi, kirimAt: e.deliveredAt, tibaAt: plusDays(e.deliveredAt, LT_KIRIM_KE_TIBA), qtyDelivery: delivered });
     }
     const restWip = p.belumCutting + p.cutting + p.fgPart;
     if (restWip > 0) {
@@ -395,6 +398,7 @@ export async function buildTrackingWorkbook(input: TrackingExportInput): Promise
     { head: "Size", width: 7, kind: "text", value: (r) => r.size },
     { head: "Code Roll", width: 16, kind: "text", value: (r) => r.roll },
     { head: "Target Qty", width: 11, kind: "int", value: (r) => r.target, note: "Target roll ini per size: target aduan dibagi menurut jumlah roll (sama seperti form Cutting vendor), sudah ada sebelum roll dicutting. Item rework tidak punya target (0)." },
+    { head: "Target (Hasil Cutting)", width: 14, kind: "int", value: (r) => r.cut, note: "Hasil cutting AKTUAL roll ini per size (beda dari Target Qty yang dari aduan). Kosong kalau roll belum dicutting, baris perencanaan, dan item rework. Diulang di tiap baris koli roll x size yang sama." },
     { head: "Tgl good Receiving", width: 16, kind: "date", value: (r) => dateOf(r.grAt) },
     { head: "Tgl Cutting", width: 12, kind: "date", value: (r) => dateOf(r.cuttingAt) },
     { head: "Tgl Awal FG", width: 12, kind: "date", value: (r) => dateOf(r.fgFirstAt) },
@@ -417,11 +421,10 @@ export async function buildTrackingWorkbook(input: TrackingExportInput): Promise
     { head: "Status Roll", width: 34, kind: "text", value: (r) => r.status },
     { head: "Qty Koli", width: 9, kind: "int", value: (r) => r.koliQty, note: "Qty roll dan size ini yang ada di koli pada baris ini. Roll dan size yang isinya tersebar di beberapa koli tampil satu baris per koli." },
     { head: "No. Koli", width: 9, kind: "text", value: (r) => r.noKoli },
+    { head: "No. Resi", width: 16, kind: "text", value: (r) => r.noResi, note: "Nomor resi pengiriman koli pada baris ini. Kosong kalau koli belum diberi resi." },
+    { head: "Qty Delivery", width: 11, kind: "int", value: (r) => r.qtyDelivery, note: "Qty roll dan size ini di koli yang SUDAH dikirim (Delivery) pada baris ini; koli belum dikirim = 0. Jumlah per roll x size tidak pernah melebihi Qty FG dan hasil cutting (kelebihan data koli dipotong)." },
     { head: "Tanggal Kirim", width: 12, kind: "date", value: (r) => dateOf(r.kirimAt), note: "Tanggal koli dikirim (tanggal kirim di resi). Kosong kalau koli belum dikirim." },
     { head: "Estimasi Tiba", width: 12, kind: "date", value: (r) => dateOf(r.tibaAt), note: `Tanggal kirim + ${LT_KIRIM_KE_TIBA} hari (sama dengan ETA di Excel pengiriman Warehouse).` },
-    // Dua kolom di ujung kanan (ditambah 2026-11-13) supaya huruf kolom template yang sudah ada tidak bergeser.
-    { head: "Target (Hasil Cutting)", width: 14, kind: "int", value: (r) => r.cut, note: "Hasil cutting AKTUAL roll ini per size (beda dari Target Qty yang dari aduan). Kosong kalau roll belum dicutting, baris perencanaan, dan item rework. Diulang di tiap baris koli roll x size yang sama." },
-    { head: "Qty Delivery", width: 11, kind: "int", value: (r) => r.qtyDelivery, note: "Qty roll dan size ini di koli yang SUDAH dikirim (Delivery) pada baris ini; koli belum dikirim = 0. Jumlah per roll x size tidak pernah melebihi Qty FG dan hasil cutting (kelebihan data koli dipotong)." },
   ];
   ws.columns = cols.map((c) => ({ width: c.width }));
   cols.forEach((c, i) => {
