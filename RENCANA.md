@@ -150,6 +150,26 @@ dipakai, dengan dasar kebutuhan user + rekomendasi dari hasil audit. Yang dihapu
 Kalau duplikat dari tempat lain -> aman dihapus. Kalau satu-satunya -> TANYA OWNER DULU.
 Catatan: menyembunyikan menu BUKAN pengamanan -- halaman tetap bisa dibuka lewat URL; keamanan ada di `proxy.ts`.
 
+#### WAJIB: 5 pemeriksaan sebelum MENYARANKAN penghapusan tabel/kolom/filter
+Diminta owner 2026-11-13: "jangan sampai 1 tabel dihapus di halaman tertentu ternyata jadi dasar tampilan
+halaman lain atau output export-nya." Dari sisi DATABASE memang selalu aman (tiap halaman membaca store
+terpusat, bukan dari halaman lain), tetapi di sisi TAMPILAN ada tiga keterkaitan nyata. Jalankan lima cek ini
+dan **laporkan hasilnya ke owner SEBELUM menghapus**, sebutkan halaman lain yang ikut terdampak:
+
+1. **Komponennya dipakai berapa halaman?** `grep -rl "NamaKomponen" app --include=*.tsx`
+   Beberapa "halaman berbeda" sebenarnya komponen yang SAMA: `DataTable` 17 halaman,
+   `MrpWarnaBreakdownTable` 3 (PPIC+SCM), `LaporanHppView` 2 (Finance+SCM), `ItemTrackingView` 2 (PPIC+SCM),
+   `MaterialPerWarnaView` 2 (Procurement+SCM). Hapus di satu tempat = HILANG DI SEMUA.
+   -> Kalau dipakai >1 halaman: jangan dihapus, jadikan OPSIONAL lewat prop (bawaan = perilaku sekarang).
+2. **Ada export yang mengikuti filter itu?** Ada 12 file `lib/mrp/export*.ts`, dan banyak tombol unduh memakai
+   baris yang SUDAH TERSARING (lihat `filterLabel` dan `exportExcel()` di `item-tracking-view.tsx`).
+   Menghapus filter = MENGUBAH ISI EXCEL yang diterima orang, bukan sekadar mengubah tampilan.
+3. **Fungsi turunannya dipakai siapa lagi?** `grep -rn "namaFungsi" app components lib`
+   Jangan hapus fungsi di `derive.ts` hanya karena satu tabel tidak memakainya lagi (211+ fungsi, dipakai silang).
+4. **Apakah ini satu-satunya tempat input atau aksi?** (lihat aturan "PROSES PUTUS" di atas)
+5. **Apakah kolom/data itu dipakai badge, notifikasi, atau gerbang?** Cek `lib/shell/badges.ts` dan
+   `gateReason` di `derive.ts` -- angka badge sidebar dan syarat tombol sering memakai data yang sama.
+
 ### Lingkup perangkat (owner 2026-11-13)
 - **Modul vendor produksi: JANGAN DISENTUH.** Sudah disederhanakan owner dan pas di HP (halaman Pengiriman
   vendor punya 113 penanda responsif -- garapannya serius). Bukan bagian redesign ini.
