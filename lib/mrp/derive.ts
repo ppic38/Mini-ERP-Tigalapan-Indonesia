@@ -3749,6 +3749,67 @@ export function vendorInvoiceTotalPaid(inv: VendorInvoice): number {
   return inv.totalTagihan - denda + reward;
 }
 
+/** Kategori produk untuk tampilan pembayaran historis (Finance > Payment Maklon > Riwayat > Per Kategori Produk): tipe harga maklon
+ *  (`maklonTipeForWarna`) tanpa lengan -- "PDK"/"PJG" = Reguler, "* KIDS" = Kids, "* RIB" = Rib, "TUNIK" = Tunik, "Wangky *" = Wangky. */
+export function kategoriProdukLabel(tipe: string): string {
+  const t = tipe.toUpperCase();
+  if (/WANGK/.test(t)) return "Wangky";
+  if (/TUNIK/.test(t)) return "Tunik";
+  if (/RIB/.test(t)) return "Rib";
+  if (/KID/.test(t)) return "Kids";
+  return "Reguler";
+}
+const KATEGORI_PRODUK_ORDER = ["Reguler", "Kids", "Rib", "Tunik", "Wangky"];
+
+export type InvoiceKategoriRow = { kategori: string; qtyPendek: number; qtyPanjang: number; qty: number; amount: number; invoiceIds: string[] };
+export type InvoiceKategoriBreakdown = {
+  rows: InvoiceKategoriRow[];
+  qty: number;
+  /** Jumlah nilai baris invoice (qty x harga maklon) di MRP ini. */
+  subtotal: number;
+  /** Denda/reward tingkat invoice (reward - denda), diprorata menurut nilai baris MRP ini bila invoice menyentuh beberapa MRP. */
+  adjustment: number;
+  /** subtotal + adjustment = nilai yang dibayar untuk MRP ini. */
+  total: number;
+  invoiceCount: number;
+};
+
+/** Pembayaran invoice vendor per KATEGORI PRODUK untuk satu MRP (owner 2026-11-14): baris invoice yang MRP-nya sama dikelompokkan menurut
+ *  kategori produknya, jadi tagihan campur (reguler + tunik / rib) tetap terbaca per kategori. Pemanggil menyaring invoice (mis. PAID satu vendor). */
+export function invoiceKategoriBreakdown(invoices: VendorInvoice[], mrpId: string, mrpDetails: MrpDetail[]): InvoiceKategoriBreakdown {
+  const byKat = new Map<string, InvoiceKategoriRow>();
+  const invoiceIds = new Set<string>();
+  let adjustment = 0;
+  for (const inv of invoices) {
+    const mine = inv.lines.filter((l) => l.mrpId === mrpId);
+    if (mine.length === 0) continue;
+    invoiceIds.add(inv.id);
+    for (const l of mine) {
+      const kategori = kategoriProdukLabel(maklonTipeForWarna(l.mrpId, l.warna, l.lengan, mrpDetails, l.usia));
+      const row = byKat.get(kategori) ?? { kategori, qtyPendek: 0, qtyPanjang: 0, qty: 0, amount: 0, invoiceIds: [] };
+      if (l.lengan === "PENDEK") row.qtyPendek += l.qty;
+      else row.qtyPanjang += l.qty;
+      row.qty += l.qty;
+      row.amount += l.amount;
+      if (!row.invoiceIds.includes(inv.id)) row.invoiceIds.push(inv.id);
+      byKat.set(kategori, row);
+    }
+    const adj = vendorInvoiceAdjustmentTotal(inv, "REWARD") - vendorInvoiceAdjustmentTotal(inv, "DENDA");
+    if (adj !== 0) {
+      const mineAmount = mine.reduce((s, l) => s + l.amount, 0);
+      const allAmount = inv.lines.reduce((s, l) => s + l.amount, 0);
+      if (allAmount > 0) adjustment += Math.round((adj * mineAmount) / allAmount);
+    }
+  }
+  const rows = Array.from(byKat.values()).sort((a, b) => {
+    const ia = KATEGORI_PRODUK_ORDER.indexOf(a.kategori);
+    const ib = KATEGORI_PRODUK_ORDER.indexOf(b.kategori);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.kategori.localeCompare(b.kategori);
+  });
+  const subtotal = rows.reduce((s, r) => s + r.amount, 0);
+  return { rows, qty: rows.reduce((s, r) => s + r.qty, 0), subtotal, adjustment, total: subtotal + adjustment, invoiceCount: invoiceIds.size };
+}
+
 /** Retensi sudah dihapus dari alur — pembayaran sekarang cuma 1 tahap (lunas penuh sekaligus),
  *  jadi status-nya biner saja: sudah dibayar atau belum. */
 export function vendorInvoicePaymentStatus(inv: VendorInvoice): { label: string; tone: "neutral" | "warning" | "success" | "info" } {

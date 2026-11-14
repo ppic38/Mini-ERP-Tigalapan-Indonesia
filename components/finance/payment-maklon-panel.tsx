@@ -16,6 +16,7 @@ import {
   formatDate,
   formatPcs,
   formatRupiah,
+  invoiceKategoriBreakdown,
   invoiceKoliBreakdown,
   vendorInvoiceAdjustmentTotal,
   vendorInvoiceBadge,
@@ -193,6 +194,78 @@ function InvoiceLinesDetail({
   );
 }
 
+/** Pembayaran historis satu vendor di satu MRP per KATEGORI PRODUK (Reguler / Kids / Rib / Tunik / Wangky), dari baris invoice yang sudah dibayar.
+ *  Tagihan yang mencampur beberapa kategori (satu resi) tetap terbaca per kategori. */
+function KategoriHistoryTable({ invoices, mrpId, mrpDetails }: { invoices: VendorInvoice[]; mrpId: string; mrpDetails: MrpDetail[] }) {
+  const b = invoiceKategoriBreakdown(invoices, mrpId, mrpDetails);
+  const th = "px-3 py-2 text-right";
+  return (
+    <div className="overflow-hidden rounded-md border border-[#E4E9EE] bg-white">
+      <table className="w-full border-collapse">
+        <thead>
+          <tr className="border-b border-[#E4E9EE] bg-[#F2F5F8] font-sans text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+            <th className="px-3 py-2 text-left">Kategori produk</th>
+            <th className={th}>Pendek</th>
+            <th className={th}>Panjang</th>
+            <th className={th}>Total qty</th>
+            <th className={th}>Nilai</th>
+            <th className="px-3 py-2 text-left">Invoice</th>
+          </tr>
+        </thead>
+        <tbody>
+          {b.rows.length === 0 && (
+            <tr>
+              <td colSpan={6} className="px-3 py-3 font-sans text-[11.5px] text-text-muted">
+                Tidak ada baris invoice untuk {mrpId} di vendor ini.
+              </td>
+            </tr>
+          )}
+          {b.rows.map((r) => (
+            <tr key={r.kategori} className="border-b border-[#EEF1F4] font-sans text-[11.5px] text-[#31414F]">
+              <td className="px-3 py-1.5 font-semibold text-text-primary">{r.kategori}</td>
+              <td className="px-3 py-1.5 text-right font-mono">{formatPcs(r.qtyPendek)}</td>
+              <td className="px-3 py-1.5 text-right font-mono">{formatPcs(r.qtyPanjang)}</td>
+              <td className="px-3 py-1.5 text-right font-mono">{formatPcs(r.qty)}</td>
+              <td className="px-3 py-1.5 text-right font-mono">{formatRupiah(r.amount)}</td>
+              <td className="px-3 py-1.5 font-mono text-[10.5px] text-text-muted">{r.invoiceIds.join(", ")}</td>
+            </tr>
+          ))}
+          {b.rows.length > 0 && (
+            <>
+              <tr className="bg-[#F7F9FB] font-sans text-[11.5px] font-semibold text-[#31414F]">
+                <td className="px-3 py-1.5">Subtotal</td>
+                <td colSpan={2} />
+                <td className="px-3 py-1.5 text-right font-mono">{formatPcs(b.qty)}</td>
+                <td className="px-3 py-1.5 text-right font-mono">{formatRupiah(b.subtotal)}</td>
+                <td className="px-3 py-1.5 font-mono text-[10.5px] font-normal text-text-muted">{b.invoiceCount} invoice</td>
+              </tr>
+              {b.adjustment !== 0 && (
+                <tr className="font-sans text-[11.5px] text-[#31414F]">
+                  <td className="px-3 py-1.5" colSpan={4}>
+                    Denda / reward <span className="text-text-muted">(tingkat invoice, tidak per kategori)</span>
+                  </td>
+                  <td className={"px-3 py-1.5 text-right font-mono " + (b.adjustment < 0 ? "text-danger-fg" : "text-success-fg")}>
+                    {b.adjustment < 0 ? "−" : "+"}
+                    {formatRupiah(Math.abs(b.adjustment))}
+                  </td>
+                  <td />
+                </tr>
+              )}
+              <tr className="border-t border-[#E4E9EE] bg-[#F2F5F8] font-sans text-[11.5px] font-semibold text-text-primary">
+                <td className="px-3 py-1.5" colSpan={4}>
+                  Total dibayar
+                </td>
+                <td className="px-3 py-1.5 text-right font-mono">{formatRupiah(b.total)}</td>
+                <td />
+              </tr>
+            </>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 /** Item 2026-09-10 (feedback: "di payment maklon sertakan no po di list card serta lampiran
  *  foto ekspedisi") -- dulu No PO/MRP & lampiran ekspedisi cuma kelihatan setelah baris
  *  di-expand (lihat InvoiceLinesDetail di atas) -- Finance minta itu langsung terlihat di baris
@@ -293,6 +366,8 @@ export function PaymentMaklonPanel() {
   const [selectedMrpId, setSelectedMrpId] = useState<string>("");
   const [expandedMrpHistory, setExpandedMrpHistory] = useState<string | null>(null);
   const [expandedVendorHistory, setExpandedVendorHistory] = useState<string | null>(null);
+  // Sub tab Riwayat Pembayaran: "invoice" = daftar invoice per vendor (semula), "kategori" = pembayaran per kategori produk (owner 2026-11-14).
+  const [historyTab, setHistoryTab] = useState<"invoice" | "kategori">("invoice");
 
   if (!mounted) return null;
 
@@ -741,7 +816,26 @@ export function PaymentMaklonPanel() {
          SEMUA MRP (bukan cuma yang lagi dipilih di dropdown atas), murni status/histori (tidak ada
          checkbox -- Payment Maklon tidak punya alur "Batalkan Bayar"). */}
       <div className="overflow-hidden border border-border-subtle bg-surface-card">
-        <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Riwayat Pembayaran</div>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle px-4 py-3">
+          <span className="font-sans text-[13px] font-semibold text-text-primary">Riwayat Pembayaran</span>
+          <span className="flex items-center gap-1 rounded-md border border-[#DDE4EB] bg-white p-0.5 font-sans text-[11.5px] font-semibold">
+            {(
+              [
+                ["invoice", "Per Invoice"],
+                ["kategori", "Per Kategori Produk"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setHistoryTab(key)}
+                className={"rounded px-2.5 py-1 " + (historyTab === key ? "bg-action-primary text-white" : "text-text-muted hover:text-text-primary")}
+              >
+                {label}
+              </button>
+            ))}
+          </span>
+        </div>
         {historyMrpSummaries.length === 0 && (
           <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada invoice vendor yang telah dibayar.</div>
         )}
@@ -796,16 +890,20 @@ export function PaymentMaklonPanel() {
                               {vendorActive && (
                                 <tr>
                                   <td colSpan={3} className="border-b border-[#F1F4F7] bg-white px-4 py-4 pl-10">
-                                    <DataTable
-                                      title="Invoice vendor telah dibayar"
-                                      columns={paidColumns}
-                                      rows={v.list}
-                                      keyOf={(inv) => inv.id}
-                                      firstColumnLabel="No Invoice"
-                                      firstColumnRender={(inv) => <span className="font-mono font-medium">{inv.id}</span>}
-                                      renderExpanded={renderInvoiceLinesDetail}
-                                      emptyText="Belum ada invoice vendor yang telah dibayar."
-                                    />
+                                    {historyTab === "kategori" ? (
+                                      <KategoriHistoryTable invoices={v.list} mrpId={m.mrpId} mrpDetails={mrpDetails} />
+                                    ) : (
+                                      <DataTable
+                                        title="Invoice vendor telah dibayar"
+                                        columns={paidColumns}
+                                        rows={v.list}
+                                        keyOf={(inv) => inv.id}
+                                        firstColumnLabel="No Invoice"
+                                        firstColumnRender={(inv) => <span className="font-mono font-medium">{inv.id}</span>}
+                                        renderExpanded={renderInvoiceLinesDetail}
+                                        emptyText="Belum ada invoice vendor yang telah dibayar."
+                                      />
+                                    )}
                                   </td>
                                 </tr>
                               )}
