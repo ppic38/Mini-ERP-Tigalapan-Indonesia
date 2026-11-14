@@ -199,6 +199,21 @@ function InvoiceLinesDetail({
 function KategoriHistoryTable({ invoices, mrpId, mrpDetails }: { invoices: VendorInvoice[]; mrpId: string; mrpDetails: MrpDetail[] }) {
   const b = invoiceKategoriBreakdown(invoices, mrpId, mrpDetails);
   const th = "px-3 py-2 text-right";
+  // Harga maklon per pcs yang dipakai di invoice (tersimpan di baris invoice), per lengan; kalau satu lengan punya beberapa harga, tiap harga diberi qty-nya.
+  const rateCell = (rates: { lengan: string; rate: number; qty: number }[]) => (
+    <div className="flex flex-col items-end gap-0.5">
+      {(["PENDEK", "PANJANG"] as const).map((l) => {
+        const items = rates.filter((r) => r.lengan === l);
+        if (items.length === 0) return null;
+        return (
+          <span key={l} className="whitespace-nowrap font-mono text-[11px]">
+            <span className="mr-1.5 font-sans text-[10px] font-medium text-text-muted">{l === "PENDEK" ? "PDK" : "PJG"}</span>
+            {items.map((i) => formatRupiah(i.rate) + (items.length > 1 ? ` (${formatPcs(i.qty)})` : "")).join(" · ")}
+          </span>
+        );
+      })}
+    </div>
+  );
   return (
     <div className="overflow-hidden rounded-md border border-[#E4E9EE] bg-white">
       <table className="w-full border-collapse">
@@ -208,6 +223,9 @@ function KategoriHistoryTable({ invoices, mrpId, mrpDetails }: { invoices: Vendo
             <th className={th}>Pendek</th>
             <th className={th}>Panjang</th>
             <th className={th}>Total qty</th>
+            <th className={th} title="Harga maklon per pcs yang tersimpan di baris invoice (dipakai untuk mengajukan tagihan)">
+              Harga maklon / pcs
+            </th>
             <th className={th}>Nilai</th>
             <th className="px-3 py-2 text-left">Invoice</th>
           </tr>
@@ -215,7 +233,7 @@ function KategoriHistoryTable({ invoices, mrpId, mrpDetails }: { invoices: Vendo
         <tbody>
           {b.rows.length === 0 && (
             <tr>
-              <td colSpan={6} className="px-3 py-3 font-sans text-[11.5px] text-text-muted">
+              <td colSpan={7} className="px-3 py-3 font-sans text-[11.5px] text-text-muted">
                 Tidak ada baris invoice untuk {mrpId} di vendor ini.
               </td>
             </tr>
@@ -226,6 +244,7 @@ function KategoriHistoryTable({ invoices, mrpId, mrpDetails }: { invoices: Vendo
               <td className="px-3 py-1.5 text-right font-mono">{formatPcs(r.qtyPendek)}</td>
               <td className="px-3 py-1.5 text-right font-mono">{formatPcs(r.qtyPanjang)}</td>
               <td className="px-3 py-1.5 text-right font-mono">{formatPcs(r.qty)}</td>
+              <td className="px-3 py-1.5 text-right">{rateCell(r.rates)}</td>
               <td className="px-3 py-1.5 text-right font-mono">{formatRupiah(r.amount)}</td>
               <td className="px-3 py-1.5 font-mono text-[10.5px] text-text-muted">{r.invoiceIds.join(", ")}</td>
             </tr>
@@ -236,12 +255,13 @@ function KategoriHistoryTable({ invoices, mrpId, mrpDetails }: { invoices: Vendo
                 <td className="px-3 py-1.5">Subtotal</td>
                 <td colSpan={2} />
                 <td className="px-3 py-1.5 text-right font-mono">{formatPcs(b.qty)}</td>
+                <td />
                 <td className="px-3 py-1.5 text-right font-mono">{formatRupiah(b.subtotal)}</td>
                 <td className="px-3 py-1.5 font-mono text-[10.5px] font-normal text-text-muted">{b.invoiceCount} invoice</td>
               </tr>
               {b.adjustment !== 0 && (
                 <tr className="font-sans text-[11.5px] text-[#31414F]">
-                  <td className="px-3 py-1.5" colSpan={4}>
+                  <td className="px-3 py-1.5" colSpan={5}>
                     Denda / reward <span className="text-text-muted">(tingkat invoice, tidak per kategori)</span>
                   </td>
                   <td className={"px-3 py-1.5 text-right font-mono " + (b.adjustment < 0 ? "text-danger-fg" : "text-success-fg")}>
@@ -252,7 +272,7 @@ function KategoriHistoryTable({ invoices, mrpId, mrpDetails }: { invoices: Vendo
                 </tr>
               )}
               <tr className="border-t border-[#E4E9EE] bg-[#F2F5F8] font-sans text-[11.5px] font-semibold text-text-primary">
-                <td className="px-3 py-1.5" colSpan={4}>
+                <td className="px-3 py-1.5" colSpan={5}>
                   Total dibayar
                 </td>
                 <td className="px-3 py-1.5 text-right font-mono">{formatRupiah(b.total)}</td>

@@ -5896,10 +5896,11 @@ export async function submitResiGroupInvoiceAction(koliIds: string[]): Promise<v
   if (error) throw new Error(error.message);
 }
 
-/** SEMENTARA (owner 2026-10-30): Master Data Harga Maklon belum final, jadi invoice vendor yang BELUM DIBAYAR Finance (SUBMITTED, REVISION,
- *  APPROVED) selalu dihitung ulang dari Master Data TERBARU -- walau vendor sudah mengajukannya sebelum master diubah. Setelah PAID, harga
- *  terkunci permanen. Ubah ke false kalau master sudah final, supaya harga invoice dikunci saat diajukan lagi. */
-const MAKLON_RATE_LIVE_UNTIL_PAID = true;
+/** Dulu (SEMENTARA, owner 2026-10-30, selama Master Data Harga Maklon belum final) invoice vendor yang BELUM DIBAYAR (SUBMITTED, REVISION,
+ *  APPROVED) dihitung ulang dari Master Data TERBARU. Owner 2026-11-14: pakai nilai nominal maklon yang diajukan vendor ke Finance, jadi
+ *  harga baris invoice DIKUNCI saat vendor mengajukan (`submitResiGroupInvoiceAction`) dan tidak berubah lagi walau Master Data diubah.
+ *  Fungsi hitung ulang di bawah tetap ada tetapi tidak berjalan selama flag ini false; ubah ke true untuk mengembalikan perilaku lama. */
+const MAKLON_RATE_LIVE_UNTIL_PAID = false;
 
 /** Hitung ulang rate per pc + total semua invoice vendor yang belum PAID dari Master Data Harga Maklon sekarang (per tipe kategori+lengan).
  *  Mengembalikan jumlah invoice yang berubah. */
@@ -6079,7 +6080,7 @@ export async function payVendorInvoicesAction(invoiceIds: string[], proof: { dat
     if (notApproved.length > 0) throw new Error(`Invoice ${notApproved.map((i) => i.id).join(", ")} belum disetujui Procurement, jadi belum bisa dibayar.`);
     const toPay = (invs ?? []).filter((i) => i.status === "APPROVED");
     if (toPay.length === 0) return { ok: true, data: undefined };
-    // Harga terkunci permanen begitu PAID -- pastikan yang dikunci adalah harga Master Data terbaru.
+    // Hitung ulang dari Master Data hanya berjalan kalau MAKLON_RATE_LIVE_UNTIL_PAID = true; sejak 2026-11-14 false, jadi harga yang dikunci = harga saat vendor mengajukan.
     await repriceUnpaidVendorInvoices();
     const uploadedAt = nowIso();
     for (const inv of toPay) {

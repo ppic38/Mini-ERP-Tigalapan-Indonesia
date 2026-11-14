@@ -3761,7 +3761,16 @@ export function kategoriProdukLabel(tipe: string): string {
 }
 const KATEGORI_PRODUK_ORDER = ["Reguler", "Kids", "Rib", "Tunik", "Wangky"];
 
-export type InvoiceKategoriRow = { kategori: string; qtyPendek: number; qtyPanjang: number; qty: number; amount: number; invoiceIds: string[] };
+export type InvoiceKategoriRow = {
+  kategori: string;
+  qtyPendek: number;
+  qtyPanjang: number;
+  qty: number;
+  amount: number;
+  invoiceIds: string[];
+  /** Harga maklon per pcs yang tersimpan di baris invoice (`ratePerPc`), per lengan; satu entri per kombinasi lengan + harga dengan qty-nya. */
+  rates: { lengan: Lengan; rate: number; qty: number }[];
+};
 export type InvoiceKategoriBreakdown = {
   rows: InvoiceKategoriRow[];
   qty: number;
@@ -3786,11 +3795,14 @@ export function invoiceKategoriBreakdown(invoices: VendorInvoice[], mrpId: strin
     invoiceIds.add(inv.id);
     for (const l of mine) {
       const kategori = kategoriProdukLabel(maklonTipeForWarna(l.mrpId, l.warna, l.lengan, mrpDetails, l.usia));
-      const row = byKat.get(kategori) ?? { kategori, qtyPendek: 0, qtyPanjang: 0, qty: 0, amount: 0, invoiceIds: [] };
+      const row = byKat.get(kategori) ?? { kategori, qtyPendek: 0, qtyPanjang: 0, qty: 0, amount: 0, invoiceIds: [], rates: [] };
       if (l.lengan === "PENDEK") row.qtyPendek += l.qty;
       else row.qtyPanjang += l.qty;
       row.qty += l.qty;
       row.amount += l.amount;
+      const sameRate = row.rates.find((r) => r.lengan === l.lengan && r.rate === l.ratePerPc);
+      if (sameRate) sameRate.qty += l.qty;
+      else row.rates.push({ lengan: l.lengan, rate: l.ratePerPc, qty: l.qty });
       if (!row.invoiceIds.includes(inv.id)) row.invoiceIds.push(inv.id);
       byKat.set(kategori, row);
     }
@@ -3801,6 +3813,7 @@ export function invoiceKategoriBreakdown(invoices: VendorInvoice[], mrpId: strin
       if (allAmount > 0) adjustment += Math.round((adj * mineAmount) / allAmount);
     }
   }
+  for (const r of byKat.values()) r.rates.sort((a, b) => (a.lengan === b.lengan ? a.rate - b.rate : a.lengan === "PENDEK" ? -1 : 1));
   const rows = Array.from(byKat.values()).sort((a, b) => {
     const ia = KATEGORI_PRODUK_ORDER.indexOf(a.kategori);
     const ib = KATEGORI_PRODUK_ORDER.indexOf(b.kategori);
