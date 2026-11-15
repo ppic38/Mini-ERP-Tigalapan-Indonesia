@@ -177,4 +177,4 @@ export khusus.
 | Tanggal | Paket | Yang dikerjakan | Commit |
 |---|---|---|---|
 | 2026-11-16 | — | Rencana ini dibuat; inspeksi otomatis PPIC, Procurement, SCM, Produksi | (lihat git log) |
-| 2026-11-16 | A1, A2, D1 | `DataTable`: pilihan kolom tersimpan (selisih dari bawaan, kunci = alamat halaman + judul) dan bagi halaman otomatis di atas 100 baris. Diuji: Yield Alert 595 baris jadi 50 (tinggi halaman 47.677 px jadi 4.771 px), SKU 2.139 jadi 50, Tracking Item 881 jadi 50; tabel 48 dan 39 baris tidak berubah; kolom yang dimatikan bertahan setelah muat ulang. Branch `redesign-fondasi-tabel`, BELUM di-merge ke `main`. | (commit berikut) |
+| 2026-11-16 | A1, A2, D1 | `DataTable`: pilihan kolom tersimpan (selisih dari bawaan, kunci = alamat halaman + judul) dan bagi halaman otomatis di atas 100 baris. Diuji: Yield Alert 595 baris jadi 50 (tinggi halaman 47.677 px jadi 4.771 px), SKU 2.139 jadi 50, Tracking Item 881 jadi 50; tabel 48 dan 39 baris tidak berubah; kolom yang dimatikan bertahan setelah muat ulang. Branch `redesign-fondasi-tabel`, BELUM di-merge ke `main`. | `fbe0d5f` |
