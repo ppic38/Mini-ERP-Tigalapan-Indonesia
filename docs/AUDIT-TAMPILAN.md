@@ -204,3 +204,13 @@ daftar ini akan bertambah.
 
 **V2 adalah temuan paling berharga**: perbaikannya cukup membuka tab pertama yang punya pekerjaan, tanpa menyentuh
 logika bisnis apa pun.
+
+### Tambahan (PO Approval, Posisi Stok, Laporan HPP; layar 1024 px)
+
+| # | Halaman | Temuan | Jenis |
+|---|---|---|---|
+| V7 | Laporan HPP | Kartu ringkasan **meluber dan terpotong**: "Total biaya produksi" (Rp 662.861.794) menabrak tepi kartu, "Total COGS bahan" terpotong jadi "Rp 3.417.590.3...". Gejala sama dengan V1 di Dashboard, jadi kemungkinan satu komponen kartu angka yang sama; satu perbaikan menutup keduanya. | Bug tata letak |
+| V8 | PO Approval | Pola sama dengan Payment (V3): pesan kosong kecil lalu riwayat penuh di bawahnya. Filter "NO MRP (MENUNGGU APPROVAL)" juga memakai satu kartu penuh. | Hierarki |
+| V9 | Laporan HPP | Belum ada **yield**, dan filter hanya per MRP (kebutuhan owner: per delivery). Kartu atas "Filter No. MRP (untuk card di bawah)" hanya memengaruhi kartu, bukan tabel, sehingga membingungkan. | Kebutuhan baru |
+| V10 | Posisi Stok | Tabel 39 baris punya lebih banyak kolom daripada lebar layar; kolom di kanan (Proses produksi, belum dikirim) terpotong dan harus digeser. Angka rupiah dua baris ("Rp" di atas angka) membuat baris tabel tinggi. | Kepadatan |
+| V11 | Posisi Stok | **Positif**: angka konsisten (Belum produksi + Proses + Sudah delivery = Stok dibeli, Rp 7.737.841.270). Halaman ini baru dan sudah terbukti jalan dengan data asli. | Terverifikasi |
