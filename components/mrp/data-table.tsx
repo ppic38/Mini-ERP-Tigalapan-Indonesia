@@ -113,7 +113,11 @@ export function DataTable<T>({
   nowrap,
   viewKey,
   pageSize,
+  filterPreset,
 }: {
+  /** Opsional: pasang pilihan filter dari luar tabel (mis. kartu angka yang diklik). Setiap kali `nonce` berubah,
+   *  pilihan filter tabel diganti dengan `filters` (kunci = label filter di `filterDefs`). Tidak diisi = tidak ada efek. */
+  filterPreset?: { nonce: number; filters: Record<string, string[]> };
   /** Opsional -- di layar HP/tablet tegak (< 1024px) tiap baris jadi KARTU bertumpuk (label kolom di depan nilainya) alih-alih
    *  tabel yang digeser ke samping. Hanya dipakai halaman portal vendor; yang lain tidak berubah sama sekali. */
   mobileCards?: boolean;
@@ -273,6 +277,14 @@ export function DataTable<T>({
     if (at < 0 || to < 0 || to >= keys.length) return;
     [keys[at], keys[to]] = [keys[to], keys[at]];
     saveColPrefs({ ...colPrefs, order: keys });
+  }
+
+  // Pilihan filter dari luar (kartu angka): diterapkan sekali tiap `nonce` berganti, sesudah itu pengguna bebas mengubahnya.
+  const [presetSeen, setPresetSeen] = useState<number | undefined>(undefined);
+  if (filterPreset && filterPreset.nonce !== presetSeen) {
+    setPresetSeen(filterPreset.nonce);
+    setFilterSel(filterPreset.filters);
+    setPage(0);
   }
 
   const trimmedQuery = searchQuery.trim().toLowerCase();

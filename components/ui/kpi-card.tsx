@@ -40,7 +40,13 @@ export function KpiCard({
   accent = "blue",
   icon,
   className,
+  onClick,
+  active,
 }: {
+  /** Opsional: kartu bisa diklik (mis. sebagai filter daftar di bawahnya). Tidak diisi = kartu biasa seperti semula. */
+  onClick?: () => void;
+  /** Menandai kartu yang filternya sedang dipakai. */
+  active?: boolean;
   label: string;
   value: ReactNode;
   valueClassName?: string;
@@ -51,8 +57,17 @@ export function KpiCard({
   className?: string;
 }) {
   const Icon = icon ?? DEFAULT_ICONS[accent];
+  const Box = onClick ? "button" : "div";
   return (
-    <div className={cn("rounded-[10px] border border-border-subtle bg-surface-card px-4 py-3.5", className)}>
+    <Box
+      {...(onClick ? { type: "button" as const, onClick, "aria-pressed": !!active } : {})}
+      className={cn(
+        "min-w-0 rounded-[10px] border bg-surface-card px-4 py-3.5 text-left",
+        active ? "border-accent-blue ring-1 ring-accent-blue" : "border-border-subtle",
+        onClick && "transition-colors hover:border-accent-blue",
+        className
+      )}
+    >
       <div className="flex items-center justify-between">
         <div className="font-sans text-[10.5px] font-semibold uppercase tracking-wider text-text-muted">{label}</div>
         <div className={cn("flex h-8 w-8 flex-none items-center justify-center rounded-[8px]", ACCENT_ICON_CLASSES[accent])}>
@@ -63,6 +78,6 @@ export function KpiCard({
         {value}
       </div>
       {sub && <div className={cn("mt-1.5 font-sans text-[11.5px] text-text-muted", subClassName)}>{sub}</div>}
-    </div>
+    </Box>
   );
 }
