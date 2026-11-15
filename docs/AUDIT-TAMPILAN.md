@@ -187,3 +187,20 @@ dari nol — sekaligus membuatnya enak di HP sejak awal.
 2. **Database lokal jalan** — untuk menilai tampilan visual dan membaca `internal_action_log` /
    `vendor_action_log` sebagai bukti pemakaian nyata.
 3. **Konfirmasi owner** untuk nomor 5, 6, 7.
+
+## Temuan visual (data nyata, 2026-11-15)
+
+Dinilai dari aplikasi lokal berisi salinan data live, login Finance, layar 1024 px. Baru dua halaman dilihat;
+daftar ini akan bertambah.
+
+| # | Halaman | Temuan | Jenis |
+|---|---|---|---|
+| V1 | Dashboard Finance | Angka "TOTAL SUDAH DIBAYAR" (Rp 8.129.153.05x) **meluber keluar kartu** dan terpotong di tepi kanan. Kartu lain (Rp 145.389.130) muat. Angka rupiah besar tidak dirancang untuk lebar kartu. | Bug tata letak |
+| V2 | Sidebar Finance | Badge **Payment = 22**, tetapi halaman Payment terbuka di tab *Payment Material* yang menampilkan "Tidak ada invoice yang siap dibayar saat ini". 22 pekerjaan sebenarnya ada di tab lain (Maklon 8 + Ekspedisi 14). Pengguna membuka menu karena ada angka, lalu disambut halaman "kosong". | Masalah alur |
+| V3 | Payment > Material | Pesan kosong hanya teks kecil abu-abu di kartu putih lebar, sedangkan "Riwayat Pembayaran" di bawahnya tampil penuh. Mata langsung tertarik ke arsip, bukan ke pekerjaan. Ini wujud nyata pola "Tugas vs Riwayat" di docs/IA-FINANCE.md. | Hierarki |
+| V4 | Payment > Material | Filter "NO MRP (SIAP DIBAYAR)" dengan placeholder "— pilih MRP —" mengisi satu kartu penuh, padahal belum ada yang bisa dipilih. | Ruang terbuang |
+| V5 | Dashboard Finance | Badge Notifikasi menampilkan **183**. Angka sebesar itu berhenti bermakna. | Kegunaan |
+| V6 | Dashboard Finance | "Payment due" menampilkan Overdue / Due hari ini / Due berikutnya semuanya Rp 0, sementara 8 invoice vendor menunggu dibayar. Perlu dicek apakah data jatuh tempo memang terisi (terkait pertanyaan "Jatuh Tempo" di docs/IA-FINANCE.md). | Perlu dicek |
+
+**V2 adalah temuan paling berharga**: perbaikannya cukup membuka tab pertama yang punya pekerjaan, tanpa menyentuh
+logika bisnis apa pun.

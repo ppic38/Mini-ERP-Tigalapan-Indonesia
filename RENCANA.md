@@ -18,18 +18,42 @@ nol pekerjaan data di live. Satu-satunya jalur ke live adalah git -> Vercel. Ris
 Semua dikerjakan di lokal dulu, baru dinaikkan ke live bertahap.
 
 ## TITIK LANJUT BERIKUTNYA (baca ini dulu)
-Satu hal yang menahan semuanya: **owner mengisi `LIVE_DB_URL=` di `.env.db-sync`** (Supabase > Connect >
-Session pooler, dengan password database, karakter khusus di-encode). JANGAN minta password dikirim ke chat,
-JANGAN tampilkan isi file `.env*`. Begitu terisi, lanjutkan bagian 1 langkah 4 ke bawah:
-`bash scripts/dev/db-sync.sh all` -> ganti `.env.local` ke lokal -> jalankan app lokal -> baru boleh mulai bagian 2.
-Supabase lokal sudah jalan dan database lokalnya masih KOSONG (0 tabel) sampai db-sync dijalankan.
-Cara cek terisi/tidak yang BENAR (pola `.*` ikut cocok dengan nilai kosong, pernah salah lapor):
-`awk -F= '/^LIVE_DB_URL=/{v=substr($0,14); gsub(/\r/,"",v); print length(v)}' .env.db-sync` -- harus > 0.
+**Lingkungan lokal SUDAH SIAP dan terverifikasi (2026-11-15).** Aplikasi jalan di `http://localhost:3000` memakai
+Supabase lokal (Docker) berisi SALINAN data live: 12 MRP, 2.058 roll, 540 koli, 177 invoice material, 64 invoice
+vendor, 2.139 SKU, 10 vendor. `.env.local` menunjuk `127.0.0.1:54321` -- klik apa pun di app lokal TIDAK menyentuh
+data kantor. Cadangan koneksi live ada di `.env.live-backup` (jangan dihapus). Login Finance diuji berhasil.
 
-Status lingkungan dicek 2026-11-13 pagi: Docker mati setelah laptop restart, dinyalakan lewat
-`Start-Process "C:\Users\ASUS\AppData\Local\Programs\DockerDesktop\Docker Desktop.exe"`; 8 container Supabase
-hidup OTOMATIS bersama Docker (tidak perlu `supabase start` lagi). `LIVE_DB_URL` masih kosong,
-`.env.local` masih menunjuk LIVE, database lokal masih 0 tabel.
+**Akun uji lokal**: akun asli TIDAK disalin (tabel akun/password sengaja dikunci tim IT). Password uji semua modul
+internal ada di `.env.local` (`INTERNAL_PASSWORD_<MODUL>`, satu nilai acak yang sama untuk 8 modul; tidak di-commit,
+JANGAN ditulis di chat). Login lewat form "Password" saja tanpa username. Akun vendor produksi BELUM bisa login di
+lokal (baris vendor ada tetapi `password_hash` berisi penanda `!`); buat akun uji kalau portal vendor perlu dilihat.
+
+**Sumber data = akun baca-saja `partner_ro`** (diberikan IT, `LIVE_DB_URL` di `.env.db-sync`, tidak di-commit).
+Batas yang dipasang IT dan harus dihormati:
+- 12 tabel DIKUNCI (tidak bisa dibaca): `attachment_files`, `internal_accounts`, `internal_action_log`,
+  `internal_role_users`, `invoice_payment_proofs`, `sysadmin_audit_log`, `vendor_action_log`,
+  `vendor_invoice_payment_proofs`, `vendor_users`, `vendors_produksi` (hanya kolom non-kredensial), `wms_integration_outbox`,
+  `wos_outbox`. Di lokal tabel-tabel itu kosong (kecuali vendors_produksi). Struktur 12 tabel itu TIDAK bisa dibaca ulang
+  dari live; `db-sync.sh schema --reset` mengamankannya lalu mengembalikannya (jarang berubah; kalau berubah minta DDL ke IT).
+- Akun punya atribut BYPASSRLS (semua tabel ber-RLS tanpa policy) dan hanya SELECT.
+
+**Menyegarkan salinan** (ritual pagi): `bash scripts/dev/db-sync.sh all --reset`. Ini MENIMPA seluruh database lokal
+dengan versi live terbaru. Hanya data live yang DIBACA; live tidak pernah ditulis. Data akan stale lagi seiring waktu.
+
+**Jebakan Windows yang sudah memakan waktu (jangan diulang)**: `psql.exe` menulis akhir baris CR+LF, sehingga nama tabel
+hasil query berakhiran CR dan pola `pg_dump -t/-T` tidak cocok dengan apa pun TANPA pesan error (dump nyaris kosong).
+`tr -d ''` ternyata tidak bekerja di dalam script ini; yang terbukti bekerja adalah mengekstrak identifier saja
+(`grep -oE '[A-Za-z0-9_]+'`). Script kini menolak jalan kalau dump berisi < 20 tabel.
+
+**Menunggu tim IT (jangan diselesaikan sendiri):**
+1. Cabut akses `partner_ro` ke kolom `vendors_produksi.password_enc` (salinan password terenkripsi yang bisa dibuka
+   dengan SESSION_SECRET; kolom ini TERBACA oleh akun baca-saja walau `password_hash` tidak). Tidak disalin ke lokal.
+2. Ganti password `partner_ro` setelah pekerjaan ini selesai (pernah terlihat di chat).
+Cara cek `LIVE_DB_URL` terisi yang BENAR (pola `.*` ikut cocok dengan nilai kosong):
+`awk -F= '/^LIVE_DB_URL=/{v=substr($0,14); gsub(//,"",v); print length(v)}' .env.db-sync` -- harus > 0.
+
+**Pekerjaan berikutnya**: Fase 1-2 redesign boleh dimulai (audit visual dengan data nyata). Temuan visual pertama ada di
+`docs/AUDIT-TAMPILAN.md` bagian "Temuan visual (data nyata)".
 
 ## Konteks penting (dibaca sebelum mengambil keputusan apa pun)
 - Ini **web kantor yang LIVE dan dipakai operasional harian**. Aplikasi rusak = pekerjaan kantor berhenti.

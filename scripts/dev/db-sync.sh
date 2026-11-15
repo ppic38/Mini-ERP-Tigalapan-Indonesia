@@ -76,8 +76,19 @@ FILE_TABLES=(attachment_files invoice_pv_files invoice_support_files invoice_pay
 
 dev_psql() { psql "$DEV_DB_URL" -X -q -v ON_ERROR_STOP=1 "$@"; }
 
+# Tabel yang tidak boleh dibaca akun LIVE_DB_URL (dikunci tim IT: akun, password, log audit, bukti bayar,
+# antrean integrasi). pg_dump mengunci SEMUA tabel yang ikut didump, jadi satu tabel terlarang menggagalkan
+# seluruh dump -- baik data maupun struktur. Dihitung sekali, dipakai dump_schema dan do_data.
+# AWAS Windows: psql.exe menulis akhir baris dengan CR+LF; tanpa membuang CR (tr -d) nama tabel berakhiran CR dan pola
+# -t/-T tidak cocok dengan apa pun, TANPA pesan error.
+DENIED=$(psql "$LIVE_DB_URL" -X -At -c "select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'r' and not has_table_privilege(current_user, c.oid, 'SELECT') order by 1")
+DENIED=$(printf '%s
+' "$DENIED" | grep -oE '[A-Za-z0-9_]+' || true)
+
 dump_schema() { # $1 = url, $2 = file
-  pg_dump "$1" --schema-only --schema=public --no-owner --no-comments -f "$2"
+  local x=() t
+  for t in $DENIED; do x+=(-T "public.$t"); done
+  pg_dump "$1" --schema-only --schema=public --no-owner --no-comments "${x[@]}" -f "$2"
 }
 
 ensure_roles() {
@@ -100,24 +111,13 @@ ensure_roles() {
 do_schema() {
   local n
   n=$(dev_psql -At -c "select count(*) from pg_tables where schemaname = 'public'")
-  if [ "$n" != "0" ]; then
-    if [ "$RESET" = "1" ]; then
-      echo "Mengosongkan schema public di UJI ($DEV_REF)…"
-      dev_psql <<'SQL'
-drop schema public cascade;
-create schema public;
-grant usage on schema public to postgres, anon, authenticated, service_role;
-alter default privileges in schema public grant all on tables to postgres, anon, authenticated, service_role;
-alter default privileges in schema public grant all on functions to postgres, anon, authenticated, service_role;
-alter default privileges in schema public grant all on sequences to postgres, anon, authenticated, service_role;
-SQL
-    else
-      echo "BERHENTI: schema public UJI sudah berisi $n tabel. Tambahkan --reset untuk mengosongkannya dulu."; exit 1
-    fi
+  if [ "$n" != "0" ] && [ "$RESET" != "1" ]; then
+    echo "BERHENTI: schema public UJI sudah berisi $n tabel. Tambahkan --reset untuk mengosongkannya dulu."; exit 1
   fi
+  # Baca struktur LIVE SEBELUM menghapus apa pun di UJI: kalau pembacaan gagal, salinan lokal tetap utuh.
   echo "Membaca struktur LIVE…"
   dump_schema "$LIVE_DB_URL" "$OUT/live-schema.sql"
-  # Schema public SELALU sudah ada di tujuan (bawaan Postgres, atau dibuat ulang oleh blok --reset di atas),
+  # Schema public SELALU sudah ada di tujuan (bawaan Postgres, atau dibuat ulang oleh blok --reset di bawah),
   # sementara pg_dump >= 15 tetap menuliskan "CREATE SCHEMA public;" -- tanpa dibuang, penerapan berhenti
   # dengan ERROR: schema "public" already exists.
   sed -i -E '/^CREATE SCHEMA public;$/d; /^ALTER SCHEMA public OWNER TO /d' "$OUT/live-schema.sql"
@@ -127,6 +127,32 @@ SQL
   # untuk salinan uji: yang bukan milik role postgres dibuang.
   sed -i -E '/^ALTER DEFAULT PRIVILEGES FOR ROLE /{/^ALTER DEFAULT PRIVILEGES FOR ROLE postgres /!d}' "$OUT/live-schema.sql"
   ensure_roles "$OUT/live-schema.sql"
+  if [ "$n" != "0" ]; then
+    echo "Mengosongkan schema public di UJI ($DEV_REF)…"
+    # Struktur tabel terlarang TIDAK bisa dibaca ulang dari live, padahal tabel lain punya foreign key ke
+    # sana (mis. ke vendors_produksi). Jadi tabelnya diamankan dulu ke schema lain, schema public
+    # dibangun ulang, lalu tabelnya dikembalikan SEBELUM struktur live diterapkan. Strukturnya jarang
+    # berubah (tabel akun/log); kalau berubah, minta IT mengirim DDL-nya.
+    local t keep=""
+    for t in $DENIED; do
+      if [ "$(dev_psql -At -c "select count(*) from pg_tables where schemaname='public' and tablename='$t'")" = "1" ]; then keep="$keep $t"; fi
+    done
+    {
+      echo "create schema if not exists keep_denied;"
+      for t in $keep; do echo "alter table public.\"$t\" set schema keep_denied;"; done
+      cat <<'SQL'
+drop schema public cascade;
+create schema public;
+grant usage on schema public to postgres, anon, authenticated, service_role;
+alter default privileges in schema public grant all on tables to postgres, anon, authenticated, service_role;
+alter default privileges in schema public grant all on functions to postgres, anon, authenticated, service_role;
+alter default privileges in schema public grant all on sequences to postgres, anon, authenticated, service_role;
+SQL
+      for t in $keep; do echo "alter table keep_denied.\"$t\" set schema public;"; done
+      echo "drop schema keep_denied;"
+    } | dev_psql --single-transaction
+    [ -z "$keep" ] || echo "Tabel terlarang diamankan lalu dikembalikan:$keep"
+  fi
   echo "Menerapkan struktur ke UJI…"
   dev_psql --single-transaction -f "$OUT/live-schema.sql"
   echo "Struktur selesai: $(dev_psql -At -c "select count(*) from pg_tables where schemaname = 'public'") tabel."
@@ -141,8 +167,31 @@ do_data() {
   # DIMILIKI kolom serial tabel terpilih.
   local args=(--data-only --schema=public --no-owner --exclude-table-data='public.*_seq' -f "$OUT/live-data.sql")
   if [ "$WITH_FILES" = "0" ]; then for t in "${FILE_TABLES[@]}"; do args+=(--exclude-table-data="public.$t"); done; fi
+  # Tabel yang TIDAK boleh dibaca akun LIVE_DB_URL (mis. akun, password, log audit, bukti bayar -- sengaja
+  # dikunci tim IT) harus dikeluarkan dari dump: pg_dump mengunci SEMUA tabel sekaligus, jadi satu tabel
+  # terlarang menggagalkan seluruh dump ("permission denied for table ...").
+  # Caranya: sebut HANYA tabel yang boleh dibaca lewat -t.
+  # AWAS Windows: psql.exe menulis akhir baris "\r\n", jadi tiap nama tabel berakhiran "\r" (kecuali baris
+  # terakhir). Tanpa tr -d '\r', pola -t/-T tidak cocok dengan nama tabel apa pun -> dump nyaris kosong
+  # TANPA pesan error. Itu sebabnya "-T" sebelumnya terlihat tidak bekerja.
+  local denied readable t
+  readable=$(psql "$LIVE_DB_URL" -X -At -c "select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'r' and has_table_privilege(current_user, c.oid, 'SELECT') order by 1" | tr -d '\r')
+  readable=$(printf '%s
+' \"$readable\" | grep -oE '[A-Za-z0-9_]+' || true)
+  denied="$DENIED"
+  [ -n "$readable" ] || { echo "BERHENTI: akun LIVE_DB_URL tidak bisa membaca satu tabel pun."; exit 1; }
+  args=(--data-only --no-owner --exclude-table-data='public.*_seq' -f "$OUT/live-data.sql")
+  if [ "$WITH_FILES" = "0" ]; then for t in "${FILE_TABLES[@]}"; do args+=(--exclude-table-data="public.$t"); done; fi
+  for t in $readable; do args+=(-t "public.$t"); done
+  [ -z "$denied" ] || echo "Dilewati (tidak boleh dibaca akun LIVE): $(echo $denied | tr '\n' ' ')"
+  echo "Tabel yang dibaca: $(echo "$readable" | wc -l) dari $(( $(echo "$readable" | wc -l) + $(echo "$denied" | grep -c .) ))"
   echo "Membaca data LIVE (sekali baca)…"
   pg_dump "$LIVE_DB_URL" "${args[@]}"
+  # Pengaman: dump yang nyaris kosong = pola tabel tidak cocok, BUKAN "database kosong". Berhenti sebelum
+  # truncate, supaya salinan lokal yang sudah ada tidak terhapus oleh dump yang salah.
+  local ncopy; ncopy=$(grep -c '^COPY ' "$OUT/live-data.sql" || true)
+  if [ "$ncopy" -lt 20 ]; then echo "BERHENTI: dump hanya berisi $ncopy tabel (seharusnya puluhan). UJI tidak disentuh."; exit 1; fi
+  echo "Dump berisi $ncopy tabel."
   echo "Mengisi data ke UJI…"
   # Kosongkan tabel UJI dulu supaya bisa diulang; trigger & FK dimatikan selama pengisian.
   {
@@ -152,8 +201,42 @@ do_data() {
     echo "set session_replication_role = origin;"
   } > "$OUT/load-data.sql"
   dev_psql --single-transaction -f "$OUT/load-data.sql"
+  copy_readable_columns "$denied"
   reset_sequences
   echo "Data selesai."
+}
+
+# Tabel yang ditolak di tingkat tabel kadang masih boleh dibaca PER KOLOM (mis. vendors_produksi: daftar
+# vendor boleh, kolom password tidak). Aplikasi butuh baris vendornya agar halaman bisa tampil, jadi kolom
+# yang boleh dibaca disalin -- KECUALI kolom yang namanya mengandung password/secret/token/hash/_enc:
+# kredensial tidak pernah disalin ke laptop, walaupun ada yang masih bisa dibaca.
+copy_readable_columns() {
+  local t cols
+  for t in $1; do
+    cols=$(psql "$LIVE_DB_URL" -X -At -c "select string_agg(quote_ident(attname), ',' order by attnum) from pg_attribute where attrelid = 'public.${t}'::regclass and attnum > 0 and not attisdropped and has_column_privilege(current_user, attrelid, attnum, 'SELECT') and attname !~* '(password|secret|token|hash|_enc\$)'" | tr -d '\r')
+    cols=$(printf '%s' "$cols" | sed 's/[^A-Za-z0-9_",]//g')
+    [ -n "$cols" ] || continue
+    echo "Menyalin kolom yang boleh dibaca saja dari $t (tanpa kolom kredensial)…"
+    psql "$LIVE_DB_URL" -X -q -c "\\copy (select $cols from public.$t) to '$OUT/part-$t.tsv'"
+    # Kolom kredensial yang sengaja TIDAK disalin tapi bersifat NOT NULL tanpa default (mis.
+    # vendors_produksi.password_hash) akan menolak barisnya. Diisi penanda "!" -- BUKAN hash bcrypt yang valid,
+    # jadi baris itu tidak bisa dipakai login sampai akun uji dibuat (lihat catatan akun uji di RENCANA.md).
+    local extra_cols extra_vals
+    extra_cols=$(dev_psql -At -c "select string_agg(quote_ident(a.attname), ',' order by a.attnum), string_agg('''!''', ',' order by a.attnum) from pg_attribute a where a.attrelid = 'public.${t}'::regclass and a.attnum > 0 and not a.attisdropped and a.attnotnull and not a.atthasdef and a.attname <> all (string_to_array(replace('$cols', '\"', ''), ','))" | sed "s/[^A-Za-z0-9_,|!']//g")
+    extra_vals="${extra_cols#*|}"; extra_cols="${extra_cols%%|*}"
+    # Lewat tabel sementara (tanpa batasan NOT NULL) lalu INSERT dengan kolom tambahan terisi.
+    { echo "set session_replication_role = replica;"
+      echo "create temp table _p as select $cols from public.$t where false;"
+      echo "\\copy _p ($cols) from '$OUT/part-$t.tsv'"
+      if [ -n "$extra_cols" ]; then
+        echo "insert into public.$t ($cols,$extra_cols) select $cols,$extra_vals from _p;"
+      else
+        echo "insert into public.$t ($cols) select $cols from _p;"
+      fi
+    } > "$OUT/part-$t.sql"
+    dev_psql -f "$OUT/part-$t.sql" || echo "  (gagal menyalin $t; lanjut)"
+    rm -f "$OUT/part-$t.tsv"
+  done
 }
 
 # Setel ulang tiap sequence yang dimiliki sebuah kolom (serial/identity) ke nilai tertinggi kolom itu,
