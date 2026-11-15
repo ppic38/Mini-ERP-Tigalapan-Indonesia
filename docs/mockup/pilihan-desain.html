@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="id" data-theme="b" data-model="panel">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pilihan Desain ERP Tigalapan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..700&family=Bricolage+Grotesque:opsz,wght@12..96,400..700&family=Figtree:wght@400;500;600;700&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ---------- A. Biru Kantor: tampilan sekarang, dirapikan ---------- */
+  [data-theme="a"]{
+    --page:#F3F4F7; --card:#fff; --ink:#111827; --soft:#6B7280; --line:#E5E7EB;
+    --nav:#0B1220; --nav-ink:#C7D0E0; --nav-on:#2563EB; --nav-on-ink:#fff;
+    --act:#2563EB; --act-ink:#fff; --tint:#EFF6FF; --flag:#DC2626;
+    --r:10px; --head:"Space Grotesk",sans-serif; --body:Inter,sans-serif; --wdth:100;
+  }
+  /* ---------- B. Indigo dan Kanvas: warna celup kain, navigasi di atas ---------- */
+  [data-theme="b"]{
+    --page:#F2F3EE; --card:#FDFDFB; --ink:#171A3A; --soft:#62657D; --line:#DCDDD3;
+    --nav:#171A3A; --nav-ink:#B9BCDA; --nav-on:#F2F3EE; --nav-on-ink:#171A3A;
+    --act:#2A389C; --act-ink:#fff; --tint:#E6E8F6; --flag:#C98A0B;
+    --r:14px; --head:"Bricolage Grotesque",sans-serif; --body:Figtree,sans-serif; --wdth:100;
+  }
+  /* ---------- C. Label Butik: hitam putih, satu warna tanda ---------- */
+  [data-theme="c"]{
+    --page:#FFFFFF; --card:#fff; --ink:#151515; --soft:#6A6A6A; --line:#D9D9D9;
+    --nav:#fff; --nav-ink:#151515; --nav-on:#151515; --nav-on-ink:#fff;
+    --act:#151515; --act-ink:#fff; --tint:#F4F4F4; --flag:#C4122F;
+    --r:2px; --head:Archivo,sans-serif; --body:Archivo,sans-serif; --wdth:88;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--page);color:var(--ink);font:15px/1.5 var(--body)}
+  button,select{font:inherit;color:inherit}
+  button{cursor:pointer}
+  :focus-visible{outline:2px solid var(--act);outline-offset:2px}
+  h1,h2,h3{font-family:var(--head);font-stretch:calc(var(--wdth)*1%);letter-spacing:-.015em;margin:0}
+  .n{font-variant-numeric:tabular-nums lining-nums}
+
+  /* pemilih */
+  .chooser{background:#1c1c1c;color:#eee;padding:12px 18px;display:flex;gap:22px;flex-wrap:wrap;align-items:center;font:14px/1.3 Inter,sans-serif;position:sticky;top:0;z-index:40}
+  .chooser .g{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .chooser .t{color:#aaa}
+  .chooser button{background:#2c2c2c;border:1px solid #444;color:#eee;border-radius:7px;padding:7px 12px}
+  .chooser button[aria-pressed="true"]{background:#fff;color:#111;border-color:#fff;font-weight:600}
+  .chooser .rec{font-size:11px;background:#2E7D32;color:#fff;border-radius:99px;padding:1px 7px;margin-left:5px}
+
+  /* kerangka */
+  .app{display:grid;grid-template-columns:212px minmax(0,1fr);min-height:calc(100vh - 52px)}
+  .nav{background:var(--nav);color:var(--nav-ink);padding:20px 12px;border-right:1px solid var(--line)}
+  .brand{font-family:var(--head);font-weight:700;font-size:17px;padding:0 10px 18px;color:var(--nav-on-ink)}
+  [data-theme="a"] .brand{color:#fff}[data-theme="b"] .brand{color:#F2F3EE}[data-theme="c"] .brand{color:#151515;letter-spacing:.02em}
+  .nav a{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 12px;border-radius:calc(var(--r) - 2px);color:inherit;text-decoration:none;font-weight:500;margin-bottom:2px}
+  .nav a.on{background:var(--nav-on);color:var(--nav-on-ink)}
+  .cnt{background:var(--flag);color:#fff;border-radius:99px;font-size:12px;font-weight:700;padding:0 8px;min-width:22px;text-align:center}
+  /* B: navigasi pindah ke atas, layar jadi lebih lebar untuk isi */
+  [data-theme="b"] .app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr}
+  [data-theme="b"] .nav{display:flex;align-items:center;gap:4px;padding:10px 22px;border-right:0;overflow-x:auto}
+  [data-theme="b"] .brand{padding:0 20px 0 0;white-space:nowrap}
+  [data-theme="b"] .nav a{margin:0;white-space:nowrap;border-radius:99px;padding:7px 14px}
+  [data-theme="c"] .nav a.on{border-radius:0}
+
+  .main{padding:26px 30px 60px;min-width:0}
+  .lede{display:flex;justify-content:space-between;align-items:end;gap:16px;flex-wrap:wrap;margin-bottom:6px}
+  h1{font-size:30px;font-weight:700}
+  [data-theme="c"] h1{font-size:34px;text-transform:none}
+  .sub{color:var(--soft);margin:4px 0 20px;max-width:60ch}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:var(--card)}
+  .seg button{border:0;background:none;padding:8px 16px;font-weight:600;color:var(--soft)}
+  .seg button[aria-pressed="true"]{background:var(--ink);color:var(--page)}
+  [data-theme="a"] .seg button[aria-pressed="true"]{background:var(--act);color:#fff}
+
+  .work{display:grid;grid-template-columns:minmax(0,1fr);gap:18px;align-items:start}
+  [data-model="split"] .work{grid-template-columns:minmax(0,1fr) minmax(320px,400px)}
+
+  /* daftar keputusan */
+  .list{display:grid;gap:10px}
+  .row{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 18px;align-items:center;text-align:left;width:100%}
+  .row:hover{border-color:var(--act)}
+  .row[aria-current="true"]{border-color:var(--act);box-shadow:inset 3px 0 0 var(--act);background:var(--tint)}
+  .who{font-family:var(--head);font-weight:600;font-size:18px;font-stretch:calc(var(--wdth)*1%)}
+  .meta{color:var(--soft);font-size:14px}
+  .val{font-size:20px;font-weight:700;text-align:right;white-space:nowrap}
+  .lvl{justify-self:end;font-size:13px;color:var(--soft)}
+  /* swatch warna kain: penanda isi PO, khas pabrik pakaian */
+  .sw{display:inline-flex;gap:3px;vertical-align:middle;margin-right:8px}
+  .sw i{width:13px;height:13px;border-radius:50%;border:1px solid rgba(0,0,0,.18)}
+  [data-theme="c"] .sw i{border-radius:0}
+
+  /* isi detail (dipakai ketiga model) */
+  .detail h2{font-size:22px;margin-bottom:2px}
+  .detail .big{font-size:28px;font-weight:700;margin:10px 0 2px}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:14px 0;font-size:14px}
+  .kv dt{color:var(--soft)} .kv dd{margin:0;font-weight:500}
+  .colors{border-top:1px solid var(--line);margin-top:6px}
+  .colors div{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line);font-size:14px}
+  label.f{display:block;font-weight:600;margin:16px 0 6px}
+  select{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:calc(var(--r) - 2px);background:var(--card)}
+  .acts{display:flex;gap:10px;margin-top:16px}
+  .ok{flex:1;background:var(--act);color:var(--act-ink);border:0;border-radius:calc(var(--r) - 2px);padding:12px 16px;font-weight:700}
+  .no{background:none;border:1px solid var(--line);border-radius:calc(var(--r) - 2px);padding:12px 16px;font-weight:600}
+  .x{float:right;background:none;border:0;font-size:22px;line-height:1;color:var(--soft);padding:2px 6px}
+  .hint{color:var(--soft);font-size:13px;margin-top:12px}
+
+  /* model 1: panel samping */
+  .scrim{position:fixed;inset:0;background:rgba(15,15,25,.38);opacity:0;pointer-events:none;transition:opacity .18s;z-index:50}
+  .sheet{position:fixed;z-index:60;background:var(--card);padding:24px;overflow:auto}
+  [data-model="panel"] .sheet{top:0;right:0;bottom:0;width:min(440px,100vw);border-left:1px solid var(--line);transform:translateX(100%);transition:transform .2s ease-out}
+  /* model 2: pop-up */
+  [data-model="popup"] .sheet{top:50%;left:50%;width:min(520px,94vw);max-height:88vh;border:1px solid var(--line);border-radius:var(--r);transform:translate(-50%,-46%);opacity:0;pointer-events:none;transition:opacity .16s,transform .16s}
+  [data-model="split"] .sheet,[data-model="split"] .scrim{display:none}
+  body.open .scrim{opacity:1;pointer-events:auto}
+  body.open[data-model="panel"] .sheet,html[data-model="panel"] body.open .sheet{transform:none}
+  html[data-model="popup"] body.open .sheet{opacity:1;pointer-events:auto;transform:translate(-50%,-50%)}
+  /* model 3: dua kolom */
+  .pane{display:none;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:22px;position:sticky;top:70px}
+  [data-model="split"] .pane{display:block}
+
+  .hist{display:none;background:var(--card);border:1px solid var(--line);border-radius:var(--r);overflow:auto}
+  .hist table{width:100%;border-collapse:collapse;font-size:14px}
+  .hist th{text-align:left;color:var(--soft);font-weight:600;padding:11px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
+  .hist td{padding:10px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
+  .hist .r{text-align:right}
+  body.h .hist{display:block} body.h .work{display:none}
+  .tools{display:none;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+  body.h .tools{display:flex}
+  .tools input{flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--line);border-radius:calc(var(--r) - 2px);background:var(--card);font:inherit}
+  .tools span{border:1px solid var(--line);border-radius:99px;padding:8px 14px;background:var(--card);font-size:14px}
+
+  @media (prefers-reduced-motion:reduce){.sheet,.scrim{transition:none}}
+  @media (max-width:860px){
+    .app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr}
+    .nav{display:flex;gap:4px;overflow-x:auto;padding:10px 14px;align-items:center}
+    .brand{padding:0 14px 0 0;white-space:nowrap}.nav a{white-space:nowrap;margin:0}
+    .main{padding:18px 14px 50px}
+    [data-model="split"] .work{grid-template-columns:minmax(0,1fr)}
+    [data-model="split"] .pane{position:static}
+    .row{grid-template-columns:minmax(0,1fr)}.val,.lvl{text-align:left;justify-self:start}
+    h1{font-size:25px}
+  }
+</style>
+</head>
+<body>
+<div class="chooser" role="toolbar" aria-label="Pilihan contoh">
+  <div class="g"><span class="t">Gaya</span>
+    <button data-theme-btn="a" aria-pressed="false">A. Biru Kantor</button>
+    <button data-theme-btn="b" aria-pressed="true">B. Indigo dan Kanvas<span class="rec">saran</span></button>
+    <button data-theme-btn="c" aria-pressed="false">C. Label Butik</button>
+  </div>
+  <div class="g"><span class="t">Detail dibuka sebagai</span>
+    <button data-model-btn="panel" aria-pressed="true">Panel samping<span class="rec">saran</span></button>
+    <button data-model-btn="popup" aria-pressed="false">Pop-up</button>
+    <button data-model-btn="split" aria-pressed="false">Dua kolom</button>
+  </div>
+</div>
+
+<div class="app">
+  <nav class="nav" aria-label="Menu Finance">
+    <div class="brand">Tigalapan</div>
+    <a href="#">Ringkasan</a>
+    <a href="#" class="on">Persetujuan PO <span class="cnt n">3</span></a>
+    <a href="#">Pembayaran <span class="cnt n">22</span></a>
+    <a href="#">Saldo deposit</a>
+    <a href="#">Posisi stok</a>
+    <a href="#">Laporan HPP</a>
+  </nav>
+
+  <main class="main">
+    <div class="lede">
+      <h1>3 PO menunggu persetujuan Anda</h1>
+      <div class="seg" role="group" aria-label="Tampilan">
+        <button id="b-todo" aria-pressed="true">Perlu disetujui</button>
+        <button id="b-hist" aria-pressed="false">Riwayat</button>
+      </div>
+    </div>
+    <p class="sub">Pilih satu PO untuk melihat rinciannya, memilih entitas, lalu menyetujui atau menolak.</p>
+
+    <div class="tools"><input placeholder="Cari nomor PO, supplier, atau MRP" aria-label="Cari riwayat"><span>30 hari terakhir</span><span>Semua supplier</span></div>
+
+    <div class="work">
+      <div class="list" id="list"></div>
+      <aside class="pane detail" id="pane" aria-live="polite"></aside>
+    </div>
+
+    <div class="hist">
+      <table>
+        <thead><tr><th>Nomor PO</th><th>Supplier</th><th>MRP</th><th>Entitas</th><th>Disetujui</th><th class="r">Nilai</th></tr></thead>
+        <tbody>
+          <tr><td>PO-MAT-W43-KNITTO</td><td>KNITTO</td><td>W43</td><td>PT Tigalapan Sejahtera Indonesia</td><td class="n">06/11/2026</td><td class="r n">Rp 1.106.600.000</td></tr>
+          <tr><td>PO-MAT-W42-KNITTO</td><td>KNITTO</td><td>W42</td><td>PT Anugrah Studio Apparel</td><td class="n">29/10/2026</td><td class="r n">Rp 660.450.000</td></tr>
+          <tr><td>PO-MKL-W42-BAYU</td><td>BAYU (produksi)</td><td>W42</td><td>mengikuti PO material</td><td class="n">29/10/2026</td><td class="r n">Rp 93.617.450</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<section class="sheet detail" id="sheet" role="dialog" aria-modal="true" aria-label="Rincian PO"></section>
+
+<script>
+const PO=[
+ {id:"PO-MAT-W44-KNITTO",who:"KNITTO",mrp:"W44",vendor:"BAYU, CECEP, AWAL",val:415486140,roll:507,lvl:"Tahap Finance, lalu General Manager",
+  colors:[["#111111","Hitam 30S",212,173800000],["#7B1E3A","Burgundy 24S",168,137700000],["#1F8A8A","Tosca 24S",127,103986140]]},
+ {id:"PO-MAT-W44-FABRIKU",who:"FABRIKU",mrp:"W44",vendor:"YOGI 01",val:144178100,roll:49,lvl:"Tahap Finance",
+  colors:[["#0D0D0D","Super Black 38",49,144178100]]},
+ {id:"PO-MKL-W44-BAYU",who:"BAYU (produksi)",mrp:"W44",vendor:"ongkos jahit 17.981 pcs",val:93617450,roll:0,lvl:"Mengikuti PO material",
+  colors:[["#111111","Pendek",11200,58240000],["#7B1E3A","Panjang",6781,35377450]]},
+];
+const rp=n=>"Rp "+n.toLocaleString("id-ID");
+const root=document.documentElement, body=document.body;
+let cur=null;
+function listHTML(){
+  return PO.map((p,i)=>`<button class="row" data-i="${i}" aria-current="${cur===i}">
+    <div><div class="who">${p.who}</div>
+      <div class="meta"><span class="sw">${p.colors.map(c=>`<i style="background:${c[0]}" title="${c[1]}"></i>`).join("")}</span>${p.mrp}, untuk ${p.vendor}</div></div>
+    <div><div class="val n">${rp(p.val)}</div><div class="lvl">${p.lvl}</div></div>
+  </button>`).join("");
+}
+function detailHTML(p,closable){
+  const mat=p.roll>0;
+  return `${closable?'<button class="x" id="x" aria-label="Tutup">×</button>':''}
+  <h2>${p.who}</h2><div class="meta">${p.id}</div>
+  <div class="big n">${rp(p.val)}</div><div class="meta">${p.lvl}</div>
+  <dl class="kv"><dt>MRP</dt><dd>${p.mrp}</dd><dt>${mat?"Dikirim ke":"Pekerjaan"}</dt><dd>${p.vendor}</dd>${mat?`<dt>Jumlah</dt><dd class="n">${p.roll} roll</dd>`:""}</dl>
+  <div class="colors">${p.colors.map(c=>`<div><span><span class="sw"><i style="background:${c[0]}"></i></span>${c[1]}, <span class="n">${c[2].toLocaleString("id-ID")}</span> ${mat?"roll":"pcs"}</span><span class="n">${rp(c[3])}</span></div>`).join("")}</div>
+  ${mat?`<label class="f" for="ent">Entitas pembeli</label><select id="ent"><option>Pilih entitas</option><option>PT Tigalapan Sejahtera Indonesia</option><option>PT Anugrah Studio Apparel</option></select>`
+       :`<p class="hint">Entitas PO produksi mengikuti PO material secara otomatis.</p>`}
+  <div class="acts"><button class="ok">Setujui</button><button class="no">Tolak</button></div>
+  <p class="hint">Angka di contoh ini ilustrasi.</p>`;
+}
+function render(){
+  document.getElementById("list").innerHTML=listHTML();
+  const m=root.dataset.model, p=cur==null?null:PO[cur];
+  document.getElementById("pane").innerHTML=p?detailHTML(p,false):'<p class="hint" style="margin:0">Pilih satu PO di kiri. Rinciannya tampil di sini tanpa menutup daftar.</p>';
+  document.getElementById("sheet").innerHTML=p?detailHTML(p,true):"";
+  body.classList.toggle("open",!!p&&m!=="split");
+  const x=document.getElementById("x"); if(x) x.onclick=close;
+  document.querySelectorAll(".row").forEach(b=>b.onclick=()=>{cur=+b.dataset.i;render()});
+}
+function close(){cur=null;render()}
+document.getElementById("scrim").onclick=close;
+document.addEventListener("keydown",e=>{if(e.key==="Escape")close()});
+document.querySelectorAll("[data-theme-btn]").forEach(b=>b.onclick=()=>{
+  root.dataset.theme=b.dataset.themeBtn;
+  document.querySelectorAll("[data-theme-btn]").forEach(x=>x.setAttribute("aria-pressed",x===b));
+});
+document.querySelectorAll("[data-model-btn]").forEach(b=>b.onclick=()=>{
+  root.dataset.model=b.dataset.modelBtn;
+  document.querySelectorAll("[data-model-btn]").forEach(x=>x.setAttribute("aria-pressed",x===b));
+  if(root.dataset.model==="split"&&cur==null) cur=0;
+  render();
+});
+const bt=document.getElementById("b-todo"), bh=document.getElementById("b-hist");
+bt.onclick=()=>{body.classList.remove("h");bt.setAttribute("aria-pressed",true);bh.setAttribute("aria-pressed",false)};
+bh.onclick=()=>{close();body.classList.add("h");bh.setAttribute("aria-pressed",true);bt.setAttribute("aria-pressed",false)};
+render();
+</script>
+</body>
+</html>

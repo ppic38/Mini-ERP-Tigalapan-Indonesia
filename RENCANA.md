@@ -52,8 +52,9 @@ hasil query berakhiran CR dan pola `pg_dump -t/-T` tidak cocok dengan apa pun TA
 Cara cek `LIVE_DB_URL` terisi yang BENAR (pola `.*` ikut cocok dengan nilai kosong):
 `awk -F= '/^LIVE_DB_URL=/{v=substr($0,14); gsub(//,"",v); print length(v)}' .env.db-sync` -- harus > 0.
 
-**Pekerjaan berikutnya**: Fase 1-2 redesign boleh dimulai (audit visual dengan data nyata). Temuan visual pertama ada di
-`docs/AUDIT-TAMPILAN.md` bagian "Temuan visual (data nyata)".
+**Pekerjaan berikutnya**: lihat **docs/RENCANA-PENGERJAAN.md** (dokumen serah-terima redesign: keputusan owner,
+hasil inspeksi, paket kerja A-E dengan tanda selesai). Keputusan desain dan rekomendasi per halaman ada di
+docs/DESAIN-DAN-FITUR.md; contoh layout di docs/mockup/.
 
 ## Konteks penting (dibaca sebelum mengambil keputusan apa pun)
 - Ini **web kantor yang LIVE dan dipakai operasional harian**. Aplikasi rusak = pekerjaan kantor berhenti.
