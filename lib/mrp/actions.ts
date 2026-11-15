@@ -5896,10 +5896,11 @@ export async function submitResiGroupInvoiceAction(koliIds: string[]): Promise<v
   if (error) throw new Error(error.message);
 }
 
-/** SEMENTARA (owner 2026-10-30): Master Data Harga Maklon belum final, jadi invoice vendor yang BELUM DIBAYAR Finance (SUBMITTED, REVISION,
- *  APPROVED) selalu dihitung ulang dari Master Data TERBARU -- walau vendor sudah mengajukannya sebelum master diubah. Setelah PAID, harga
- *  terkunci permanen. Ubah ke false kalau master sudah final, supaya harga invoice dikunci saat diajukan lagi. */
-const MAKLON_RATE_LIVE_UNTIL_PAID = true;
+/** Dulu (SEMENTARA, owner 2026-10-30, selama Master Data Harga Maklon belum final) invoice vendor yang BELUM DIBAYAR (SUBMITTED, REVISION,
+ *  APPROVED) dihitung ulang dari Master Data TERBARU. Owner 2026-11-14: pakai nilai nominal maklon yang diajukan vendor ke Finance, jadi
+ *  harga baris invoice DIKUNCI saat vendor mengajukan (`submitResiGroupInvoiceAction`) dan tidak berubah lagi walau Master Data diubah.
+ *  Fungsi hitung ulang di bawah tetap ada tetapi tidak berjalan selama flag ini false; ubah ke true untuk mengembalikan perilaku lama. */
+const MAKLON_RATE_LIVE_UNTIL_PAID = false;
 
 /** Hitung ulang rate per pc + total semua invoice vendor yang belum PAID dari Master Data Harga Maklon sekarang (per tipe kategori+lengan).
  *  Mengembalikan jumlah invoice yang berubah. */
@@ -6079,7 +6080,7 @@ export async function payVendorInvoicesAction(invoiceIds: string[], proof: { dat
     if (notApproved.length > 0) throw new Error(`Invoice ${notApproved.map((i) => i.id).join(", ")} belum disetujui Procurement, jadi belum bisa dibayar.`);
     const toPay = (invs ?? []).filter((i) => i.status === "APPROVED");
     if (toPay.length === 0) return { ok: true, data: undefined };
-    // Harga terkunci permanen begitu PAID -- pastikan yang dikunci adalah harga Master Data terbaru.
+    // Hitung ulang dari Master Data hanya berjalan kalau MAKLON_RATE_LIVE_UNTIL_PAID = true; sejak 2026-11-14 false, jadi harga yang dikunci = harga saat vendor mengajukan.
     await repriceUnpaidVendorInvoices();
     const uploadedAt = nowIso();
     for (const inv of toPay) {
@@ -6096,6 +6097,31 @@ export async function payVendorInvoicesAction(invoiceIds: string[], proof: { dat
     for (const inv of toPay) {
       await insertNotification(notif(`Invoice vendor ${inv.id} telah dibayar lunas oleh Finance — bukti pembayaran tersedia di Invoice & Payment`, ["vendorMaklon"], inv.vendor_produksi));
     }
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Tandai / batalkan penanda "transaksi sudah dibuat" (migration 0091) pada invoice vendor produksi yang sudah APPROVED Procurement (siap dibayar).
+ *  Hanya Finance. TIDAK mengubah status invoice. Yang sudah ditandai orang lain tidak ditimpa (nama dan waktu penanda pertama dipertahankan);
+ *  invoice yang sudah lunas dilewati. Pola sama setInvoicesTxnCreatedAction (invoice material). */
+export async function setVendorInvoicesTxnCreatedAction(invoiceIds: string[], created: boolean): Promise<ActionResult<void>> {
+  const MIGRATION_MISSING = "Jalankan migration 0091 (kolom txn_created_at/txn_created_by di vendor_invoices) di Supabase dulu.";
+  try {
+    const actor = await requireInternalRoleWithActor("finance");
+    const ids = Array.from(new Set(invoiceIds));
+    if (ids.length === 0) return { ok: true, data: undefined };
+    const db = supabaseServer();
+    const { data: rows, error: selErr } = await db.from("vendor_invoices").select("id,status,txn_created_at").in("id", ids);
+    if (selErr) throw new Error(selErr.message.includes("txn_created") ? MIGRATION_MISSING : selErr.message);
+    const open = (rows ?? []).filter((r) => r.status === "APPROVED");
+    const targets = created ? open.filter((r) => !r.txn_created_at) : open.filter((r) => !!r.txn_created_at);
+    if (targets.length === 0) return { ok: true, data: undefined };
+    const patch = created ? { txn_created_at: nowIso(), txn_created_by: actor.actorName } : { txn_created_at: null, txn_created_by: null };
+    const { error } = await db.from("vendor_invoices").update(patch).in("id", targets.map((r) => r.id));
+    if (error) throw new Error(error.message.includes("txn_created") ? MIGRATION_MISSING : error.message);
+    await logInternalAction(actor, `${created ? "Tandai transaksi dibuat" : "Batalkan tanda transaksi dibuat"} (invoice vendor): ${targets.map((r) => r.id).join(", ")}`, "vendor_invoices", targets[0].id);
     return { ok: true, data: undefined };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

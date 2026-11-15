@@ -3749,6 +3749,80 @@ export function vendorInvoiceTotalPaid(inv: VendorInvoice): number {
   return inv.totalTagihan - denda + reward;
 }
 
+/** Kategori produk untuk tampilan pembayaran historis (Finance > Payment Maklon > Riwayat > Per Kategori Produk): tipe harga maklon
+ *  (`maklonTipeForWarna`) tanpa lengan -- "PDK"/"PJG" = Reguler, "* KIDS" = Kids, "* RIB" = Rib, "TUNIK" = Tunik, "Wangky *" = Wangky. */
+export function kategoriProdukLabel(tipe: string): string {
+  const t = tipe.toUpperCase();
+  if (/WANGK/.test(t)) return "Wangky";
+  if (/TUNIK/.test(t)) return "Tunik";
+  if (/RIB/.test(t)) return "Rib";
+  if (/KID/.test(t)) return "Kids";
+  return "Reguler";
+}
+const KATEGORI_PRODUK_ORDER = ["Reguler", "Kids", "Rib", "Tunik", "Wangky"];
+
+export type InvoiceKategoriRow = {
+  kategori: string;
+  qtyPendek: number;
+  qtyPanjang: number;
+  qty: number;
+  amount: number;
+  invoiceIds: string[];
+  /** Harga maklon per pcs yang tersimpan di baris invoice (`ratePerPc`), per lengan; satu entri per kombinasi lengan + harga dengan qty-nya. */
+  rates: { lengan: Lengan; rate: number; qty: number }[];
+};
+export type InvoiceKategoriBreakdown = {
+  rows: InvoiceKategoriRow[];
+  qty: number;
+  /** Jumlah nilai baris invoice (qty x harga maklon) di MRP ini. */
+  subtotal: number;
+  /** Denda/reward tingkat invoice (reward - denda), diprorata menurut nilai baris MRP ini bila invoice menyentuh beberapa MRP. */
+  adjustment: number;
+  /** subtotal + adjustment = nilai yang dibayar untuk MRP ini. */
+  total: number;
+  invoiceCount: number;
+};
+
+/** Pembayaran invoice vendor per KATEGORI PRODUK untuk satu MRP (owner 2026-11-14): baris invoice yang MRP-nya sama dikelompokkan menurut
+ *  kategori produknya, jadi tagihan campur (reguler + tunik / rib) tetap terbaca per kategori. Pemanggil menyaring invoice (mis. PAID satu vendor). */
+export function invoiceKategoriBreakdown(invoices: VendorInvoice[], mrpId: string, mrpDetails: MrpDetail[]): InvoiceKategoriBreakdown {
+  const byKat = new Map<string, InvoiceKategoriRow>();
+  const invoiceIds = new Set<string>();
+  let adjustment = 0;
+  for (const inv of invoices) {
+    const mine = inv.lines.filter((l) => l.mrpId === mrpId);
+    if (mine.length === 0) continue;
+    invoiceIds.add(inv.id);
+    for (const l of mine) {
+      const kategori = kategoriProdukLabel(maklonTipeForWarna(l.mrpId, l.warna, l.lengan, mrpDetails, l.usia));
+      const row = byKat.get(kategori) ?? { kategori, qtyPendek: 0, qtyPanjang: 0, qty: 0, amount: 0, invoiceIds: [], rates: [] };
+      if (l.lengan === "PENDEK") row.qtyPendek += l.qty;
+      else row.qtyPanjang += l.qty;
+      row.qty += l.qty;
+      row.amount += l.amount;
+      const sameRate = row.rates.find((r) => r.lengan === l.lengan && r.rate === l.ratePerPc);
+      if (sameRate) sameRate.qty += l.qty;
+      else row.rates.push({ lengan: l.lengan, rate: l.ratePerPc, qty: l.qty });
+      if (!row.invoiceIds.includes(inv.id)) row.invoiceIds.push(inv.id);
+      byKat.set(kategori, row);
+    }
+    const adj = vendorInvoiceAdjustmentTotal(inv, "REWARD") - vendorInvoiceAdjustmentTotal(inv, "DENDA");
+    if (adj !== 0) {
+      const mineAmount = mine.reduce((s, l) => s + l.amount, 0);
+      const allAmount = inv.lines.reduce((s, l) => s + l.amount, 0);
+      if (allAmount > 0) adjustment += Math.round((adj * mineAmount) / allAmount);
+    }
+  }
+  for (const r of byKat.values()) r.rates.sort((a, b) => (a.lengan === b.lengan ? a.rate - b.rate : a.lengan === "PENDEK" ? -1 : 1));
+  const rows = Array.from(byKat.values()).sort((a, b) => {
+    const ia = KATEGORI_PRODUK_ORDER.indexOf(a.kategori);
+    const ib = KATEGORI_PRODUK_ORDER.indexOf(b.kategori);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.kategori.localeCompare(b.kategori);
+  });
+  const subtotal = rows.reduce((s, r) => s + r.amount, 0);
+  return { rows, qty: rows.reduce((s, r) => s + r.qty, 0), subtotal, adjustment, total: subtotal + adjustment, invoiceCount: invoiceIds.size };
+}
+
 /** Retensi sudah dihapus dari alur — pembayaran sekarang cuma 1 tahap (lunas penuh sekaligus),
  *  jadi status-nya biner saja: sudah dibayar atau belum. */
 export function vendorInvoicePaymentStatus(inv: VendorInvoice): { label: string; tone: "neutral" | "warning" | "success" | "info" } {
@@ -5355,6 +5429,53 @@ function isReworkHppRow(r: HppRow): boolean {
   return r.item.includes("Rework");
 }
 
+/** HPP ESTIMASI untuk item koli hasil tambahan sisa kain (owner 2026-11-13): item ini tidak punya roll asal (`sourceBatchId` kosong, `usia` terisi), jadi tidak punya baris HPP
+ *  per roll dan dulu membuat gate Bongkar Warehouse menolak resi ("HPP item ini tidak bisa ditelusuri ke koli"). Nilainya = COGS bahan per pcs rata-rata tertimbang baris
+ *  roll yang mencatat hasil tambahan itu (`extraResults`; cadangan: warna yang sama di MRP + vendor itu, lalu semua warna MRP itu), ditambah tarif maklon baris invoice vendor untuk kunci
+ *  MRP·warna·lengan·usia yang sama (cadangan: rata-rata maklon baris roll), ditambah ongkir per pcs koli. `sementara` (estimasi) = roll asal tidak ketemu, masih terbuka, atau HPP-nya
+ *  dari invoice estimasi. `invoiceId` terisi kalau ada baris invoice vendor (bukan REVISION) untuk kunci itu; kosong = belum
+ *  ada invoice, sehingga gate memberi alasan "Sebagian item resi ini belum ada invoice vendor". */
+export function extraKoliItemHpp(
+  vendorHppRows: HppRow[],
+  invoices: VendorInvoice[],
+  koli: DeliveryKoli,
+  it: DeliveryKoliItem,
+  allKolis: DeliveryKoli[],
+  ekspedisiRates: EkspedisiRateRow[],
+  batches: ProductionBatch[] = []
+): { hppPerItem: number; invoiceId?: string; sementara: boolean } {
+  const rollRows = vendorHppRows.filter((r) => r.mrpId === koli.mrpId && !isReworkHppRow(r) && r.fg > 0 && r.cogsBahanPerItem > 0);
+  // Roll asal: roll yang mencatat hasil tambahan ini (`extraResults` dengan lengan·usia·size yang sama dan Finish Good terisi). Kalau rollnya punya baris HPP
+  // (sudah ikut kirim), bahan per pcs memakai baris roll itu saja; kalau tidak, rata-rata warna yang sama, lalu rata-rata semua warna MRP itu.
+  const extraRollIds = new Set(
+    batches
+      .filter((b) => b.mrpId === koli.mrpId && b.vendorProduksi === koli.vendorProduksi && b.warna === it.warna)
+      .filter((b) => (b.extraResults ?? []).some((x) => x.lengan === it.lengan && x.usia === it.usia && x.size === it.size && (x.fgQty ?? 0) > 0))
+      .map((b) => b.id)
+  );
+  const traced = rollRows.filter((r) => !!r.rollId && extraRollIds.has(r.rollId));
+  const sameWarna = rollRows.filter((r) => r.warna === it.warna);
+  const pool = traced.length > 0 ? traced : sameWarna.length > 0 ? sameWarna : rollRows;
+  // Estimasi kalau tidak bisa ditelusuri ke roll asal, atau roll asal masih terbuka / HPP-nya masih dari invoice estimasi.
+  const sementara = traced.length === 0 || traced.some((r) => r.sementara || r.invoiceId.startsWith("EST-"));
+  const fgSum = pool.reduce((s, r) => s + r.fg, 0);
+  const cogs = fgSum > 0 ? pool.reduce((s, r) => s + r.cogsBahanPerItem * r.fg, 0) / fgSum : 0;
+  let rate = fgSum > 0 ? pool.reduce((s, r) => s + r.biayaProduksiPerItem * r.fg, 0) / fgSum : 0;
+  let invoiceId: string | undefined;
+  for (const inv of invoices) {
+    if (inv.vendorProduksi !== koli.vendorProduksi || inv.status === "REVISION") continue;
+    const line = inv.lines.find((l) => l.mrpId === koli.mrpId && l.warna === it.warna && l.lengan === it.lengan && (l.usia ?? "") === (it.usia ?? "") && l.qty > 0);
+    if (line) {
+      invoiceId = inv.id;
+      rate = line.ratePerPc;
+      break;
+    }
+  }
+  const pcs = koli.items.filter(isBillableKoliItem).reduce((s, i) => s + i.qty, 0);
+  const ongkir = pcs > 0 ? koliOngkirShare(koli, allKolis, ekspedisiRates) / pcs : 0;
+  return { hppPerItem: cogs + rate + ongkir, invoiceId, sementara };
+}
+
 /** Spec Portal Warehouse, requirement 15 -- daftar batch pengiriman (resi group) siap dibongkar,
  *  dibangun dengan memanggil `hppRowsForInvoicePerRoll` APA ADANYA (fungsi & alokasi FIFO yang
  *  SAMA dipakai Laporan HPP & invoiceKoliBreakdown, TIDAK dihitung ulang) lalu regroup per
@@ -5478,6 +5599,14 @@ export function warehouseReceivableGroups(
           (r) => r.koliId === koli.id && r.warna === it.warna && r.lengan === it.lengan && r.jenis.slice(r.lengan.length + 1) === it.size && isReworkHppRow(r) === isRework
         );
         let hppPerItem = 0;
+        // Hasil tambahan sisa kain (tanpa roll asal, berusia) tidak punya baris HPP per roll: pakai HPP estimasi, jangan dianggap "tidak bisa ditelusuri".
+        if (matches.length === 0 && !isRework && !it.sourceBatchId && it.usia) {
+          const ex = extraKoliItemHpp(hppRowsForVendor(vendorProduksi), nonRevisionInvoices, koli, it, deliveryKolis, ekspedisiRates, productionBatches);
+          if (ex.invoiceId) invoiceIdSet.add(ex.invoiceId);
+          else anyNoInvoice = true;
+          items.push({ deliveryKoliId: koli.id, noKoli: koli.noKoli, warna: it.warna, lengan: it.lengan, size: it.size, usia: it.usia, kind: it.kind, qty: it.qty, sourceBatchId: it.sourceBatchId, hppPerItem: ex.hppPerItem, sementara: ex.sementara || undefined });
+          continue;
+        }
         if (matches.length === 0) {
           anyUntraceable = true;
         } else {

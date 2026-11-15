@@ -1026,6 +1026,8 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean; vers
     proposal: v.proposal ?? undefined,
     paidBy: v.paid_by ?? undefined,
     approvedBy: v.approved_by ?? undefined,
+    txnCreatedAt: v.txn_created_at ?? undefined,
+    txnCreatedBy: v.txn_created_by ?? undefined,
   }));
 
   // ---- Warehouse (migration 0031) -- pola sama deliveryKoliBatchRows di atas, tabel belum tentu

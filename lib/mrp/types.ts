@@ -705,6 +705,9 @@ export type VendorInvoice = {
   paidBy?: string;
   /** Migration 0083: PIC Procurement yang menyetujui invoice (akun sub-user atau akun utama). */
   approvedBy?: string;
+  /** Migration 0091: penanda Finance "transaksi sudah dibuat" (sudah transfer) -- status invoice tidak berubah; pola sama RawMaterialInvoice.txnCreatedAt. */
+  txnCreatedAt?: string;
+  txnCreatedBy?: string;
 };
 
 export type ProductionGroupMeta = {

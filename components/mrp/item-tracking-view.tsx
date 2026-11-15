@@ -383,6 +383,7 @@ export function ItemTrackingView() {
   const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
   const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
   const invoices = useMrpStore((s) => s.invoices);
+  const materialPOs = useMrpStore((s) => s.materialPOs);
 
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
@@ -460,7 +461,7 @@ export function ItemTrackingView() {
     if (dateFrom || dateTo) parts.push(`tanggal kirim ${dateFrom ? formatDate(dateFrom) : "…"} s/d ${dateTo ? formatDate(dateTo) : "…"}`);
     try {
       await exportTrackingExcel(
-        { rows, filterLabel: parts.length > 0 ? "Filter: " + parts.join(" · ") : undefined, batches: productionBatches, results: productionResults, kolis: deliveryKolis, invoices, aduans: mrpDetails.flatMap((d) => d.aduanRows) },
+        { rows, filterLabel: parts.length > 0 ? "Filter: " + parts.join(" · ") : undefined, batches: productionBatches, results: productionResults, kolis: deliveryKolis, invoices, aduans: mrpDetails.flatMap((d) => d.aduanRows), aduanMrpIds: Object.fromEntries(mrpDetails.flatMap((d) => d.aduanRows.map((a) => [a.id, d.mrp.id] as const))), materialPOs },
         `WIP-Tracking-Item-${today}.xlsx`
       );
     } catch (e) {

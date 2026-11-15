@@ -44,8 +44,6 @@ export function InvoiceVendorReviewPanel() {
   const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
-  const repriceVendorInvoices = useMrpStore((s) => s.repriceVendorInvoices);
-  const [repricing, setRepricing] = useState(false);
   const staticMrps = useMrpStore((s) => s.staticMrps);
   const productionBatches = useMrpStore((s) => s.productionBatches);
   const productionResults = useMrpStore((s) => s.productionResults);
@@ -163,25 +161,7 @@ export function InvoiceVendorReviewPanel() {
           >
             Download laporan (Excel)
           </Button>
-          <Button
-            variant="ghost"
-            size="xs"
-            disabled={repricing}
-            title="Sementara: invoice vendor yang belum dibayar Finance selalu memakai Harga Maklon Master Data terbaru. Klik untuk menghitung ulang sekarang."
-            onClick={async () => {
-              setRepricing(true);
-              try {
-                const n = await repriceVendorInvoices();
-                void alertDialog({ title: "Harga master terbaru diterapkan", message: n > 0 ? n + " invoice yang belum dibayar dihitung ulang dari Master Data Harga Maklon." : "Semua invoice yang belum dibayar sudah memakai harga Master Data terbaru.", tone: "default" });
-              } catch (err) {
-                void alertDialog({ title: "Gagal menghitung ulang", message: err instanceof Error ? err.message : String(err), tone: "danger" });
-              } finally {
-                setRepricing(false);
-              }
-            }}
-          >
-            {repricing ? "Menghitung…" : "Terapkan harga master terbaru"}
-          </Button>
+          {/* Tombol "Terapkan harga master terbaru" dihapus (owner 2026-11-14): harga maklon invoice dikunci saat vendor mengajukan, tidak lagi mengikuti Master Data. */}
           </span>
         </div>
         {vendorMrpSummaries.length === 0 && <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada invoice vendor.</div>}
