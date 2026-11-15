@@ -188,8 +188,9 @@ function ItemDetailModal({ item, onClose }: { item: ItemTrackRow; onClose: () =>
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={onClose}>
-      <div className="flex max-h-[88vh] w-full max-w-[1100px] flex-col overflow-hidden rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.25)]" onClick={(e) => e.stopPropagation()}>
+    // Redesign 2026-11-16: rincian item dibuka sebagai panel samping (kanan), bukan pop-up di tengah; isinya sama.
+    <div className="fixed inset-0 z-50 flex justify-end bg-[#0B131B]/35" onClick={onClose}>
+      <div role="dialog" aria-modal="true" className="flex h-full w-full max-w-[1100px] flex-col overflow-hidden bg-white shadow-[-12px_0_32px_rgba(11,19,27,.18)] motion-safe:animate-in motion-safe:slide-in-from-right-8 motion-safe:fade-in motion-safe:duration-200" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 border-b border-border-subtle px-5 py-3.5">
           <div>
             <div className="font-sans text-[16px] font-bold text-text-primary">{item.itemName}</div>
