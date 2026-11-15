@@ -104,13 +104,18 @@ tampilan bawaan tidak berubah kecuali yang dimaksud. Untuk A2 dan A5: bandingkan
       langsung terbuka; yang lain membuka form password yang sudah ada. **Tidak menyentuh `lib/auth/*`.**
 - [x] **B4. Halaman utama** (`app/page.tsx`): tulisan besar kiri tetap, kanan jadi kisi modul.
 - [ ] **B5. Baris kendali** (komponen baru): jejak halaman, kotak cari + keping, favorit, penghitung halaman, tombol aksi.
-- [ ] **B6. Panel samping** (komponen baru) dengan penutup Esc, fokus terjaga, layar penuh di HP.
-- [ ] **B7. Kartu angka** (komponen baru): ringkas, tidak meluber, bisa diklik sebagai filter.
+- [x] **B6. Panel samping** (komponen baru) dengan penutup Esc, fokus terjaga, layar penuh di HP.
+- [x] **B7. Kartu angka** (komponen baru): ringkas, tidak meluber, bisa diklik sebagai filter.
 - [?] **B8. Mode Sysadmin**: sidebar bertumpuk dipertahankan atau diganti kisi. Menunggu owner.
 
 Catatan B1-B4 (selesai 2026-11-16, commit `e3c6152`): saklar `TOP_NAV_ENABLED` di `components/shell/app-shell.tsx`; menu belum
 dikelompokkan dalam dropdown (masih daftar `nav.ts` apa adanya, yang tidak muat masuk "Lainnya"); Mode Sysadmin dan portal
 vendor tetap sidebar. Berikutnya: B5 baris kendali, B6 panel samping, B7 kartu angka.
+
+Catatan B6-B7 dan PPIC (2026-11-16, commit `bcc1ad1`, `c5d0b85`, `e3f134d`): `components/ui/side-panel.tsx`, `KpiCard` bisa diklik,
+`DataTable.filterPreset`. PPIC sudah memakai pola baru (MRP, Tracking Item, Dashboard); sisa PPIC: pita tahapan Dashboard
+(paket C), filter Tracking Item ke keping, Master Data jadi Pengaturan. Baris kendali B5 belum jadi komponen tersendiri
+(sementara memakai kepala DataTable).
 
 ### Paket C — Pemantauan staging ("Lacak")
 Kebutuhan owner: melihat status satu PO/MRP di semua tahap tanpa membuka tiap modul.
@@ -147,7 +152,7 @@ Tiap modul = satu branch pendek. Langkah: nyalakan kerangka Odoo, pindahkan filt
 "tugas + riwayat" menjadi satu daftar dengan filter bawaan, pindahkan rincian ke panel samping, pasang kartu.
 Rekomendasi per halaman ada di docs/DESAIN-DAN-FITUR.md (PPIC bagian 9, Finance bagian 4).
 
-- [ ] **E1. PPIC** (disetujui owner). Kotak impor jadi tombol + panel; pita tahapan di Ringkasan; Tracking Item
+- [~] **E1. PPIC** (disetujui owner; sebagian selesai 2026-11-16, lihat catatan B6-B7). Kotak impor jadi tombol + panel; pita tahapan di Ringkasan; Tracking Item
       (ikut berubah di SCM); Master Data jadi menu Pengaturan.
 - [ ] **E2. Procurement.** Purchase Order: kartu "MRP tanpa PO" jadi keping/penanda; 3 tab tetap. Paying Voucher:
       dua tabel jadi satu daftar berfilter "Belum invoice". Raw Material: tabel 12 kolom dipangkas + bagi halaman
