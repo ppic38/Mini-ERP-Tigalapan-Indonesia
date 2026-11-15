@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Bell, Menu } from "lucide-react";
 import type { Notification } from "@/lib/mrp/types";
 
@@ -39,7 +39,11 @@ export function Topbar({
   onOpenProfile,
   showNotifications = false,
   onOpenMenu,
+  leading,
 }: {
+  /** Isi sisi kiri bar di layar lebar (menu modul gaya Odoo). Kalau diisi, nama peran di kiri hanya tampil di
+   *  layar kecil; kalau kosong, bar tampil seperti semula. */
+  leading?: ReactNode;
   /** Tombol hamburger (hanya tampil < lg) untuk membuka sidebar yang jadi laci di layar kecil. */
   onOpenMenu?: () => void;
   role: string;
@@ -64,8 +68,9 @@ export function Topbar({
         </button>
       )}
       {/* Nama peran/vendor sudah ada di tombol profil (kanan); di HP cukup satu kali supaya tidak sempit. */}
-      <div className="hidden truncate font-sans text-[13px] font-semibold text-text-primary sm:block">{role}</div>
-      <div className="ml-auto flex min-w-0 items-center gap-2.5 sm:gap-[14px]">
+      <div className={"hidden truncate font-sans text-[13px] font-semibold text-text-primary sm:block" + (leading ? " lg:hidden" : "")}>{role}</div>
+      {leading}
+      <div className="ml-auto flex flex-none min-w-0 items-center gap-2.5 sm:gap-[14px]">
         {showNotifications && (
         <>
         <div className="relative">

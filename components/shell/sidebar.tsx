@@ -111,7 +111,11 @@ export function Sidebar({
   onClose,
   help,
   boxedHrefs,
+  drawerOnly = false,
 }: {
+  /** Kerangka menu atas (gaya Odoo): sidebar hanya dipakai sebagai laci di layar kecil dan disembunyikan di
+   *  layar lebar, karena menunya sudah ada di bar atas. Bawaan false = perilaku lama. */
+  drawerOnly?: boolean;
   /** Link "Panduan Penggunaan" di dasar sidebar (revisi 2026-10-12, owner; untuk saat ini hanya modul Vendor Produksi).
    *  Nomor feedback ada di halaman panduannya. Kosong = tidak tampil. */
   help?: { guideHref: string; guideActive?: boolean };
@@ -166,10 +170,10 @@ export function Sidebar({
         // < lg: laci tetap di kiri layar, geser masuk/keluar. >= lg: kolom biasa di samping konten.
         "fixed inset-y-0 left-0 z-40 transition-transform duration-200 ease-out",
         mobileOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full",
-        "lg:z-auto lg:w-[212px] lg:max-w-none lg:translate-x-0 lg:shadow-none lg:transition-none",
+        drawerOnly ? "lg:hidden" : "lg:z-auto lg:w-[212px] lg:max-w-none lg:translate-x-0 lg:shadow-none lg:transition-none",
         // Dengan blok bantuan, sidebar menempel setinggi layar supaya Panduan & nomor feedback selalu terlihat di dasar layar
         // (bukan di dasar halaman yang panjang). Tanpa bantuan: perilaku lama.
-        help ? "lg:sticky lg:top-0 lg:h-screen lg:self-start lg:overflow-y-auto" : "lg:static lg:overflow-visible"
+        drawerOnly ? "" : help ? "lg:sticky lg:top-0 lg:h-screen lg:self-start lg:overflow-y-auto" : "lg:static lg:overflow-visible"
       )}
     >
       <div className="flex h-[52px] flex-none items-center gap-[9px] border-b border-white/8 px-4">
