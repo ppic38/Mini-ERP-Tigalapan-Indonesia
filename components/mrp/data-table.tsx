@@ -1,7 +1,8 @@
 "use client";
 
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { InfoPopover } from "@/components/ui/info-popover";
 
@@ -36,6 +37,32 @@ export type SearchDef<T> = {
   getText: (row: T) => string;
 };
 
+const COL_PREFS_EVENT = "dt-kolom-berubah";
+function subscribeColPrefs(onChange: () => void) {
+  window.addEventListener("storage", onChange);
+  window.addEventListener(COL_PREFS_EVENT, onChange);
+  return () => {
+    window.removeEventListener("storage", onChange);
+    window.removeEventListener(COL_PREFS_EVENT, onChange);
+  };
+}
+function readColPrefsRaw(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function parseColPrefs(raw: string | null): { shown: string[]; hidden: string[] } {
+  const strs = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+  try {
+    const parsed = raw ? (JSON.parse(raw) as { shown?: unknown; hidden?: unknown }) : null;
+    return { shown: strs(parsed?.shown), hidden: strs(parsed?.hidden) };
+  } catch {
+    return { shown: [], hidden: [] };
+  }
+}
+
 export function DataTable<T>({
   title,
   subtitle,
@@ -58,6 +85,8 @@ export function DataTable<T>({
   collapseSignal,
   mobileCards,
   nowrap,
+  viewKey,
+  pageSize,
 }: {
   /** Opsional -- di layar HP/tablet tegak (< 1024px) tiap baris jadi KARTU bertumpuk (label kolom di depan nilainya) alih-alih
    *  tabel yang digeser ke samping. Hanya dipakai halaman portal vendor; yang lain tidak berubah sama sekali. */
@@ -113,8 +142,36 @@ export function DataTable<T>({
    *  jangan pakai `key` di komponen ini buat maksud yang sama (itu me-remount seluruh state,
    *  termasuk kolom & filter). */
   collapseSignal?: number;
+  /** Opsional: kunci penyimpanan pilihan kolom. Tidak diisi = alamat halaman + judul tabel, jadi semua tabel
+   *  otomatis mengingat pilihan kolomnya tanpa menyentuh tiap pemakai. Isi sendiri hanya kalau dua tabel di satu
+   *  halaman berjudul sama. */
+  viewKey?: string;
+  /** Opsional: jumlah baris per halaman. Tidak diisi = dibagi 50 baris per halaman HANYA kalau baris lebih dari
+   *  100 (tabel kecil tidak berubah). `false` = jangan pernah dibagi. */
+  pageSize?: number | false;
 }) {
-  const [visible, setVisible] = useState<Set<string>>(new Set(columns.filter((c) => c.default).map((c) => c.key)));
+  // Pilihan kolom diingat per tabel di browser (owner 2026-11-16: field harus fleksibel, dan sebelumnya pilihan
+  // hilang tiap halaman dibuka). Yang disimpan SELISIH dari bawaan (kolom yang sengaja ditampilkan / disembunyikan),
+  // bukan daftar lengkap -- supaya kolom baru yang ditambahkan ke tabel di kemudian hari tetap ikut bawaannya.
+  const pathname = usePathname();
+  const storageKey = "dt-kolom-v1:" + (viewKey ?? `${pathname}:${typeof title === "string" ? title : ""}`);
+  // useSyncExternalStore: render server memakai bawaan (null), klien membaca localStorage setelah hidrasi,
+  // dan perubahan dari tab lain ikut terbaca.
+  const colPrefsRaw = useSyncExternalStore(subscribeColPrefs, () => readColPrefsRaw(storageKey), () => null);
+  const colPrefs = useMemo(() => parseColPrefs(colPrefsRaw), [colPrefsRaw]);
+  function saveColPrefs(next: { shown: string[]; hidden: string[] }) {
+    try {
+      if (next.shown.length === 0 && next.hidden.length === 0) window.localStorage.removeItem(storageKey);
+      else window.localStorage.setItem(storageKey, JSON.stringify(next));
+    } catch {
+      // Penyimpanan penuh atau diblokir: pilihan tidak bisa diingat.
+    }
+    window.dispatchEvent(new Event(COL_PREFS_EVENT));
+  }
+  const visible = new Set(columns.filter((c) => (c.default || colPrefs.shown.includes(c.key)) && !colPrefs.hidden.includes(c.key)).map((c) => c.key));
+  const colPrefsActive = colPrefs.shown.length > 0 || colPrefs.hidden.length > 0;
+  const [page, setPage] = useState(0);
+  const [pageSizeChoice, setPageSizeChoice] = useState<number | null>(null);
   const [colOpen, setColOpen] = useState(false);
   const [filterValues, setFilterValues] = useState<string[]>((filterDefs ?? []).map(() => ""));
   const [searchQuery, setSearchQuery] = useState("");
@@ -138,12 +195,13 @@ export function DataTable<T>({
   }
 
   function toggle(key: string) {
-    setVisible((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+    const isDefault = columns.some((c) => c.key === key && c.default);
+    const shown = colPrefs.shown.filter((k) => k !== key);
+    const hidden = colPrefs.hidden.filter((k) => k !== key);
+    if (visible.has(key)) {
+      if (isDefault) hidden.push(key);
+    } else if (!isDefault) shown.push(key);
+    saveColPrefs({ shown, hidden });
   }
 
   const trimmedQuery = searchQuery.trim().toLowerCase();
@@ -168,6 +226,20 @@ export function DataTable<T>({
     );
     return f.options.filter((o) => o === filterValues[i] || pool.some((r) => f.test(r, o)));
   }
+  // Bagi halaman (owner 2026-11-16): tabel besar dulu dirender sekaligus (Master SKU 2.139 baris, Tracking Item 881,
+  // Yield Alert 595 -- halaman setinggi 47.677 px). Ini HANYA membatasi baris yang digambar; `filtered` tetap utuh,
+  // jadi hitungan, total, dan export pemakai tidak berubah.
+  const AUTO_PAGE_MIN = 100;
+  const effectivePageSize = pageSize === false ? 0 : (pageSizeChoice ?? (typeof pageSize === "number" ? pageSize : filtered.length > AUTO_PAGE_MIN ? 50 : 0));
+  const pageCount = effectivePageSize > 0 ? Math.max(1, Math.ceil(filtered.length / effectivePageSize)) : 1;
+  const currentPage = Math.min(page, pageCount - 1);
+  let pageRows = effectivePageSize > 0 ? filtered.slice(currentPage * effectivePageSize, (currentPage + 1) * effectivePageSize) : filtered;
+  // Baris yang wajib selalu terlihat tidak boleh tersembunyi di halaman lain.
+  if (alwaysShowKey != null && effectivePageSize > 0 && !pageRows.some((r) => keyOf(r) === alwaysShowKey)) {
+    const pinned = filtered.find((r) => keyOf(r) === alwaysShowKey);
+    if (pinned) pageRows = [pinned, ...pageRows];
+  }
+  const showPager = pageSize !== false && (effectivePageSize > 0 || pageSizeChoice === 0) && filtered.length > 25;
   const sysadminMode = useSysadminMode();
   const visibleColumns = [...columns.filter((c) => !c.sysadmin && visible.has(c.key)), ...(sysadminMode ? columns.filter((c) => c.sysadmin) : [])];
 
@@ -192,6 +264,11 @@ export function DataTable<T>({
                     {c.label}
                   </label>
                 ))}
+                {colPrefsActive && (
+                  <button onClick={() => saveColPrefs({ shown: [], hidden: [] })} className="mt-1 w-full rounded border-t border-border-subtle px-2 py-1.5 text-left font-sans text-xs font-semibold text-action-primary hover:bg-[#F7F9FB]">
+                    Kembalikan kolom bawaan
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -245,7 +322,7 @@ export function DataTable<T>({
             </tr>
           </thead>
           <tbody>
-            {filtered.map((r) => {
+            {pageRows.map((r) => {
               const key = keyOf(r);
               const isExpanded = renderExpanded ? expandedKeys.has(key) : false;
               return (
@@ -299,6 +376,46 @@ export function DataTable<T>({
           </tbody>
         </table>
       </div>
+      {showPager && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle bg-[#FAFBFC] px-5 py-2 font-sans text-[11.5px] text-text-muted max-md:px-4">
+          <span>
+            {effectivePageSize > 0
+              ? `${currentPage * effectivePageSize + 1}–${Math.min((currentPage + 1) * effectivePageSize, filtered.length)} dari ${filtered.length} baris`
+              : `${filtered.length} baris`}
+          </span>
+          <div className="flex items-center gap-2">
+            <select
+              aria-label="Baris per halaman"
+              value={effectivePageSize}
+              onChange={(e) => {
+                setPageSizeChoice(Number(e.target.value));
+                setPage(0);
+              }}
+              className="rounded-md border border-border-subtle bg-white px-2 py-[5px] font-sans text-[11.5px] font-medium text-[#31414F]"
+            >
+              {[25, 50, 100].map((n) => (
+                <option key={n} value={n}>
+                  {n} per halaman
+                </option>
+              ))}
+              <option value={0}>Semua</option>
+            </select>
+            {effectivePageSize > 0 && (
+              <>
+                <button type="button" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)} className="rounded-md border border-border-subtle bg-white px-2.5 py-[5px] font-semibold text-[#31414F] disabled:opacity-40">
+                  Sebelumnya
+                </button>
+                <span>
+                  {currentPage + 1} / {pageCount}
+                </span>
+                <button type="button" disabled={currentPage >= pageCount - 1} onClick={() => setPage(currentPage + 1)} className="rounded-md border border-border-subtle bg-white px-2.5 py-[5px] font-semibold text-[#31414F] disabled:opacity-40">
+                  Berikutnya
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

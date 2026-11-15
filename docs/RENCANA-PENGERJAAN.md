@@ -73,10 +73,10 @@ Urutan dipilih supaya manfaat terbesar datang lebih dulu dari perubahan paling k
 di komponen bersama; setelah itu tiap modul tinggal "menyalakan".
 
 ### Paket A — Tabel bersama (`components/mrp/data-table.tsx`, dipakai 17+ halaman)
-- [ ] **A1. Pilihan kolom tersimpan** per pengguna dan per tabel (localStorage). Kunci bawaan = alamat halaman +
+- [x] **A1. Pilihan kolom tersimpan** per pengguna dan per tabel (localStorage). Kunci bawaan = alamat halaman +
       judul tabel, jadi berlaku di semua tabel tanpa menyentuh tiap halaman. Kolom baru yang ditambah tim IT di
       kemudian hari tetap muncul sesuai bawaannya (simpan daftar "disembunyikan" dan "ditampilkan" terpisah dari bawaan).
-- [ ] **A2. Bagi halaman otomatis** bila baris > 100 (50 per halaman, bisa 25/50/100/Semua). Hanya tampilan; baris
+- [x] **A2. Bagi halaman otomatis** bila baris > 100 (50 per halaman, bisa 25/50/100/Semua). Hanya tampilan; baris
       yang dihitung export dan total tidak berubah. Memperbaiki 2.139 / 881 / 595 baris sekaligus.
 - [ ] **A3. Urutan kolom bisa diubah** (naik/turun di menu Kolom) dan tersimpan. Ini inti "field fleksibel".
 - [ ] **A4. Kelompokkan (group by)** satu tingkat dulu: pilih kolom, baris terkumpul per nilai, tiap kelompok bisa
@@ -127,7 +127,7 @@ PPIC), `app/scm/monitoring/page.tsx` (status lintas modul per MRP), `mrpStatusBa
   dilihat modul itu; tanyakan owner sebelum menampilkan nilai ke modul yang sekarang tidak melihatnya.
 
 ### Paket D — Kecepatan (tanpa database)
-- [ ] **D1.** Bagi halaman tabel (sama dengan A2).
+- [x] **D1.** Bagi halaman tabel (sama dengan A2).
 - [ ] **D2. Pustaka unduhan dimuat saat tombol ditekan** di 18 file yang masih impor statis (`exceljs` 10 file,
       PDF/XLSX/OCR 8 file). Cari: `grep -rlE "^import .* from ['\"](exceljs|jspdf|jspdf-autotable|pdfjs-dist|xlsx|tesseract\.js)['\"]" lib components app`.
 - [ ] **D3. Kerangka halaman tampil lebih dulu**: ganti layar "Memuat data…" yang menahan semuanya
@@ -177,3 +177,4 @@ export khusus.
 | Tanggal | Paket | Yang dikerjakan | Commit |
 |---|---|---|---|
 | 2026-11-16 | — | Rencana ini dibuat; inspeksi otomatis PPIC, Procurement, SCM, Produksi | (lihat git log) |
+| 2026-11-16 | A1, A2, D1 | `DataTable`: pilihan kolom tersimpan (selisih dari bawaan, kunci = alamat halaman + judul) dan bagi halaman otomatis di atas 100 baris. Diuji: Yield Alert 595 baris jadi 50 (tinggi halaman 47.677 px jadi 4.771 px), SKU 2.139 jadi 50, Tracking Item 881 jadi 50; tabel 48 dan 39 baris tidak berubah; kolom yang dimatikan bertahan setelah muat ulang. Branch `redesign-fondasi-tabel`, BELUM di-merge ke `main`. | (commit berikut) |
