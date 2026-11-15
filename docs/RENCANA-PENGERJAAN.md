@@ -78,12 +78,12 @@ di komponen bersama; setelah itu tiap modul tinggal "menyalakan".
       kemudian hari tetap muncul sesuai bawaannya (simpan daftar "disembunyikan" dan "ditampilkan" terpisah dari bawaan).
 - [x] **A2. Bagi halaman otomatis** bila baris > 100 (50 per halaman, bisa 25/50/100/Semua). Hanya tampilan; baris
       yang dihitung export dan total tidak berubah. Memperbaiki 2.139 / 881 / 595 baris sekaligus.
-- [ ] **A3. Urutan kolom bisa diubah** (naik/turun di menu Kolom) dan tersimpan. Ini inti "field fleksibel".
-- [ ] **A4. Kelompokkan (group by)** satu tingkat dulu: pilih kolom, baris terkumpul per nilai, tiap kelompok bisa
+- [x] **A3. Urutan kolom bisa diubah** (naik/turun di menu Kolom) dan tersimpan. Ini inti "field fleksibel".
+- [x] **A4. Kelompokkan (group by)** satu tingkat dulu: pilih kolom, baris terkumpul per nilai, tiap kelompok bisa
       dibuka-tutup, ada jumlah baris dan total kolom angka. Prop opsional `groupable`.
-- [ ] **A5. Filter sebagai keping** di kotak cari, menggantikan deretan `select` (prop opsional; `filterDefs` lama
+- [x] **A5. Filter sebagai keping** di kotak cari, menggantikan deretan `select` (prop opsional; `filterDefs` lama
       tetap diterima dan diubah jadi keping). Dukung banyak nilai per kolom.
-- [ ] **A6. Favorit**: simpan gabungan filter + kelompok + kolom + urutan dengan nama; pilih satu sebagai bawaan.
+- [x] **A6. Favorit** (A3-A6 selesai 2026-11-16, commit `a3ddb83`; portal vendor dikecualikan; kelompok memakai kolom ber-filter): simpan gabungan filter + kelompok + kolom + urutan dengan nama; pilih satu sebagai bawaan.
       Disimpan di localStorage per akun (`internalActor.username` atau nama modul) dan per tabel.
 - [ ] **A7. Export yang tampil**: tombol yang membuat Excel dari kolom terlihat + filter + kelompok aktif.
       `exceljs` dimuat saat tombol ditekan (`await import`). Export khusus yang sudah ada tidak diganti.
