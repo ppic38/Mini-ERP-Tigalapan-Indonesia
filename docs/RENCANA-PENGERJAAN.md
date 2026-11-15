@@ -96,17 +96,21 @@ tampilan bawaan tidak berubah kecuali yang dimaksud. Untuk A2 dan A5: bandingkan
 "mengikuti filter" (Tracking Item) sebelum dan sesudah.
 
 ### Paket B — Kerangka gaya Odoo (`components/shell/*`, `lib/shell/nav.ts`, `app/page.tsx`)
-- [ ] **B1. Kerangka baru di samping yang lama**: `AppShell` menerima pilihan tata letak per modul
+- [x] **B1. Kerangka baru di samping yang lama**: `AppShell` menerima pilihan tata letak per modul
       (bawaan = sidebar sekarang). Modul pindah satu per satu.
-- [ ] **B2. Bar atas**: tombol kisi, nama modul, menu dengan dropdown (dari `nav.ts`, ditambah pengelompokan opsional),
+- [x] **B2. Bar atas**: tombol kisi, nama modul, menu dengan dropdown (dari `nav.ts`, ditambah pengelompokan opsional),
       notifikasi (`99+`), profil. Badge tetap dari `lib/shell/badges.ts`.
-- [ ] **B3. Kisi pindah modul**: lapisan berisi 9 modul dengan ikon yang sekarang. Modul yang sesinya masih aktif
+- [x] **B3. Kisi pindah modul**: lapisan berisi 9 modul dengan ikon yang sekarang. Modul yang sesinya masih aktif
       langsung terbuka; yang lain membuka form password yang sudah ada. **Tidak menyentuh `lib/auth/*`.**
-- [ ] **B4. Halaman utama** (`app/page.tsx`): tulisan besar kiri tetap, kanan jadi kisi modul.
+- [x] **B4. Halaman utama** (`app/page.tsx`): tulisan besar kiri tetap, kanan jadi kisi modul.
 - [ ] **B5. Baris kendali** (komponen baru): jejak halaman, kotak cari + keping, favorit, penghitung halaman, tombol aksi.
 - [ ] **B6. Panel samping** (komponen baru) dengan penutup Esc, fokus terjaga, layar penuh di HP.
 - [ ] **B7. Kartu angka** (komponen baru): ringkas, tidak meluber, bisa diklik sebagai filter.
 - [?] **B8. Mode Sysadmin**: sidebar bertumpuk dipertahankan atau diganti kisi. Menunggu owner.
+
+Catatan B1-B4 (selesai 2026-11-16, commit `e3c6152`): saklar `TOP_NAV_ENABLED` di `components/shell/app-shell.tsx`; menu belum
+dikelompokkan dalam dropdown (masih daftar `nav.ts` apa adanya, yang tidak muat masuk "Lainnya"); Mode Sysadmin dan portal
+vendor tetap sidebar. Berikutnya: B5 baris kendali, B6 panel samping, B7 kartu angka.
 
 ### Paket C — Pemantauan staging ("Lacak")
 Kebutuhan owner: melihat status satu PO/MRP di semua tahap tanpa membuka tiap modul.
