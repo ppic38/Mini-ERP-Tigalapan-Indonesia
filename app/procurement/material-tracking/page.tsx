@@ -9,7 +9,7 @@ import { DataTable, aggSame, aggSum, type ColumnDef, type FilterDef } from "@/co
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Tabs } from "@/components/ui/tabs";
 import { MATERIAL_ROLL_STAGES, buildMaterialRolls, type MaterialRollRow } from "@/lib/mrp/materialRolls";
-import { flowTone } from "@/lib/mrp/flowStatus";
+import { batchShippingMap, flowTone, invoiceFlowStage, type FlowStage } from "@/lib/mrp/flowStatus";
 import { TransferMaterialModal, type TransferCandidate } from "@/components/mrp/transfer-material-modal";
 import { SetDeliveryModal } from "@/components/mrp/set-delivery-modal";
 import { WithdrawVendorModal } from "@/components/mrp/withdraw-vendor-modal";
@@ -23,7 +23,6 @@ import {
   formatRupiah,
   maklonPoBadgeWithApproval,
   materialPoFullStatus,
-  materialPoFullStatusBadge,
   movableRollCountForInvoiceColor,
   mrpDetailFor,
   poDisplayNo,
@@ -58,17 +57,18 @@ type TrackingRow = {
   tglReceiving?: string;
   tglProduksi?: string;
   status: MaterialPoFullStatus;
+  /** Status staging standar kiriman ini (lib/mrp/flowStatus.ts): tahap paling awal roll-rollnya. */
+  flow: FlowStage;
   invoice?: RawMaterialInvoice;
 };
 
 /** Status kiriman di halaman ini (revisi 2026-10-13, owner): GOOD RECEIPT (hijau) kalau SEMUA roll kiriman itu sudah diterima vendor;
  *  selama belum lengkap -- sudah dikirim tapi belum diterima atau baru diterima sebagian -- tampil DELIVERY (ungu). Tahap lain
  *  (PAID, PRODUCTION, dst.) memakai lencana bawaan. Hanya tampilan; nilai status di data tidak berubah. */
-function trackingStatusBadge(r: { status: MaterialPoFullStatus; invoice?: RawMaterialInvoice }) {
-  if ((r.status === "DELIVERY" || r.status === "RECEIVING") && r.invoice) {
-    return rollArrivalStatus(r.invoice) === "LENGKAP" ? { label: "GOOD RECEIPT", tone: "success" as const } : { label: "DELIVERY", tone: "rework" as const };
-  }
-  return materialPoFullStatusBadge(r.status);
+// Revisi 2026-11-16 (owner: "status hanya sampai good receipt, belum berubah"): status kiriman kini status staging standar dari roll-rollnya
+// (Paid ... Receiving Material, Resting, Cutting, Finish Good, Done FG, Packing, Delivery, GR DC), bukan lagi field status invoice yang berhenti di RECEIVING.
+function trackingStatusBadge(r: { flow: FlowStage }) {
+  return { label: r.flow, tone: flowTone(r.flow) };
 }
 
 /** Tanggal satu kiriman (satu invoice): kapan dikirim (Set Delivery), kapan roll pertama diterima vendor, dan kapan roll TERAKHIR
@@ -183,6 +183,8 @@ export default function MaterialTrackingPage() {
     WAITING_PRODUCTION: "RECEIVING",
     PRODUCTION_DONE: "RECEIVING",
   };
+  const flowBatchByCode = new Map(productionBatches.filter((b) => b.codeRoll).map((b) => [b.codeRoll as string, b]));
+  const flowShipping = batchShippingMap(deliveryKolis, warehouseReceipts);
   const invoiceRows: TrackingRow[] = invoices.map((i) => {
     const po = materialPOs.find((p) => p.id === i.poId);
     const batchStartedProduction = i.status === "WAITING_PRODUCTION" || i.status === "PRODUCTION_DONE";
@@ -208,6 +210,7 @@ export default function MaterialTrackingPage() {
         batchStartedProduction && po
           ? materialPoFullStatus(po, invoices, productionBatches, productionResults, mrpDetails, deliveryKolis, vendorInvoices, maklonPOs)
           : invoiceOwnStatus[i.status],
+      flow: invoiceFlowStage(i, flowBatchByCode, flowShipping),
       invoice: i,
     };
   });

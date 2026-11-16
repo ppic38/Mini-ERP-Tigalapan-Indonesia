@@ -149,6 +149,23 @@ export function invoiceRollFlowStage(inv: RawMaterialInvoice, arrived: boolean, 
   return "Paid";
 }
 
+/** Tahap satu invoice bahan (satu kiriman) = tahap PALING AWAL roll-rollnya. Invoice tanpa roll memakai status invoicenya. */
+export function invoiceFlowStage(inv: RawMaterialInvoice, batchByCode: Map<string, ProductionBatch>, shipping: Map<string, BatchShipping>): FlowStage {
+  let best: FlowStage | null = null;
+  for (const c of inv.colorEntries) {
+    const key = `${c.warna}|${c.lengan}`;
+    const arrivals = inv.rollArrivals[key] ?? [];
+    const receipts = inv.rollReceipts[key] ?? [];
+    c.rolls.forEach((_, idx) => {
+      const code = arrivals[idx]?.codeRoll || receipts[idx]?.codeRoll || c.codeRolls?.[idx] || "";
+      const batch = code ? batchByCode.get(code) : undefined;
+      const st = invoiceRollFlowStage(inv, !!arrivals[idx], batch, batch ? shipping.get(batch.id) : undefined);
+      if (!best || flowRank(st) < flowRank(best)) best = st;
+    });
+  }
+  return best ?? invoiceRollFlowStage(inv, false, undefined, undefined);
+}
+
 // ---------------------------------------------------------------- MRP -------------------------------------------------------------------------------------
 export type MrpFlow = { stage: FlowStage | FlowSideStatus; rollsByStage: Partial<Record<FlowStage, number>> };
 
