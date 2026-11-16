@@ -7,6 +7,7 @@ import { DataTable, aggSame, aggSum, type ColumnDef, type FilterDef } from "@/co
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatDate, formatRupiah, poDisplayNo } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import { flowTone } from "@/lib/mrp/flowStatus";
 import { RM_ROLL_POSITIONS, RM_ROLL_STATUSES, buildRawMaterialRolls, type RmRollRow } from "@/lib/mrp/rawMaterialRolls";
 
 const vendorName = (id: string) => VENDOR_PRODUKSI[id]?.name ?? id;
@@ -16,16 +17,6 @@ const intFmt = (n: number) => Math.round(n).toLocaleString("id-ID");
 const uniq = (xs: string[]) => Array.from(new Set(xs.filter(Boolean))).sort((a, b) => a.localeCompare(b, "id-ID"));
 const bold = (s: string) => <span className="font-semibold">{s}</span>;
 
-const STATUS_TONE: Record<string, "neutral" | "warning" | "info" | "rework" | "success" | "danger"> = {
-  Dibayar: "warning",
-  "Dikirim supplier": "info",
-  "Diterima vendor": "info",
-  Resting: "rework",
-  "Cutting & FG": "rework",
-  "Roll ditutup": "rework",
-  "Sudah delivery": "success",
-  Diretur: "danger",
-};
 
 /** Tabel material per roll yang SUDAH DIBAYAR. Dipakai Procurement > Raw Material (`focus="roll"`: kartu dan kolom bawaan dalam roll dan kg)
  *  dan Finance > Posisi Stok (`focus="nilai"`: kartu dan kolom bawaan dalam rupiah). Kolom, filter, dan isi tabel sama; hanya bawaannya beda. */
@@ -35,10 +26,11 @@ export function RawMaterialRollTab({ focus }: { focus: "roll" | "nilai" }) {
   const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
   const claims = useMrpStore((s) => s.materialClaimHistory);
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
+  const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
 
   const rows = useMemo(
-    () => buildRawMaterialRolls(invoices, productionBatches, deliveryKolis, claims, mrpDetails),
-    [invoices, productionBatches, deliveryKolis, claims, mrpDetails]
+    () => buildRawMaterialRolls(invoices, productionBatches, deliveryKolis, claims, mrpDetails, warehouseReceipts),
+    [invoices, productionBatches, deliveryKolis, claims, mrpDetails, warehouseReceipts]
   );
   const [shownKeys, setShownKeys] = useState<Set<string> | null>(null);
   const [preset, setPreset] = useState<{ nonce: number; filters: Record<string, string[]>; card: string }>({ nonce: 0, filters: {}, card: "" });
@@ -107,8 +99,8 @@ export function RawMaterialRollTab({ focus }: { focus: "roll" | "nilai" }) {
       key: "status",
       label: "Status",
       default: true,
-      aggregate: aggSame((r) => r.status, (v) => <StatusPill tone={STATUS_TONE[v] ?? "neutral"}>{v}</StatusPill>),
-      render: (r) => <StatusPill tone={STATUS_TONE[r.status] ?? "neutral"}>{r.status}</StatusPill>,
+      aggregate: aggSame((r) => r.status, (v) => <StatusPill tone={flowTone(v)}>{v}</StatusPill>),
+      render: (r) => <StatusPill tone={flowTone(r.status)}>{r.status}</StatusPill>,
     },
     { key: "tglBayar", label: "Tgl Bayar", default: !isRoll, render: (r) => formatDate(r.paidAt) },
     { key: "tglInvoice", label: "Tgl Invoice", default: false, render: (r) => formatDate(r.invoiceAt) },
@@ -127,15 +119,15 @@ export function RawMaterialRollTab({ focus }: { focus: "roll" | "nilai" }) {
           <>
             {card("Roll dibayar", "blue", intFmt(shown.length), `${kgFmt(kg(shown))} kg`)}
             {card("Belum produksi", "orange", intFmt(belum.length), `${kgFmt(kg(belum))} kg · belum resting`, "Belum produksi")}
-            {card("Proses produksi", "purple", intFmt(proses.length), `${kgFmt(kg(proses))} kg · resting s/d roll ditutup`, "Proses produksi")}
-            {card("Sudah delivery", "teal", intFmt(terkirimRoll.length), `${kgFmt(kg(terkirimRoll))} kg · terkirim penuh`, "Sudah delivery")}
+            {card("Proses produksi", "purple", intFmt(proses.length), `${kgFmt(kg(proses))} kg · Resting s/d Packing`, "Proses produksi")}
+            {card("Sudah delivery", "teal", intFmt(terkirimRoll.length), `${kgFmt(kg(terkirimRoll))} kg · Delivery dan GR DC`, "Sudah delivery")}
           </>
         ) : (
           <>
             {card("Nilai material dibayar", "blue", rp(nilaiTotal), `${intFmt(shown.length)} roll`)}
             {card("Belum produksi", "orange", rp(stok(belum)), `${intFmt(belum.length)} roll · belum resting`, "Belum produksi")}
             {card("Proses produksi", "purple", rp(stok(proses)), `${intFmt(proses.length)} roll · porsi belum terkirim`, "Proses produksi")}
-            {card("Sudah delivery", "teal", rp(terkirimNilai), `${intFmt(terkirimRoll.length)} roll terkirim penuh`, "Sudah delivery")}
+            {card("Sudah delivery", "teal", rp(terkirimNilai), `${intFmt(terkirimRoll.length)} roll Delivery dan GR DC`, "Sudah delivery")}
           </>
         )}
       </div>

@@ -8,7 +8,8 @@ import { ClosePoReasonModal } from "@/components/mrp/close-po-reason-modal";
 import { PayingVoucherWizard } from "@/components/mrp/paying-voucher-wizard";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
-import { formatDateTime, formatRupiah, invoiceAwaitingPayment, invoiceBadge, materialSupplierNamesForWarna, poDisplayNo } from "@/lib/mrp/derive";
+import { formatDateTime, formatRupiah, invoiceAwaitingPayment, materialSupplierNamesForWarna, poDisplayNo } from "@/lib/mrp/derive";
+import { pvStatusMaterial, pvTone } from "@/lib/mrp/flowStatus";
 import { useMrpStore } from "@/lib/mrp/store";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { MaterialPO, RawMaterialInvoice } from "@/lib/mrp/types";
@@ -198,7 +199,8 @@ export function PayingVoucherMaterialPanel() {
     },
   ];
 
-  const invStatus = (inv: RawMaterialInvoice) => invoiceBadge(inv.status);
+  // Status Paying Voucher standar (lib/mrp/flowStatus.ts): Not Paid, Paid, Delivery Material, Receiving Material.
+  const invStatus = (inv: RawMaterialInvoice) => ({ label: pvStatusMaterial(inv), tone: pvTone(pvStatusMaterial(inv)) });
   const invFilters: FilterDef<RawMaterialInvoice>[] = [
     { label: "No. MRP", options: uniqSorted(invoices.map((i) => i.mrpId)).reverse(), test: (i, v) => i.mrpId === v },
     { label: "Supplier", options: uniqSorted(invoices.map((i) => supplierOf(i.supplier))), test: (i, v) => supplierOf(i.supplier) === v },
@@ -222,7 +224,7 @@ export function PayingVoucherMaterialPanel() {
           <StatusPill tone={invStatus(inv).tone}>{invStatus(inv).label}</StatusPill>
           {inv.status !== "INVOICED" && invoiceAwaitingPayment(inv) && (
             <span title="Material sudah diterima vendor lebih awal (dispensasi Sysadmin), tagihan belum dibayar Finance">
-              <StatusPill tone="warning">TERIMA AWAL · BELUM DIBAYAR</StatusPill>
+              <StatusPill tone="warning">Terima awal</StatusPill>
             </span>
           )}
         </span>

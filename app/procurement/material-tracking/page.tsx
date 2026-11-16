@@ -9,6 +9,7 @@ import { DataTable, aggSame, aggSum, type ColumnDef, type FilterDef } from "@/co
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Tabs } from "@/components/ui/tabs";
 import { MATERIAL_ROLL_STAGES, buildMaterialRolls, type MaterialRollRow } from "@/lib/mrp/materialRolls";
+import { flowTone } from "@/lib/mrp/flowStatus";
 import { TransferMaterialModal, type TransferCandidate } from "@/components/mrp/transfer-material-modal";
 import { SetDeliveryModal } from "@/components/mrp/set-delivery-modal";
 import { WithdrawVendorModal } from "@/components/mrp/withdraw-vendor-modal";
@@ -109,6 +110,7 @@ export default function MaterialTrackingPage() {
   const productionBatches = useMrpStore((s) => s.productionBatches);
   const productionResults = useMrpStore((s) => s.productionResults);
   const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
+  const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
   const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
   const setInvoicesDelivery = useMrpStore((s) => s.setInvoicesDelivery);
   const transferMaterial = useMrpStore((s) => s.transferMaterial);
@@ -367,11 +369,12 @@ export default function MaterialTrackingPage() {
   // ---- Tab Per Roll (owner 2026-11-16): satu baris per roll kain, status sampai roll dipakai produksi ----
   const allRolls = buildMaterialRolls(
     rows.filter((r) => r.invoice).map((r) => r.invoice!),
-    productionBatches
+    productionBatches,
+    deliveryKolis,
+    warehouseReceipts
   );
   const shownRolls = shownRollKeys ? allRolls.filter((r) => shownRollKeys.has(r.key)) : allRolls;
   const kgFmt = (n: number) => n.toLocaleString("id-ID", { maximumFractionDigits: 1 });
-  const rollStageTone: Record<string, "warning" | "info" | "rework" | "success"> = { Dibayar: "warning", Delivery: "info", "Diterima vendor": "rework", "Di produksi": "success" };
   const rollFilters: FilterDef<MaterialRollRow>[] = [
     { label: "Status", options: [...MATERIAL_ROLL_STAGES].filter((st) => allRolls.some((r) => r.status === st)), test: (r, v) => r.status === v },
     { label: "No. MRP", options: uniqSorted(allRolls.map((r) => r.mrpId)).reverse(), test: (r, v) => r.mrpId === v },
@@ -396,10 +399,10 @@ export default function MaterialTrackingPage() {
       key: "status",
       label: "Status",
       default: true,
-      aggregate: aggSame((r) => r.status, (v) => <StatusPill tone={rollStageTone[v] ?? "neutral"}>{v}</StatusPill>),
+      aggregate: aggSame((r) => r.status, (v) => <StatusPill tone={flowTone(v)}>{v}</StatusPill>),
       render: (r) => (
         <span title={r.tahapProduksi ? `Tahap produksi: ${r.tahapProduksi}` : undefined}>
-          <StatusPill tone={rollStageTone[r.status] ?? "neutral"}>{r.status}</StatusPill>
+          <StatusPill tone={flowTone(r.status)}>{r.status}</StatusPill>
         </span>
       ),
     },
@@ -512,19 +515,29 @@ export default function MaterialTrackingPage() {
 
       {tab === "roll" && (
         <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
-          {MATERIAL_ROLL_STAGES.map((st) => {
-            const list = shownRolls.filter((r) => r.status === st);
-            const sub = { Dibayar: "belum di-set delivery", Delivery: "belum ditandai diterima", "Diterima vendor": "belum masuk produksi", "Di produksi": "resting atau lebih" }[st];
+          {(
+            [
+              { key: "bayar", label: "PV Material dan Paid", sub: "belum Delivery Material", stages: ["PV Material", "Paid"], accent: "orange" },
+              { key: "kirim", label: "Delivery Material", sub: "belum Receiving Material", stages: ["Delivery Material"], accent: "blue" },
+              { key: "terima", label: "Receiving Material", sub: "belum Resting", stages: ["Receiving Material"], accent: "purple" },
+              { key: "prod", label: "Produksi s/d GR DC", sub: "Resting sampai GR DC", stages: ["Resting", "Cutting", "Finish Good", "Done FG", "Packing", "Delivery", "GR DC"], accent: "teal" },
+            ] as const
+          ).map((c) => {
+            const list = shownRolls.filter((r) => (c.stages as readonly string[]).includes(r.status));
             return (
               <KpiCard
-                key={st}
-                label={st}
+                key={c.key}
+                label={c.label}
                 value={list.length}
-                sub={`${sub} · ${kgFmt(list.reduce((s, r) => s + r.beratKotor, 0))} kg`}
-                accent={st === "Dibayar" ? "orange" : st === "Delivery" ? "blue" : st === "Diterima vendor" ? "purple" : "teal"}
-                active={rollPreset.card === st}
+                sub={`${c.sub} · ${kgFmt(list.reduce((s, r) => s + r.beratKotor, 0))} kg`}
+                accent={c.accent}
+                active={rollPreset.card === c.key}
                 onClick={() =>
-                  setRollPreset((p) => (p.card === st ? { nonce: p.nonce + 1, filters: {} as Record<string, string[]>, card: "" } : { nonce: p.nonce + 1, filters: { Status: [st] }, card: st }))
+                  setRollPreset((p) =>
+                    p.card === c.key
+                      ? { nonce: p.nonce + 1, filters: {} as Record<string, string[]>, card: "" }
+                      : { nonce: p.nonce + 1, filters: { Status: c.stages.filter((st) => allRolls.some((r) => r.status === st)) as string[] }, card: c.key }
+                  )
                 }
               />
             );

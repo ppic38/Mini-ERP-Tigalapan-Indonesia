@@ -423,7 +423,9 @@ export function koliRowsForItem(item: ItemTrackRow, kolis: DeliveryKoli[], recei
  * ------------------------------------------------------------------------------------------------------------------------------ */
 
 /** Urutan tahapan baris (dipakai status dan filter). */
-export const ADUAN_STAGES = ["Belum dialokasikan", "Belum resting", "Resting", "Cutting", "Finish Good", "Di koli", "Dikirim", "Tiba DC", "Diterima DC", "Selesai"] as const;
+// Nama status mengikuti status staging standar (lib/mrp/flowStatus.ts, owner 2026-11-16). "Belum dialokasikan" dan "Belum resting" tetap: baris rencana
+// belum punya roll, jadi tahap materialnya tidak bisa ditentukan per baris.
+export const ADUAN_STAGES = ["Belum dialokasikan", "Belum resting", "Resting", "Cutting", "Finish Good", "Done FG", "Packing", "Delivery", "GR DC"] as const;
 export type AduanStage = (typeof ADUAN_STAGES)[number];
 
 export type AduanTrackRow = {
@@ -525,7 +527,7 @@ export function buildAduanTracking(
     cuttingWip: 0,
     fgWip: 0,
     perjalanan: 0,
-    status: "Selesai",
+    status: "GR DC",
     shipDates: [],
     koliNos: [],
   });
@@ -745,10 +747,9 @@ function rowStatus(r: AduanTrackRow, b?: ProductionBatch): AduanStage {
     if (!b.closedAt) return r.fg > 0 ? "Finish Good" : "Cutting";
   }
   if (r.cuttingWip > 0) return "Cutting";
-  if (r.fgWip > 0) return "Finish Good";
-  if (r.diKoli > 0) return "Di koli";
-  if (r.perjalanan > 0) return "Dikirim";
-  if (r.tibaDc > 0) return "Tiba DC";
-  if (r.diterima > 0) return "Diterima DC";
-  return "Selesai";
+  if (r.fgWip > 0) return b ? "Done FG" : "Finish Good";
+  if (r.diKoli > 0) return "Packing";
+  // Tiba DC (WOS, belum divalidasi) masih Delivery; GR DC = sudah dibongkar / diterima gudang.
+  if (r.perjalanan > 0 || r.tibaDc > 0) return "Delivery";
+  return "GR DC";
 }

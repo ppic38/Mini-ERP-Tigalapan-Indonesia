@@ -1,26 +1,27 @@
 import type { MrpDetail } from "./store";
-import { invoiceAwaitingPayment, isBillableKoliItem } from "./derive";
+import { invoiceAwaitingPayment } from "./derive";
+import { batchBasis, batchShippingMap, invoiceRollFlowStage, type FlowStage } from "./flowStatus";
 import { benangFromKategori } from "./rawMaterialReport";
-import type { DeliveryKoli, Lengan, MaterialClaimHistory, ProductionBatch, RawMaterialInvoice } from "./types";
+import type { DeliveryKoli, Lengan, MaterialClaimHistory, ProductionBatch, RawMaterialInvoice, WarehouseReceipt } from "./types";
 
 /** Material per ROLL yang SUDAH DIBAYAR (Procurement > Raw Material dan Finance > Posisi Stok, tabel yang sama; owner 2026-11-16).
  *  Satu baris = satu roll kain di invoice bahan yang sudah dibayar Finance.
  *  Nilai roll = harga/kg x berat kotor + porsi rib - porsi diskon, rumus yang SAMA dengan HPP (`rawRollCostShares` di derive.ts):
  *   - porsi rib    = biaya item tambahan (rib/kerah/manset) warna itu di invoice / total kg kain warna itu x berat roll
  *   - porsi diskon = diskon invoice / total kg kain invoice x berat roll
- *  Status berurutan sampai barang jadi dikirim vendor (aturan tahap = Posisi Stok `buildStockPosition`):
- *   Dibayar -> Dikirim supplier -> Diterima vendor -> Resting -> Cutting & FG -> Roll ditutup -> Sudah delivery; Diretur = roll keluar lewat klaim retur. */
+ *  Status = status staging standar (`lib/mrp/flowStatus.ts`, owner 2026-11-16): Paid -> Delivery Material -> Receiving Material -> Resting -> Cutting ->
+ *  Finish Good -> Done FG -> Packing -> Delivery -> GR DC; Diretur = roll keluar lewat klaim retur. */
 
-export const RM_ROLL_STATUSES = ["Dibayar", "Dikirim supplier", "Diterima vendor", "Resting", "Cutting & FG", "Roll ditutup", "Sudah delivery", "Diretur"] as const;
-export type RmRollStatus = (typeof RM_ROLL_STATUSES)[number];
+export const RM_ROLL_STATUSES = ["Paid", "Delivery Material", "Receiving Material", "Resting", "Cutting", "Finish Good", "Done FG", "Packing", "Delivery", "GR DC", "Diretur"] as const;
+export type RmRollStatus = Exclude<FlowStage, "Approval MRP" | "Approval PO" | "PV Material"> | "Diretur";
 
 /** Posisi ringkas untuk kartu (sama pengelompokan Posisi Stok). */
 export const RM_ROLL_POSITIONS = ["Belum produksi", "Proses produksi", "Sudah delivery", "Diretur"] as const;
 export type RmRollPosition = (typeof RM_ROLL_POSITIONS)[number];
 
 export function positionOf(status: RmRollStatus): RmRollPosition {
-  if (status === "Dibayar" || status === "Dikirim supplier" || status === "Diterima vendor") return "Belum produksi";
-  if (status === "Sudah delivery") return "Sudah delivery";
+  if (status === "Paid" || status === "Delivery Material" || status === "Receiving Material") return "Belum produksi";
+  if (status === "Delivery" || status === "GR DC") return "Sudah delivery";
   if (status === "Diretur") return "Diretur";
   return "Proses produksi";
 }
@@ -66,14 +67,14 @@ export type RmRollRow = {
 };
 
 const day = (iso?: string) => (iso ? iso.slice(0, 10) : undefined);
-const sumQty = (q: Record<string, number> | undefined) => Object.values(q ?? {}).reduce((s, n) => s + (n > 0 ? n : 0), 0);
 
 export function buildRawMaterialRolls(
   invoices: RawMaterialInvoice[],
   batches: ProductionBatch[],
   kolis: DeliveryKoli[],
   claims: MaterialClaimHistory[],
-  mrpDetails: MrpDetail[]
+  mrpDetails: MrpDetail[],
+  receipts: WarehouseReceipt[]
 ): RmRollRow[] {
   const batchByCode = new Map<string, ProductionBatch>();
   for (const b of batches) if (b.codeRoll) batchByCode.set(b.codeRoll, b);
@@ -83,17 +84,7 @@ export function buildRawMaterialRolls(
     return d?.lenganGroups.find((g) => g.warna === warna && g.lengan === lengan && g.kategori)?.kategori || d?.mrp.kategori || "-";
   };
 
-  // Pcs terkirim per roll (sama Posisi Stok): item koli yang sudah dikirim, reject tidak dihitung; koli lama level-koli = roll terkirim utuh.
-  const shippedByBatch = new Map<string, number>();
-  const legacyShipped = new Set<string>();
-  for (const k of kolis) {
-    if (!k.deliveredAt) continue;
-    for (const id of k.sourceBatchIds ?? []) legacyShipped.add(id);
-    for (const it of k.items) {
-      if (!it.sourceBatchId || !isBillableKoliItem(it)) continue;
-      shippedByBatch.set(it.sourceBatchId, (shippedByBatch.get(it.sourceBatchId) ?? 0) + it.qty);
-    }
-  }
+  const shipping = batchShippingMap(kolis, receipts);
   const returnedRolls = new Set(claims.filter((c) => c.resolutionKind === "RETUR_REORDER" && c.resolvedAt).map((c) => `${c.invoiceId}|${c.warna}|${c.lengan}|${c.rollIndex}`));
 
   const out: RmRollRow[] = [];
@@ -122,17 +113,16 @@ export function buildRawMaterialRolls(
         const diskonRoll = fabricKg > 0 ? ((inv.diskon ?? 0) * kg) / fabricKg : 0;
         const nilai = nilaiKain + ribRoll - diskonRoll;
 
-        let status: RmRollStatus;
+        const returned = returnedRolls.has(`${inv.id}|${c.warna}|${c.lengan}|${idx}`);
+        const ship = batch ? shipping.get(batch.id) : undefined;
+        const status: RmRollStatus = returned ? "Diretur" : (invoiceRollFlowStage(inv, !!arrival, batch, ship) as RmRollStatus);
         let shippedShare = 0;
         let pcsBelumKirim = 0;
-        if (returnedRolls.has(`${inv.id}|${c.warna}|${c.lengan}|${idx}`)) status = "Diretur";
-        else if (!batch) status = arrival ? "Diterima vendor" : inv.deliveredAt ? "Dikirim supplier" : "Dibayar";
-        else {
-          const basis = batch.closedAt ? sumQty(batch.fgSizeQty) : sumQty(batch.sizeQty);
-          const shipped = legacyShipped.has(batch.id) ? basis : Math.min(shippedByBatch.get(batch.id) ?? 0, basis);
+        if (batch) {
+          const basis = batchBasis(batch);
+          const shipped = Math.min(ship?.shipped ?? 0, basis);
           shippedShare = basis > 0 ? shipped / basis : 0;
           pcsBelumKirim = basis - shipped;
-          status = shippedShare >= 1 ? "Sudah delivery" : batch.closedAt ? "Roll ditutup" : batch.cuttingAt ? "Cutting & FG" : "Resting";
         }
         const nilaiTerkirim = status === "Diretur" ? 0 : nilai * shippedShare;
         out.push({

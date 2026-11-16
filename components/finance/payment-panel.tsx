@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { KpiCard } from "@/components/ui/kpi-card";
+import { pvStatusMaterial, pvTone } from "@/lib/mrp/flowStatus";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Checkbox } from "@/components/ui/checkbox";
 import { NumberInput } from "@/components/mrp/number-input";
@@ -14,7 +15,6 @@ import {
   formatDecimal,
   formatRupiah,
   invoiceAwaitingPayment,
-  invoiceBadge,
   outstandingAmountForInvoice,
   vendorDepositBalance,
   vendorDepositCreditForClaim,
@@ -364,10 +364,10 @@ export function PaymentPanel() {
         const isDeposit = !!i.sourceClaimId && selisih < 0;
         return (
           <div className="flex flex-col items-start gap-1">
-            <StatusPill tone={invoiceBadge(i.status).tone}>{invoiceBadge(i.status).label}</StatusPill>
+            <StatusPill tone={pvTone(pvStatusMaterial(i))}>{pvStatusMaterial(i)}</StatusPill>
             {i.status !== "INVOICED" && invoiceAwaitingPayment(i) && (
               <span title="Material sudah diterima vendor lebih awal (dispensasi Sysadmin), tagihan belum dibayar">
-                <StatusPill tone="warning">TERIMA AWAL · BELUM DIBAYAR</StatusPill>
+                <StatusPill tone="warning">Terima awal</StatusPill>
               </span>
             )}
             {invoiceAwaitingPayment(i) && poNotApproved(i) && (
@@ -973,7 +973,7 @@ export function PaymentPanel() {
             { label: "No PO", options: Array.from(new Set(historyRows.map((i) => poDisplayNo(i.poId, i.entity)))), test: (i, v) => poDisplayNo(i.poId, i.entity) === v },
             { label: "Vendor Produksi", options: Array.from(new Set(historyRows.map(vendorProduksiName))), test: (i, v) => vendorProduksiName(i) === v },
             { label: "Entitas", options: Array.from(new Set(historyRows.map((i) => i.entity))), test: (i, v) => i.entity === v },
-            { label: "Status", options: Array.from(new Set(historyRows.map((i) => i.status))), test: (i, v) => i.status === v },
+            { label: "Status", options: Array.from(new Set(historyRows.map((i) => pvStatusMaterial(i)))), test: (i, v) => pvStatusMaterial(i) === v },
           ]}
           emptyText="Belum ada invoice yang sudah dibayar."
           collapseSignal={collapseSignal}

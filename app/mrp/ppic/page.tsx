@@ -14,7 +14,8 @@ import { KpiCard } from "@/components/ui/kpi-card";
 import { mrpCorrections } from "@/components/sysadmin/ppic-corrections";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { useMrpStore } from "@/lib/mrp/store";
-import { mrpStatusBadges, mrpStatusBadgeTone, mrpWarnaBreakdown, effectiveMrpQty, formatPcs, formatDate, ppicApprovalBadge, vendorsForMrp, mrpStage, MRP_STAGES, type MrpStage } from "@/lib/mrp/derive";
+import { mrpStatusBadges, mrpStatusBadgeTone, mrpWarnaBreakdown, effectiveMrpQty, formatPcs, formatDate, ppicApprovalBadge, vendorsForMrp } from "@/lib/mrp/derive";
+import { FLOW_STAGES, batchShippingMap, mrpFlowStage, mrpHppEstimate, ongkirPerPcsByVendor, type FlowStage, type FlowSideStatus } from "@/lib/mrp/flowStatus";
 import { StageBadge } from "@/components/ui/stage-badge";
 import type { ParsedMrpImport } from "@/lib/mrp/parseImport";
 import { exportMaklonPoRasioExcel } from "@/lib/mrp/exportPoExcel";
@@ -86,6 +87,12 @@ function RasioVendorDialog({
   );
 }
 
+const formatRp = (n: number) => "Rp " + Math.round(n).toLocaleString("id-ID");
+const rollTooltip = (by: Partial<Record<FlowStage, number>>) =>
+  FLOW_STAGES.filter((st) => (by[st] ?? 0) > 0)
+    .map((st) => `${st}: ${by[st]} roll`)
+    .join("\n") || undefined;
+
 export default function MrpListPage() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -99,6 +106,9 @@ export default function MrpListPage() {
   const maklonInvoices = useMrpStore((s) => s.maklonInvoices);
   const productionBatches = useMrpStore((s) => s.productionBatches);
   const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
+  const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
+  const ekspedisiRates = useMrpStore((s) => s.ekspedisiRates);
+  const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
   const sysadmin = useSysadminMode();
   const importMrp = useMrpStore((s) => s.importMrp);
   const resetMrp = useMrpStore((s) => s.resetMrp);
@@ -177,6 +187,10 @@ export default function MrpListPage() {
   const [shownIds, setShownIds] = useState<Set<string> | null>(null);
 
   const rows = useMemo(() => {
+    // Status staging standar (lib/mrp/flowStatus.ts) dan estimasi HPP % per MRP.
+    const batchByCode = new Map(productionBatches.filter((b) => b.codeRoll).map((b) => [b.codeRoll as string, b]));
+    const shipping = batchShippingMap(deliveryKolis, warehouseReceipts);
+    const ongkir = ongkirPerPcsByVendor(deliveryKolis, ekspedisiRates);
     const all: { mrp: (typeof mrpDetails)[number]["mrp"]; detail?: (typeof mrpDetails)[number] }[] = [
       ...mrpDetails.map((d) => ({ mrp: d.mrp, detail: d })),
       ...staticMrps.map((m) => ({ mrp: m })),
@@ -197,9 +211,10 @@ export default function MrpListPage() {
       vendors: vendorsForMrp(detail),
       scm: detail ? ppicApprovalBadge(detail.ppicApproval) : null,
       roll: mrpWarnaBreakdown(detail).reduce((sum, w) => sum + w.rollTotal, 0),
-      stage: mrpStage(detail?.ppicApproval, mrpStatusBadges(mrp.id, detail, materialPOs, maklonPOs, invoices, vendorInvoices)),
-    }));
-  }, [mrpDetails, staticMrps, materialPOs, maklonPOs, invoices, vendorInvoices]);
+      flow: mrpFlowStage(detail, mrp.id, materialPOs, invoices, batchByCode, shipping),
+      hpp: mrpHppEstimate(detail, mrp.id, materialPOs, maklonPOs, ongkir, itemSellingPrices),
+    })).map((r) => ({ ...r, stage: r.flow.stage as FlowStage | FlowSideStatus }));
+  }, [mrpDetails, staticMrps, materialPOs, maklonPOs, invoices, vendorInvoices, productionBatches, deliveryKolis, warehouseReceipts, ekspedisiRates, itemSellingPrices]);
   type Row = (typeof rows)[number];
 
   if (!mounted) return null;
@@ -209,7 +224,7 @@ export default function MrpListPage() {
   }
 
   const uniq = (list: string[]) => Array.from(new Set(list));
-  const stageOrder: string[] = ["Ditolak SCM", ...MRP_STAGES];
+  const stageOrder: string[] = ["Ditolak", ...FLOW_STAGES];
   const filterDefs: FilterDef<Row>[] = [
     { label: "Status", options: stageOrder.filter((st) => rows.some((r) => r.stage === st)), test: (r, v) => r.stage === v },
     { label: "Vendor", options: uniq(rows.flatMap((r) => r.vendors)).sort(), test: (r, v) => r.vendors.includes(v) },
@@ -243,11 +258,46 @@ export default function MrpListPage() {
     },
     { key: "vendor", label: "Vendor", default: false, render: (r) => (r.vendors.length ? r.vendors.join(", ") : "—") },
     {
-      key: "tahapan", aggregate: aggSame<Row>((r) => r.stage, (v) => <StageBadge stages={MRP_STAGES} current={v} tone={v === "Ditolak SCM" ? "danger" : undefined} />),
+      key: "tahapan", aggregate: aggSame<Row>((r) => r.stage, (v) => <StageBadge stages={FLOW_STAGES} current={v} tone={v === "Ditolak" ? "danger" : undefined} />),
       label: "Status",
       default: true,
-      render: (r) => <StageBadge stages={MRP_STAGES} current={r.stage} tone={r.stage === "Ditolak SCM" ? "danger" : undefined} />,
+      info: { title: "Status MRP", body: <p>Tahap paling awal yang masih memegang barang MRP ini (status staging standar). Jumlah roll per tahap ada di tooltip.</p> },
+      render: (r) => (
+        <span title={rollTooltip(r.flow.rollsByStage)}>
+          <StageBadge stages={FLOW_STAGES} current={r.stage} tone={r.stage === "Ditolak" ? "danger" : undefined} />
+        </span>
+      ),
     },
+    {
+      key: "estHpp",
+      label: "Est. HPP %",
+      default: true,
+      align: "right",
+      info: {
+        title: "Estimasi HPP %",
+        body: (
+          <>
+            <p>(Nilai PO Material + nilai PO Produksi + estimasi ongkir) ÷ nilai jual qty MRP.</p>
+            <p className="mt-1.5 text-text-muted">Ongkir = qty × rata-rata ongkir per pcs vendor dari pengiriman yang sudah ada. Harga jual dari Master SKU (lewat Mapping Warna). Tersedia mulai Approval PO.</p>
+          </>
+        ),
+      },
+      render: (r) =>
+        r.hpp.pct == null || r.hpp.material + r.hpp.maklon === 0 ? (
+          <span className="text-text-muted">—</span>
+        ) : (
+          <span
+            className={"font-mono font-semibold " + (r.hpp.pct > 100 ? "text-danger-fg" : r.hpp.pct > 80 ? "text-warning-fg" : "text-success-fg")}
+            title={`Material ${formatRp(r.hpp.material)} + Maklon ${formatRp(r.hpp.maklon)} + Est. ongkir ${formatRp(r.hpp.delivery)} = ${formatRp(r.hpp.total)}\nNilai jual ${formatRp(r.hpp.hargaJual)}${r.hpp.pcsTanpaHarga > 0 ? `\n${formatPcs(r.hpp.pcsTanpaHarga)} pcs belum punya harga jual (memakai rata-rata harga size lain)` : ""}`}
+          >
+            {r.hpp.pct.toLocaleString("id-ID", { maximumFractionDigits: 1 })}%
+          </span>
+        ),
+    },
+    { key: "estMaterial", label: "Est. Material", default: false, align: "right", aggregate: aggSum<Row>((r) => r.hpp.material, (n) => <span className="font-semibold">{formatRp(n)}</span>), render: (r) => <span className="font-mono">{formatRp(r.hpp.material)}</span> },
+    { key: "estMaklon", label: "Est. Maklon", default: false, align: "right", aggregate: aggSum<Row>((r) => r.hpp.maklon, (n) => <span className="font-semibold">{formatRp(n)}</span>), render: (r) => <span className="font-mono">{formatRp(r.hpp.maklon)}</span> },
+    { key: "estOngkir", label: "Est. Delivery", default: false, align: "right", aggregate: aggSum<Row>((r) => r.hpp.delivery, (n) => <span className="font-semibold">{formatRp(n)}</span>), render: (r) => <span className="font-mono">{formatRp(r.hpp.delivery)}</span> },
+    { key: "estJual", label: "Nilai Jual", default: false, align: "right", aggregate: aggSum<Row>((r) => r.hpp.hargaJual, (n) => <span className="font-semibold">{formatRp(n)}</span>), render: (r) => <span className="font-mono">{formatRp(r.hpp.hargaJual)}</span> },
     { key: "tglMrp", label: "Tgl MRP", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.created)}</span> },
     { key: "tglPO", label: "Tgl PO", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.poSent)}</span> },
     { key: "tglApproved", label: "Tgl Approve PO", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.poApproved)}</span> },
@@ -262,12 +312,13 @@ export default function MrpListPage() {
   // Kartu angka: jumlah MRP per kelompok tahapan, dari baris yang SEDANG lolos filter/pencarian tabel (berubah mengikuti filter).
   // Klik kartu = filter Tahapan.
   const shown = shownIds ? rows.filter((r) => shownIds.has(r.mrp.id)) : rows;
-  const inStages = (list: MrpStage[]) => shown.filter((r) => list.includes(r.stage)).length;
-  const cards: { key: string; label: string; value: number; sub: string; accent: "blue" | "orange" | "purple" | "teal"; stages: MrpStage[] }[] = [
-    { key: "awal", label: "Approval & PO", value: inStages(["Approval SCM", "Ditolak SCM", "PO"]), sub: "menunggu SCM atau approval PO", accent: "orange", stages: ["Approval SCM", "Ditolak SCM", "PO"] },
-    { key: "material", label: "Menunggu material", value: inStages(["Material"]), sub: "PO disetujui, produksi belum jalan", accent: "purple", stages: ["Material"] },
-    { key: "produksi", label: "Produksi & kirim", value: inStages(["Produksi", "Pengiriman"]), sub: "sedang diproduksi atau dikirim", accent: "blue", stages: ["Produksi", "Pengiriman"] },
-    { key: "selesai", label: "Tagihan & selesai", value: inStages(["Tagihan", "Selesai"]), sub: "sudah ditagih vendor", accent: "teal", stages: ["Tagihan", "Selesai"] },
+  type St = FlowStage | FlowSideStatus;
+  const inStages = (list: St[]) => shown.filter((r) => list.includes(r.stage)).length;
+  const cards: { key: string; label: string; value: number; sub: string; accent: "blue" | "orange" | "purple" | "teal"; stages: St[] }[] = [
+    { key: "awal", label: "Approval", value: inStages(["Approval MRP", "Ditolak", "Approval PO"]), sub: "Approval MRP dan Approval PO", accent: "orange", stages: ["Approval MRP", "Ditolak", "Approval PO"] },
+    { key: "material", label: "Material", value: inStages(["PV Material", "Paid", "Delivery Material", "Receiving Material"]), sub: "PV Material s/d Receiving Material", accent: "purple", stages: ["PV Material", "Paid", "Delivery Material", "Receiving Material"] },
+    { key: "produksi", label: "Produksi", value: inStages(["Resting", "Cutting", "Finish Good", "Done FG", "Packing"]), sub: "Resting s/d Packing", accent: "blue", stages: ["Resting", "Cutting", "Finish Good", "Done FG", "Packing"] },
+    { key: "selesai", label: "Delivery & GR DC", value: inStages(["Delivery", "GR DC"]), sub: "dikirim vendor atau diterima gudang", accent: "teal", stages: ["Delivery", "GR DC"] },
   ];
 
   const openRow = openMrpId ? rows.find((r) => r.mrp.id === openMrpId) : undefined;
@@ -336,7 +387,7 @@ export default function MrpListPage() {
         subtitle={openRow ? `${openRow.mrp.kategori} · ${formatPcs(effectiveMrpQty(openRow.mrp.id, openRow.mrp.qty, maklonPOs))} pcs` : undefined}
         headerExtra={
           openRow && (
-            <StageBadge stages={MRP_STAGES} current={openRow.stage} tone={openRow.stage === "Ditolak SCM" ? "danger" : undefined} />
+            <StageBadge stages={FLOW_STAGES} current={openRow.stage} tone={openRow.stage === "Ditolak" ? "danger" : undefined} />
           )
         }
         footer={

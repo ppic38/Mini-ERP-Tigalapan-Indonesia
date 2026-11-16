@@ -1,4 +1,5 @@
-import type { ProductionBatch, RawMaterialInvoice, Lengan } from "./types";
+import type { DeliveryKoli, ProductionBatch, RawMaterialInvoice, Lengan, WarehouseReceipt } from "./types";
+import { FLOW_STAGES, batchShippingMap, invoiceRollFlowStage, type FlowStage } from "./flowStatus";
 
 /** Material Tracking per ROLL (Procurement, owner 2026-11-16: "tabel per roll, statusnya hingga material itu sudah di produksi atau
  *  sudah delivery"). Satu baris = satu roll kain di invoice bahan (`colorEntries[].rolls[i]`). Semua turunan dari data yang sudah ada:
@@ -7,8 +8,9 @@ import type { ProductionBatch, RawMaterialInvoice, Lengan } from "./types";
  *   - Diterima vendor  : roll sudah ditandai fisik diterima di Good Receive vendor, belum dipakai produksi
  *   - Di produksi      : code roll sudah masuk Resting / Cutting / sesudahnya (ada `production_batches` dengan code roll itu)
  *  Roll yang diterima tanpa code roll tidak bisa dicocokkan ke produksi, jadi berhenti di "Diterima vendor" sampai code rollnya ada. */
-export const MATERIAL_ROLL_STAGES = ["Dibayar", "Delivery", "Diterima vendor", "Di produksi"] as const;
-export type MaterialRollStage = (typeof MATERIAL_ROLL_STAGES)[number];
+// Status memakai status staging standar (lib/mrp/flowStatus.ts, owner 2026-11-16): PV Material, Paid, Delivery Material, Receiving Material, Resting ... GR DC.
+export const MATERIAL_ROLL_STAGES = FLOW_STAGES.slice(2) as readonly FlowStage[];
+export type MaterialRollStage = FlowStage;
 
 export type MaterialRollRow = {
   key: string;
@@ -39,7 +41,8 @@ export type MaterialRollRow = {
 
 const day = (iso?: string) => (iso ? iso.slice(0, 10) : undefined);
 
-export function buildMaterialRolls(invoices: RawMaterialInvoice[], batches: ProductionBatch[]): MaterialRollRow[] {
+export function buildMaterialRolls(invoices: RawMaterialInvoice[], batches: ProductionBatch[], kolis: DeliveryKoli[] = [], receipts: WarehouseReceipt[] = []): MaterialRollRow[] {
+  const shipping = batchShippingMap(kolis, receipts);
   const batchByCode = new Map<string, ProductionBatch>();
   for (const b of batches) if (b.codeRoll) batchByCode.set(b.codeRoll, b);
 
@@ -54,7 +57,7 @@ export function buildMaterialRolls(invoices: RawMaterialInvoice[], batches: Prod
         const receipt = receipts[idx] ?? null;
         const codeRoll = arrival?.codeRoll || receipt?.codeRoll || c.codeRolls?.[idx] || "";
         const batch = codeRoll ? batchByCode.get(codeRoll) : undefined;
-        const status: MaterialRollStage = batch ? "Di produksi" : arrival ? "Diterima vendor" : inv.deliveredAt ? "Delivery" : "Dibayar";
+        const status: MaterialRollStage = invoiceRollFlowStage(inv, !!arrival, batch, batch ? shipping.get(batch.id) : undefined);
         out.push({
           key: `${inv.id}|${key}|${idx}`,
           invoiceId: inv.id,

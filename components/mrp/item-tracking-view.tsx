@@ -18,17 +18,17 @@ const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 const dateText = (iso?: string) => (iso ? formatDate(iso) : "-");
 const uniq = (xs: string[]) => Array.from(new Set(xs.filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 /** Tahapan yang ditampilkan sebagai titik di sel Status (tanpa "Belum dialokasikan" dan "Selesai" yang di luar alur). */
-const FLOW: readonly string[] = ADUAN_STAGES.filter((s) => s !== "Belum dialokasikan" && s !== "Selesai");
+const FLOW: readonly string[] = ADUAN_STAGES.filter((s) => s !== "Belum dialokasikan");
 
 /** Kartu posisi barang (redesign 2026-11-16): angka dari baris yang SEDANG lolos filter tabel, diklik = filter Status. */
 const CARDS: { key: string; label: string; value: (r: AduanTrackRow) => number; stages: AduanStage[] }[] = [
   { key: "target", label: "Target MRP", value: (r) => r.target, stages: [] },
   { key: "belum", label: "Belum cutting", value: (r) => r.belumCutting, stages: ["Belum dialokasikan", "Belum resting", "Resting"] },
   { key: "cutting", label: "Di cutting", value: (r) => r.cuttingWip, stages: ["Cutting"] },
-  { key: "fg", label: "Finish Good", value: (r) => r.fgWip, stages: ["Finish Good"] },
-  { key: "koli", label: "Di koli", value: (r) => r.diKoli, stages: ["Di koli"] },
-  { key: "kirim", label: "Dikirim, belum tiba", value: (r) => r.perjalanan + r.tibaDc, stages: ["Dikirim", "Tiba DC"] },
-  { key: "dc", label: "Diterima DC", value: (r) => r.diterima, stages: ["Diterima DC"] },
+  { key: "fg", label: "Finish Good", value: (r) => r.fgWip, stages: ["Finish Good", "Done FG"] },
+  { key: "koli", label: "Packing", value: (r) => r.diKoli, stages: ["Packing"] },
+  { key: "kirim", label: "Delivery", value: (r) => r.perjalanan + r.tibaDc, stages: ["Delivery"] },
+  { key: "dc", label: "GR DC", value: (r) => r.diterima, stages: ["GR DC"] },
 ];
 
 /** Isi halaman Tracking Item, dipakai PPIC dan SCM (data sama, hanya pembungkus halaman yang beda).
@@ -139,14 +139,14 @@ export function ItemTrackingView() {
     { key: "cutting", aggregate: sumPcs((r) => r.cutting), label: "Cutting", default: true, align: "right", info: { title: "Cutting", body: "Hasil cutting roll ini untuk size ini." }, render: (r) => pcs(r.cutting) },
     { key: "fg", aggregate: sumPcs((r) => r.fg), label: "Finish Good", default: true, align: "right", info: { title: "Finish Good", body: "Finish Good roll ini (termasuk yang sudah dikemas dan dikirim)." }, render: (r) => pcs(r.fg) },
     { key: "reject", aggregate: sumPcs((r) => r.reject), label: "Reject", default: false, align: "right", render: (r) => pcs(r.reject) },
-    { key: "diKoli", aggregate: sumPcs((r) => r.diKoli), label: "Di koli", default: true, align: "right", render: (r) => pcs(r.diKoli) },
-    { key: "dikirim", aggregate: sumPcs((r) => r.dikirim), label: "Dikirim", default: true, align: "right", render: (r) => pcs(r.dikirim) },
-    { key: "diterima", aggregate: sumPcs((r) => r.diterima), label: "Diterima DC", default: true, align: "right", render: (r) => pcs(r.diterima) },
+    { key: "diKoli", aggregate: sumPcs((r) => r.diKoli), label: "Packing", default: true, align: "right", render: (r) => pcs(r.diKoli) },
+    { key: "dikirim", aggregate: sumPcs((r) => r.dikirim), label: "Delivery", default: true, align: "right", render: (r) => pcs(r.dikirim) },
+    { key: "diterima", aggregate: sumPcs((r) => r.diterima), label: "GR DC", default: true, align: "right", render: (r) => pcs(r.diterima) },
     {
-      key: "status", aggregate: aggSame<AduanTrackRow>((r) => r.status, (v) => <StageBadge stages={FLOW} current={v} tone={v === "Diterima DC" || v === "Selesai" ? "done" : undefined} />),
+      key: "status", aggregate: aggSame<AduanTrackRow>((r) => r.status, (v) => <StageBadge stages={FLOW} current={v} tone={v === "GR DC" ? "done" : undefined} />),
       label: "Status",
       default: true,
-      render: (r) => <StageBadge stages={FLOW} current={r.status} tone={r.status === "Diterima DC" || r.status === "Selesai" ? "done" : undefined} />,
+      render: (r) => <StageBadge stages={FLOW} current={r.status} tone={r.status === "GR DC" ? "done" : undefined} />,
     },
     { key: "belumCutting", aggregate: sumPcs((r) => r.belumCutting), label: "Sisa belum cutting", default: false, align: "right", render: (r) => pcs(r.belumCutting) },
     { key: "fgWip", aggregate: sumPcs((r) => r.fgWip), label: "FG belum dikemas", default: false, align: "right", render: (r) => pcs(r.fgWip) },

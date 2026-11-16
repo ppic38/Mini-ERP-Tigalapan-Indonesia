@@ -142,10 +142,12 @@ export function ekspedisiResiGroups(kolis: DeliveryKoli[], rates: EkspedisiRateR
 }
 
 export function ekspedisiInvoiceBadge(status: EkspedisiInvoiceStatus | undefined): { label: string; tone: "neutral" | "info" | "warning" | "success" } {
-  if (status === "PAID") return { label: "LUNAS", tone: "success" };
-  if (status === "SUBMITTED") return { label: "DIAJUKAN KE FINANCE", tone: "warning" };
-  if (status === "DRAFT") return { label: "TERVALIDASI", tone: "info" };
-  return { label: "BELUM DIVALIDASI", tone: "neutral" };
+  // Status Paying Voucher standar (lib/mrp/flowStatus.ts PV_STATUSES, owner 2026-11-16): resi vendor = Submitted, divalidasi Procurement = Approve,
+  // diajukan ke Finance (belum dibayar) = Not Paid, dibayar = Paid.
+  if (status === "PAID") return { label: "Paid", tone: "success" };
+  if (status === "SUBMITTED") return { label: "Not Paid", tone: "warning" };
+  if (status === "DRAFT") return { label: "Approve", tone: "info" };
+  return { label: "Submitted", tone: "neutral" };
 }
 
 /** Procurement: resi yang masih perlu diproses (belum divalidasi, atau sudah divalidasi tetapi belum diajukan). */

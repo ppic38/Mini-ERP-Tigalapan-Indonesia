@@ -10,6 +10,7 @@ import { NumberInput } from "@/components/mrp/number-input";
 import { viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
 import { InvoiceKoliTabs } from "@/components/mrp/invoice-koli-tabs";
 import { useMrpStore } from "@/lib/mrp/store";
+import { pvStatusVendor, pvTone } from "@/lib/mrp/flowStatus";
 import { exportVendorInvoiceExcel } from "@/lib/mrp/exportVendorInvoiceExcel";
 import {
   formatPcs,
@@ -22,7 +23,6 @@ import {
   vendorCumulativeQtyByTipe,
   productionYieldBySize,
   vendorInvoiceAdjustmentTotal,
-  vendorInvoiceBadge,
   vendorInvoiceFinalAmount,
 } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -104,7 +104,8 @@ export function InvoiceVendorReviewPanel() {
   // rincian invoice (denda/reward, Setujui invoice, lampiran ekspedisi, isi koli, detail per MRP) di panel samping, kartu mengikuti filter.
   const vendorName = (id: string) => VENDOR_PRODUKSI[id]?.name ?? id;
   const mrpsOf = (inv: VendorInvoice) => Array.from(new Set(inv.lines.map((l) => l.mrpId)));
-  const statusOf = (inv: VendorInvoice) => vendorInvoiceBadge(inv.status);
+  // Status Paying Voucher standar (lib/mrp/flowStatus.ts): Submitted (diajukan vendor), Approve (disetujui Procurement), Paid.
+  const statusOf = (inv: VendorInvoice) => ({ label: pvStatusVendor(inv), tone: pvTone(pvStatusVendor(inv)) });
   const uniqSorted = (xs: string[]) => Array.from(new Set(xs.filter(Boolean))).sort((a, b) => a.localeCompare(b, "id-ID", { numeric: true }));
   const shown = shownIds ? sorted.filter((i) => shownIds.has(i.id)) : sorted;
   const bold = (x: React.ReactNode) => <span className="font-semibold">{x}</span>;
@@ -335,7 +336,7 @@ export function InvoiceVendorReviewPanel() {
             setPreset((p) =>
               p.card === "review"
                 ? { nonce: p.nonce + 1, filters: {} as Record<string, string[]>, card: "" }
-                : { nonce: p.nonce + 1, filters: { Status: [vendorInvoiceBadge("SUBMITTED").label] }, card: "review" }
+                : { nonce: p.nonce + 1, filters: { Status: ["Submitted"] }, card: "review" }
             )
           }
         />
