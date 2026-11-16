@@ -6,7 +6,7 @@ import { VENDOR_PRODUKSI } from "./seed";
 import type { AduanPolaRow, DeliveryKoli, Lengan, MaterialPO, ProductionBatch, ProductionResult, RawMaterialInvoice } from "./types";
 
 // Export Excel Tracking Item (PPIC/SCM): SATU sheet "WIP" mengikuti template "WIP Download" owner (2026-11-09), satu baris per ROLL x SIZE:
-// Item, No. MRP, Vendor, Kategory, Warna, Size, Code Roll, Target Qty, Target (Hasil Cutting), Tgl good Receiving, Tgl Cutting, Tgl Awal FG, Qty FG, Qty WIP, Status Roll, Estimasi Tanggal Kirim, Status Roll,
+// Item, Item (SKU), No. MRP, Vendor, Kategory, Warna, Size, Code Roll, Target Qty, Target (Hasil Cutting), Tgl good Receiving, Tgl Cutting, Tgl Awal FG, Qty FG, Qty WIP, Status Roll, Estimasi Tanggal Kirim, Status Roll,
 // Qty Koli, No. Koli, No. Resi, Qty Delivery, Tanggal Kirim, Estimasi Tiba. (Revisi 2026-11-11: template baru owner menambah empat kolom koli di kanan; kolom "Estimasi" jadi "Estimasi Tanggal Kirim"
 // dan kolom "Status" berjudul "Status Roll" juga, persis seperti template. Revisi 2026-11-13: Target (Hasil Cutting), No. Resi, dan Qty Delivery ditambahkan dan disisipkan berurutan menurut alur
 // proses: hasil cutting di samping Target Qty, lalu koli -> resi -> qty delivery -> tanggal kirim -> estimasi tiba.)
@@ -58,6 +58,8 @@ export type TrackingExportInput = {
   /** Baris perencanaan MRP (belum ada code roll): id baris aduan -> No. MRP (jumlah roll per grup), dan PO Material (belum dibeli / sudah dipesan / dibatalkan). */
   aduanMrpIds?: Record<string, string>;
   materialPOs?: MaterialPO[];
+  /** Nama item Master SKU untuk warna ERP + lengan + size (kolom "Item (SKU)"); tanpa ini kolomnya kosong. */
+  itemSkuOf?: (warna: string, lengan: string, size: string) => string;
 };
 
 export type WipRow = {
@@ -391,6 +393,7 @@ export async function buildTrackingWorkbook(input: TrackingExportInput): Promise
   const ws = wb.addWorksheet("WIP", { views: [{ state: "frozen", ySplit: 1 }] });
   const cols: { head: string; width: number; kind: "text" | "int" | "date"; value: (r: WipRow) => string | number | Date | null; note?: string }[] = [
     { head: "Item", width: 26, kind: "text", value: (r) => r.item },
+    { head: "Item (SKU)", width: 28, kind: "text", value: (r) => (r.size && input.itemSkuOf ? input.itemSkuOf(r.warna, r.lengan, r.size) : ""), note: "Nama item di Master SKU (lewat Mapping Warna), beda dari kolom Item yang memakai nama warna di MRP. Kosong kalau item tidak ada di Master SKU." },
     { head: "No. MRP", width: 9, kind: "text", value: (r) => r.mrp },
     { head: "Vendor", width: 20, kind: "text", value: (r) => r.vendor },
     { head: "Kategory", width: 14, kind: "text", value: (r) => r.kategori },

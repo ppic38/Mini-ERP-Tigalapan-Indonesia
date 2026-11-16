@@ -6,7 +6,7 @@ import { alertDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { MultiSelectFilter } from "@/components/mrp/multi-select-filter";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatDate, formatPcs, localDateString } from "@/lib/mrp/derive";
+import { formatDate, formatPcs, localDateString, skuItemNameLookup } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { getWosKoliStatusAction, type WosKoliStatusResult } from "@/lib/mrp/wosStatusActions";
 import { WOS_STATUS_LABEL, type WosStatusCode } from "@/lib/mrp/wosStatusMap";
@@ -384,6 +384,7 @@ export function ItemTrackingView() {
   const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
   const invoices = useMrpStore((s) => s.invoices);
   const materialPOs = useMrpStore((s) => s.materialPOs);
+  const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
 
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
@@ -461,7 +462,7 @@ export function ItemTrackingView() {
     if (dateFrom || dateTo) parts.push(`tanggal kirim ${dateFrom ? formatDate(dateFrom) : "…"} s/d ${dateTo ? formatDate(dateTo) : "…"}`);
     try {
       await exportTrackingExcel(
-        { rows, filterLabel: parts.length > 0 ? "Filter: " + parts.join(" · ") : undefined, batches: productionBatches, results: productionResults, kolis: deliveryKolis, invoices, aduans: mrpDetails.flatMap((d) => d.aduanRows), aduanMrpIds: Object.fromEntries(mrpDetails.flatMap((d) => d.aduanRows.map((a) => [a.id, d.mrp.id] as const))), materialPOs },
+        { rows, filterLabel: parts.length > 0 ? "Filter: " + parts.join(" · ") : undefined, batches: productionBatches, results: productionResults, kolis: deliveryKolis, invoices, aduans: mrpDetails.flatMap((d) => d.aduanRows), aduanMrpIds: Object.fromEntries(mrpDetails.flatMap((d) => d.aduanRows.map((a) => [a.id, d.mrp.id] as const))), materialPOs, itemSkuOf: skuItemNameLookup(itemSellingPrices) },
         `WIP-Tracking-Item-${today}.xlsx`
       );
     } catch (e) {

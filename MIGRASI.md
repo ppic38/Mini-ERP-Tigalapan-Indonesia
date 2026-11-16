@@ -1,5 +1,12 @@
 # Migrasi Project — Status & Riwayat
 
+## Export Excel Tracking Item: kolom "Item (SKU)" (2026-11-16, tanpa migration)
+Owner: kolom Item di export memakai nama item ERP (warna MRP + PDK/PJG + size, mis. "PUTIH BLUISH 24S PDK L"), bukan nama Master SKU; diminta menyertakan nama item SKU juga. Kolom baru "Item (SKU)" disisipkan tepat di kanan kolom Item (kolom B; kolom lain bergeser satu, jadi 24 kolom).
+- `lib/mrp/derive.ts` `skuItemNameLookup(itemSellingPrices)`: nama item Master SKU (`item_name`, mis. "MLS PUTIH 24S PDK L") untuk warna ERP + lengan + size, dicari dengan nama warna ERP lalu nama warna hasil Mapping Warna (`skuWarnaFor`), pola sama pencarian nama item di unduhan Warehouse. Item yang tidak ada di Master SKU dikosongkan (tidak ditebak). Baris tanpa size (roll tanpa aduan) juga kosong.
+- `lib/mrp/exportTrackingExcel.ts`: kolom "Item (SKU)" (`itemSkuOf` di input); `components/mrp/item-tracking-view.tsx` meneruskan `skuItemNameLookup(itemSellingPrices)`. Kolom Item tetap nama ERP.
+- Catatan: file rekapan dengan kolom ITEM/WIP/ON DELIVERY/IN TRANSIT/PUT AWAY yang ditunjukkan owner bukan export ERP (tidak ada kodenya di repo); nama item di sana mengikuti nama ERP.
+- Diuji: tsc dan eslint bersih; lookup pada data tiruan (PUTIH BLUISH -> "MLS PUTIH 24S PDK L", COKLAT KOPI -> "MLS COKLAT TUA 24S PJG S", warna tanpa mapping tetap cocok, item tak ada di SKU = kosong).
+
 ## Payment Maklon (Finance): sub tab "Per Kategori Produk" di Riwayat Pembayaran (2026-11-14, tanpa migration)
 Owner: pembayaran historis per kategori produk dari tiap vendor untuk satu MRP (tagihan satu resi sering mencampur reguler + tunik / rib). Hanya tampilan; invoice dan data tidak berubah.
 - `components/finance/payment-maklon-panel.tsx`: kartu Riwayat Pembayaran punya dua sub tab, "Per Invoice" (daftar invoice seperti semula, bawaan) dan "Per Kategori Produk". Pohon MRP -> vendor produksi sama; kalau baris vendor dibuka, sub tab kedua menampilkan tabel kategori (`KategoriHistoryTable`): Kategori produk, Qty Pendek, Qty Panjang, Total qty, Nilai (qty x harga maklon baris invoice), dan nomor invoice, lalu Subtotal, Denda/reward (bila ada), dan Total dibayar.

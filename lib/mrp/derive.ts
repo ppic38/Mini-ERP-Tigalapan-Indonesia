@@ -4436,6 +4436,18 @@ export function skuKategoriLookup(rows: ItemSellingPriceRow[]): (warna: string, 
   };
 }
 
+/** Nama item di Master SKU (`item_name`, mis. "MLS PUTIH 24S PDK L") untuk warna ERP + lengan + size, dicari dengan nama warna ERP lalu nama warna hasil Mapping Warna
+ *  (varian Kids lewat akhiran " KID"), sama dengan pencarian nama item di unduhan Warehouse. Kosong kalau item tidak ada di Master SKU (tidak ditebak). Dipakai kolom "Item (SKU)"
+ *  di export Tracking Item (owner 2026-11-16). */
+export function skuItemNameLookup(rows: ItemSellingPriceRow[]): (warna: string, lengan: string, size: string) => string {
+  const byKey = new Map<string, string>();
+  for (const r of rows) {
+    const key = `${r.warna}|${r.lengan}|${r.size}`;
+    if (r.itemName && !byKey.has(key)) byKey.set(key, r.itemName);
+  }
+  return (warna, lengan, size) => byKey.get(`${warna}|${lengan}|${size}`) ?? byKey.get(`${skuWarnaFor(warna)}|${lengan}|${size}`) ?? "";
+}
+
 /** Id roll (ProductionBatch) yang sudah MASUK RESI pengiriman (owner 2026-11-10: hasil cutting roll terkunci saat itu, bukan lagi saat Finish Good diisi): ada item-nya di koli yang
  *  sudah punya grup resi atau tanggal kirim, atau roll itu tercatat lewat koli level-koli lama (sourceBatchIds, dianggap terkirim utuh). Koli yang baru dibuat tanpa resi tidak dihitung. */
 export function rollsInResi(kolis: DeliveryKoli[]): Set<string> {
