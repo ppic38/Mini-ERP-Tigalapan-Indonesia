@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Boxes, Factory, ShoppingCart, Truck } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
-import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
-import { MultiSelectFilter } from "@/components/mrp/multi-select-filter";
+import { Tabs } from "@/components/ui/tabs";
+import { DataTable, aggSum, type ColumnDef, type FilterDef } from "@/components/mrp/data-table";
+import { RawMaterialRollTab } from "@/components/procurement/raw-material-roll-tab";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatRupiah } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -51,15 +52,8 @@ function summarize(lines: StockLine[]): StockSummary[] {
   );
 }
 
-function StockDetailModal({ summary, onClose }: { summary: StockSummary; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented) onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
+/** Rincian per warna dan jenis bahan (dibuka di panel samping tabel). */
+function StockDetail({ summary }: { summary: StockSummary }) {
   const rows = [...summary.lines].sort((a, b) => a.warna.localeCompare(b.warna) || a.jenis.localeCompare(b.jenis) || a.noInvoice.localeCompare(b.noInvoice));
   const num = "whitespace-nowrap px-3 py-2 text-right font-mono";
   const money = (bucket: StockBucket, estimasi?: boolean) => (
@@ -68,50 +62,39 @@ function StockDetailModal({ summary, onClose }: { summary: StockSummary; onClose
       {rp(bucket.nilai)}
     </>
   );
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-6 max-md:p-0" onClick={onClose}>
-      <div className="flex max-h-[80vh] w-full max-w-[1180px] flex-col overflow-hidden rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.25)] max-md:h-full max-md:max-h-none max-md:rounded-none" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-4 border-b border-border-subtle px-5 py-3">
-          <div className="font-sans text-[15px] font-semibold text-text-primary">
-            Rincian stok · <span className="font-mono">{summary.mrpId}</span> · {vendorName(summary.vendorProduksi)}
-          </div>
-          <button onClick={onClose} aria-label="Tutup" className="ml-auto rounded-md border border-[#CBD5DF] bg-white px-3 py-[6px] font-sans text-xs font-semibold text-action-primary">
-            Tutup
-          </button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-auto">
-          <table className="w-full min-w-[980px] border-collapse font-sans text-[12px] text-[#31414F]">
-            <thead className="sticky top-0 z-10">
-              <tr className="border-b-2 border-accent-blue bg-info-bg text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
-                <th className="px-3 py-2.5 text-left">Warna</th>
-                <th className="px-3 py-2.5 text-left">Jenis bahan</th>
-                <th className="px-3 py-2.5 text-left">No. invoice</th>
-                <th className="px-3 py-2.5 text-right">Dibeli</th>
-                <th className="px-3 py-2.5 text-right">Belum produksi</th>
-                <th className="px-3 py-2.5 text-right">Proses produksi</th>
-                <th className="px-3 py-2.5 text-right">Sudah delivery</th>
-                <th className="px-3 py-2.5 text-right">Pcs belum kirim</th>
+    <div>
+      <div className="overflow-x-auto rounded-md border border-[#E4E8EE]">
+        <table className="w-full min-w-[860px] border-collapse font-sans text-[12px] text-[#31414F]">
+          <thead>
+            <tr className="border-b-2 border-accent-blue bg-info-bg text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
+              <th className="px-3 py-2.5 text-left">Warna</th>
+              <th className="px-3 py-2.5 text-left">Jenis bahan</th>
+              <th className="px-3 py-2.5 text-left">No. invoice</th>
+              <th className="px-3 py-2.5 text-right">Dibeli</th>
+              <th className="px-3 py-2.5 text-right">Belum produksi</th>
+              <th className="px-3 py-2.5 text-right">Proses produksi</th>
+              <th className="px-3 py-2.5 text-right">Sudah delivery</th>
+              <th className="px-3 py-2.5 text-right">Pcs belum kirim</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((line) => (
+              <tr key={line.key} className="border-b border-[#EEF1F4]">
+                <td className="whitespace-nowrap px-3 py-2">{line.warna}</td>
+                <td className="whitespace-nowrap px-3 py-2">{line.jenis}</td>
+                <td className="whitespace-nowrap px-3 py-2 font-mono">{line.noInvoice}</td>
+                <td className={num + " font-semibold"}>{rp(line.dibeli.nilai)}</td>
+                <td className={num}>{money(belumProduksi(line), line.estimasi)}</td>
+                <td className={num}>{money(prosesProduksi(line), line.estimasi)}</td>
+                <td className={num}>{money(line.terkirim, line.estimasi)}</td>
+                <td className={num}>{line.kind === "KAIN" ? fmtInt(line.pcsBelumKirim) : "—"}</td>
               </tr>
-            </thead>
-            <tbody>
-              {rows.map((line) => (
-                <tr key={line.key} className="border-b border-[#EEF1F4]">
-                  <td className="px-3 py-2">{line.warna}</td>
-                  <td className="px-3 py-2">{line.jenis}</td>
-                  <td className="px-3 py-2 font-mono">{line.noInvoice}</td>
-                  <td className={num + " font-semibold"}>{rp(line.dibeli.nilai)}</td>
-                  <td className={num}>{money(belumProduksi(line), line.estimasi)}</td>
-                  <td className={num}>{money(prosesProduksi(line), line.estimasi)}</td>
-                  <td className={num}>{money(line.terkirim, line.estimasi)}</td>
-                  <td className={num}>{line.kind === "KAIN" ? fmtInt(line.pcsBelumKirim) : "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="border-t border-border-subtle px-5 py-2 font-sans text-[10.5px] text-text-muted">≈ = rib, kerah, atau manset. Pembagian tahapnya estimasi dari roll kain warna yang sama, karena bahan ini tidak dilacak per roll.</div>
+            ))}
+          </tbody>
+        </table>
       </div>
+      <div className="mt-2 font-sans text-[10.5px] text-text-muted">≈ = rib, kerah, atau manset. Pembagian tahapnya estimasi dari roll kain warna yang sama, karena bahan ini tidak dilacak per roll.</div>
     </div>
   );
 }
@@ -125,107 +108,107 @@ export default function PosisiStokPage() {
   const materialClaimHistory = useMrpStore((s) => s.materialClaimHistory);
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
 
+  const [tab, setTab] = useState<"roll" | "mrp">("roll");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
-  const [mrp, setMrp] = useState<string[]>([]);
-  const [vendor, setVendor] = useState<string[]>([]);
-  const [detailKey, setDetailKey] = useState<string | null>(null);
+  const [shownKeys, setShownKeys] = useState<Set<string> | null>(null);
 
   const position = useMemo(() => buildStockPosition(invoices, productionBatches, deliveryKolis, materialClaimHistory, mrpDetails), [invoices, productionBatches, deliveryKolis, materialClaimHistory, mrpDetails]);
   const lines = useMemo(
     () =>
       position.lines.filter((line) => {
         const date = line.bookedAt.slice(0, 10);
-        return (!from || date >= from) && (!to || date <= to) && (mrp.length === 0 || mrp.includes(line.mrpId)) && (vendor.length === 0 || vendor.includes(vendorName(line.vendorProduksi)));
+        return (!from || date >= from) && (!to || date <= to);
       }),
-    [position.lines, from, to, mrp, vendor]
+    [position.lines, from, to]
   );
   const summaries = useMemo(() => summarize(lines), [lines]);
-  const total = useMemo(() => sumStock(lines), [lines]);
 
   if (!mounted) return null;
 
+  // Kartu mengikuti baris yang lolos filter tabel (pola PPIC).
+  const shown = shownKeys ? summaries.filter((s) => shownKeys.has(s.key)) : summaries;
+  const total = sumStock(shown);
   const belum = belumProduksi(total);
   const proses = prosesProduksi(total);
-  const unmatched = position.unmatchedBatches.filter((b) => (mrp.length === 0 || mrp.includes(b.mrpId)) && (vendor.length === 0 || vendor.includes(vendorName(b.vendorProduksi))));
-  const hasFilter = !!from || !!to || mrp.length > 0 || vendor.length > 0;
-  const dateCls = "rounded-md border border-border-subtle bg-white px-2.5 py-[5px] font-sans text-[11.5px] text-[#31414F]";
-  const detail = summaries.find((s) => s.key === detailKey);
+  const shownMrp = new Set(shown.map((s) => `${s.mrpId}|${s.vendorProduksi}`));
+  const unmatched = position.unmatchedBatches.filter((b) => shownMrp.has(`${b.mrpId}|${b.vendorProduksi}`) || !shownKeys);
+  const dateCls = "rounded-md border border-border-subtle bg-white px-2 py-[4px] font-sans text-[11.5px] text-[#31414F]";
 
+  const filterDefs: FilterDef<StockSummary>[] = [
+    { label: "No. MRP", options: Array.from(new Set(summaries.map((s) => s.mrpId))).sort((a, b) => b.localeCompare(a, undefined, { numeric: true })), test: (s, v) => s.mrpId === v },
+    { label: "Vendor", options: Array.from(new Set(summaries.map((s) => vendorName(s.vendorProduksi)))).sort(), test: (s, v) => vendorName(s.vendorProduksi) === v },
+  ];
+
+  const sumCol = (get: (s: StockSummary) => number, fmt = rp) => aggSum(get, (n) => <span className="font-semibold">{fmt(n)}</span>);
   const columns: ColumnDef<StockSummary>[] = [
-    { key: "vendor", label: "Vendor", default: true, render: (s) => vendorName(s.vendorProduksi) },
-    { key: "dibeli", aggregate: aggSum((s) => s.dibeli.nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Dibeli", default: true, align: "right", render: (s) => <span className="font-semibold">{rp(s.dibeli.nilai)}</span> },
-    { key: "rollDibeli", aggregate: aggSum((s) => s.dibeli.roll, (n) => <span className="font-semibold">{fmtInt(n)}</span>), label: "Roll dibeli", default: false, align: "right", render: (s) => fmtInt(s.dibeli.roll) },
-    { key: "belumDiterima", aggregate: aggSum((s) => s.belumDiterima.nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Belum diterima vendor", default: true, align: "right", render: (s) => rp(s.belumDiterima.nilai) },
-    { key: "diVendor", aggregate: aggSum((s) => s.diVendor.nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Di vendor, belum resting", default: true, align: "right", render: (s) => rp(s.diVendor.nilai) },
-    { key: "belumProduksi", aggregate: aggSum((s) => belumProduksi(s).nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Total belum produksi", default: true, align: "right", info: INFO.belumProduksi, render: (s) => <span className="font-semibold">{rp(belumProduksi(s).nilai)}</span> },
-    { key: "resting", aggregate: aggSum((s) => s.resting.nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Resting", default: false, align: "right", render: (s) => rp(s.resting.nilai) },
-    { key: "cuttingFg", aggregate: aggSum((s) => s.cuttingFg.nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Cutting & Finish Good", default: false, align: "right", render: (s) => rp(s.cuttingFg.nilai) },
-    { key: "tutup", aggregate: aggSum((s) => s.tutup.nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Roll ditutup, belum dikirim", default: false, align: "right", render: (s) => rp(s.tutup.nilai) },
-    { key: "proses", aggregate: aggSum((s) => prosesProduksi(s).nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Total proses produksi", default: true, align: "right", info: INFO.proses, render: (s) => <span className="font-semibold">{rp(prosesProduksi(s).nilai)}</span> },
-    { key: "pcs", aggregate: aggSum((s) => s.pcsBelumKirim, (n) => <span className="font-semibold">{fmtInt(n)}</span>), label: "Pcs belum kirim", default: true, align: "right", render: (s) => fmtInt(s.pcsBelumKirim) },
-    { key: "terkirim", aggregate: aggSum((s) => s.terkirim.nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Sudah delivery", default: true, align: "right", info: INFO.terkirim, render: (s) => rp(s.terkirim.nilai) },
-    { key: "diretur", aggregate: aggSum((s) => s.diretur.nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Diretur", default: false, align: "right", render: (s) => rp(s.diretur.nilai) },
+    { key: "mrp", label: "No. MRP", default: false, render: (s) => <span className="font-mono">{s.mrpId}</span> },
+    { key: "dibeli", aggregate: sumCol((s) => s.dibeli.nilai), label: "Dibeli", default: true, align: "right", render: (s) => <span className="font-semibold">{rp(s.dibeli.nilai)}</span> },
+    { key: "rollDibeli", aggregate: sumCol((s) => s.dibeli.roll, fmtInt), label: "Roll dibeli", default: false, align: "right", render: (s) => fmtInt(s.dibeli.roll) },
+    { key: "belumDiterima", aggregate: sumCol((s) => s.belumDiterima.nilai), label: "Belum diterima", default: true, align: "right", render: (s) => rp(s.belumDiterima.nilai) },
+    { key: "diVendor", aggregate: sumCol((s) => s.diVendor.nilai), label: "Di vendor", default: true, align: "right", render: (s) => rp(s.diVendor.nilai) },
+    { key: "belumProduksi", aggregate: sumCol((s) => belumProduksi(s).nilai), label: "Belum produksi", default: true, align: "right", info: INFO.belumProduksi, render: (s) => <span className="font-semibold">{rp(belumProduksi(s).nilai)}</span> },
+    { key: "resting", aggregate: sumCol((s) => s.resting.nilai), label: "Resting", default: false, align: "right", render: (s) => rp(s.resting.nilai) },
+    { key: "cuttingFg", aggregate: sumCol((s) => s.cuttingFg.nilai), label: "Cutting & FG", default: false, align: "right", render: (s) => rp(s.cuttingFg.nilai) },
+    { key: "tutup", aggregate: sumCol((s) => s.tutup.nilai), label: "Roll ditutup", default: false, align: "right", render: (s) => rp(s.tutup.nilai) },
+    { key: "proses", aggregate: sumCol((s) => prosesProduksi(s).nilai), label: "Proses produksi", default: true, align: "right", info: INFO.proses, render: (s) => <span className="font-semibold">{rp(prosesProduksi(s).nilai)}</span> },
+    { key: "pcs", aggregate: sumCol((s) => s.pcsBelumKirim, fmtInt), label: "Pcs belum kirim", default: true, align: "right", render: (s) => fmtInt(s.pcsBelumKirim) },
+    { key: "terkirim", aggregate: sumCol((s) => s.terkirim.nilai), label: "Sudah delivery", default: true, align: "right", info: INFO.terkirim, render: (s) => rp(s.terkirim.nilai) },
+    { key: "diretur", aggregate: sumCol((s) => s.diretur.nilai), label: "Diretur", default: false, align: "right", render: (s) => rp(s.diretur.nilai) },
   ];
 
   return (
     <AppShell role="finance" activeHref="/finance/posisi-stok" breadcrumb={["Dashboard", "Posisi Stok"]} title="Posisi Stok" subtitle="Bahan yang sudah dibeli menurut tahap saat ini, sampai dikirim vendor">
-      <div className="grid grid-cols-4 gap-3.5 max-lg:grid-cols-2 max-sm:grid-cols-1">
-        <KpiCard label="Stok dibeli" value={rp(total.dibeli.nilai)} valueClassName="text-[20px]" sub={bucketSub(total.dibeli)} accent="blue" icon={ShoppingCart} />
-        <KpiCard label="Belum produksi" value={rp(belum.nilai)} valueClassName="text-[20px]" sub={`${bucketSub(belum)} · belum masuk resting`} accent="orange" icon={Boxes} />
-        <KpiCard label="Proses produksi" value={rp(proses.nilai)} valueClassName="text-[20px]" sub={`${bucketSub(proses)} · ${fmtInt(total.pcsBelumKirim)} pcs belum dikirim`} accent="purple" icon={Factory} />
-        <KpiCard label="Sudah delivery" value={rp(total.terkirim.nilai)} valueClassName="text-[20px]" sub={`${fmtKg(total.terkirim.kg)} kg · menunggu feedback gudang`} accent="teal" icon={Truck} />
-      </div>
+      <Tabs
+        items={[
+          { key: "roll", label: "Per Roll" },
+          { key: "mrp", label: "Per MRP dan vendor" },
+        ]}
+        active={tab}
+        onChange={(k) => setTab(k as "roll" | "mrp")}
+      />
+      {tab === "roll" && <RawMaterialRollTab />}
+      {tab === "mrp" && (
+        <>
+          <div className="grid grid-cols-4 gap-3.5 max-lg:grid-cols-2 max-sm:grid-cols-1">
+            <KpiCard label="Stok dibeli" value={rp(total.dibeli.nilai)} valueClassName="text-[20px]" sub={bucketSub(total.dibeli)} accent="blue" icon={ShoppingCart} />
+            <KpiCard label="Belum produksi" value={rp(belum.nilai)} valueClassName="text-[20px]" sub={`${bucketSub(belum)} · belum masuk resting`} accent="orange" icon={Boxes} />
+            <KpiCard label="Proses produksi" value={rp(proses.nilai)} valueClassName="text-[20px]" sub={`${bucketSub(proses)} · ${fmtInt(total.pcsBelumKirim)} pcs belum dikirim`} accent="purple" icon={Factory} />
+            <KpiCard label="Sudah delivery" value={rp(total.terkirim.nilai)} valueClassName="text-[20px]" sub={`${fmtKg(total.terkirim.kg)} kg · menunggu feedback gudang`} accent="teal" icon={Truck} />
+          </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-[#FAFBFC] px-5 py-2.5">
-        <label className="flex items-center gap-1.5 font-sans text-[11.5px] text-text-muted">
-          Tanggal invoice
-          <input type="date" aria-label="Tanggal invoice dari" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className={dateCls} />
-        </label>
-        <label className="flex items-center gap-1.5 font-sans text-[11.5px] text-text-muted">
-          sampai
-          <input type="date" aria-label="Tanggal invoice sampai" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className={dateCls} />
-        </label>
-        <MultiSelectFilter label="No. MRP" options={Array.from(new Set(position.lines.map((l) => l.mrpId))).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))} value={mrp} onChange={setMrp} />
-        <MultiSelectFilter label="Vendor" options={Array.from(new Set(position.lines.map((l) => vendorName(l.vendorProduksi)))).sort()} value={vendor} onChange={setVendor} />
-        {hasFilter && (
-          <button
-            onClick={() => {
-              setFrom("");
-              setTo("");
-              setMrp([]);
-              setVendor([]);
-            }}
-            className="font-sans text-[11.5px] font-semibold text-action-primary underline"
-          >
-            Hapus filter
-          </button>
-        )}
-        {(from || to) && <span className="w-full font-sans text-[10.5px] text-text-muted">Menampilkan invoice pada rentang ini, dengan posisi rollnya hari ini.</span>}
-      </div>
+          {(unmatched.length > 0 || total.tidakDilacak > 0 || total.diretur.nilai > 0) && (
+            <ul className="list-disc rounded-lg border border-border-subtle bg-white px-8 py-2.5 font-sans text-[11.5px] text-[#31414F]">
+              {unmatched.length > 0 && <li>{fmtInt(unmatched.length)} roll di produksi tidak ketemu di invoice bahan, jadi nilainya belum masuk halaman ini.</li>}
+              {total.tidakDilacak > 0 && <li>{rp(total.tidakDilacak)} item tambahan selain rib, kerah, dan manset ada di Stok dibeli, tetapi pemakaiannya tidak dilacak per tahap.</li>}
+              {total.diretur.nilai > 0 && <li>{rp(total.diretur.nilai)} roll diretur lewat klaim ada di Stok dibeli, tetapi tidak lagi dihitung sebagai stok.</li>}
+            </ul>
+          )}
 
-      {(unmatched.length > 0 || total.tidakDilacak > 0 || total.diretur.nilai > 0) && (
-        <ul className="mt-3 list-disc rounded-lg border border-border-subtle bg-white px-8 py-2.5 font-sans text-[11.5px] text-[#31414F]">
-          {unmatched.length > 0 && <li>{fmtInt(unmatched.length)} roll di produksi tidak ketemu di invoice bahan, jadi nilainya belum masuk halaman ini.</li>}
-          {total.tidakDilacak > 0 && <li>{rp(total.tidakDilacak)} item tambahan selain rib, kerah, dan manset ada di Stok dibeli, tetapi pemakaiannya tidak dilacak per tahap.</li>}
-          {total.diretur.nilai > 0 && <li>{rp(total.diretur.nilai)} roll diretur lewat klaim ada di Stok dibeli, tetapi tidak lagi dihitung sebagai stok.</li>}
-        </ul>
+          <DataTable<StockSummary>
+            title="Posisi stok per MRP dan vendor"
+            subtitle={from || to ? "Invoice pada rentang tanggal ini, dengan posisi rollnya hari ini" : undefined}
+            headerActions={
+              <span className="flex items-center gap-1.5 font-sans text-[11.5px] text-text-muted">
+                Tgl invoice
+                <input type="date" aria-label="Tanggal invoice dari" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className={dateCls} />
+                s/d
+                <input type="date" aria-label="Tanggal invoice sampai" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className={dateCls} />
+              </span>
+            }
+            columns={columns}
+            rows={summaries}
+            keyOf={(s) => s.key}
+            firstColumnLabel="Vendor"
+            firstColumnRender={(s) => <span className="font-medium">{vendorName(s.vendorProduksi)}</span>}
+            filterDefs={filterDefs}
+            defaultGroupBy={["No. MRP"]}
+            onFilteredRows={(list) => setShownKeys(new Set(list.map((s) => s.key)))}
+            renderExpanded={(s) => <StockDetail summary={s} />}
+            emptyText="Belum ada invoice bahan untuk filter ini."
+          />
+        </>
       )}
-
-      <div className="mt-4">
-        <DataTable
-          title="Posisi stok per MRP dan vendor"
-          subtitle={`${summaries.length} baris · klik baris untuk rincian per warna`}
-          columns={columns}
-          rows={summaries}
-          keyOf={(s) => s.key}
-          firstColumnLabel="No. MRP"
-          firstColumnRender={(s) => <span className="font-mono">{s.mrpId}</span>}
-          onRowClick={(s) => setDetailKey(s.key)}
-          emptyText="Belum ada invoice bahan untuk filter ini."
-        />
-      </div>
-      {detail && <StockDetailModal summary={detail} onClose={() => setDetailKey(null)} />}
     </AppShell>
   );
 }

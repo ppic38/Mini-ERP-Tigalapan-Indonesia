@@ -115,7 +115,8 @@ export function buildRawMaterialRolls(
   const invoicedRolls = new Map<string, number>(); // poId|warna|lengan -> roll di invoice
 
   for (const inv of invoices) {
-    if (inv.status === "WAITING_INVOICE" || isSyntheticSupplier(inv.supplier)) continue;
+    // Sama dengan Posisi Stok: semua invoice kecuali WAITING_INVOICE (termasuk invoice migrasi data awal), supaya jumlah roll dan nilai cocok.
+    if (inv.status === "WAITING_INVOICE") continue;
     const vendor = inv.destinationVendor || inv.vendorProduksi;
     const baseTotal = inv.colorEntries.reduce((s, c) => s + c.rolls.reduce((t, kg) => t + c.hargaPerRoll * kg, 0), 0) + inv.addBuys.reduce((s, a) => s + a.totalHarga, 0);
     const factor = baseTotal > 0 && inv.totalBiaya > 0 ? inv.totalBiaya / baseTotal : 1;

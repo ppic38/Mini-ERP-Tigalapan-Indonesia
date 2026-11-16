@@ -1,5 +1,11 @@
 # Migrasi Project — Status & Riwayat
 
+## Posisi Stok (Finance) ikut tab Per Roll; tampilan per MRP Raw Material dan Posisi Stok gaya Odoo (2026-11-16, tanpa migration) [redesign-finance]
+Owner: "kenapa Posisi Stok dan Raw Material belum update? dan belum berformat Odoo".
+- Finance > Posisi Stok (`app/finance/posisi-stok/page.tsx`) kini dua tab: Per Roll (bawaan, komponen yang SAMA dengan Raw Material Procurement) dan Per MRP dan vendor. Di tab per MRP: No. MRP dan Vendor pindah ke kotak cari gaya Odoo, kelompok bawaan No. MRP dengan jumlah per kolom, kartu mengikuti filter tabel, rentang tanggal invoice di baris judul tabel, rincian per warna di panel samping (dulu pop-up). Angka tidak berubah.
+- Procurement > Raw Material tab Per MRP dan vendor: No. MRP dan Vendor pindah ke kotak cari gaya Odoo, kelompok bawaan No. MRP, kartu dan Export Excel mengikuti baris yang tampil. Bulan invoice, Kategori produk, dan Jenis bahan tetap tombol pilihan di baris judul (menyaring per baris invoice, jadi angka per MRP ikut berubah).
+- Tab Per Roll kini juga memuat invoice migrasi data awal, sehingga jumlah roll sama dengan Posisi Stok: 2.677 roll invoice (+ 376 roll PO belum invoice = 3.053), Belum produksi 619 roll, Proses produksi 1.009 roll. Nilai Per Roll lebih kecil dari kartu per MRP karena rib, kerah, manset tidak dihitung per roll (contoh: Proses produksi Rp 2.305.448.677 per roll vs Rp 2.384.295.450 termasuk rib).
+
 ## Raw Material per roll (gabungan Raw Material dan Posisi Stok) dan kolom Warna di Tracking Item (2026-11-16, tanpa migration) [redesign-procurement]
 Owner: "raw material sama dengan posisi stok, namun by roll yang sudah di PO, sudah di paid, dengan field gabungan antara raw material dan posisi stok"; "di tracking menu PPIC tambahkan field warna".
 - Procurement > Raw Material punya dua tab: **Per Roll** (baru, bawaan) dan **Per MRP dan vendor** (tampilan lama, isi dan Export Excel tidak berubah).
