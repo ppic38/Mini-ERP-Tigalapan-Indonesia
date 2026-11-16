@@ -168,8 +168,8 @@ Invoice Ekspedisi, Monitor Invoice Maklon; Finance Payment Material/Maklon/Ekspe
 Produksi Kebutuhan Bahan, Monitoring, Reject; SCM Approval MRP, Monitoring; Warehouse Penerimaan, Riwayat).
 
 **Sisa per modul (unsur 2, 3, 6, dan tabel yang belum memakai DataTable):**
-- Procurement: Purchase Order (`app/procurement/po-approval/page.tsx`, 1.238 baris, 2 tabel buatan sendiri + PoApprovalQueue),
-  Material Tracking (853 baris, 2 tabel sendiri, FilterBar), Paying Voucher (3 panel), Klaim Material; kartu dan status tahapan.
+- Procurement: SELESAI 2026-11-16 (Purchase Order, Paying Voucher, Material Tracking, Raw Material, Klaim Material). Sisa: Dashboard,
+  Material per Warna (dipakai juga SCM), Master Data.
 - Finance: PO Approval (PoMaterialPanel, PoMaklonPanel, tabel sendiri), Laporan HPP (pohon sendiri), Dashboard; kartu Payment.
 - SCM / GM: PoApprovalQueue (dipakai Procurement, SCM, GM; prioritas tampilan HP untuk approval), Approval MRP dua tabel jadi satu.
 - Produksi: Monitoring Produksi (4 tabel sendiri di rincian), Yield Alert kartu + status.
@@ -179,7 +179,7 @@ Produksi Kebutuhan Bahan, Monitoring, Reject; SCM Approval MRP, Monitoring; Ware
 
 - [~] **E1. PPIC** (disetujui owner; sebagian selesai 2026-11-16, lihat catatan B6-B7). Kotak impor jadi tombol + panel; pita tahapan di Ringkasan; Tracking Item
       (ikut berubah di SCM); Master Data jadi menu Pengaturan.
-- [ ] **E2. Procurement.** Purchase Order: kartu "MRP tanpa PO" jadi keping/penanda; 3 tab tetap. Paying Voucher:
+- [x] **E2. Procurement.** (selesai 2026-11-16 kecuali Dashboard, Material per Warna, Master Data; lihat MIGRASI.md [redesign-procurement]) Purchase Order: kartu "MRP tanpa PO" jadi keping/penanda; 3 tab tetap. Paying Voucher:
       dua tabel jadi satu daftar berfilter "Belum invoice". Raw Material: tabel 12 kolom dipangkas + bagi halaman
       (halaman 3.581 px). Master Data: 7 tab jadi menu Pengaturan.
 - [ ] **E3. Finance.** Payment buka tab yang berisi pekerjaan; PO Approval; Laporan HPP (ikut berubah di SCM);
