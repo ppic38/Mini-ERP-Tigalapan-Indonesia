@@ -16,7 +16,7 @@ export function ResiDownloadDialog({
   onDownload,
   onClose,
   title = "Download Excel Pengiriman per Resi",
-  note = "Satu file, satu sheet per nomor resi (pengiriman bernomor resi sama digabung jadi satu sheet, koli berurutan dari nomor terkecil). Kolom: No Koli, Item Name, Qty, Type, Tgl Kirim, AWB (no resi), dan ETA (tanggal kirim + 7 hari).",
+  note = "Satu file, satu sheet per nomor resi (pengiriman bernomor resi sama digabung jadi satu sheet, koli berurutan dari nomor terkecil). Kolom: No Koli, Item Name, Qty, Type, Tgl Kirim, AWB (no resi), dan ETA (tanggal kirim + 7 hari). Klik \"Pilih koli\" pada sebuah resi untuk hanya mengunduh koli yang datang.",
   extraFields,
   extraReady = true,
   showSheetCount = true,

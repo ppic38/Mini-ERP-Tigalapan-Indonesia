@@ -442,7 +442,7 @@ export default function WarehousePenerimaanPage() {
         emptyText="Belum ada koli yang siap/menunggu diterima."
       />
       {poOpen && <MokaPoDialog groups={groups} vendorName={vendorName} onDownload={downloadMokaPo} onClose={() => setPoOpen(false)} />}
-      {downloadOpen && <ResiDownloadDialog groups={groups} vendorName={vendorName} onDownload={downloadResiSheets} onClose={() => setDownloadOpen(false)} />}
+      {downloadOpen && <ResiDownloadDialog groups={groups} vendorName={vendorName} onDownload={downloadResiSheets} onClose={() => setDownloadOpen(false)} pickKoli />}
     </AppShell>
   );
 }
