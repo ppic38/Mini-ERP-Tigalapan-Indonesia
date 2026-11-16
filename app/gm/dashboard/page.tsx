@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { OpsDashboard } from "@/components/dashboard/ops-dashboard";
 import Link from "next/link";
 import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
@@ -53,6 +54,9 @@ export default function GmDashboardPage() {
 
   return (
     <AppShell role="gm" activeHref="/gm/dashboard" breadcrumb={["Dashboard", "General Manager"]} title="Ringkasan untuk General Manager">
+      {/* Dashboard operasional bersama (owner 2026-11-16): progres produksi, pembelian material, SLA lewat, KPI Yield dan HPP %. */}
+      <OpsDashboard />
+      <h2 className="mt-2 font-sans text-[13.5px] font-semibold text-text-primary">Tugas modul ini</h2>
       <div className="grid grid-cols-4 gap-3.5">
         <KpiCard label="Menunggu Approval Anda" value={String(stats.mine.length)} sub={`${formatRupiah(stats.mineAmount)} · Level 4`} accent="orange" />
         <KpiCard label="PO Lewat SLA" value={String(stats.overdue.length)} sub={`dari ${stats.inFlight.length} PO yang sedang diproses`} />
