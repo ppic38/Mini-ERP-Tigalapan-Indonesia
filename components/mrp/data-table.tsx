@@ -5,6 +5,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, t
 import { usePathname } from "next/navigation";
 import { ChevronDown, ChevronRight, Filter, Layers, Search, Star, X } from "lucide-react";
 import { InfoPopover } from "@/components/ui/info-popover";
+import { SidePanel } from "@/components/ui/side-panel";
 
 export type ColumnDef<T> = {
   key: string;
@@ -132,7 +133,14 @@ export function DataTable<T>({
   pageSize,
   filterPreset,
   onFilteredRows,
+  expandIn,
+  panelWidth,
 }: {
+  /** Tempat rincian baris (`renderExpanded`) dibuka. Bawaan tabel modul internal = "panel" (panel samping kanan, gaya Odoo,
+   *  owner 2026-11-16); "row" = baris yang melebar ke bawah seperti dulu. Portal vendor selalu "row". */
+  expandIn?: "panel" | "row";
+  /** Lebar maksimum panel samping (px). */
+  panelWidth?: number;
   /** Opsional: dipanggil dengan baris yang lolos filter dan kotak cari setiap kali hasilnya berubah (mis. kartu angka yang
    *  mengikuti filter). Tidak diisi = tidak ada efek. */
   onFilteredRows?: (rows: T[]) => void;
@@ -266,15 +274,22 @@ export function DataTable<T>({
   const [openFilterSections, setOpenFilterSections] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
+  const panelMode = modern && !!renderExpanded && expandIn !== "row";
+  const [panelKey, setPanelKey] = useState<string | null>(null);
   const prevCollapseSignal = useRef(collapseSignal);
   useEffect(() => {
     if (collapseSignal !== undefined && collapseSignal !== prevCollapseSignal.current) {
       prevCollapseSignal.current = collapseSignal;
       setExpandedKeys(new Set());
+      setPanelKey(null);
     }
   }, [collapseSignal]);
 
   function toggleExpanded(key: string) {
+    if (panelMode) {
+      setPanelKey((prev) => (prev === key ? null : key));
+      return;
+    }
     setExpandedKeys((prev) => {
       if (singleExpand) return prev.has(key) ? new Set() : new Set([key]);
       const next = new Set(prev);
@@ -778,13 +793,14 @@ export function DataTable<T>({
                 );
               const r = item.row;
               const key = keyOf(r);
-              const isExpanded = renderExpanded ? expandedKeys.has(key) : false;
+              const isExpanded = renderExpanded ? (panelMode ? panelKey === key : expandedKeys.has(key)) : false;
               return (
                 <Fragment key={key}>
                   <tr
                     className={
                       "border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] last:border-b-0 " +
                       (renderExpanded || onRowClick ? "cursor-pointer hover:bg-[#FAFBFC] " : "") +
+                      (panelMode && isExpanded ? "bg-info-bg " : "") +
                       (rowClassName?.(r) ?? "")
                     }
                     onClick={renderExpanded ? () => toggleExpanded(key) : onRowClick ? () => onRowClick(r) : undefined}
@@ -802,7 +818,7 @@ export function DataTable<T>({
                     )}
                     {renderExpanded && (
                       <td data-chevron className="px-3 py-[11px]">
-                        {isExpanded ? (
+                        {isExpanded && !panelMode ? (
                           <ChevronDown className="h-3.5 w-3.5 flex-none text-text-muted" />
                         ) : (
                           <ChevronRight className="h-3.5 w-3.5 flex-none text-text-muted" />
@@ -810,7 +826,7 @@ export function DataTable<T>({
                       </td>
                     )}
                   </tr>
-                  {renderExpanded && isExpanded && (
+                  {renderExpanded && isExpanded && !panelMode && (
                     <tr className="border-b border-[#F1F4F7] last:border-b-0">
                       <td colSpan={visibleColumns.length + 2} className="bg-[#FAFBFC] px-5 py-4">
                         {renderExpanded(r)}
@@ -870,6 +886,14 @@ export function DataTable<T>({
           </div>
         </div>
       )}
+      {panelMode && renderExpanded && (() => {
+        const row = panelKey ? rows.find((x) => keyOf(x) === panelKey) : undefined;
+        return (
+          <SidePanel open={!!row} onClose={() => setPanelKey(null)} title={row ? firstColumnRender(row) : ""} subtitle={title} width={panelWidth ?? 1040}>
+            {row && renderExpanded(row)}
+          </SidePanel>
+        );
+      })()}
     </div>
   );
 }
