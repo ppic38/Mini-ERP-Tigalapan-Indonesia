@@ -2,7 +2,7 @@ import type { MrpDetail } from "./store";
 import { SIZE_ORDER, compareNoKoli, targetSizesForBatch } from "./derive";
 import { LT_CUTTING_KE_FG, LT_FG_KE_KIRIM, dayKey, ltTiba, maxDay, minDay, parseLooseDay, plusDays } from "./itemEstimates";
 import type { WosKoliStatus } from "./wosStatusMap";
-import type { AduanPolaRow, DeliveryKoli, Lengan, ProductionBatch, ProductionResult, RawMaterialInvoice, WarehouseReceipt } from "./types";
+import type { AduanPolaRow, DeliveryKoli, Lengan, MaterialPO, ProductionBatch, ProductionResult, RawMaterialInvoice, WarehouseReceipt } from "./types";
 
 /** Tracking Item (PPIC dan SCM, owner 2026-10-26): memantau SATU ITEM (warna + lengan + size, mis. "HITAM 24S PDK L"), bukan satu warna, dari rencana
  *  MRP sampai diterima gudang. Semua angka turunan dari data yang sudah ada:
@@ -168,6 +168,9 @@ export type ItemTrackingExtra = {
   invoices?: RawMaterialInvoice[];
   /** Status penerimaan DC per koli dari WOS (tab ERP_INCOMING); kosong = integrasi belum aktif. */
   wosByKoli?: Record<string, WosKoliStatus>;
+  /** Untuk tanggal Tracking per roll: hasil FG (tanggal FG pertama per roll) dan PO Material (tanggal PO). */
+  results?: ProductionResult[];
+  materialPOs?: MaterialPO[];
 };
 
 export function buildItemTracking(
@@ -456,8 +459,16 @@ export type AduanTrackRow = {
   fgWip: number;
   perjalanan: number;
   status: AduanStage;
+  /** Tanggal PO Material (PO yang memuat warna x lengan ini untuk vendor itu; paling awal). */
+  poMaterialAt?: string;
+  /** Tanggal bahan dikirim ke vendor (Set Delivery invoice bahan) dan tanggal roll diterima vendor (Good Receive). Baris roll
+   *  memakai invoice yang memuat code roll itu; baris lain memakai yang paling awal untuk MRP x vendor x warna x lengan. */
+  deliveryAt?: string;
+  grAt?: string;
   restingAt?: string;
   cuttingAt?: string;
+  /** Tanggal Finish Good pertama roll x size ini (catatan hasil "Roll {kode}", sama dengan export WIP). */
+  fgFirstAt?: string;
   closedAt?: string;
   koliFirstAt?: string;
   shipLastAt?: string;
@@ -644,6 +655,55 @@ export function buildAduanTracking(
       r.koliNos = [...c.inKoli];
       rows.set(r.key, r);
     }
+  }
+
+  // Tanggal PO Material, delivery bahan, Good Receive, dan FG pertama.
+  const poAt = new Map<string, string>(); // mrp|vendor|warna|lengan
+  for (const po of extra.materialPOs ?? []) {
+    if (po.status === "CANCELLED" || !activeIds.has(po.mrpId)) continue;
+    const day = dayKey(po.createdAt ?? po.approvalSubmittedAt);
+    if (!day) continue;
+    const lines = po.colorBreakdown.length > 0 ? po.colorBreakdown : [{ warna: po.warna, lengan: po.lengan }];
+    for (const c of lines) {
+      const k = `${po.mrpId}|${po.vendorProduksi}|${c.warna}|${c.lengan}`;
+      poAt.set(k, minDay(poAt.get(k), day)!);
+    }
+  }
+  const matByRoll = new Map<string, { delivery?: string; gr?: string }>(); // mrp|vendor|codeRoll
+  const matByGroup = new Map<string, { delivery?: string; gr?: string }>(); // mrp|vendor|warna|lengan
+  for (const inv of extra.invoices ?? []) {
+    if (!activeIds.has(inv.mrpId)) continue;
+    const delivery = inv.deliveredAt ? dayKey(inv.deliveredAt) : undefined;
+    for (const c of inv.colorEntries) {
+      const gk = `${inv.mrpId}|${inv.destinationVendor}|${c.warna}|${c.lengan}`;
+      const g = matByGroup.get(gk) ?? {};
+      g.delivery = minDay(g.delivery, delivery);
+      for (const a of inv.rollArrivals[c.warna + "|" + c.lengan] ?? []) {
+        if (!a) continue;
+        const gr = dayKey(a.arrivedAt);
+        g.gr = minDay(g.gr, gr);
+        if (a.codeRoll) matByRoll.set(`${inv.mrpId}|${inv.destinationVendor}|${a.codeRoll}`, { delivery, gr });
+      }
+      matByGroup.set(gk, g);
+    }
+  }
+  const fgFirst = new Map<string, string>(); // mrp|vendor|codeRoll|size
+  for (const res of extra.results ?? []) {
+    if (res.kind !== "FG" || !res.note?.startsWith("Roll ") || !activeIds.has(res.mrpId)) continue;
+    const day = dayKey(res.recordedAt);
+    for (const [size, qty] of Object.entries(res.sizeQty)) {
+      if (!(qty > 0)) continue;
+      const k = `${res.mrpId}|${res.vendorProduksi}|${res.note.slice(5).trim()}|${size}`;
+      fgFirst.set(k, minDay(fgFirst.get(k), day)!);
+    }
+  }
+  for (const r of rows.values()) {
+    const gk = `${r.mrpId}|${r.vendorProduksi}|${r.warna}|${r.lengan}`;
+    r.poMaterialAt = poAt.get(gk);
+    const mat = (r.codeRoll ? matByRoll.get(`${r.mrpId}|${r.vendorProduksi}|${r.codeRoll}`) : undefined) ?? matByGroup.get(gk);
+    r.deliveryAt = mat?.delivery;
+    r.grAt = r.jenis === "rencana" ? undefined : mat?.gr;
+    if (r.codeRoll) r.fgFirstAt = fgFirst.get(`${r.mrpId}|${r.vendorProduksi}|${r.codeRoll}|${r.size}`);
   }
 
   for (const r of rows.values()) {

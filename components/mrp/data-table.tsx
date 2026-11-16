@@ -3,7 +3,7 @@
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
-import { Check, ChevronDown, ChevronRight, Filter, Layers, Search, Star, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Filter, Layers, Search, Star, X } from "lucide-react";
 import { InfoPopover } from "@/components/ui/info-popover";
 
 export type ColumnDef<T> = {
@@ -67,7 +67,7 @@ function parseColPrefs(raw: string | null): ColPrefs {
   }
 }
 /** Favorit: susunan tabel yang diberi nama (filter + kelompok + kolom), disimpan di browser per tabel. */
-type Favorite = { name: string; filters: Record<string, string[]>; group: string | null; cols: ColPrefs };
+type Favorite = { name: string; filters: Record<string, string[]>; group: string[]; cols: ColPrefs };
 type FavStore = { items: Favorite[]; def: string | null };
 const NO_FAVS: FavStore = { items: [], def: null };
 function parseFavs(raw: string | null): FavStore {
@@ -79,7 +79,7 @@ function parseFavs(raw: string | null): FavStore {
         const filters: Record<string, string[]> = {};
         if (x.filters && typeof x.filters === "object") for (const [k, v] of Object.entries(x.filters as Record<string, unknown>)) filters[k] = strList(v);
         const c = (x.cols ?? {}) as { shown?: unknown; hidden?: unknown; order?: unknown };
-        return { name: x.name as string, filters, group: typeof x.group === "string" ? x.group : null, cols: { shown: strList(c.shown), hidden: strList(c.hidden), order: strList(c.order) } };
+        return { name: x.name as string, filters, group: typeof x.group === "string" ? [x.group] : strList(x.group), cols: { shown: strList(c.shown), hidden: strList(c.hidden), order: strList(c.order) } };
       });
     const def = typeof p?.def === "string" && items.some((f) => f.name === p.def) ? p.def : null;
     return { items, def };
@@ -238,9 +238,10 @@ export function DataTable<T>({
     const f = parseFavs(readColPrefsRaw(typeof window === "undefined" ? null : favKey));
     return f.items.find((x) => x.name === f.def)?.filters ?? {};
   });
-  const [groupBy, setGroupBy] = useState<string | null>(() => {
+  // Kelompokkan bertingkat (owner 2026-11-16): urutan label = urutan tingkat, mis. ["No. MRP", "Vendor"].
+  const [groupBy, setGroupBy] = useState<string[]>(() => {
     const f = parseFavs(readColPrefsRaw(typeof window === "undefined" ? null : favKey));
-    return f.items.find((x) => x.name === f.def)?.group ?? null;
+    return f.items.find((x) => x.name === f.def)?.group ?? [];
   });
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const [fullGroups, setFullGroups] = useState<Set<string>>(new Set());
@@ -332,20 +333,31 @@ export function DataTable<T>({
   }
   // Kelompokkan: memakai definisi filter yang sudah ada sebagai sumber kelompok (nilai kelompok sebuah baris = pilihan
   // filter pertama yang cocok), jadi semua tabel yang punya filter langsung bisa dikelompokkan tanpa diubah.
-  const groupDef = modern ? (filterDefList.find((f) => f.label === groupBy) ?? null) : null;
-  const groups = groupDef
-    ? (() => {
-        const map = new Map<string, T[]>();
-        for (const r of filtered) {
-          const name = groupDef.options.find((o) => groupDef.test(r, o)) ?? "Lainnya";
-          const list = map.get(name);
-          if (list) list.push(r);
-          else map.set(name, [r]);
-        }
-        const order = [...groupDef.options, "Lainnya"];
-        return [...map.entries()].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
-      })()
-    : null;
+  const groupDefs = modern ? groupBy.map((g) => filterDefList.find((f) => f.label === g)).filter((f): f is FilterDef<T> => !!f) : [];
+  type GroupNode = { name: string; path: string; rows: T[]; children: GroupNode[] };
+  const buildGroups = (list: T[], level: number, parent: string): GroupNode[] => {
+    const def = groupDefs[level];
+    const map = new Map<string, T[]>();
+    for (const r of list) {
+      const name = def.options.find((o) => def.test(r, o)) ?? "Lainnya";
+      const bucket = map.get(name);
+      if (bucket) bucket.push(r);
+      else map.set(name, [r]);
+    }
+    const order = [...def.options, "Lainnya"];
+    return [...map.entries()]
+      .sort((x, y) => order.indexOf(x[0]) - order.indexOf(y[0]))
+      .map(([name, rowsIn]) => {
+        const path = parent ? parent + " › " + name : name;
+        return { name, path, rows: rowsIn, children: level + 1 < groupDefs.length ? buildGroups(rowsIn, level + 1, path) : [] };
+      });
+  };
+  const groups = groupDefs.length > 0 ? buildGroups(filtered, 0, "") : null;
+  function toggleGroupBy(label: string) {
+    setGroupBy((prev) => (prev.includes(label) ? prev.filter((g) => g !== label) : [...prev, label]));
+    setOpenGroups(new Set());
+    setFullGroups(new Set());
+  }
   const activeFilterCount = filterDefList.filter((f) => selOf(f).length > 0).length;
   function applyFavorite(fav: Favorite) {
     setFilterSel(fav.filters);
@@ -360,7 +372,7 @@ export function DataTable<T>({
     if (!name) return;
     const filters: Record<string, string[]> = {};
     for (const f of filterDefList) if (selOf(f).length > 0) filters[f.label] = selOf(f);
-    const fav: Favorite = { name, filters, group: groupDef ? groupDef.label : null, cols: colPrefs };
+    const fav: Favorite = { name, filters, group: groupDefs.map((g) => g.label), cols: colPrefs };
     saveFavs({ items: [...favs.items.filter((x) => x.name !== name), fav], def: favs.def });
     setFavName("");
   }
@@ -382,16 +394,19 @@ export function DataTable<T>({
   const sysadminMode = useSysadminMode();
   const visibleColumns = [...inUserOrder(columns.filter((c) => !c.sysadmin && visible.has(c.key))), ...(sysadminMode ? columns.filter((c) => c.sysadmin) : [])];
   const fullSpan = visibleColumns.length + 1 + (renderExpanded || onRowClick ? 1 : 0);
-  type Item = { kind: "row"; row: T } | { kind: "group"; name: string; count: number; open: boolean } | { kind: "more"; name: string; rest: number };
+  type Item = { kind: "row"; row: T } | { kind: "group"; name: string; path: string; depth: number; count: number; open: boolean } | { kind: "more"; path: string; rest: number };
+  const flatten = (nodes: GroupNode[], depth: number): Item[] =>
+    nodes.flatMap((g): Item[] => {
+      const open = openGroups.has(g.path);
+      const head: Item = { kind: "group", name: g.name, path: g.path, depth, count: g.rows.length, open };
+      if (!open) return [head];
+      if (g.children.length > 0) return [head, ...flatten(g.children, depth + 1)];
+      const shown = fullGroups.has(g.path) ? g.rows : g.rows.slice(0, GROUP_PREVIEW);
+      const body: Item[] = shown.map((row) => ({ kind: "row", row }));
+      return g.rows.length > shown.length ? [head, ...body, { kind: "more", path: g.path, rest: g.rows.length - shown.length }] : [head, ...body];
+    });
   const displayItems: Item[] = groups
-    ? groups.flatMap(([name, list]): Item[] => {
-        const open = openGroups.has(name);
-        const head: Item = { kind: "group", name, count: list.length, open };
-        if (!open) return [head];
-        const shown = fullGroups.has(name) ? list : list.slice(0, GROUP_PREVIEW);
-        const body: Item[] = shown.map((row) => ({ kind: "row", row }));
-        return list.length > shown.length ? [head, ...body, { kind: "more", name, rest: list.length - shown.length }] : [head, ...body];
-      })
+    ? flatten(groups, 0)
     : pageRows.map((row) => ({ kind: "row", row }));
   const toggleIn = (set: Set<string>, name: string) => {
     const next = new Set(set);
@@ -410,7 +425,7 @@ export function DataTable<T>({
       {/* Kotak cari gaya Odoo (owner 2026-11-16): filter dan kelompok tampil sebagai keping di dalam kotak; tombol panah membuka
           panel Filter / Kelompokkan / Favorit. Mengetik = cari langsung; saran di bawahnya menambahkan filter. Backspace di kotak
           kosong menghapus keping terakhir. */}
-      <div className="relative min-w-[260px] max-w-[620px] flex-1 basis-[340px] max-md:order-last max-md:basis-full max-md:max-w-none">
+      <div className="relative min-w-[260px] flex-1 basis-[340px] max-md:order-last max-md:basis-full">
         <div className="flex min-h-[34px] flex-wrap items-center gap-1 rounded-md border border-border-subtle bg-white py-1 pl-2 pr-1 focus-within:border-accent-blue">
           <Search className="h-3.5 w-3.5 flex-none text-text-muted" />
           {filterDefList
@@ -424,11 +439,11 @@ export function DataTable<T>({
                 </button>
               </span>
             ))}
-          {groupDef && (
+          {groupDefs.length > 0 && (
             <span className="inline-flex items-center overflow-hidden rounded border border-[#D9CFF3] bg-accent-purple-bg font-sans text-[11px] text-accent-purple">
               <span className="flex-none bg-[#E6DDFA] px-1.5 py-[2px] font-semibold">Kelompok</span>
-              <span className="px-1.5 py-[2px]">{groupDef.label}</span>
-              <button type="button" aria-label="Hapus kelompok" onClick={() => setGroupBy(null)} className="flex-none px-1 py-[2px] hover:bg-[#E6DDFA]">
+              <span className="px-1.5 py-[2px]">{groupDefs.map((g) => g.label).join(" › ")}</span>
+              <button type="button" aria-label="Hapus kelompok" onClick={() => setGroupBy([])} className="flex-none px-1 py-[2px] hover:bg-[#E6DDFA]">
                 <X className="h-3 w-3" />
               </button>
             </span>
@@ -447,7 +462,7 @@ export function DataTable<T>({
               if (e.key === "Escape") setOpenMenu(null);
               if (e.key === "Enter") setOpenMenu(null);
               if (e.key === "Backspace" && !searchQuery) {
-                if (groupDef) setGroupBy(null);
+                if (groupDefs.length > 0) setGroupBy((prev) => prev.slice(0, -1));
                 else {
                   const last = [...filterDefList].reverse().find((f) => selOf(f).length > 0);
                   if (last) setSel(last.label, []);
@@ -549,20 +564,22 @@ export function DataTable<T>({
                 <Layers className="h-3.5 w-3.5 text-accent-teal" /> Kelompokkan
               </div>
               {filterDefList.length === 0 && <div className="px-2 py-1 font-sans text-xs text-text-muted">Tidak ada kolom untuk dikelompokkan.</div>}
-              {filterDefList.map((f) => (
-                <button
-                  key={f.label}
-                  className={menuItem + (groupBy === f.label ? " bg-info-bg font-semibold text-action-primary" : "")}
-                  onClick={() => {
-                    setGroupBy(groupBy === f.label ? null : f.label);
-                    setOpenGroups(new Set());
-                    setFullGroups(new Set());
-                  }}
-                >
-                  {groupBy === f.label ? <Check className="h-3.5 w-3.5 flex-none" /> : <span className="w-3.5 flex-none" />}
-                  {f.label}
-                </button>
-              ))}
+              {filterDefList.map((f) => {
+                const level = groupBy.indexOf(f.label);
+                return (
+                  <button key={f.label} className={menuItem + (level >= 0 ? " bg-info-bg font-semibold text-action-primary" : "")} onClick={() => toggleGroupBy(f.label)}>
+                    {level >= 0 ? (
+                      <span className="flex h-4 w-4 flex-none items-center justify-center rounded-full bg-action-primary font-mono text-[9.5px] text-white">{level + 1}</span>
+                    ) : (
+                      <span className="w-4 flex-none" />
+                    )}
+                    {f.label}
+                  </button>
+                );
+              })}
+              {groupBy.length > 0 && (
+                <div className="mt-1 px-2 font-sans text-[10.5px] leading-snug text-text-muted">Nomor = tingkat kelompok. Klik lagi untuk melepas.</div>
+              )}
             </div>
             <div className="p-3">
               <div className="mb-1.5 flex items-center gap-1.5 font-sans text-[12px] font-semibold text-text-primary">
@@ -710,8 +727,12 @@ export function DataTable<T>({
             {displayItems.map((item) => {
               if (item.kind === "group")
                 return (
-                  <tr key={"g:" + item.name} className="cursor-pointer border-b border-[#E3E8EE] bg-[#F4F6F9] font-sans text-xs font-semibold text-text-primary hover:bg-[#EDF1F5]" onClick={() => setOpenGroups(toggleIn(openGroups, item.name))}>
-                    <td colSpan={fullSpan} className="px-5 py-[9px]">
+                  <tr
+                    key={"g:" + item.path}
+                    className={"cursor-pointer border-b border-[#E3E8EE] font-sans text-xs font-semibold text-text-primary hover:bg-[#EDF1F5] " + (item.depth === 0 ? "bg-[#F4F6F9]" : "bg-[#F9FAFC]")}
+                    onClick={() => setOpenGroups(toggleIn(openGroups, item.path))}
+                  >
+                    <td colSpan={fullSpan} className="py-[9px] pr-5" style={{ paddingLeft: 20 + item.depth * 18 }}>
                       <span className="inline-flex items-center gap-2">
                         {item.open ? <ChevronDown className="h-3.5 w-3.5 flex-none" /> : <ChevronRight className="h-3.5 w-3.5 flex-none" />}
                         {item.name}
@@ -722,10 +743,10 @@ export function DataTable<T>({
                 );
               if (item.kind === "more")
                 return (
-                  <tr key={"m:" + item.name} className="border-b border-[#F1F4F7]">
+                  <tr key={"m:" + item.path} className="border-b border-[#F1F4F7]">
                     <td colSpan={fullSpan} className="px-5 py-2">
-                      <button className="font-sans text-xs font-semibold text-action-primary" onClick={() => setFullGroups(toggleIn(fullGroups, item.name))}>
-                        Tampilkan {item.rest} baris lainnya di {item.name}
+                      <button className="font-sans text-xs font-semibold text-action-primary" onClick={() => setFullGroups(toggleIn(fullGroups, item.path))}>
+                        Tampilkan {item.rest} baris lainnya di {item.path}
                       </button>
                     </td>
                   </tr>

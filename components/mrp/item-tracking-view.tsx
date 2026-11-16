@@ -70,8 +70,8 @@ export function ItemTrackingView() {
     [mrpDetails, productionBatches, productionResults, deliveryKolis, warehouseReceipts, invoices, wos]
   );
   const all = useMemo(
-    () => buildAduanTracking(items, mrpDetails, productionBatches, deliveryKolis, warehouseReceipts, { wosByKoli: wos?.byKoli }),
-    [items, mrpDetails, productionBatches, deliveryKolis, warehouseReceipts, wos]
+    () => buildAduanTracking(items, mrpDetails, productionBatches, deliveryKolis, warehouseReceipts, { wosByKoli: wos?.byKoli, invoices, results: productionResults, materialPOs }),
+    [items, mrpDetails, productionBatches, deliveryKolis, warehouseReceipts, wos, invoices, productionResults, materialPOs]
   );
   const rows = useMemo(() => {
     if (!dateFrom && !dateTo) return all;
@@ -142,8 +142,12 @@ export function ItemTrackingView() {
     { key: "fgWip", label: "FG belum dikemas", default: false, align: "right", render: (r) => pcs(r.fgWip) },
     { key: "perjalanan", label: "Di perjalanan", default: false, align: "right", render: (r) => pcs(r.perjalanan) },
     { key: "tibaDc", label: "Tiba DC (belum validasi)", default: false, align: "right", render: (r) => pcs(r.tibaDc) },
+    { key: "tglPo", label: "Tgl PO Material", default: true, render: (r) => <span className="whitespace-nowrap">{dateText(r.poMaterialAt)}</span> },
+    { key: "tglDelivery", label: "Tgl Delivery", default: true, info: { title: "Tgl Delivery", body: "Tanggal bahan dikirim ke vendor (Set Delivery invoice bahan). Baris roll memakai invoice yang memuat code roll itu." }, render: (r) => <span className="whitespace-nowrap">{dateText(r.deliveryAt)}</span> },
+    { key: "tglGr", label: "Tgl GR", default: true, info: { title: "Tgl GR", body: "Tanggal roll diterima vendor (Good Receive). Baris yang belum resting tidak punya tanggal ini." }, render: (r) => <span className="whitespace-nowrap">{dateText(r.grAt)}</span> },
     { key: "tglResting", label: "Tgl Resting", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.restingAt)}</span> },
     { key: "tglCutting", label: "Tgl Cutting", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.cuttingAt)}</span> },
+    { key: "tglFg", label: "Tgl Awal FG", default: true, render: (r) => <span className="whitespace-nowrap">{dateText(r.fgFirstAt)}</span> },
     { key: "tglKoli", label: "Tgl Awal Di Koli", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.koliFirstAt)}</span> },
     { key: "tglKirim", label: "Tgl Kirim", default: true, render: (r) => <span className="whitespace-nowrap" title={r.shipDates.map(formatDate).join(", ") || undefined}>{dateText(r.shipLastAt)}</span> },
     {
