@@ -1,5 +1,5 @@
 import type { MrpDetail } from "./store";
-import { SIZE_ORDER, compareNoKoli } from "./derive";
+import { SIZE_ORDER, compareNoKoli, targetSizesForBatch } from "./derive";
 import { LT_CUTTING_KE_FG, LT_FG_KE_KIRIM, dayKey, ltTiba, maxDay, minDay, parseLooseDay, plusDays } from "./itemEstimates";
 import type { WosKoliStatus } from "./wosStatusMap";
 import type { AduanPolaRow, DeliveryKoli, Lengan, ProductionBatch, ProductionResult, RawMaterialInvoice, WarehouseReceipt } from "./types";
@@ -408,16 +408,18 @@ export function koliRowsForItem(item: ItemTrackRow, kolis: DeliveryKoli[], recei
 }
 
 /* ------------------------------------------------------------------------------------------------------------------------------
- * Tracking per ADUAN (owner 2026-11-16: "datanya seperti Odoo, row data detail per aduan, status mengikuti produksi berdasarkan
- * status roll"). Satu baris = satu baris Aduan Pola x size. Angkanya dibaca dari roll aduan itu sendiri:
- *   cutting / FG / reject : roll (production_batches) milik aduan itu: hasil cutting, FG per roll, dan selisihnya untuk roll ditutup
- *   di koli / dikirim / DC: item koli yang roll asalnya (sourceBatchId) milik aduan itu
- * Yang TIDAK bisa ditelusuri ke satu aduan (FG rework dan sisa kain, koli lama tanpa roll asal, target yang belum punya vendor)
- * menjadi baris sisa per MRP x vendor x item, dihitung sebagai selisih terhadap angka Tracking Item per sel (buildItemTracking),
- * sehingga jumlah semua baris sama dengan angka Tracking Item sebelumnya.
+ * Tracking per ROLL x SIZE (owner 2026-11-16, revisi: "line seperti Detail Roll HPP; aduan M-L = 2 line, M-M = 1 line, karena
+ * produksi by aduan"). Satu baris = satu roll (production_batches) x satu size aduan roll itu:
+ *   target     : target roll itu = target aduan diprorata menurut jumlah roll (targetSizesForBatch, sama dengan form Cutting vendor)
+ *   cutting/FG : hasil cutting dan Finish Good roll itu (`sizeQty`, `fgSizeQty`); reject = cutting - FG kalau roll sudah ditutup
+ *   koli       : item koli yang roll asalnya (sourceBatchId) roll itu
+ * Roll yang belum di-resting belum punya kode roll: sisa target aduannya tampil sebagai satu baris per size berstatus
+ * "Belum resting". Yang tidak bisa ditelusuri ke satu roll (FG rework dan sisa kain, koli lama tanpa roll asal) menjadi baris
+ * "Rework / tanpa roll", dan target tanpa vendor menjadi "Belum dialokasikan"; keduanya selisih terhadap angka sel Tracking Item
+ * (buildItemTracking), sehingga jumlah semua baris sama dengan angka sel itu.
  * ------------------------------------------------------------------------------------------------------------------------------ */
 
-/** Urutan tahapan baris aduan (dipakai status, filter, dan titik tahapan). */
+/** Urutan tahapan baris (dipakai status dan filter). */
 export const ADUAN_STAGES = ["Belum dialokasikan", "Belum resting", "Resting", "Cutting", "Finish Good", "Di koli", "Dikirim", "Tiba DC", "Diterima DC", "Selesai"] as const;
 export type AduanStage = (typeof ADUAN_STAGES)[number];
 
@@ -427,20 +429,20 @@ export type AduanTrackRow = {
   cellKey: string;
   mrpId: string;
   vendorProduksi: string;
-  /** Kode aduan; kosong untuk baris sisa. */
+  /** Kode aduan (kosong untuk baris sisa / belum dialokasikan). */
   kode: string;
-  /** "aduan" = baris Aduan Pola; "sisa" = rework / tanpa roll asal; "belum" = target belum dialokasikan ke vendor. */
-  jenis: "aduan" | "sisa" | "belum";
+  /** Kode roll (kosong kalau belum resting atau baris sisa). */
+  codeRoll: string;
+  /** "roll" = roll yang sudah di-resting; "rencana" = roll aduan yang belum di-resting; "sisa" = rework / tanpa roll asal;
+   *  "belum" = target belum dialokasikan ke vendor. */
+  jenis: "roll" | "rencana" | "sisa" | "belum";
+  /** Jumlah roll di baris ini: 1 untuk baris roll, sisa roll rencana untuk baris "rencana". */
+  qtyRoll: number;
   kategori: string;
   warna: string;
   lengan: Lengan;
   size: string;
   itemName: string;
-  rollPlan: number;
-  rollStarted: number;
-  rollResting: number;
-  rollCutting: number;
-  rollClosed: number;
   target: number;
   cutting: number;
   fg: number;
@@ -456,12 +458,15 @@ export type AduanTrackRow = {
   status: AduanStage;
   restingAt?: string;
   cuttingAt?: string;
+  closedAt?: string;
   koliFirstAt?: string;
   shipLastAt?: string;
   estTiba?: string;
   shipDates: string[];
   koliNos: string[];
 };
+
+const SUM_FIELDS = ["target", "cutting", "fg", "reject", "diKoli", "dikirim", "tibaDc", "diterima"] as const;
 
 export function buildAduanTracking(
   items: ItemTrackRow[],
@@ -475,35 +480,24 @@ export function buildAduanTracking(
   const activeIds = new Set(active.map((d) => d.mrp.id));
   const kategoriOf = new Map<string, string>();
   for (const d of active) for (const g of d.lenganGroups) kategoriOf.set(`${d.mrp.id}|${g.warna}|${g.lengan}`, g.kategori || d.mrp.kategori || "");
-
-  const batchesByAduan = new Map<string, ProductionBatch[]>();
-  const aduanOfBatch = new Map<string, string>();
-  for (const b of batches) {
-    if (!activeIds.has(b.mrpId) || !b.aduanRowId) continue;
-    aduanOfBatch.set(b.id, b.aduanRowId);
-    const list = batchesByAduan.get(b.aduanRowId);
-    if (list) list.push(b);
-    else batchesByAduan.set(b.aduanRowId, [b]);
-  }
+  const aduanById = new Map<string, { mrpId: string; a: AduanPolaRow; aduanRows: AduanPolaRow[] }>();
+  for (const d of active) for (const a of d.aduanRows) aduanById.set(a.id, { mrpId: d.mrp.id, a, aduanRows: d.aduanRows });
 
   const rows = new Map<string, AduanTrackRow>();
-  const blank = (key: string, cellKey: string, mrpId: string, vendor: string, kode: string, jenis: AduanTrackRow["jenis"], warna: string, lengan: Lengan, size: string): AduanTrackRow => ({
+  const blank = (key: string, mrpId: string, vendor: string, kode: string, codeRoll: string, jenis: AduanTrackRow["jenis"], warna: string, lengan: Lengan, size: string): AduanTrackRow => ({
     key,
-    cellKey,
+    cellKey: `${mrpId}|${vendor}|${warna}|${lengan}|${size}`,
     mrpId,
     vendorProduksi: vendor,
     kode,
+    codeRoll,
     jenis,
+    qtyRoll: 0,
     kategori: kategoriOf.get(`${mrpId}|${warna}|${lengan}`) ?? "",
     warna,
     lengan,
     size,
     itemName: itemNameOf(warna, lengan, size),
-    rollPlan: 0,
-    rollStarted: 0,
-    rollResting: 0,
-    rollCutting: 0,
-    rollClosed: 0,
     target: 0,
     cutting: 0,
     fg: 0,
@@ -520,44 +514,72 @@ export function buildAduanTracking(
     shipDates: [],
     koliNos: [],
   });
-  const aduanById = new Map<string, { mrpId: string; a: AduanPolaRow }>();
-  const rowOf = (aduanId: string, size: string) => {
-    const key = `${aduanId}|${size}`;
+
+  // Baris roll: satu per roll x size (size aduan, ditambah size lain yang muncul di hasil roll, mis. alih size).
+  const batchById = new Map<string, ProductionBatch>();
+  const startedByAduan = new Map<string, ProductionBatch[]>();
+  const rollRow = (b: ProductionBatch, size: string) => {
+    const key = `${b.id}|${size}`;
     let r = rows.get(key);
     if (!r) {
-      const info = aduanById.get(aduanId)!;
-      const a = info.a;
-      r = blank(key, `${info.mrpId}|${a.vendor}|${a.warna}|${a.lengan}|${size}`, info.mrpId, a.vendor, a.kode, "aduan", a.warna, a.lengan, size);
+      const info = aduanById.get(b.aduanRowId);
+      r = blank(key, b.mrpId, b.vendorProduksi, info?.a.kode ?? b.kode ?? "", b.codeRoll ?? "", "roll", b.warna, b.lengan, size);
+      r.qtyRoll = 1;
+      r.restingAt = b.restingAt ? dayKey(b.restingAt) : undefined;
+      r.cuttingAt = b.cuttingAt ? dayKey(b.cuttingAt) : undefined;
+      r.closedAt = b.closedAt ? dayKey(b.closedAt) : undefined;
       rows.set(key, r);
     }
     return r;
   };
-
-  for (const d of active) {
-    for (const a of d.aduanRows) {
-      aduanById.set(a.id, { mrpId: d.mrp.id, a });
-      for (const s of a.sizes) rowOf(a.id, s.size).target += s.qty;
+  for (const b of batches) {
+    if (!activeIds.has(b.mrpId)) continue;
+    batchById.set(b.id, b);
+    const info = aduanById.get(b.aduanRowId);
+    if (info) {
+      const list = startedByAduan.get(b.aduanRowId);
+      if (list) list.push(b);
+      else startedByAduan.set(b.aduanRowId, [b]);
+    }
+    const target = info ? targetSizesForBatch(b, info.aduanRows) : {};
+    const sizes = new Set([...Object.keys(target), ...Object.keys(b.cuttingAt ? (b.sizeQty ?? {}) : {}), ...Object.keys(b.fgSizeQty ?? {})]);
+    for (const size of sizes) {
+      const r = rollRow(b, size);
+      r.target += target[size] ?? 0;
+      const cut = b.cuttingAt ? (b.sizeQty?.[size] ?? 0) : 0;
+      const fg = b.fgSizeQty?.[size] ?? 0;
+      r.cutting += cut;
+      r.fg += fg;
+      if (b.closedAt) r.reject += Math.max(0, cut - fg);
     }
   }
 
-  // Roll: hasil cutting, FG per roll, reject roll yang ditutup, tanggal resting/cutting.
-  for (const [aduanId, list] of batchesByAduan) {
-    if (!aduanById.has(aduanId)) continue;
-    for (const b of list) {
-      const sizes = new Set([...Object.keys(b.sizeQty ?? {}), ...Object.keys(b.fgSizeQty ?? {})]);
-      for (const size of sizes) {
-        const r = rowOf(aduanId, size);
-        const cut = b.cuttingAt ? (b.sizeQty?.[size] ?? 0) : 0;
-        const fg = b.fgSizeQty?.[size] ?? 0;
-        r.cutting += cut;
-        r.fg += fg;
-        if (b.closedAt) r.reject += Math.max(0, cut - fg);
-        if (cut > 0 && b.cuttingAt) r.cuttingAt = minDay(r.cuttingAt, dayKey(b.cuttingAt));
+  // Baris rencana: roll aduan yang belum di-resting (belum ada kode roll), sisa target per size.
+  for (const [aduanId, info] of aduanById) {
+    const started = startedByAduan.get(aduanId) ?? [];
+    const plan = Math.max(started.length, Math.ceil(info.a.qtyRoll - 0.01));
+    const restRolls = plan - started.length;
+    if (started.length === 0 && restRolls <= 0) continue;
+    const usedTarget: Record<string, number> = {};
+    for (const b of started) for (const [size, q] of Object.entries(targetSizesForBatch(b, info.aduanRows))) usedTarget[size] = (usedTarget[size] ?? 0) + q;
+    for (const s of info.a.sizes) {
+      const rest = s.qty - (usedTarget[s.size] ?? 0);
+      // Target per roll dibulatkan, jadi jumlahnya bisa lebih/kurang beberapa pcs dari target aduan. Kalau tidak ada roll
+      // rencana yang menampung selisihnya, selisih itu dibebankan ke roll terakhir supaya jumlah target tetap = target aduan.
+      if (restRolls <= 0 || rest <= 0) {
+        const last = started[started.length - 1];
+        const lastRow = last ? rows.get(`${last.id}|${s.size}`) : undefined;
+        if (rest !== 0 && lastRow) lastRow.target = Math.max(0, lastRow.target + rest);
+        continue;
       }
+      const r = blank(`rencana|${aduanId}|${s.size}`, info.mrpId, info.a.vendor, info.a.kode, "", "rencana", info.a.warna, info.a.lengan, s.size);
+      r.qtyRoll = restRolls;
+      r.target = rest;
+      rows.set(r.key, r);
     }
   }
 
-  // Koli: item yang roll asalnya milik aduan.
+  // Koli: item yang roll asalnya roll itu.
   const erpReceived = new Set<string>();
   for (const rc of receipts) if (activeIds.has(rc.mrpId)) for (const id of rc.koliIds) erpReceived.add(id);
   const wos = extra.wosByKoli ?? {};
@@ -570,9 +592,9 @@ export function buildAduanTracking(
     const arrived = !received && !!w && w.code === "TIBA";
     for (const it of k.items) {
       if (it.kind === "REJECT" || !it.sourceBatchId) continue;
-      const aduanId = aduanOfBatch.get(it.sourceBatchId);
-      if (!aduanId || !aduanById.has(aduanId)) continue;
-      const r = rowOf(aduanId, it.size);
+      const b = batchById.get(it.sourceBatchId);
+      if (!b) continue;
+      const r = rollRow(b, it.size);
       r.koliFirstAt = minDay(r.koliFirstAt, dayKey(k.createdAt));
       if (!r.koliNos.includes(koliNo)) r.koliNos.push(koliNo);
       if (!k.deliveredAt) {
@@ -590,33 +612,30 @@ export function buildAduanTracking(
     }
   }
 
-  // Baris sisa: selisih angka sel Tracking Item terhadap jumlah baris aduan sel itu.
-  const sumByCell = new Map<string, AduanTrackRow>();
+  // Baris sisa: selisih angka sel Tracking Item terhadap jumlah baris roll/rencana sel itu.
+  const sumByCell = new Map<string, Record<(typeof SUM_FIELDS)[number], number>>();
   for (const r of rows.values()) {
-    let t = sumByCell.get(r.cellKey);
-    if (!t) {
-      t = blank("", r.cellKey, r.mrpId, r.vendorProduksi, "", "sisa", r.warna, r.lengan, r.size);
-      sumByCell.set(r.cellKey, t);
-    }
+    const t = sumByCell.get(r.cellKey) ?? { target: 0, cutting: 0, fg: 0, reject: 0, diKoli: 0, dikirim: 0, tibaDc: 0, diterima: 0 };
     for (const f of SUM_FIELDS) t[f] += r[f];
+    sumByCell.set(r.cellKey, t);
   }
   for (const it of items) {
     for (const c of it.breakdown) {
       const t = sumByCell.get(c.key);
-      const rest = {
-        target: c.alokasi - (t?.target ?? 0),
-        cutting: c.cutting - (t?.cutting ?? 0),
-        fg: c.fg - (t?.fg ?? 0),
-        reject: c.reject - (t?.reject ?? 0),
-        diKoli: c.diKoli - (t?.diKoli ?? 0),
-        dikirim: c.dikirim - (t?.dikirim ?? 0),
-        tibaDc: c.tibaDc - (t?.tibaDc ?? 0),
-        diterima: c.diterima - (t?.diterima ?? 0),
+      const cellVal: Record<(typeof SUM_FIELDS)[number], number> = {
+        target: c.alokasi,
+        cutting: c.cutting,
+        fg: c.fg,
+        reject: c.reject,
+        diKoli: c.diKoli,
+        dikirim: c.dikirim,
+        tibaDc: c.tibaDc,
+        diterima: c.diterima,
       };
-      if (!Object.values(rest).some((v) => v > 0)) continue;
-      const jenis = c.vendorProduksi ? "sisa" : "belum";
-      const r = blank(`sisa|${c.key}`, c.key, c.mrpId, c.vendorProduksi, "", jenis, it.warna, it.lengan, it.size);
-      for (const [f, v] of Object.entries(rest) as [keyof typeof rest, number][]) r[f] = Math.max(0, v);
+      const rest = SUM_FIELDS.map((f) => [f, cellVal[f] - (t?.[f] ?? 0)] as const);
+      if (!rest.some(([, v]) => v > 0)) continue;
+      const r = blank(`sisa|${c.key}`, c.mrpId, c.vendorProduksi, "", "", c.vendorProduksi ? "sisa" : "belum", it.warna, it.lengan, it.size);
+      for (const [f, v] of rest) r[f] = Math.max(0, v);
       r.cuttingAt = c.cuttingAt;
       r.koliFirstAt = c.koliFirstAt;
       r.shipDates = c.shipments.map((s) => s.date);
@@ -628,24 +647,14 @@ export function buildAduanTracking(
   }
 
   for (const r of rows.values()) {
-    if (r.jenis === "aduan") {
-      const info = [...(batchesByAduan.get(r.key.slice(0, r.key.lastIndexOf("|"))) ?? [])];
-      const a = aduanById.get(r.key.slice(0, r.key.lastIndexOf("|")))!.a;
-      r.rollStarted = info.length;
-      r.rollPlan = Math.max(info.length, Math.ceil(a.qtyRoll - 0.01));
-      r.rollResting = info.filter((b) => !b.cuttingAt).length;
-      r.rollCutting = info.filter((b) => b.cuttingAt && !b.closedAt).length;
-      r.rollClosed = info.filter((b) => b.closedAt).length;
-      for (const b of info) r.restingAt = minDay(r.restingAt, b.restingAt ? dayKey(b.restingAt) : undefined);
-    }
-    const allClosed = r.jenis === "aduan" && r.rollPlan > 0 && r.rollClosed >= r.rollPlan;
-    r.belumCutting = allClosed ? 0 : Math.max(0, r.target - r.cutting);
+    const b = r.jenis === "roll" ? batchById.get(r.key.slice(0, r.key.lastIndexOf("|"))) : undefined;
+    r.belumCutting = r.jenis === "rencana" || r.jenis === "belum" || (b && !b.cuttingAt) ? r.target : 0;
     r.cuttingWip = Math.max(0, r.cutting - r.fg - r.reject);
     r.fgWip = Math.max(0, r.fg - r.diKoli - r.dikirim);
     r.perjalanan = Math.max(0, r.dikirim - r.diterima - r.tibaDc);
     r.shipDates.sort();
     r.koliNos.sort(compareNoKoli);
-    r.status = aduanStatus(r);
+    r.status = rowStatus(r, b);
   }
 
   return Array.from(rows.values()).sort(
@@ -655,23 +664,21 @@ export function buildAduanTracking(
       a.warna.localeCompare(b.warna) ||
       a.lengan.localeCompare(b.lengan) ||
       a.kode.localeCompare(b.kode) ||
+      a.codeRoll.localeCompare(b.codeRoll) ||
       sizeRank(a.size) - sizeRank(b.size)
   );
 }
 
-const SUM_FIELDS = ["target", "cutting", "fg", "reject", "diKoli", "dikirim", "tibaDc", "diterima"] as const;
-
-/** Status satu baris = tahap paling awal yang masih memegang barang. Untuk baris aduan, tahap produksi dibaca dari status roll:
- *  ada roll yang belum di-resting -> "Belum resting"; ada roll resting -> "Resting"; ada roll dicutting yang belum ditutup ->
- *  "Cutting" (atau "Finish Good" kalau FG-nya sudah mulai diisi); sesudah semua roll ditutup, tahap mengikuti posisi barang. */
-function aduanStatus(r: AduanTrackRow): AduanStage {
+/** Status satu baris. Baris roll mengikuti status roll: belum dicutting -> Resting; dicutting dan belum ditutup -> Cutting
+ *  (atau Finish Good kalau FG-nya sudah mulai diisi); sesudah roll ditutup, tahap paling awal yang masih memegang barang. */
+function rowStatus(r: AduanTrackRow, b?: ProductionBatch): AduanStage {
   if (r.jenis === "belum") return "Belum dialokasikan";
-  if (r.jenis === "aduan" && r.target > 0) {
-    if (r.rollStarted < r.rollPlan) return "Belum resting";
-    if (r.rollResting > 0) return "Resting";
-    if (r.rollCutting > 0) return r.fg > 0 ? "Finish Good" : "Cutting";
+  if (r.jenis === "rencana") return "Belum resting";
+  if (b) {
+    if (!b.cuttingAt) return "Resting";
+    if (!b.closedAt) return r.fg > 0 ? "Finish Good" : "Cutting";
   }
-  if (r.jenis === "sisa" && r.cuttingWip > 0) return "Cutting";
+  if (r.cuttingWip > 0) return "Cutting";
   if (r.fgWip > 0) return "Finish Good";
   if (r.diKoli > 0) return "Di koli";
   if (r.perjalanan > 0) return "Dikirim";

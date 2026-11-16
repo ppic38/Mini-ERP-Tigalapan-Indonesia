@@ -32,7 +32,7 @@ const CARDS: { key: string; label: string; value: (r: AduanTrackRow) => number; 
 ];
 
 /** Isi halaman Tracking Item, dipakai PPIC dan SCM (data sama, hanya pembungkus halaman yang beda).
- *  Redesign 2026-11-16 (owner): satu tabel gaya Odoo, satu baris per aduan x size, status tahapan dari status roll; tanpa
+ *  Redesign 2026-11-16 (owner): satu tabel gaya Odoo, satu baris per roll x size (seperti Detail Roll HPP), status dari status roll; tanpa
  *  pop-up rincian (semua data ada di tabel, kolom tambahan lewat menu Kolom). */
 export function ItemTrackingView() {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
@@ -89,7 +89,7 @@ export function ItemTrackingView() {
     { label: "Lengan", options: ["Pendek", "Panjang"], test: (r, v) => lenganLabel(r) === v },
     { label: "Size", options: Array.from(new Set(rows.map((r) => r.size))), test: (r, v) => r.size === v },
     { label: "Kategori", options: uniq(rows.map((r) => r.kategori)), test: (r, v) => r.kategori === v },
-    { label: "Kode aduan", options: uniq(rows.map((r) => r.kode)), test: (r, v) => r.kode === v },
+    { label: "Aduan", options: uniq(rows.map((r) => r.kode)), test: (r, v) => r.kode === v },
   ];
 
   const pcs = (n: number) => <span className={n === 0 ? "text-text-muted" : undefined}>{formatPcs(n)}</span>;
@@ -101,7 +101,7 @@ export function ItemTrackingView() {
       label: "Aduan",
       default: true,
       render: (r) =>
-        r.jenis === "aduan" ? (
+        r.jenis === "roll" || r.jenis === "rencana" ? (
           <span className="font-mono">{r.kode}</span>
         ) : (
           <span className="text-text-muted" title={r.jenis === "sisa" ? "FG rework / sisa kain atau koli lama yang tidak tercatat roll asalnya" : "Target MRP yang belum punya vendor"}>
@@ -109,25 +109,25 @@ export function ItemTrackingView() {
           </span>
         ),
     },
-    { key: "kategori", label: "Kategori", default: false, render: (r) => r.kategori || "-" },
     {
-      key: "roll",
-      label: "Roll ditutup",
+      key: "codeRoll",
+      label: "Code Roll",
+      default: true,
+      render: (r) =>
+        r.codeRoll ? <span className="font-mono">{r.codeRoll}</span> : r.jenis === "rencana" ? <span className="text-text-muted">belum resting</span> : <span className="text-text-muted">-</span>,
+    },
+    {
+      key: "qtyRoll",
+      label: "Roll",
       default: true,
       align: "right",
-      info: { title: "Roll ditutup", body: "Roll aduan yang sudah ditutup dari rencana roll aduan. Tooltip memuat roll resting dan cutting." },
-      render: (r) =>
-        r.jenis === "aduan" ? (
-          <span className="font-mono" title={`${r.rollStarted} roll mulai · ${r.rollResting} resting · ${r.rollCutting} cutting · ${r.rollClosed} ditutup`}>
-            {r.rollClosed}/{r.rollPlan}
-          </span>
-        ) : (
-          <span className="text-text-muted">-</span>
-        ),
+      info: { title: "Roll", body: "1 untuk baris roll. Baris yang belum resting memuat jumlah roll aduan yang belum di-resting." },
+      render: (r) => (r.qtyRoll > 0 ? <span className="font-mono">{r.qtyRoll}</span> : <span className="text-text-muted">-</span>),
     },
+    { key: "kategori", label: "Kategori", default: false, render: (r) => r.kategori || "-" },
     { key: "target", label: "Target", default: true, align: "right", render: (r) => pcs(r.target) },
-    { key: "cutting", label: "Cutting", default: true, align: "right", info: { title: "Cutting", body: "Hasil cutting kumulatif roll aduan ini untuk size ini." }, render: (r) => pcs(r.cutting) },
-    { key: "fg", label: "Finish Good", default: true, align: "right", info: { title: "Finish Good", body: "Finish Good kumulatif roll aduan ini (termasuk yang sudah dikemas dan dikirim)." }, render: (r) => pcs(r.fg) },
+    { key: "cutting", label: "Cutting", default: true, align: "right", info: { title: "Cutting", body: "Hasil cutting roll ini untuk size ini." }, render: (r) => pcs(r.cutting) },
+    { key: "fg", label: "Finish Good", default: true, align: "right", info: { title: "Finish Good", body: "Finish Good roll ini (termasuk yang sudah dikemas dan dikirim)." }, render: (r) => pcs(r.fg) },
     { key: "reject", label: "Reject", default: false, align: "right", render: (r) => pcs(r.reject) },
     { key: "diKoli", label: "Di koli", default: true, align: "right", render: (r) => pcs(r.diKoli) },
     { key: "dikirim", label: "Dikirim", default: true, align: "right", render: (r) => pcs(r.dikirim) },
@@ -142,10 +142,10 @@ export function ItemTrackingView() {
     { key: "fgWip", label: "FG belum dikemas", default: false, align: "right", render: (r) => pcs(r.fgWip) },
     { key: "perjalanan", label: "Di perjalanan", default: false, align: "right", render: (r) => pcs(r.perjalanan) },
     { key: "tibaDc", label: "Tiba DC (belum validasi)", default: false, align: "right", render: (r) => pcs(r.tibaDc) },
-    { key: "tglResting", label: "Tgl Awal Resting", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.restingAt)}</span> },
-    { key: "tglCutting", label: "Tgl Awal Cutting", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.cuttingAt)}</span> },
+    { key: "tglResting", label: "Tgl Resting", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.restingAt)}</span> },
+    { key: "tglCutting", label: "Tgl Cutting", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.cuttingAt)}</span> },
     { key: "tglKoli", label: "Tgl Awal Di Koli", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.koliFirstAt)}</span> },
-    { key: "tglKirim", label: "Tgl Kirim Terakhir", default: true, render: (r) => <span className="whitespace-nowrap" title={r.shipDates.map(formatDate).join(", ") || undefined}>{dateText(r.shipLastAt)}</span> },
+    { key: "tglKirim", label: "Tgl Kirim", default: true, render: (r) => <span className="whitespace-nowrap" title={r.shipDates.map(formatDate).join(", ") || undefined}>{dateText(r.shipLastAt)}</span> },
     {
       key: "estTiba",
       label: "Est. Tiba DC",
@@ -166,7 +166,7 @@ export function ItemTrackingView() {
       exportRows.push(bd.length === it.breakdown.length ? it : itemWithBreakdown(it, bd));
     }
     const parts: string[] = [];
-    if (shown.length !== all.length) parts.push(`${shown.length} dari ${all.length} baris aduan yang tampil`);
+    if (shown.length !== all.length) parts.push(`${shown.length} dari ${all.length} baris roll yang tampil`);
     if (dateFrom || dateTo) parts.push(`tanggal kirim ${dateFrom ? formatDate(dateFrom) : "…"} s/d ${dateTo ? formatDate(dateTo) : "…"}`);
     try {
       await exportTrackingExcel(
@@ -224,7 +224,7 @@ export function ItemTrackingView() {
       </div>
 
       <DataTable<AduanTrackRow>
-        title="Tracking per aduan"
+        title="Tracking per roll"
         subtitle={wos && (!wos.configured || !wos.hasStatusColumn) ? "Status penerimaan DC dari WOS belum aktif; Diterima DC hanya dari penerimaan Warehouse ERP." : undefined}
         headerActions={
           <>
@@ -254,7 +254,7 @@ export function ItemTrackingView() {
         filterDefs={filterDefs}
         filterPreset={preset}
         onFilteredRows={(list) => setShownKeys(new Set(list.map((r) => r.key)))}
-        search={{ placeholder: "Cari item, MRP, vendor, kode aduan, status…", getText: (r) => `${r.itemName} ${r.mrpId} ${vendorLabel(r.vendorProduksi)} ${r.kode} ${r.status} ${r.kategori}` }}
+        search={{ placeholder: "Cari item, MRP, vendor, aduan, code roll…", getText: (r) => `${r.itemName} ${r.mrpId} ${vendorLabel(r.vendorProduksi)} ${r.kode} ${r.codeRoll} ${r.status} ${r.kategori}` }}
         emptyText="Belum ada baris untuk filter ini."
         nowrap
       />

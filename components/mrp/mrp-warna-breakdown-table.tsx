@@ -200,6 +200,10 @@ export function MrpWarnaBreakdownTable({
                   {w.vendors.length === 0 ? (
                     <span className="text-text-muted">—</span>
                   ) : (
+                    // Tanpa pcs/roll (vendorQty false): nama vendor sebaris dan boleh turun baris, supaya sel tidak memanjang ke bawah.
+                    !vendorQty ? (
+                      <span className="leading-snug">{w.vendors.map((v) => v.vendor).join(", ")}</span>
+                    ) : (
                     <div className="flex flex-col gap-0.5">
                       {w.vendors.map((v) => (
                         <div key={v.vendor} className="flex items-baseline gap-1.5 whitespace-nowrap">
@@ -213,6 +217,7 @@ export function MrpWarnaBreakdownTable({
                       ))}
                       {w.vendors.length > 1 && <span className="mt-0.5 font-sans text-[10px] font-semibold text-info-fg">{w.vendors.length} vendor</span>}
                     </div>
+                    )
                   )}
                 </td>
               </tr>

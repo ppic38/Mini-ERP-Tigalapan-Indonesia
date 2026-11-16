@@ -196,6 +196,7 @@ export default function MrpListPage() {
       badges: mrpStatusBadges(mrp.id, detail, materialPOs, maklonPOs, invoices, vendorInvoices),
       vendors: vendorsForMrp(detail),
       scm: detail ? ppicApprovalBadge(detail.ppicApproval) : null,
+      roll: mrpWarnaBreakdown(detail).reduce((sum, w) => sum + w.rollTotal, 0),
       stage: mrpStage(detail?.ppicApproval, mrpStatusBadges(mrp.id, detail, materialPOs, maklonPOs, invoices, vendorInvoices)),
     }));
   }, [mrpDetails, staticMrps, materialPOs, maklonPOs, invoices, vendorInvoices]);
@@ -210,7 +211,7 @@ export default function MrpListPage() {
   const uniq = (list: string[]) => Array.from(new Set(list));
   const stageOrder: string[] = ["Ditolak SCM", ...MRP_STAGES];
   const filterDefs: FilterDef<Row>[] = [
-    { label: "Tahapan", options: stageOrder.filter((st) => rows.some((r) => r.stage === st)), test: (r, v) => r.stage === v },
+    { label: "Status", options: stageOrder.filter((st) => rows.some((r) => r.stage === st)), test: (r, v) => r.stage === v },
     { label: "Vendor", options: uniq(rows.flatMap((r) => r.vendors)).sort(), test: (r, v) => r.vendors.includes(v) },
     { label: "Kategori", options: uniq(rows.map((r) => r.mrp.kategori).filter(Boolean)).sort(), test: (r, v) => r.mrp.kategori === v },
   ];
@@ -230,24 +231,32 @@ export default function MrpListPage() {
         />
       ),
     },
-    { key: "kategori", label: "Kategori / Warna", default: false, render: (r) => `${r.mrp.kategori} · ${r.warnaLabel}` },
+    { key: "kategori", label: "Kategori", default: false, render: (r) => `${r.mrp.kategori} · ${r.warnaLabel}` },
     { key: "qty", label: "Qty", default: true, align: "right", render: (r) => <span className="font-mono">{formatPcs(effectiveMrpQty(r.mrp.id, r.mrp.qty, maklonPOs))}</span> },
+    {
+      key: "roll",
+      label: "Roll",
+      default: true,
+      align: "right",
+      // Jumlah roll rencana MRP = total roll rincian warna (sama dengan angka di panel rincian).
+      render: (r) => <span className="font-mono">{r.roll.toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>,
+    },
     { key: "vendor", label: "Vendor", default: false, render: (r) => (r.vendors.length ? r.vendors.join(", ") : "—") },
     {
       key: "tahapan",
-      label: "Tahapan",
+      label: "Status",
       default: true,
       render: (r) => <StageBadge stages={MRP_STAGES} current={r.stage} tone={r.stage === "Ditolak SCM" ? "danger" : undefined} />,
     },
-    { key: "tglMrp", label: "Tanggal MRP", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.created)}</span> },
-    { key: "tglPO", label: "Tanggal PO", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.poSent)}</span> },
-    { key: "tglApproved", label: "Tanggal PO Disetujui", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.poApproved)}</span> },
-    { key: "tglInvoice", label: "Tanggal Invoice", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.firstInvoice)}</span> },
-    { key: "tglPayment", label: "Tanggal Payment", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.firstPayment)}</span> },
-    { key: "statusScm", label: "Status SCM", default: false, render: (r) => (r.scm ? <StatusPill tone={r.scm.tone}>{r.scm.label}</StatusPill> : "—") },
-    { key: "statusPO", label: "Status PO", default: false, render: (r) => pill(r.badges.statusPO) },
-    { key: "statusRM", label: "Status Raw Material", default: false, render: (r) => pill(r.badges.statusRawMaterial) },
-    { key: "statusProduksi", label: "Status Produksi", default: false, render: (r) => pill(r.badges.statusProduksi) },
+    { key: "tglMrp", label: "Tgl MRP", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.created)}</span> },
+    { key: "tglPO", label: "Tgl PO", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.poSent)}</span> },
+    { key: "tglApproved", label: "Tgl Approve PO", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.poApproved)}</span> },
+    { key: "tglInvoice", label: "Tgl Invoice", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.firstInvoice)}</span> },
+    { key: "tglPayment", label: "Tgl Bayar", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.firstPayment)}</span> },
+    { key: "statusScm", label: "SCM", default: false, render: (r) => (r.scm ? <StatusPill tone={r.scm.tone}>{r.scm.label}</StatusPill> : "—") },
+    { key: "statusPO", label: "PO", default: false, render: (r) => pill(r.badges.statusPO) },
+    { key: "statusRM", label: "Material", default: false, render: (r) => pill(r.badges.statusRawMaterial) },
+    { key: "statusProduksi", label: "Produksi", default: false, render: (r) => pill(r.badges.statusProduksi) },
   ];
 
   // Kartu angka: jumlah MRP per kelompok tahapan, dari baris yang SEDANG lolos filter/pencarian tabel (berubah mengikuti filter).
@@ -293,7 +302,7 @@ export default function MrpListPage() {
             active={preset.card === c.key}
             onClick={() =>
               setPreset((p) =>
-                p.card === c.key ? { nonce: p.nonce + 1, filters: {} as Record<string, string[]>, card: "" } : { nonce: p.nonce + 1, filters: { Tahapan: c.stages.filter((st) => rows.some((r) => r.stage === st)) as string[] }, card: c.key }
+                p.card === c.key ? { nonce: p.nonce + 1, filters: {} as Record<string, string[]>, card: "" } : { nonce: p.nonce + 1, filters: { Status: c.stages.filter((st) => rows.some((r) => r.stage === st)) as string[] }, card: c.key }
               )
             }
           />
