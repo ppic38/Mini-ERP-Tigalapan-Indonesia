@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Checkbox } from "@/components/ui/checkbox";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { MultiFileInput } from "@/components/mrp/multi-file-input";
 import { VendorPhotoLinks, kirimDateText } from "@/components/mrp/ekspedisi-photo-links";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -84,10 +84,10 @@ export function PaymentEkspedisiPanel() {
     { key: "ekspedisi", label: "Ekspedisi", default: true, render: (g) => g.ekspedisi },
     { key: "koli", label: "No Koli", default: true, render: (g) => <span className="font-mono text-[11px]">{g.noKolis.join(", ")}</span> },
     { key: "tgl", label: "Tgl Kirim", default: true, render: (g) => <span className="whitespace-nowrap">{kirimDateText(g)}</span> },
-    { key: "jumlahKoli", label: "Jumlah Koli", default: true, align: "right", render: (g) => <span className="font-mono font-semibold">{g.koliIds.length}</span> },
-    { key: "berat", label: "Berat Resi", default: false, align: "right", render: (g) => <span className="font-mono">{kg(g.beratResi)}</span> },
+    { key: "jumlahKoli", aggregate: aggSum((g) => g.koliIds.length, (n) => <span className="font-semibold">{n}</span>), label: "Jumlah Koli", default: true, align: "right", render: (g) => <span className="font-mono font-semibold">{g.koliIds.length}</span> },
+    { key: "berat", aggregate: aggSum((g) => g.beratResi, (n) => <span className="font-semibold">{kg(n)}</span>), label: "Berat Resi", default: false, align: "right", render: (g) => <span className="font-mono">{kg(g.beratResi)}</span> },
     { key: "noNota", label: "No Nota", default: true, render: (g) => <span className="font-mono text-[11px]">{g.invoice?.noNota ?? "—"}</span> },
-    { key: "biaya", label: "Biaya Ekspedisi", default: true, align: "right", render: (g) => <span className="font-mono font-semibold">{formatRupiah(g.invoice?.biaya ?? 0)}</span> },
+    { key: "biaya", aggregate: aggSum((g) => g.invoice?.biaya ?? 0, (n) => <span className="font-semibold">{formatRupiah(n)}</span>), label: "Biaya Ekspedisi", default: true, align: "right", render: (g) => <span className="font-mono font-semibold">{formatRupiah(g.invoice?.biaya ?? 0)}</span> },
     {
       key: "lampiranVendor",
       label: "Lampiran Vendor",

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { MrpWarnaBreakdownTable } from "@/components/mrp/mrp-warna-breakdown-table";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { mrpApprovalCorrections } from "@/components/sysadmin/ppic-corrections";
@@ -51,7 +51,7 @@ export default function ScmApprovalMrpPage() {
   // rincian per-warna (qty/roll/rib) dulu SEBELUM memutuskan, bukan cuma qty total, dengan cara
   // klik baris untuk expand (chevron di ujung kanan, lihat DataTable renderExpanded).
   const pendingColumns: ColumnDef<MrpDetail>[] = [
-    { key: "qty", label: "Qty", default: true, align: "right", render: (d) => formatPcs(effectiveMrpQty(d.mrp.id, d.mrp.qty, maklonPOs)) + " pcs" },
+    { key: "qty", aggregate: aggSum((d) => effectiveMrpQty(d.mrp.id, d.mrp.qty, maklonPOs), (n) => <span className="font-semibold">{formatPcs(n)}</span>), label: "Qty", default: true, align: "right", render: (d) => formatPcs(effectiveMrpQty(d.mrp.id, d.mrp.qty, maklonPOs)) + " pcs" },
     { key: "vendor", label: "Jumlah Vendor", default: true, render: (d) => `${vendorsForMrp(d).length} vendor` },
     { key: "tglSubmit", label: "Tanggal Diajukan", default: true, render: (d) => formatDate(d.dates.ppicSubmitted) },
     {
@@ -64,7 +64,7 @@ export default function ScmApprovalMrpPage() {
 
   const historyColumns: ColumnDef<MrpDetail>[] = [
     { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (d) => <SysadminActionsBar compact actions={mrpApprovalCorrections(d.mrp.id, { detail: d, materialPOs, maklonPOs })} /> },
-    { key: "qty", label: "Qty", default: true, align: "right", render: (d) => formatPcs(effectiveMrpQty(d.mrp.id, d.mrp.qty, maklonPOs)) },
+    { key: "qty", aggregate: aggSum((d) => effectiveMrpQty(d.mrp.id, d.mrp.qty, maklonPOs), (n) => <span className="font-semibold">{formatPcs(n)}</span>), label: "Qty", default: true, align: "right", render: (d) => formatPcs(effectiveMrpQty(d.mrp.id, d.mrp.qty, maklonPOs)) },
     { key: "vendor", label: "Jumlah Vendor", default: true, render: (d) => `${vendorsForMrp(d).length} vendor` },
     { key: "tglSubmit", label: "Tanggal Diajukan", default: true, render: (d) => formatDate(d.dates.ppicSubmitted) },
     { key: "tglKeputusan", label: "Tanggal Keputusan", default: true, render: (d) => formatDate(d.dates.ppicApproved) },

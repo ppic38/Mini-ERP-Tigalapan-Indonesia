@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatDateTime, formatRupiah, vendorDepositBalance, vendorDepositEntriesFor, vendorDepositSuppliers } from "@/lib/mrp/derive";
 // Item 6 (feedback batch 2026-09-07): bukti transfer & bukti foto klaim sengaja tidak ada di
@@ -89,7 +89,7 @@ export default function VendorDepositPage() {
   const totalBalance = rows.reduce((a, r) => a + r.balance, 0);
 
   const columns: ColumnDef<SupplierDepositRow>[] = [
-    { key: "entryCount", label: "Jumlah Transaksi", default: true, align: "right", render: (r) => r.entryCount },
+    { key: "entryCount", aggregate: aggSum((r) => r.entryCount, (n) => <span className="font-semibold">{n}</span>), label: "Jumlah Transaksi", default: true, align: "right", render: (r) => r.entryCount },
     {
       key: "balance",
       label: "Saldo Berjalan",

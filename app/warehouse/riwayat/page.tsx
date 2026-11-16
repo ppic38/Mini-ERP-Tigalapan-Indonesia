@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatDate, formatPcs, formatRupiah, mrpMetaFor } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -73,20 +73,20 @@ export default function WarehouseRiwayatPage() {
   const columns: ColumnDef<WarehouseReceipt>[] = [
     { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (r) => <SysadminActionsBar compact actions={warehouseReceiptCorrections(r)} /> },
     { key: "resi", label: "No Resi", default: true, render: (r) => <span className="font-mono">{r.resiGroupId}</span> },
-    { key: "koli", label: "Jumlah Koli", default: true, align: "right", render: (r) => formatPcs(r.koliIds.length) },
+    { key: "koli", aggregate: aggSum((r) => r.koliIds.length, (n) => <span className="font-semibold">{formatPcs(n)}</span>), label: "Jumlah Koli", default: true, align: "right", render: (r) => formatPcs(r.koliIds.length) },
     { key: "mrp", label: "No MRP", default: true, render: (r) => <span className="font-mono">{mrpMetaFor(r.mrpId, mrpDetails, staticMrps) ? `${r.mrpId} ${mrpMetaFor(r.mrpId, mrpDetails, staticMrps)?.kategori ?? ""}`.trim() : r.mrpId}</span> },
     { key: "vendor", label: "Vendor Produksi", default: true, render: (r) => VENDOR_PRODUKSI[r.vendorProduksi]?.name ?? r.vendorProduksi },
     { key: "invoice", label: "No Invoice Vendor", default: true, render: (r) => r.vendorInvoiceId ?? "—" },
     { key: "receivedAt", label: "Tanggal Terima", default: true, render: (r) => formatDate(r.receivedAt) },
     {
-      key: "qty",
+      key: "qty", aggregate: aggSum((r) => r.items.reduce((s, it) => s + it.qty, 0), (n) => <span className="font-semibold">{formatPcs(n)}</span>),
       label: "Total Qty",
       default: true,
       align: "right",
       render: (r) => formatPcs(r.items.reduce((s, it) => s + it.qty, 0)),
     },
     {
-      key: "nilai",
+      key: "nilai", aggregate: aggSum((r) => r.items.reduce((s, it) => s + it.qty * it.hppPerItem, 0), (n) => <span className="font-semibold">{formatRupiah(n)}</span>),
       label: "Total Nilai",
       default: true,
       align: "right",

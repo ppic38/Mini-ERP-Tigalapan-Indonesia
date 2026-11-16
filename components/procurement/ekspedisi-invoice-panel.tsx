@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { StatusPill } from "@/components/ui/status-pill";
 import { alertDialog, confirmDialog } from "@/components/ui/confirm-dialog";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { MultiFileInput } from "@/components/mrp/multi-file-input";
 import { VendorPhotoLinks, VendorPhotoSummary, kirimDateText } from "@/components/mrp/ekspedisi-photo-links";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -461,12 +461,12 @@ export function EkspedisiInvoicePanel() {
     { key: "ekspedisi", label: "Ekspedisi", default: true, render: (g) => g.ekspedisi },
     // Daftar nomor koli disembunyikan secara default (owner 2026-11-05): nomornya terlihat saat baris dibuka (klik nomor untuk melihat isinya), atau tampilkan lewat menu Kolom.
     { key: "koli", label: "No Koli", default: false, render: (g) => <span className="font-mono text-[11px]">{g.noKolis.join(", ")}</span> },
-    { key: "jumlahKoli", label: "Jumlah Koli", default: true, align: "right", render: (g) => <span className="font-mono font-semibold">{g.koliIds.length}</span> },
+    { key: "jumlahKoli", aggregate: aggSum((g) => g.koliIds.length, (n) => <span className="font-semibold">{n}</span>), label: "Jumlah Koli", default: true, align: "right", render: (g) => <span className="font-mono font-semibold">{g.koliIds.length}</span> },
     // Tgl Kirim dan Estimasi Master disembunyikan secara bawaan (owner 2026-11-06); tetap ada di menu Kolom, dan tanggal per pengiriman terlihat saat baris dibuka.
     { key: "tgl", label: "Tgl Kirim", default: false, render: (g) => <span className="whitespace-nowrap">{kirimDateText(g)}</span> },
-    { key: "berat", label: "Berat Resi", default: true, align: "right", render: (g) => <span className="font-mono">{kg(g.beratResi)}</span> },
+    { key: "berat", aggregate: aggSum((g) => g.beratResi, (n) => <span className="font-semibold">{kg(n)}</span>), label: "Berat Resi", default: true, align: "right", render: (g) => <span className="font-mono">{kg(g.beratResi)}</span> },
     {
-      key: "estimasi",
+      key: "estimasi", aggregate: aggSum((g) => g.estimasiMaster, (n) => <span className="font-semibold">{formatRupiah(n)}</span>),
       label: "Estimasi Master",
       default: false,
       align: "right",

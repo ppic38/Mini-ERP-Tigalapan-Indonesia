@@ -1,7 +1,7 @@
 "use client";
 
 import { StatusPill } from "@/components/ui/status-pill";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatRupiah, maklonInvoiceBadge } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -20,11 +20,11 @@ export function InvoiceMaklonMonitorPanel() {
   const columns: ColumnDef<MaklonInvoice>[] = [
     { key: "poId", label: "No PO Produksi", default: true, render: (i) => <span className="font-mono font-medium">{i.maklonPoId}</span> },
     { key: "vendor", label: "Vendor", default: true, render: (i) => VENDOR_PRODUKSI[i.vendorProduksi]?.name ?? i.vendorProduksi },
-    { key: "base", label: "Base fee", default: true, align: "right", render: (i) => formatRupiah(i.baseFee) },
-    { key: "penalty", label: "Penalty", default: false, align: "right", render: (i) => (i.penalty ? "−" + formatRupiah(i.penalty) : "—") },
-    { key: "bonus", label: "Bonus", default: false, align: "right", render: (i) => (i.bonus ? "+" + formatRupiah(i.bonus) : "—") },
+    { key: "base", aggregate: aggSum((i) => i.baseFee, (n) => <span className="font-semibold">{formatRupiah(n)}</span>), label: "Base fee", default: true, align: "right", render: (i) => formatRupiah(i.baseFee) },
+    { key: "penalty", aggregate: aggSum((i) => i.penalty ?? 0, (n) => <span className="font-semibold">{formatRupiah(n)}</span>), label: "Penalty", default: false, align: "right", render: (i) => (i.penalty ? "−" + formatRupiah(i.penalty) : "—") },
+    { key: "bonus", aggregate: aggSum((i) => i.bonus ?? 0, (n) => <span className="font-semibold">{formatRupiah(n)}</span>), label: "Bonus", default: false, align: "right", render: (i) => (i.bonus ? "+" + formatRupiah(i.bonus) : "—") },
     { key: "retention", label: "Retention", default: false, align: "right", render: (i) => (i.retentionPct ? i.retentionPct + "%" : "—") },
-    { key: "net", label: "Net dibayar", default: true, align: "right", render: (i) => formatRupiah(i.netAmount) },
+    { key: "net", aggregate: aggSum((i) => i.netAmount, (n) => <span className="font-semibold">{formatRupiah(n)}</span>), label: "Net dibayar", default: true, align: "right", render: (i) => formatRupiah(i.netAmount) },
     { key: "entitas", label: "Entitas", default: false, render: (i) => i.entity },
     { key: "note", label: "Catatan vendor", default: false, render: (i) => i.note || "—" },
     { key: "status", label: "Status", default: true, render: (i) => <StatusPill tone={maklonInvoiceBadge(i.status).tone}>{maklonInvoiceBadge(i.status).label}</StatusPill> },

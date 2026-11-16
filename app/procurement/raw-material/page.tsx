@@ -5,7 +5,7 @@ import { Banknote, Boxes, Factory, Percent } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { Button } from "@/components/ui/button";
 import { KpiCard } from "@/components/ui/kpi-card";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { MultiSelectFilter } from "@/components/mrp/multi-select-filter";
 import { InfoPopover } from "@/components/ui/info-popover";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -388,17 +388,17 @@ export default function RawMaterialPage() {
     { key: "vendor", label: "Vendor", default: true, render: (s) => vendorName(s.vendorProduksi) },
     { key: "kategori", label: "Kategori produk", default: true, render: (s) => s.kategori },
     { key: "jenis", label: "Jenis bahan", default: false, render: (s) => s.jenis },
-    { key: "invoice", label: "Invoice", default: false, align: "right", render: (s) => s.invoiceCount },
-    { key: "rollBeli", label: "Roll dibeli", default: true, align: "right", render: (s) => s.rollBeli },
-    { key: "rollWip", label: "Roll WIP", default: true, align: "right", info: INFO.rollWip, render: (s) => s.rollWip },
-    { key: "rollSelesai", label: "Roll selesai", default: true, align: "right", info: INFO.rollSelesai, render: (s) => s.rollSelesai },
-    { key: "rollSisa", label: "Roll sisa", default: true, align: "right", info: INFO.rollSisa, render: (s) => s.rollSisa },
-    { key: "sebelum", label: "Total sebelum diskon", default: false, align: "right", info: INFO.sebelum, render: (s) => rp(s.nilaiSebelumDiskon) },
-    { key: "diskon", label: "Diskon", default: true, align: "right", info: INFO.diskon, render: (s) => rp(s.diskon) },
-    { key: "setelah", label: "Total invoice setelah diskon", default: true, align: "right", info: INFO.setelah, render: (s) => <span className="font-semibold">{rp(s.nilaiSetelahDiskon)}</span> },
-    { key: "wip", label: "WIP (Rp)", default: true, align: "right", info: INFO.wip, render: (s) => rp(s.nilaiWip) },
-    { key: "selesai", label: "Selesai produksi (Rp)", default: false, align: "right", info: INFO.selesai, render: (s) => rp(s.nilaiSelesai) },
-    { key: "sisa", label: "Sisa bahan baku (Rp)", default: true, align: "right", info: INFO.sisa, render: (s) => rp(s.nilaiSisa) },
+    { key: "invoice", aggregate: aggSum((s) => s.invoiceCount, (n) => <span className="font-semibold">{n}</span>), label: "Invoice", default: false, align: "right", render: (s) => s.invoiceCount },
+    { key: "rollBeli", aggregate: aggSum((s) => s.rollBeli, (n) => <span className="font-semibold">{n}</span>), label: "Roll dibeli", default: true, align: "right", render: (s) => s.rollBeli },
+    { key: "rollWip", aggregate: aggSum((s) => s.rollWip, (n) => <span className="font-semibold">{n}</span>), label: "Roll WIP", default: true, align: "right", info: INFO.rollWip, render: (s) => s.rollWip },
+    { key: "rollSelesai", aggregate: aggSum((s) => s.rollSelesai, (n) => <span className="font-semibold">{n}</span>), label: "Roll selesai", default: true, align: "right", info: INFO.rollSelesai, render: (s) => s.rollSelesai },
+    { key: "rollSisa", aggregate: aggSum((s) => s.rollSisa, (n) => <span className="font-semibold">{n}</span>), label: "Roll sisa", default: true, align: "right", info: INFO.rollSisa, render: (s) => s.rollSisa },
+    { key: "sebelum", aggregate: aggSum((s) => s.nilaiSebelumDiskon, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Total sebelum diskon", default: false, align: "right", info: INFO.sebelum, render: (s) => rp(s.nilaiSebelumDiskon) },
+    { key: "diskon", aggregate: aggSum((s) => s.diskon, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Diskon", default: true, align: "right", info: INFO.diskon, render: (s) => rp(s.diskon) },
+    { key: "setelah", aggregate: aggSum((s) => s.nilaiSetelahDiskon, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Total invoice setelah diskon", default: true, align: "right", info: INFO.setelah, render: (s) => <span className="font-semibold">{rp(s.nilaiSetelahDiskon)}</span> },
+    { key: "wip", aggregate: aggSum((s) => s.nilaiWip, (n) => <span className="font-semibold">{rp(n)}</span>), label: "WIP (Rp)", default: true, align: "right", info: INFO.wip, render: (s) => rp(s.nilaiWip) },
+    { key: "selesai", aggregate: aggSum((s) => s.nilaiSelesai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Selesai produksi (Rp)", default: false, align: "right", info: INFO.selesai, render: (s) => rp(s.nilaiSelesai) },
+    { key: "sisa", aggregate: aggSum((s) => s.nilaiSisa, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Sisa bahan baku (Rp)", default: true, align: "right", info: INFO.sisa, render: (s) => rp(s.nilaiSisa) },
   ];
 
   async function doExport(mrpIds: string[]) {

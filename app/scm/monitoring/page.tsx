@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { MrpWarnaBreakdownTable } from "@/components/mrp/mrp-warna-breakdown-table";
 import { useMrpStore } from "@/lib/mrp/store";
 import { effectiveMrpQty, formatPcs, mrpStatusBadges, mrpStatusBadgeTone, mrpWarnaBreakdown, ppicApprovalBadge, vendorsForMrp } from "@/lib/mrp/derive";
@@ -42,7 +42,7 @@ export default function ScmMonitoringPage() {
 
   const columns: ColumnDef<Row>[] = [
     { key: "kategori", label: "Kategori / Warna", default: true, render: (r) => `${r.mrp.kategori} · ${r.mrp.warna}` },
-    { key: "qty", label: "Qty", default: true, align: "right", render: (r) => formatPcs(effectiveMrpQty(r.mrp.id, r.mrp.qty, maklonPOs)) + " pcs" },
+    { key: "qty", aggregate: aggSum((r) => effectiveMrpQty(r.mrp.id, r.mrp.qty, maklonPOs), (n) => <span className="font-semibold">{formatPcs(n) + " pcs"}</span>), label: "Qty", default: true, align: "right", render: (r) => formatPcs(effectiveMrpQty(r.mrp.id, r.mrp.qty, maklonPOs)) + " pcs" },
     { key: "vendor", label: "Vendor", default: true, render: (r) => (r.vendors.length ? r.vendors.join(", ") : "—") },
     {
       key: "statusScm",

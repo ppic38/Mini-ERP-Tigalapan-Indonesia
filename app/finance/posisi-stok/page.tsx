@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Boxes, Factory, ShoppingCart, Truck } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { MultiSelectFilter } from "@/components/mrp/multi-select-filter";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatRupiah } from "@/lib/mrp/derive";
@@ -154,18 +154,18 @@ export default function PosisiStokPage() {
 
   const columns: ColumnDef<StockSummary>[] = [
     { key: "vendor", label: "Vendor", default: true, render: (s) => vendorName(s.vendorProduksi) },
-    { key: "dibeli", label: "Dibeli", default: true, align: "right", render: (s) => <span className="font-semibold">{rp(s.dibeli.nilai)}</span> },
-    { key: "rollDibeli", label: "Roll dibeli", default: false, align: "right", render: (s) => fmtInt(s.dibeli.roll) },
-    { key: "belumDiterima", label: "Belum diterima vendor", default: true, align: "right", render: (s) => rp(s.belumDiterima.nilai) },
-    { key: "diVendor", label: "Di vendor, belum resting", default: true, align: "right", render: (s) => rp(s.diVendor.nilai) },
-    { key: "belumProduksi", label: "Total belum produksi", default: true, align: "right", info: INFO.belumProduksi, render: (s) => <span className="font-semibold">{rp(belumProduksi(s).nilai)}</span> },
-    { key: "resting", label: "Resting", default: false, align: "right", render: (s) => rp(s.resting.nilai) },
-    { key: "cuttingFg", label: "Cutting & Finish Good", default: false, align: "right", render: (s) => rp(s.cuttingFg.nilai) },
-    { key: "tutup", label: "Roll ditutup, belum dikirim", default: false, align: "right", render: (s) => rp(s.tutup.nilai) },
-    { key: "proses", label: "Total proses produksi", default: true, align: "right", info: INFO.proses, render: (s) => <span className="font-semibold">{rp(prosesProduksi(s).nilai)}</span> },
-    { key: "pcs", label: "Pcs belum kirim", default: true, align: "right", render: (s) => fmtInt(s.pcsBelumKirim) },
-    { key: "terkirim", label: "Sudah delivery", default: true, align: "right", info: INFO.terkirim, render: (s) => rp(s.terkirim.nilai) },
-    { key: "diretur", label: "Diretur", default: false, align: "right", render: (s) => rp(s.diretur.nilai) },
+    { key: "dibeli", aggregate: aggSum((s) => s.dibeli.nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Dibeli", default: true, align: "right", render: (s) => <span className="font-semibold">{rp(s.dibeli.nilai)}</span> },
+    { key: "rollDibeli", aggregate: aggSum((s) => s.dibeli.roll, (n) => <span className="font-semibold">{fmtInt(n)}</span>), label: "Roll dibeli", default: false, align: "right", render: (s) => fmtInt(s.dibeli.roll) },
+    { key: "belumDiterima", aggregate: aggSum((s) => s.belumDiterima.nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Belum diterima vendor", default: true, align: "right", render: (s) => rp(s.belumDiterima.nilai) },
+    { key: "diVendor", aggregate: aggSum((s) => s.diVendor.nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Di vendor, belum resting", default: true, align: "right", render: (s) => rp(s.diVendor.nilai) },
+    { key: "belumProduksi", aggregate: aggSum((s) => belumProduksi(s).nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Total belum produksi", default: true, align: "right", info: INFO.belumProduksi, render: (s) => <span className="font-semibold">{rp(belumProduksi(s).nilai)}</span> },
+    { key: "resting", aggregate: aggSum((s) => s.resting.nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Resting", default: false, align: "right", render: (s) => rp(s.resting.nilai) },
+    { key: "cuttingFg", aggregate: aggSum((s) => s.cuttingFg.nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Cutting & Finish Good", default: false, align: "right", render: (s) => rp(s.cuttingFg.nilai) },
+    { key: "tutup", aggregate: aggSum((s) => s.tutup.nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Roll ditutup, belum dikirim", default: false, align: "right", render: (s) => rp(s.tutup.nilai) },
+    { key: "proses", aggregate: aggSum((s) => prosesProduksi(s).nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Total proses produksi", default: true, align: "right", info: INFO.proses, render: (s) => <span className="font-semibold">{rp(prosesProduksi(s).nilai)}</span> },
+    { key: "pcs", aggregate: aggSum((s) => s.pcsBelumKirim, (n) => <span className="font-semibold">{fmtInt(n)}</span>), label: "Pcs belum kirim", default: true, align: "right", render: (s) => fmtInt(s.pcsBelumKirim) },
+    { key: "terkirim", aggregate: aggSum((s) => s.terkirim.nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Sudah delivery", default: true, align: "right", info: INFO.terkirim, render: (s) => rp(s.terkirim.nilai) },
+    { key: "diretur", aggregate: aggSum((s) => s.diretur.nilai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Diretur", default: false, align: "right", render: (s) => rp(s.diretur.nilai) },
   ];
 
   return (

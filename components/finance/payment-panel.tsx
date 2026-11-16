@@ -4,7 +4,7 @@ import { Fragment, useEffect, useState } from "react";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Checkbox } from "@/components/ui/checkbox";
 import { NumberInput } from "@/components/mrp/number-input";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
 import {
   claimKeySourceInvoiceId,
@@ -347,7 +347,7 @@ export function PaymentPanel() {
       default: false, // Revisi 2026-11-06 (owner): kolom khusus PV pengganti klaim, disembunyikan secara bawaan (tetap ada di toggle "Kolom").
       render: (i) => (i.sourceClaimId ? <span className="font-mono">{claimKeySourceInvoiceId(i.sourceClaimId)}</span> : <span className="font-sans text-[11px] text-text-muted">—</span>),
     },
-    { key: "nilai", label: "Harga", default: true, align: "right", render: (i) => formatRupiah(i.totalBiaya) },
+    { key: "nilai", aggregate: aggSum((i) => i.totalBiaya, (n) => <span className="font-semibold">{formatRupiah(n)}</span>), label: "Harga", default: true, align: "right", render: (i) => formatRupiah(i.totalBiaya) },
     {
       key: "pembayaranSebelumnya",
       label: "Pembayaran Sebelumnya",
@@ -456,7 +456,7 @@ export function PaymentPanel() {
       default: false,
       render: (i) => (i.sourceClaimId ? <StatusPill tone="info">Reorder klaim</StatusPill> : <span className="font-sans text-[11px] text-text-muted">PO biasa</span>),
     },
-    { key: "roll", label: "Roll", default: false, align: "right", render: (i) => i.qtyReady },
+    { key: "roll", aggregate: aggSum((i) => i.qtyReady, (n) => <span className="font-semibold">{n}</span>), label: "Roll", default: false, align: "right", render: (i) => i.qtyReady },
     { key: "entitas", label: "Entitas", default: false, render: (i) => i.entity },
     {
       key: "bukti",

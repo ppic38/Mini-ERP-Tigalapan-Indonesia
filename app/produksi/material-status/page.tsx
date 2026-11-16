@@ -4,7 +4,7 @@ import { Fragment, useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatPcs, materialPoFullStatus, materialPoFullStatusBadge, materialPoStageBreakdown, type MaterialPoFullStatus } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -195,11 +195,11 @@ export default function ProduksiMaterialStatusPage() {
 
   const columns: ColumnDef<MrpGroup>[] = [
     { key: "vendorCount", label: "Jumlah Vendor", default: true, render: (g) => `${new Set(g.rows.map((r) => r.po.vendorProduksi)).size} vendor` },
-    { key: "poCount", label: "Jumlah PO", default: true, align: "right", render: (g) => `${g.rows.length} PO` },
-    { key: "total", label: "Total Roll", default: true, align: "right", render: (g) => formatPcs(sumBreakdown(g.rows).totalRolls) },
-    { key: "waiting", label: "Menunggu", default: true, align: "right", render: (g) => <span className="text-text-muted">{formatPcs(sumBreakdown(g.rows).waitingRolls)}</span> },
-    { key: "received", label: "Sudah Good Receive", default: true, align: "right", render: (g) => <span className="text-info-fg">{formatPcs(sumBreakdown(g.rows).receivedRolls)}</span> },
-    { key: "production", label: "Sudah Masuk Produksi", default: true, align: "right", render: (g) => <span className="text-success-fg">{formatPcs(sumBreakdown(g.rows).productionRolls)}</span> },
+    { key: "poCount", aggregate: aggSum((g) => g.rows.length, (n) => <span className="font-semibold">{`${n} PO`}</span>), label: "Jumlah PO", default: true, align: "right", render: (g) => `${g.rows.length} PO` },
+    { key: "total", aggregate: aggSum((g) => sumBreakdown(g.rows).totalRolls, (n) => <span className="font-semibold">{formatPcs(n)}</span>), label: "Total Roll", default: true, align: "right", render: (g) => formatPcs(sumBreakdown(g.rows).totalRolls) },
+    { key: "waiting", aggregate: aggSum((g) => sumBreakdown(g.rows).waitingRolls, (n) => <span className="font-semibold">{formatPcs(n)}</span>), label: "Menunggu", default: true, align: "right", render: (g) => <span className="text-text-muted">{formatPcs(sumBreakdown(g.rows).waitingRolls)}</span> },
+    { key: "received", aggregate: aggSum((g) => sumBreakdown(g.rows).receivedRolls, (n) => <span className="font-semibold">{formatPcs(n)}</span>), label: "Sudah Good Receive", default: true, align: "right", render: (g) => <span className="text-info-fg">{formatPcs(sumBreakdown(g.rows).receivedRolls)}</span> },
+    { key: "production", aggregate: aggSum((g) => sumBreakdown(g.rows).productionRolls, (n) => <span className="font-semibold">{formatPcs(n)}</span>), label: "Sudah Masuk Produksi", default: true, align: "right", render: (g) => <span className="text-success-fg">{formatPcs(sumBreakdown(g.rows).productionRolls)}</span> },
     {
       key: "status",
       label: "Status",

@@ -11,7 +11,7 @@ import { alertDialog } from "@/components/ui/confirm-dialog";
 import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Button } from "@/components/ui/button";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatDate, formatPcs, formatRupiah, localDateString, skuKategoriLookup, skuWarnaFor, warehouseReceivableGroups, warnaWithUsia, type WarehouseReceivableGroup } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -342,10 +342,10 @@ export default function WarehousePenerimaanPage() {
   const columns: ColumnDef<WarehouseReceivableGroup>[] = [
     { key: "mrp", label: "No MRP", default: true, render: (g) => <span className="font-mono font-semibold">{g.mrpIds.join(", ")}</span> },
     { key: "vendor", label: "Vendor Produksi", default: true, render: (g) => VENDOR_PRODUKSI[g.vendorProduksi]?.name ?? g.vendorProduksi },
-    { key: "jumlahKoli", label: "Jumlah Koli", default: true, align: "right", render: (g) => <span className="font-mono">{g.koliIds.length}</span> },
+    { key: "jumlahKoli", aggregate: aggSum((g) => g.koliIds.length, (n) => <span className="font-semibold">{n}</span>), label: "Jumlah Koli", default: true, align: "right", render: (g) => <span className="font-mono">{g.koliIds.length}</span> },
     { key: "ekspedisi", label: "Ekspedisi", default: true, render: (g) => g.ekspedisi || "—" },
     { key: "tanggalKirim", label: "Tanggal Kirim", default: true, render: (g) => formatDate(g.deliveredAt) },
-    { key: "qty", label: "Total Qty", default: true, align: "right", render: (g) => <span className="font-mono">{formatPcs(g.totalQty)}</span> },
+    { key: "qty", aggregate: aggSum((g) => g.totalQty, (n) => <span className="font-semibold">{formatPcs(n)}</span>), label: "Total Qty", default: true, align: "right", render: (g) => <span className="font-mono">{formatPcs(g.totalQty)}</span> },
     {
       // HPP resi ini = Σ qty x HPP/item (mesin HPP yang sama dengan Laporan HPP Finance), tampil walau invoice belum dibayar.
       key: "totalHpp",
