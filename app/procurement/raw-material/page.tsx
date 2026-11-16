@@ -13,6 +13,8 @@ import { formatDate, formatRupiah } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { rawMaterialLines, summarizeRawMaterial, type RawMaterialSummary } from "@/lib/mrp/rawMaterialReport";
 import { exportRawMaterialExcel } from "@/lib/mrp/exportRawMaterialExcel";
+import { Tabs } from "@/components/ui/tabs";
+import { RawMaterialRollTab } from "@/components/procurement/raw-material-roll-tab";
 
 const vendorName = (id: string) => VENDOR_PRODUKSI[id]?.name ?? id;
 const rp = (n: number) => formatRupiah(Math.round(n));
@@ -354,6 +356,7 @@ export default function RawMaterialPage() {
   const [exporting, setExporting] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [detailKey, setDetailKey] = useState<string | null>(null);
+  const [tab, setTab] = useState<"roll" | "mrp">("roll");
 
   const allLines = useMemo(() => rawMaterialLines(invoices, productionBatches, mrpDetails, staticMrps), [invoices, productionBatches, mrpDetails, staticMrps]);
   const lines = useMemo(
@@ -428,8 +431,19 @@ export default function RawMaterialPage() {
       activeHref="/procurement/raw-material"
       breadcrumb={["Dashboard", "Raw Material"]}
       title="Raw Material"
-      subtitle="Pembelian dan penggunaan bahan baku per MRP dan vendor produksi"
+      subtitle="Pembelian dan penggunaan bahan baku per roll, per MRP dan vendor produksi"
     >
+      <Tabs
+        items={[
+          { key: "roll", label: "Per Roll" },
+          { key: "mrp", label: "Per MRP dan vendor" },
+        ]}
+        active={tab}
+        onChange={(k) => setTab(k as "roll" | "mrp")}
+      />
+      {tab === "roll" && <RawMaterialRollTab />}
+      {tab === "mrp" && (
+      <>
       <div className="grid grid-cols-4 gap-3.5 max-lg:grid-cols-2 max-sm:grid-cols-1">
         <KpiCard label="Total invoice setelah diskon" value={rp(totalSetelah)} valueClassName="text-[20px]" sub={`Sebelum diskon ${rp(totalSebelum)}`} accent="blue" icon={Banknote} />
         <KpiCard label="Total diskon" value={rp(totalDiskon)} valueClassName="text-[20px]" sub={totalSebelum > 0 ? `${((totalDiskon / totalSebelum) * 100).toFixed(2).replace(".", ",")}% dari total sebelum diskon` : undefined} accent="teal" icon={Percent} />
@@ -480,6 +494,8 @@ export default function RawMaterialPage() {
           emptyText="Belum ada invoice bahan untuk filter ini."
         />
       </div>
+      </>
+      )}
       {exportOpen && <ExportMrpDialog options={exportOptions} onCancel={() => setExportOpen(false)} onConfirm={(ids) => void doExport(ids)} busy={exporting} />}
       {detailKey && summaries.find((x) => x.key === detailKey) && (
         <RawMaterialDetailModal summary={summaries.find((x) => x.key === detailKey) as RawMaterialSummary} mrpCreated={mrpCreated} onClose={() => setDetailKey(null)} />

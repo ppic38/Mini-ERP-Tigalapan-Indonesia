@@ -99,6 +99,7 @@ export function ItemTrackingView() {
   const columns: ColumnDef<AduanTrackRow>[] = [
     { key: "mrp", aggregate: sameText((r) => r.mrpId), label: "No. MRP", default: true, render: (r) => <span className="font-mono">{r.mrpId}</span> },
     { key: "vendor", aggregate: sameText((r) => vendorLabel(r.vendorProduksi)), label: "Vendor", default: true, render: (r) => vendorLabel(r.vendorProduksi) },
+    { key: "warna", aggregate: sameText((r) => r.warna), label: "Warna", default: true, render: (r) => r.warna },
     {
       key: "kode", aggregate: sameText((r) => r.kode),
       label: "Aduan",
