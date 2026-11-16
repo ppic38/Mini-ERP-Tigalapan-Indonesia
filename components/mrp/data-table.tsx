@@ -3,7 +3,7 @@
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Filter, Layers, Search, Star, X } from "lucide-react";
 import { InfoPopover } from "@/components/ui/info-popover";
 
 export type ColumnDef<T> = {
@@ -114,7 +114,11 @@ export function DataTable<T>({
   viewKey,
   pageSize,
   filterPreset,
+  onFilteredRows,
 }: {
+  /** Opsional: dipanggil dengan baris yang lolos filter dan kotak cari setiap kali hasilnya berubah (mis. kartu angka yang
+   *  mengikuti filter). Tidak diisi = tidak ada efek. */
+  onFilteredRows?: (rows: T[]) => void;
   /** Opsional: pasang pilihan filter dari luar tabel (mis. kartu angka yang diklik). Setiap kali `nonce` berubah,
    *  pilihan filter tabel diganti dengan `filters` (kunci = label filter di `filterDefs`). Tidak diisi = tidak ada efek. */
   filterPreset?: { nonce: number; filters: Record<string, string[]> };
@@ -241,6 +245,7 @@ export function DataTable<T>({
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const [fullGroups, setFullGroups] = useState<Set<string>>(new Set());
   const [favName, setFavName] = useState("");
+  const [openFilterSections, setOpenFilterSections] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const prevCollapseSignal = useRef(collapseSignal);
@@ -302,6 +307,15 @@ export function DataTable<T>({
       (alwaysShowKey != null && keyOf(r) === alwaysShowKey) ||
       ((filterDefs ?? []).every((f) => passes(f, r)) && (!search || !trimmedQuery || search.getText(r).toLowerCase().includes(trimmedQuery)))
   );
+  const filteredSig = filtered.length + ":" + filtered.map(keyOf).join("|");
+  const onFilteredRef = useRef(onFilteredRows);
+  useEffect(() => {
+    onFilteredRef.current = onFilteredRows;
+  });
+  useEffect(() => {
+    onFilteredRef.current?.(filtered);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- cukup saat isi hasil filter berubah (bukan tiap render)
+  }, [filteredSig]);
   // Filter saling memengaruhi (permintaan owner 2026-11-05): pilihan sebuah filter hanya memuat nilai yang MASIH ADA di baris yang lolos SEMUA filter lain
   // (dan kotak cari). Contoh: pilih MRP W39 -> filter Vendor hanya berisi vendor yang punya baris di W39. Pilihan yang sedang aktif selalu tetap tampil.
   // Tanpa filter lain/pencarian yang aktif, daftar pilihannya apa adanya seperti sebelumnya.
@@ -400,84 +414,6 @@ export function DataTable<T>({
           {headerActions}
           {/* Lapisan penutup: klik di luar menu menutupnya. */}
           {openMenu && <div className="fixed inset-0 z-20" onClick={() => setOpenMenu(null)} />}
-          {modern && filterDefList.length > 0 && (
-            <div className="relative">
-              <button onClick={() => setOpenMenu(openMenu === "grup" ? null : "grup")} className={menuBtn + (groupDef ? " bg-info-bg" : "")}>
-                {groupDef ? `Kelompok: ${groupDef.label}` : "Kelompokkan"}
-              </button>
-              {openMenu === "grup" && (
-                <div className={menuBox + " right-0 top-[110%] w-52"}>
-                  {filterDefList.map((f) => (
-                    <button
-                      key={f.label}
-                      className={menuItem + (groupBy === f.label ? " font-semibold text-action-primary" : "")}
-                      onClick={() => {
-                        setGroupBy(f.label);
-                        setOpenGroups(new Set());
-                        setFullGroups(new Set());
-                        setOpenMenu(null);
-                      }}
-                    >
-                      {f.label}
-                    </button>
-                  ))}
-                  {groupDef && (
-                    <button className={menuItem + " mt-1 border-t border-border-subtle font-semibold text-action-primary"} onClick={() => { setGroupBy(null); setOpenMenu(null); }}>
-                      Tanpa kelompok
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-          {modern && (
-            <div className="relative">
-              <button onClick={() => setOpenMenu(openMenu === "fav" ? null : "fav")} className={menuBtn}>
-                Favorit{favs.items.length > 0 ? ` (${favs.items.length})` : ""}
-              </button>
-              {openMenu === "fav" && (
-                <div className={menuBox + " right-0 top-[110%] w-72"}>
-                  {favs.items.length === 0 && <div className="px-2 py-1.5 font-sans text-xs text-text-muted">Belum ada favorit. Atur filter, kelompok, dan kolom, lalu simpan di bawah.</div>}
-                  {favs.items.map((f) => (
-                    <div key={f.name} className="flex items-center gap-1">
-                      <button className={menuItem + " min-w-0 flex-1"} onClick={() => applyFavorite(f)}>
-                        <span className="truncate">{f.name}</span>
-                        {favs.def === f.name && <span className="flex-none rounded bg-info-bg px-1.5 py-px text-[10px] font-semibold text-info-fg">bawaan</span>}
-                      </button>
-                      <button
-                        className="flex-none rounded px-1.5 py-1 font-sans text-[11px] font-semibold text-action-primary hover:bg-[#F7F9FB]"
-                        title={favs.def === f.name ? "Jangan pakai sebagai bawaan" : "Pakai setiap kali tabel ini dibuka"}
-                        onClick={() => saveFavs({ items: favs.items, def: favs.def === f.name ? null : f.name })}
-                      >
-                        {favs.def === f.name ? "Lepas" : "Jadikan bawaan"}
-                      </button>
-                      <button
-                        className="flex-none rounded px-1.5 py-1 font-sans text-[11px] font-semibold text-danger-fg hover:bg-[#F7F9FB]"
-                        aria-label={`Hapus favorit ${f.name}`}
-                        onClick={() => saveFavs({ items: favs.items.filter((x) => x.name !== f.name), def: favs.def === f.name ? null : favs.def })}
-                      >
-                        Hapus
-                      </button>
-                    </div>
-                  ))}
-                  <div className="mt-1 flex gap-1 border-t border-border-subtle pt-2">
-                    <input
-                      value={favName}
-                      onChange={(e) => setFavName(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") saveFavorite(); }}
-                      placeholder="Nama susunan ini"
-                      aria-label="Nama favorit"
-                      maxLength={40}
-                      className="min-w-0 flex-1 rounded-md border border-border-subtle bg-white px-2 py-[5px] font-sans text-xs text-[#31414F]"
-                    />
-                    <button onClick={saveFavorite} disabled={!favName.trim()} className="flex-none rounded-md bg-action-primary px-2.5 py-[5px] font-sans text-xs font-semibold text-white disabled:opacity-40">
-                      Simpan
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
           <div className="relative">
             <button onClick={() => setOpenMenu(openMenu === "kolom" ? null : "kolom")} className={menuBtn}>
               ⊞ Kolom
@@ -513,7 +449,218 @@ export function DataTable<T>({
         </div>
       </div>
 
-      {((filterDefs && filterDefs.length > 0) || search) && (
+      {modern && ((filterDefs && filterDefs.length > 0) || search) && (
+        <div className="dt-filters flex flex-wrap items-center gap-2 border-b border-border-subtle bg-[#FAFBFC] px-5 py-2.5 max-md:px-4">
+          {/* Kotak cari gaya Odoo (owner 2026-11-16): filter dan kelompok tampil sebagai keping di dalam kotak; tombol panah membuka
+              panel Filter / Kelompokkan / Favorit. Mengetik = cari langsung; saran di bawahnya menambahkan filter. Backspace di kotak
+              kosong menghapus keping terakhir. */}
+          <div className="relative min-w-0 max-w-[760px] flex-1 max-md:w-full max-md:max-w-none">
+            <div className="flex min-h-[34px] flex-wrap items-center gap-1 rounded-md border border-border-subtle bg-white py-1 pl-2 pr-1 focus-within:border-accent-blue">
+              <Search className="h-3.5 w-3.5 flex-none text-text-muted" />
+              {filterDefList
+                .filter((f) => selOf(f).length > 0)
+                .map((f) => (
+                  <span key={f.label} className="inline-flex max-w-full items-center overflow-hidden rounded border border-[#C9D6EA] bg-info-bg font-sans text-[11px] text-info-fg">
+                    <span className="flex-none bg-[#DCE7F8] px-1.5 py-[2px] font-semibold">{f.label}</span>
+                    <span className="truncate px-1.5 py-[2px]">{selOf(f).join(" atau ")}</span>
+                    <button type="button" aria-label={`Hapus filter ${f.label}`} onClick={() => setSel(f.label, [])} className="flex-none px-1 py-[2px] hover:bg-[#DCE7F8]">
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              {groupDef && (
+                <span className="inline-flex items-center overflow-hidden rounded border border-[#D9CFF3] bg-accent-purple-bg font-sans text-[11px] text-accent-purple">
+                  <span className="flex-none bg-[#E6DDFA] px-1.5 py-[2px] font-semibold">Kelompok</span>
+                  <span className="px-1.5 py-[2px]">{groupDef.label}</span>
+                  <button type="button" aria-label="Hapus kelompok" onClick={() => setGroupBy(null)} className="flex-none px-1 py-[2px] hover:bg-[#E6DDFA]">
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+              <input
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setPage(0);
+                  setOpenMenu(e.target.value.trim() ? "saran" : null);
+                }}
+                onFocus={() => {
+                  if (searchQuery.trim()) setOpenMenu("saran");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setOpenMenu(null);
+                  if (e.key === "Enter") setOpenMenu(null);
+                  if (e.key === "Backspace" && !searchQuery) {
+                    if (groupDef) setGroupBy(null);
+                    else {
+                      const last = [...filterDefList].reverse().find((f) => selOf(f).length > 0);
+                      if (last) setSel(last.label, []);
+                    }
+                  }
+                }}
+                placeholder={search?.placeholder ?? "Cari…"}
+                aria-label="Cari"
+                className="relative z-30 min-w-[120px] flex-1 bg-transparent px-1 py-[3px] font-sans text-[12px] text-[#31414F] outline-none"
+              />
+              {(
+                <button
+                  type="button"
+                  onClick={() => setOpenMenu(openMenu === "panel" ? null : "panel")}
+                  aria-label="Filter, kelompok, dan favorit"
+                  aria-expanded={openMenu === "panel"}
+                  className={"relative z-30 flex h-[26px] w-[28px] flex-none items-center justify-center rounded border-l border-border-subtle text-text-muted hover:bg-[#F1F4F8]" + (openMenu === "panel" ? " bg-[#F1F4F8] text-text-primary" : "")}
+                >
+                  <ChevronDown className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {openMenu === "saran" && searchQuery.trim() && (
+              <div className={menuBox + " left-0 top-[calc(100%+4px)] w-full max-w-[520px]"}>
+                <button className={menuItem} onClick={() => setOpenMenu(null)}>
+                  <Search className="h-3.5 w-3.5 flex-none text-text-muted" />
+                  <span>
+                    Cari semua kolom: <span className="font-semibold">{searchQuery.trim()}</span>
+                  </span>
+                </button>
+                {filterDefList.flatMap((f, i) =>
+                  optionsFor(i)
+                    .filter((o) => o.toLowerCase().includes(trimmedQuery) && !selOf(f).includes(o))
+                    .slice(0, 4)
+                    .map((o) => (
+                      <button
+                        key={f.label + "|" + o}
+                        className={menuItem}
+                        onClick={() => {
+                          setSel(f.label, [...selOf(f), o]);
+                          setSearchQuery("");
+                          setOpenMenu(null);
+                        }}
+                      >
+                        <span className="w-[120px] flex-none truncate text-text-muted">Filter {f.label}</span>
+                        <span className="truncate font-semibold">{o}</span>
+                      </button>
+                    ))
+                )}
+              </div>
+            )}
+
+            {openMenu === "panel" && (
+              <div className="absolute left-0 top-[calc(100%+4px)] z-30 grid max-h-[70vh] w-[min(760px,calc(100vw-48px))] grid-cols-3 gap-0 overflow-y-auto rounded-md border border-border-subtle bg-surface-card shadow-[0_12px_28px_rgba(11,19,27,.18)] max-md:grid-cols-1">
+                <div className="border-r border-border-subtle p-3 max-md:border-b max-md:border-r-0">
+                  <div className="mb-1.5 flex items-center gap-1.5 font-sans text-[12px] font-semibold text-text-primary">
+                    <Filter className="h-3.5 w-3.5 text-accent-purple" /> Filter
+                  </div>
+                  {filterDefList.length === 0 && <div className="px-2 py-1 font-sans text-xs text-text-muted">Tabel ini tidak punya filter.</div>}
+                  {filterDefList.map((f, i) => {
+                    const sel = selOf(f);
+                    const isOpen = openFilterSections.has(f.label) || sel.length > 0;
+                    const opts = optionsFor(i);
+                    return (
+                      <div key={f.label} className="border-b border-[#F1F4F7] last:border-b-0">
+                        <button className={menuItem + " font-medium"} onClick={() => setOpenFilterSections(toggleIn(openFilterSections, f.label))}>
+                          {isOpen ? <ChevronDown className="h-3 w-3 flex-none" /> : <ChevronRight className="h-3 w-3 flex-none" />}
+                          <span className="flex-1 truncate">{f.label}</span>
+                          {sel.length > 0 && <span className="rounded bg-info-bg px-1.5 text-[10px] font-semibold text-info-fg">{sel.length}</span>}
+                        </button>
+                        {isOpen && (
+                          <div className="max-h-48 overflow-y-auto pb-1 pl-4">
+                            {opts.map((o) => (
+                              <label key={o} className={menuItem + " cursor-pointer py-1"}>
+                                <input
+                                  type="checkbox"
+                                  checked={sel.includes(o)}
+                                  onChange={() => setSel(f.label, sel.includes(o) ? sel.filter((v) => v !== o) : [...sel, o])}
+                                  className="h-3.5 w-3.5 flex-none accent-accent-blue"
+                                />
+                                <span className="truncate">{o}</span>
+                              </label>
+                            ))}
+                            {opts.length === 0 && <div className="px-2 py-1 font-sans text-xs text-text-muted">Tidak ada pilihan.</div>}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {activeFilterCount > 0 && (
+                    <button className={menuItem + " mt-1 font-semibold text-action-primary"} onClick={() => { setFilterSel({}); setPage(0); }}>
+                      Hapus semua filter
+                    </button>
+                  )}
+                </div>
+                <div className="border-r border-border-subtle p-3 max-md:border-b max-md:border-r-0">
+                  <div className="mb-1.5 flex items-center gap-1.5 font-sans text-[12px] font-semibold text-text-primary">
+                    <Layers className="h-3.5 w-3.5 text-accent-teal" /> Kelompokkan
+                  </div>
+                  {filterDefList.length === 0 && <div className="px-2 py-1 font-sans text-xs text-text-muted">Tidak ada kolom untuk dikelompokkan.</div>}
+                  {filterDefList.map((f) => (
+                    <button
+                      key={f.label}
+                      className={menuItem + (groupBy === f.label ? " bg-info-bg font-semibold text-action-primary" : "")}
+                      onClick={() => {
+                        setGroupBy(groupBy === f.label ? null : f.label);
+                        setOpenGroups(new Set());
+                        setFullGroups(new Set());
+                      }}
+                    >
+                      {groupBy === f.label ? <Check className="h-3.5 w-3.5 flex-none" /> : <span className="w-3.5 flex-none" />}
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="p-3">
+                  <div className="mb-1.5 flex items-center gap-1.5 font-sans text-[12px] font-semibold text-text-primary">
+                    <Star className="h-3.5 w-3.5 text-accent-orange" /> Favorit
+                  </div>
+                  {favs.items.length === 0 && <div className="px-2 py-1 font-sans text-xs leading-snug text-text-muted">Belum ada. Atur filter, kelompok, dan kolom, lalu simpan di bawah.</div>}
+                  {favs.items.map((f) => (
+                    <div key={f.name} className="group flex items-center gap-0.5">
+                      <button className={menuItem + " min-w-0 flex-1"} onClick={() => applyFavorite(f)}>
+                        <span className="truncate">{f.name}</span>
+                        {favs.def === f.name && <span className="flex-none rounded bg-info-bg px-1.5 py-px text-[10px] font-semibold text-info-fg">bawaan</span>}
+                      </button>
+                      <button
+                        className="flex-none rounded px-1 py-1 text-text-muted hover:bg-[#F7F9FB] hover:text-accent-orange"
+                        title={favs.def === f.name ? "Jangan pakai sebagai bawaan" : "Pakai setiap kali tabel ini dibuka"}
+                        aria-label={favs.def === f.name ? `Lepas ${f.name} sebagai bawaan` : `Jadikan ${f.name} bawaan`}
+                        onClick={() => saveFavs({ items: favs.items, def: favs.def === f.name ? null : f.name })}
+                      >
+                        <Star className={"h-3.5 w-3.5" + (favs.def === f.name ? " fill-accent-orange text-accent-orange" : "")} />
+                      </button>
+                      <button
+                        className="flex-none rounded px-1 py-1 text-text-muted hover:bg-[#F7F9FB] hover:text-danger-fg"
+                        aria-label={`Hapus favorit ${f.name}`}
+                        onClick={() => saveFavs({ items: favs.items.filter((x) => x.name !== f.name), def: favs.def === f.name ? null : favs.def })}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  <div className="mt-2 flex gap-1 border-t border-border-subtle pt-2">
+                    <input
+                      value={favName}
+                      onChange={(e) => setFavName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") saveFavorite(); }}
+                      placeholder="Simpan susunan ini sebagai…"
+                      aria-label="Nama favorit"
+                      maxLength={40}
+                      className="min-w-0 flex-1 rounded-md border border-border-subtle bg-white px-2 py-[5px] font-sans text-xs text-[#31414F]"
+                    />
+                    <button onClick={saveFavorite} disabled={!favName.trim()} className="flex-none rounded-md bg-action-primary px-2.5 py-[5px] font-sans text-xs font-semibold text-white disabled:opacity-40">
+                      Simpan
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          <span className="ml-auto font-sans text-[11.5px] text-text-muted max-md:ml-0">
+            {activeFilterCount > 0 || trimmedQuery ? `${filtered.length} dari ${rows.length} baris` : `${rows.length} baris`}
+          </span>
+        </div>
+      )}
+
+      {!modern && ((filterDefs && filterDefs.length > 0) || search) && (
         <div className="dt-filters flex flex-wrap items-center gap-2 border-b border-border-subtle bg-[#FAFBFC] px-5 py-2.5 max-md:flex-col max-md:items-stretch max-md:px-4">
           {search && (
             <input
@@ -539,55 +686,6 @@ export function DataTable<T>({
                 ))}
               </select>
             ))}
-          {modern &&
-            filterDefs?.map((f, i) => {
-              const sel = selOf(f);
-              const id = "f:" + f.label;
-              return (
-                <div key={f.label} className="relative max-md:w-full">
-                  <button
-                    onClick={() => setOpenMenu(openMenu === id ? null : id)}
-                    className={
-                      "flex max-w-full items-center gap-1.5 rounded-md border px-2.5 py-[6px] font-sans text-[11.5px] font-medium max-md:w-full " +
-                      (sel.length > 0 ? "border-accent-blue bg-info-bg text-info-fg" : "border-border-subtle bg-white text-[#31414F]")
-                    }
-                  >
-                    <span className="truncate">
-                      {f.label}
-                      {sel.length === 1 ? `: ${sel[0]}` : sel.length > 1 ? `: ${sel.length} dipilih` : ""}
-                    </span>
-                    <ChevronDown className="h-3 w-3 flex-none" />
-                  </button>
-                  {openMenu === id && (
-                    <div className={menuBox + " left-0 top-[110%] w-60"}>
-                      {optionsFor(i).map((o) => (
-                        <label key={o} className={menuItem + " cursor-pointer"}>
-                          <input
-                            type="checkbox"
-                            checked={sel.includes(o)}
-                            onChange={() => setSel(f.label, sel.includes(o) ? sel.filter((v) => v !== o) : [...sel, o])}
-                            className="h-3.5 w-3.5 flex-none accent-accent-blue"
-                          />
-                          <span className="truncate">{o}</span>
-                        </label>
-                      ))}
-                      {optionsFor(i).length === 0 && <div className="px-2 py-1.5 font-sans text-xs text-text-muted">Tidak ada pilihan.</div>}
-                      {sel.length > 0 && (
-                        <button className={menuItem + " mt-1 border-t border-border-subtle font-semibold text-action-primary"} onClick={() => setSel(f.label, [])}>
-                          Hapus pilihan
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          {modern && activeFilterCount > 0 && (
-            <button onClick={() => { setFilterSel({}); setPage(0); }} className="rounded-md px-2 py-[6px] font-sans text-[11.5px] font-semibold text-action-primary hover:bg-white">
-              Hapus semua filter
-            </button>
-          )}
-          {modern && (activeFilterCount > 0 || trimmedQuery) && <span className="ml-auto font-sans text-[11.5px] text-text-muted max-md:ml-0">{filtered.length} dari {rows.length} baris</span>}
         </div>
       )}
 

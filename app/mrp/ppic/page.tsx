@@ -9,12 +9,13 @@ import { ImportDropzone } from "@/components/mrp/import-dropzone";
 import { MrpWarnaBreakdownTable } from "@/components/mrp/mrp-warna-breakdown-table";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { DataTable, type ColumnDef, type FilterDef } from "@/components/mrp/data-table";
-import { SidePanel, PanelField } from "@/components/ui/side-panel";
+import { SidePanel } from "@/components/ui/side-panel";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { mrpCorrections } from "@/components/sysadmin/ppic-corrections";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { useMrpStore } from "@/lib/mrp/store";
-import { mrpStatusBadges, mrpStatusBadgeTone, mrpWarnaBreakdown, effectiveMrpQty, formatPcs, formatDate, ppicApprovalBadge, vendorsForMrp } from "@/lib/mrp/derive";
+import { mrpStatusBadges, mrpStatusBadgeTone, mrpWarnaBreakdown, effectiveMrpQty, formatPcs, formatDate, ppicApprovalBadge, vendorsForMrp, mrpStage, MRP_STAGES, type MrpStage } from "@/lib/mrp/derive";
+import { StageBadge } from "@/components/ui/stage-badge";
 import type { ParsedMrpImport } from "@/lib/mrp/parseImport";
 import { exportMaklonPoRasioExcel } from "@/lib/mrp/exportPoExcel";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -172,6 +173,8 @@ export default function MrpListPage() {
   const [importOpen, setImportOpen] = useState(false);
   // Kartu angka yang diklik memasang filter di tabel (lihat `filterPreset` di DataTable).
   const [preset, setPreset] = useState<{ nonce: number; filters: Record<string, string[]>; card: string }>({ nonce: 0, filters: {}, card: "" });
+  // Kartu angka mengikuti filter tabel (owner 2026-11-16): dihitung dari baris yang sedang lolos filter dan pencarian.
+  const [shownIds, setShownIds] = useState<Set<string> | null>(null);
 
   const rows = useMemo(() => {
     const all: { mrp: (typeof mrpDetails)[number]["mrp"]; detail?: (typeof mrpDetails)[number] }[] = [
@@ -193,6 +196,7 @@ export default function MrpListPage() {
       badges: mrpStatusBadges(mrp.id, detail, materialPOs, maklonPOs, invoices, vendorInvoices),
       vendors: vendorsForMrp(detail),
       scm: detail ? ppicApprovalBadge(detail.ppicApproval) : null,
+      stage: mrpStage(detail?.ppicApproval, mrpStatusBadges(mrp.id, detail, materialPOs, maklonPOs, invoices, vendorInvoices)),
     }));
   }, [mrpDetails, staticMrps, materialPOs, maklonPOs, invoices, vendorInvoices]);
   type Row = (typeof rows)[number];
@@ -204,12 +208,11 @@ export default function MrpListPage() {
   }
 
   const uniq = (list: string[]) => Array.from(new Set(list));
+  const stageOrder: string[] = ["Ditolak SCM", ...MRP_STAGES];
   const filterDefs: FilterDef<Row>[] = [
+    { label: "Tahapan", options: stageOrder.filter((st) => rows.some((r) => r.stage === st)), test: (r, v) => r.stage === v },
     { label: "Vendor", options: uniq(rows.flatMap((r) => r.vendors)).sort(), test: (r, v) => r.vendors.includes(v) },
-    { label: "Status SCM", options: uniq(rows.map((r) => r.scm?.label ?? "—")), test: (r, v) => (r.scm?.label ?? "—") === v },
-    { label: "Status PO", options: uniq(rows.map((r) => r.badges.statusPO)), test: (r, v) => r.badges.statusPO === v },
-    { label: "Status Raw Material", options: uniq(rows.map((r) => r.badges.statusRawMaterial)), test: (r, v) => r.badges.statusRawMaterial === v },
-    { label: "Status Produksi", options: uniq(rows.map((r) => r.badges.statusProduksi)), test: (r, v) => r.badges.statusProduksi === v },
+    { label: "Kategori", options: uniq(rows.map((r) => r.mrp.kategori).filter(Boolean)).sort(), test: (r, v) => r.mrp.kategori === v },
   ];
 
   const pill = (label: string) => <StatusPill tone={badgeTone(label)}>{label}</StatusPill>;
@@ -230,27 +233,32 @@ export default function MrpListPage() {
     { key: "kategori", label: "Kategori / Warna", default: false, render: (r) => `${r.mrp.kategori} · ${r.warnaLabel}` },
     { key: "qty", label: "Qty", default: true, align: "right", render: (r) => <span className="font-mono">{formatPcs(effectiveMrpQty(r.mrp.id, r.mrp.qty, maklonPOs))}</span> },
     { key: "vendor", label: "Vendor", default: false, render: (r) => (r.vendors.length ? r.vendors.join(", ") : "—") },
-    { key: "tglMrp", label: "Tanggal MRP", default: false, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.created)}</span> },
-    { key: "tglPO", label: "Tanggal PO", default: false, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.poSent)}</span> },
-    { key: "tglApproved", label: "Tanggal PO Disetujui", default: false, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.poApproved)}</span> },
-    { key: "tglInvoice", label: "Tanggal Invoice", default: false, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.firstInvoice)}</span> },
-    { key: "tglPayment", label: "Tanggal Payment", default: false, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.firstPayment)}</span> },
-    { key: "statusScm", label: "Status SCM", default: true, render: (r) => (r.scm ? <StatusPill tone={r.scm.tone}>{r.scm.label}</StatusPill> : "—") },
-    { key: "statusPO", label: "Status PO", default: true, render: (r) => pill(r.badges.statusPO) },
-    { key: "statusRM", label: "Status Raw Material", default: true, render: (r) => pill(r.badges.statusRawMaterial) },
-    { key: "statusProduksi", label: "Status Produksi", default: true, render: (r) => pill(r.badges.statusProduksi) },
+    {
+      key: "tahapan",
+      label: "Tahapan",
+      default: true,
+      render: (r) => <StageBadge stages={MRP_STAGES} current={r.stage} tone={r.stage === "Ditolak SCM" ? "danger" : undefined} />,
+    },
+    { key: "tglMrp", label: "Tanggal MRP", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.created)}</span> },
+    { key: "tglPO", label: "Tanggal PO", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.poSent)}</span> },
+    { key: "tglApproved", label: "Tanggal PO Disetujui", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.poApproved)}</span> },
+    { key: "tglInvoice", label: "Tanggal Invoice", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.firstInvoice)}</span> },
+    { key: "tglPayment", label: "Tanggal Payment", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.firstPayment)}</span> },
+    { key: "statusScm", label: "Status SCM", default: false, render: (r) => (r.scm ? <StatusPill tone={r.scm.tone}>{r.scm.label}</StatusPill> : "—") },
+    { key: "statusPO", label: "Status PO", default: false, render: (r) => pill(r.badges.statusPO) },
+    { key: "statusRM", label: "Status Raw Material", default: false, render: (r) => pill(r.badges.statusRawMaterial) },
+    { key: "statusProduksi", label: "Status Produksi", default: false, render: (r) => pill(r.badges.statusProduksi) },
   ];
 
-  // Kartu angka: dihitung dari baris yang sama dengan tabel (label status yang sama), jadi angkanya pasti cocok dengan hasil filternya.
-  const SCM_WAIT = "MENUNGGU APPROVAL SCM";
-  const count = (test: (r: Row) => boolean) => rows.filter(test).length;
-  const poOpenLabels = uniq(rows.map((r) => r.badges.statusPO)).filter((l) => l !== "PO APPROVED");
-  const prodRunLabels = uniq(rows.map((r) => r.badges.statusProduksi)).filter((l) => l !== "BELUM MULAI" && badgeTone(l) !== "success");
-  const cards: { key: string; label: string; value: number; sub: string; accent: "blue" | "orange" | "purple" | "teal"; filters: Record<string, string[]> }[] = [
-    { key: "semua", label: "Semua MRP", value: rows.length, sub: "klik untuk melihat semua", accent: "blue", filters: {} },
-    { key: "scm", label: "Menunggu approval SCM", value: count((r) => r.scm?.label === SCM_WAIT), sub: "belum bisa dibuatkan PO", accent: "orange", filters: { "Status SCM": [SCM_WAIT] } },
-    { key: "po", label: "PO belum disetujui", value: count((r) => poOpenLabels.includes(r.badges.statusPO)), sub: "draft atau menunggu approval", accent: "purple", filters: { "Status PO": poOpenLabels } },
-    { key: "prod", label: "Produksi berjalan", value: count((r) => prodRunLabels.includes(r.badges.statusProduksi)), sub: "sudah mulai, belum selesai", accent: "teal", filters: { "Status Produksi": prodRunLabels } },
+  // Kartu angka: jumlah MRP per kelompok tahapan, dari baris yang SEDANG lolos filter/pencarian tabel (berubah mengikuti filter).
+  // Klik kartu = filter Tahapan.
+  const shown = shownIds ? rows.filter((r) => shownIds.has(r.mrp.id)) : rows;
+  const inStages = (list: MrpStage[]) => shown.filter((r) => list.includes(r.stage)).length;
+  const cards: { key: string; label: string; value: number; sub: string; accent: "blue" | "orange" | "purple" | "teal"; stages: MrpStage[] }[] = [
+    { key: "awal", label: "Approval & PO", value: inStages(["Approval SCM", "Ditolak SCM", "PO"]), sub: "menunggu SCM atau approval PO", accent: "orange", stages: ["Approval SCM", "Ditolak SCM", "PO"] },
+    { key: "material", label: "Menunggu material", value: inStages(["Material"]), sub: "PO disetujui, produksi belum jalan", accent: "purple", stages: ["Material"] },
+    { key: "produksi", label: "Produksi & kirim", value: inStages(["Produksi", "Pengiriman"]), sub: "sedang diproduksi atau dikirim", accent: "blue", stages: ["Produksi", "Pengiriman"] },
+    { key: "selesai", label: "Tagihan & selesai", value: inStages(["Tagihan", "Selesai"]), sub: "sudah ditagih vendor", accent: "teal", stages: ["Tagihan", "Selesai"] },
   ];
 
   const openRow = openMrpId ? rows.find((r) => r.mrp.id === openMrpId) : undefined;
@@ -282,8 +290,12 @@ export default function MrpListPage() {
             value={c.value}
             sub={c.sub}
             accent={c.accent}
-            active={preset.card === c.key && c.key !== "semua"}
-            onClick={() => setPreset((p) => ({ nonce: p.nonce + 1, filters: c.filters, card: c.key }))}
+            active={preset.card === c.key}
+            onClick={() =>
+              setPreset((p) =>
+                p.card === c.key ? { nonce: p.nonce + 1, filters: {} as Record<string, string[]>, card: "" } : { nonce: p.nonce + 1, filters: { Tahapan: c.stages.filter((st) => rows.some((r) => r.stage === st)) as string[] }, card: c.key }
+              )
+            }
           />
         ))}
       </div>
@@ -297,7 +309,8 @@ export default function MrpListPage() {
         firstColumnRender={(r) => <span className="font-mono font-medium">{r.mrp.id}</span>}
         filterDefs={filterDefs}
         filterPreset={preset}
-        search={{ placeholder: "Cari no. MRP, warna, vendor…", getText: (r) => `${r.mrp.id} ${r.mrp.kategori} ${r.warnaLabel} ${r.vendors.join(" ")}` }}
+        onFilteredRows={(list) => setShownIds(new Set(list.map((r) => r.mrp.id)))}
+        search={{ placeholder: "Cari no. MRP, warna, vendor, tahapan…", getText: (r) => `${r.mrp.id} ${r.mrp.kategori} ${r.warnaLabel} ${r.vendors.join(" ")} ${r.stage}` }}
         onRowClick={(r) => setOpenMrpId(r.mrp.id)}
         emptyText="Tidak ada MRP yang cocok dengan filter."
       />
@@ -314,12 +327,7 @@ export default function MrpListPage() {
         subtitle={openRow ? `${openRow.mrp.kategori} · ${formatPcs(effectiveMrpQty(openRow.mrp.id, openRow.mrp.qty, maklonPOs))} pcs` : undefined}
         headerExtra={
           openRow && (
-            <div className="flex flex-wrap gap-1.5">
-              {openRow.scm && <StatusPill tone={openRow.scm.tone}>{openRow.scm.label}</StatusPill>}
-              {pill(openRow.badges.statusPO)}
-              {pill(openRow.badges.statusRawMaterial)}
-              {pill(openRow.badges.statusProduksi)}
-            </div>
+            <StageBadge stages={MRP_STAGES} current={openRow.stage} tone={openRow.stage === "Ditolak SCM" ? "danger" : undefined} />
           )
         }
         footer={
@@ -358,17 +366,9 @@ export default function MrpListPage() {
                 {openRow.detail.ppicRejectionNote ? ` — ${openRow.detail.ppicRejectionNote}` : ""} — impor ulang dengan data yang sudah dibetulkan kalau perlu diajukan lagi.
               </div>
             )}
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border-subtle bg-[#FAFBFC] px-4 py-3 sm:grid-cols-3 lg:grid-cols-6">
-              <PanelField label="Tanggal MRP">{formatDate(openRow.detail?.dates?.created)}</PanelField>
-              <PanelField label="Tanggal PO">{formatDate(openRow.detail?.dates?.poSent)}</PanelField>
-              <PanelField label="PO disetujui">{formatDate(openRow.detail?.dates?.poApproved)}</PanelField>
-              <PanelField label="Invoice pertama">{formatDate(openRow.detail?.dates?.firstInvoice)}</PanelField>
-              <PanelField label="Payment pertama">{formatDate(openRow.detail?.dates?.firstPayment)}</PanelField>
-              <PanelField label="Vendor produksi">{openRow.vendors.length ? openRow.vendors.join(", ") : "—"}</PanelField>
-            </div>
             <div>
               <div className="mb-2 font-sans text-[13px] font-semibold text-text-primary">Rincian warna</div>
-              <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(openRow.detail)} />
+              <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(openRow.detail)} vendorQty={false} />
             </div>
           </div>
         )}

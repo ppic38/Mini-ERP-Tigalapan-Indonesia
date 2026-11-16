@@ -1420,6 +1420,32 @@ export function ppicApprovalBadge(status: PpicApprovalStatus): { label: string; 
   return map[status];
 }
 
+/** Tahapan MRP (owner 2026-11-16: "status 1 saja, by staging progress seperti Odoo"): satu status per MRP yang menggabungkan
+ *  Status SCM, Status PO, Status Raw Material, dan Status Produksi menjadi posisi di alur. Diturunkan dari label yang sama
+ *  dengan kolom-kolom status itu (mrpStatusBadges + ppicApprovalBadge), tidak ada rumus baru:
+ *   Approval SCM  : MRP belum disetujui SCM (draft / menunggu)
+ *   PO            : disetujui SCM, PO belum disetujui semua
+ *   Material      : PO disetujui, produksi belum mulai / menunggu material
+ *   Produksi      : produksi berjalan (sebagian atau penuh)
+ *   Pengiriman    : status produksi DELIVERY
+ *   Tagihan       : sudah ditagih vendor (INVOICE / PAID sebagian)
+ *   Selesai       : FULLY PAID
+ *  MRP yang ditolak SCM berstatus "Ditolak SCM" (di luar alur). */
+export const MRP_STAGES = ["Approval SCM", "PO", "Material", "Produksi", "Pengiriman", "Tagihan", "Selesai"] as const;
+export type MrpStage = (typeof MRP_STAGES)[number] | "Ditolak SCM";
+
+export function mrpStage(ppicApproval: PpicApprovalStatus | undefined, badges: { statusPO: string; statusRawMaterial: string; statusProduksi: string }): MrpStage {
+  if (ppicApproval === "REJECTED") return "Ditolak SCM";
+  const prod = badges.statusProduksi;
+  if (prod === "FULLY PAID") return "Selesai";
+  if (prod === "INVOICE" || prod === "PAID") return "Tagihan";
+  if (prod === "DELIVERY") return "Pengiriman";
+  if (prod === "PRODUCTION" || prod === "PARTIAL PRODUCTION") return "Produksi";
+  if (ppicApproval === "DRAFT" || ppicApproval === "WAITING_PPIC_APPROVAL") return "Approval SCM";
+  if (badges.statusPO !== "PO APPROVED") return "PO";
+  return "Material";
+}
+
 export function maklonPoBadge(po: Pick<MaklonPO, "status" | "qty">) {
   // qty bisa turun ke 0 lewat transferMaterial/closePoWithReason (seluruh material dipindahkan
   // ke vendor lain) — status ASLI (mis. FULL_WAITING_MATERIAL) sengaja dipertahankan sebagai
