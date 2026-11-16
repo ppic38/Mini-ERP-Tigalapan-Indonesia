@@ -196,7 +196,8 @@ dan **laporkan hasilnya ke owner SEBELUM menghapus**, sebutkan halaman lain yang
    `gateReason` di `derive.ts` -- angka badge sidebar dan syarat tombol sering memakai data yang sama.
 
 ### Lingkup perangkat (owner 2026-11-13)
-- **Modul vendor produksi: JANGAN DISENTUH.** Sudah disederhanakan owner dan pas di HP (halaman Pengiriman
+- **REVISI owner 2026-11-16: vendor produksi ikut pola Odoo HANYA di desktop (>= 1024 px); tampilan HP vendor tetap JANGAN disentuh.** Tahap 1 selesai (menu atas + tabel bersama, lihat MIGRASI.md [redesign-vendor]); sisa: Good Receive, Produksi, Pengiriman, Invoice & Payment. Uji pakai akun vendor uji lokal CECEP (`VENDOR_TEST_PASSWORD_CE` di .env.local). Catatan lama:
+  **Modul vendor produksi: JANGAN DISENTUH.** Sudah disederhanakan owner dan pas di HP (halaman Pengiriman
   vendor punya 113 penanda responsif -- garapannya serius). Bukan bagian redesign ini.
 - **Modul internal: desktop/laptop**, KECUALI dua alur yang wajib jalan enak di HP:
   1. **Approval** -- dipakai dari HP saat approver sedang di luar. Kondisi sekarang: `po-approval-queue.tsx`
