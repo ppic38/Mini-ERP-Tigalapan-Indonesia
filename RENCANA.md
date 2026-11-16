@@ -78,6 +78,11 @@ docs/DESAIN-DAN-FITUR.md; contoh layout di docs/mockup/.
   lokal, sisanya pembaruan RENCANA.md saja.
   Jangan push ke `main` tanpa persetujuan owner: push ke `main` langsung ter-deploy ke aplikasi online.
 - Catatan teknis laptop ini:
+  - **Localhost "tidak bisa dirender" / halaman error 500 setelah folder `.next` dihapus (2026-11-16)**: Next mengunduh font Google
+    (Inter, Space Grotesk, IBM Plex Mono) saat start; unduhan lewat IPv6 gagal di jaringan laptop ini ("Can't resolve
+    @vercel/turbopack-next/internal/font/google/font"). Selama cache `.next` ada, font tersimpan sehingga tidak terasa. Jalankan dev server dengan
+    `node --dns-result-order=ipv4first node_modules/next/dist/bin/next dev` (sudah di `.claude/launch.json`, file itu tidak di-commit).
+    Jangan hapus `.next` kalau tidak perlu; kalau dihapus, pakai opsi IPv4 di atas.
   - Nama folder memuat `&`, jadi `npx`/`npm run` gagal. Jalankan lewat node langsung, mis.
     `node node_modules/typescript/bin/tsc --noEmit`, `node node_modules/next/dist/bin/next dev`,
     `node node_modules/supabase/dist/supabase.js <perintah>`.
