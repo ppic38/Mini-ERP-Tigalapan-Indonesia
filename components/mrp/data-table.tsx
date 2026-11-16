@@ -1,7 +1,7 @@
 "use client";
 
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
-import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { Fragment, isValidElement, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { ChevronDown, ChevronRight, Filter, Layers, Search, Star, X } from "lucide-react";
 import { InfoPopover } from "@/components/ui/info-popover";
@@ -21,7 +21,47 @@ export type ColumnDef<T> = {
   /** Opsional: isi sel kolom ini di baris kelompok (Kelompokkan), dihitung dari semua baris kelompok itu. Pakai `aggSum`
    *  untuk angka yang bisa dijumlah dan `aggSame` untuk nilai yang hanya ditampilkan kalau semua baris sama. Tidak diisi = kosong. */
   aggregate?: (rows: T[]) => ReactNode;
+  /** Opsional: nilai untuk mengurutkan kolom (klik judul kolom). Tidak diisi = teks yang tampil di sel (angka, rupiah, dan tanggal
+   *  dd/mm/yyyy dikenali otomatis). */
+  sortValue?: (row: T) => string | number | null | undefined;
 };
+
+/** Teks yang tampil di sebuah sel (untuk urutan kolom): menelusuri isi elemen React; StageBadge memakai prop `current`. */
+export function nodeText(node: ReactNode): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(nodeText).join(" ");
+  if (isValidElement(node)) {
+    const props = node.props as { children?: ReactNode; current?: unknown; value?: unknown };
+    if (typeof props.current === "string") return props.current;
+    return nodeText(props.children);
+  }
+  return "";
+}
+
+/** Nilai pembanding: angka (termasuk "Rp 1.234.567", "12,5%", "1.398 pcs") dan tanggal dd/mm/yyyy jadi angka, selain itu teks. */
+function sortKeyOf(v: string | number | null | undefined): { n: number | null; t: string } {
+  if (v == null) return { n: null, t: "" };
+  if (typeof v === "number") return { n: v, t: String(v) };
+  const t = v.trim();
+  if (t === "" || t === "—" || t === "-") return { n: null, t: "" };
+  const d = t.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if (d) return { n: Number(d[3] + d[2] + d[1]), t };
+  const num = t.replace(/^[≈+−-]?\s*(Rp\s*)?/i, (m) => (m.includes("−") || m.trim().startsWith("-") ? "-" : "")).replace(/\s*(%|pcs|roll|kg|baris)$/i, "");
+  if (/^-?[\d.]+(,\d+)?$/.test(num)) {
+    const n = Number(num.replace(/\./g, "").replace(",", "."));
+    if (!Number.isNaN(n)) return { n, t };
+  }
+  return { n: null, t };
+}
+function compareSortKeys(a: { n: number | null; t: string }, b: { n: number | null; t: string }): number {
+  // Kosong selalu di bawah.
+  const ea = a.n == null && a.t === "";
+  const eb = b.n == null && b.t === "";
+  if (ea || eb) return ea === eb ? 0 : ea ? 1 : -1;
+  if (a.n != null && b.n != null) return a.n - b.n;
+  return a.t.localeCompare(b.t, "id-ID", { numeric: true, sensitivity: "base" });
+}
 
 /** Jumlah satu angka di baris kelompok. */
 /** Lebar layar desktop (sama batas tampilan HP di globals.css: < 64rem = HP / tablet tegak). */
@@ -282,6 +322,10 @@ export function DataTable<T>({
     return f.items.find((x) => x.name === f.def)?.filters ?? {};
   });
   // Kelompokkan bertingkat (owner 2026-11-16): urutan label = urutan tingkat, mis. ["No. MRP", "Vendor"].
+  const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
+  const toggleSort = (key: string) =>
+    setSort((p) => (!p || p.key !== key ? { key, dir: "asc" } : p.dir === "asc" ? { key, dir: "desc" } : null));
+  const sortMark = (key: string) => (sort?.key === key ? <span className="ml-1 text-[9px]">{sort.dir === "asc" ? "▲" : "▼"}</span> : null);
   const [groupBy, setGroupBy] = useState<string[]>(() => {
     const f = parseFavs(readColPrefsRaw(typeof window === "undefined" ? null : favKey));
     return f.items.find((x) => x.name === f.def)?.group ?? defaultGroupBy ?? [];
@@ -355,11 +399,27 @@ export function DataTable<T>({
     setFilterSel((prev) => ({ ...prev, [label]: values }));
     setPage(0);
   }
-  const filtered = rows.filter(
+  const filteredRaw = rows.filter(
     (r) =>
       (alwaysShowKey != null && keyOf(r) === alwaysShowKey) ||
       ((filterDefs ?? []).every((f) => passes(f, r)) && (!search || !trimmedQuery || search.getText(r).toLowerCase().includes(trimmedQuery)))
   );
+  // Urutan kolom (owner 2026-11-16): klik judul kolom = A-Z, klik lagi = Z-A, klik ketiga = urutan bawaan. Berlaku di dalam kelompok juga.
+  const sortCol = sort ? (sort.key === "__first" ? null : columns.find((c) => c.key === sort.key)) : null;
+  const sortGet = sort
+    ? (r: T) => (sortCol ? (sortCol.sortValue ? sortCol.sortValue(r) : nodeText(sortCol.render(r))) : nodeText(firstColumnRender(r)))
+    : null;
+  const filtered = sortGet
+    ? filteredRaw
+        .map((r) => ({ r, k: sortKeyOf(sortGet(r)) }))
+        .sort((x, y) => {
+          const c = compareSortKeys(x.k, y.k);
+          const emptyX = x.k.n == null && x.k.t === "";
+          const emptyY = y.k.n == null && y.k.t === "";
+          return emptyX || emptyY ? c : sort!.dir === "asc" ? c : -c;
+        })
+        .map((x) => x.r)
+    : filteredRaw;
   const filteredSig = filtered.length + ":" + filtered.map(keyOf).join("|");
   const onFilteredRef = useRef(onFilteredRows);
   useEffect(() => {
@@ -768,11 +828,28 @@ export function DataTable<T>({
         <table className="w-full border-collapse">
           <thead className={bodyMaxHeight ? "sticky top-0 z-10" : undefined}>
             <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
-              <th className={"px-5 py-[9px] " + (nowrap ? "whitespace-nowrap " : "") + (firstColumnAlign === "right" ? "text-right" : "text-left")}>{firstColumnLabel}</th>
+              <th
+                onClick={firstColumnLabel ? () => toggleSort("__first") : undefined}
+                title={firstColumnLabel ? "Klik untuk mengurutkan" : undefined}
+                className={"select-none px-5 py-[9px] " + (firstColumnLabel ? "cursor-pointer hover:text-text-primary " : "") + (nowrap ? "whitespace-nowrap " : "") + (firstColumnAlign === "right" ? "text-right" : "text-left")}
+              >
+                {firstColumnLabel}
+                {sortMark("__first")}
+              </th>
               {visibleColumns.map((c) => (
-                <th key={c.key} className={(nowrap ? "px-2.5 " : "px-3 ") + "py-[9px] " + (nowrap ? "whitespace-nowrap " : "") + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple bg-accent-purple-bg text-accent-purple" : "")}>
+                <th
+                  key={c.key}
+                  onClick={c.sysadmin ? undefined : () => toggleSort(c.key)}
+                  title={c.sysadmin ? undefined : "Klik untuk mengurutkan"}
+                  className={"select-none " + (c.sysadmin ? "" : "cursor-pointer hover:text-text-primary ") + (nowrap ? "px-2.5 " : "px-3 ") + "py-[9px] " + (nowrap ? "whitespace-nowrap " : "") + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple bg-accent-purple-bg text-accent-purple" : "")}
+                >
                   {c.label}
-                  {c.info && <InfoPopover title={c.info.title}>{c.info.body}</InfoPopover>}
+                  {sortMark(c.key)}
+                  {c.info && (
+                    <span onClick={(e) => e.stopPropagation()}>
+                      <InfoPopover title={c.info.title}>{c.info.body}</InfoPopover>
+                    </span>
+                  )}
                 </th>
               ))}
               {(renderExpanded || onRowClick) && <th className="w-8 px-3 py-[9px]" />}
