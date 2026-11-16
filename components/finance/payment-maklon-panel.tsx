@@ -426,6 +426,10 @@ export function PaymentMaklonPanel() {
       total: Array.from(vendorMap.values()).reduce((s, l) => s + l.reduce((s2, i) => s2 + vendorInvoiceFinalAmount(i), 0), 0),
     }))
     .sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID"));
+  type HistoryRow = VendorInvoice & { histMrp: string; rowKey: string };
+  const historyRows: HistoryRow[] = paidInvoices
+    .flatMap((inv) => Array.from(new Set(inv.lines.map((l) => l.mrpId))).map((mrpId) => ({ ...inv, histMrp: mrpId, rowKey: `${inv.id}|${mrpId}` })))
+    .sort((a, b) => (a.paidAt ?? "") < (b.paidAt ?? "") ? 1 : -1);
   function historyVendorSummariesForMrp(mrpId: string) {
     return Array.from(historyHierarchy.get(mrpId)?.entries() ?? [])
       .map(([vendor, list]) => ({
@@ -873,7 +877,26 @@ export function PaymentMaklonPanel() {
         {historyMrpSummaries.length === 0 && (
           <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada invoice vendor yang telah dibayar.</div>
         )}
-        {historyMrpSummaries.length > 0 && (
+        {/* Per Invoice (pola PPIC): satu tabel bersama, satu baris per invoice x MRP, kelompok bawaan No. MRP > Vendor. */}
+        {historyTab === "invoice" && historyMrpSummaries.length > 0 && (
+          <DataTable<HistoryRow>
+            title="Invoice vendor telah dibayar"
+            columns={paidColumns}
+            rows={historyRows}
+            keyOf={(r) => r.rowKey}
+            firstColumnLabel="No Invoice"
+            firstColumnRender={(inv) => <span className="font-mono font-medium">{inv.id}</span>}
+            defaultGroupBy={["No. MRP", "Vendor"]}
+            filterDefs={[
+              { label: "No. MRP", options: historyMrpSummaries.map((m) => m.mrpId), test: (r, v) => r.histMrp === v },
+              { label: "Vendor", options: Array.from(new Set(historyRows.map((r) => VENDOR_PRODUKSI[r.vendorProduksi]?.name ?? r.vendorProduksi))).sort(), test: (r, v) => (VENDOR_PRODUKSI[r.vendorProduksi]?.name ?? r.vendorProduksi) === v },
+            ]}
+            search={{ placeholder: "Cari no invoice, vendor, MRP…", getText: (r) => r.id + " " + (VENDOR_PRODUKSI[r.vendorProduksi]?.name ?? r.vendorProduksi) + " " + r.histMrp }}
+            renderExpanded={renderInvoiceLinesDetail}
+            emptyText="Belum ada invoice vendor yang telah dibayar."
+          />
+        )}
+        {historyTab === "kategori" && historyMrpSummaries.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead>
