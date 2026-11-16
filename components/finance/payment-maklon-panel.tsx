@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
+import { KpiCard } from "@/components/ui/kpi-card";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
@@ -388,6 +389,7 @@ export function PaymentMaklonPanel() {
   const [expandedVendorHistory, setExpandedVendorHistory] = useState<string | null>(null);
   // Sub tab Riwayat Pembayaran: "invoice" = daftar invoice per vendor (semula), "kategori" = pembayaran per kategori produk (owner 2026-11-14).
   const [historyTab, setHistoryTab] = useState<"invoice" | "kategori">("invoice");
+  const [shownReadyIds, setShownReadyIds] = useState<Set<string> | null>(null);
 
   if (!mounted) return null;
 
@@ -701,8 +703,19 @@ export function PaymentMaklonPanel() {
     );
   }
 
+  const shownReady = shownReadyIds ? readyRows.filter((i) => shownReadyIds.has(i.id)) : readyRows;
+  const invTotal = (list: VendorInvoice[]) => list.reduce((t, i) => t + vendorInvoiceTotalPaid(i), 0);
+
   return (
     <>
+      {/* Kartu angka (pola PPIC): mengikuti filter tabel siap bayar. */}
+      <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+        <KpiCard label="Siap dibayar" value={shownReady.length} sub={`${effectiveMrpId || "semua MRP"} · ${formatRupiah(invTotal(shownReady))}`} accent="orange" />
+        <KpiCard label="Dipilih untuk bayar" value={selected.size} sub={formatRupiah(invTotal(readyInvoices.filter((i) => selected.has(i.id))))} accent="blue" />
+        <KpiCard label="Transaksi belum dibuat" value={shownReady.filter((i) => !i.txnCreatedAt).length} sub="dari invoice yang tampil" accent="purple" />
+        <KpiCard label="MRP menunggu bayar" value={readyMrpIds.length} sub={`${readyInvoices.length} invoice di semua MRP`} accent="teal" />
+      </div>
+
       <div className="flex items-center gap-3 rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
         <div>
           <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">No MRP (siap dibayar)</div>
@@ -827,6 +840,7 @@ export function PaymentMaklonPanel() {
           )}
           renderExpanded={renderInvoiceLinesDetail}
           emptyText="Belum ada invoice vendor yang disetujui Procurement untuk MRP ini."
+          onFilteredRows={(list) => setShownReadyIds(new Set(list.map((i) => i.id)))}
         />
       )}
 

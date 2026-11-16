@@ -1,5 +1,12 @@
 # Migrasi Project — Status & Riwayat
 
+## Modul Finance mengikuti pola PPIC: kartu angka dan Riwayat Payment Material berkelompok (2026-11-16, tanpa migration) [redesign-finance]
+Hanya tampilan; aksi bayar, perhitungan, dan data tidak berubah.
+- Payment Material (`components/finance/payment-panel.tsx`): empat kartu (Siap dibayar, Dipilih untuk bayar, Sudah dibayar, MRP menunggu bayar) mengikuti filter tabel. Pohon Riwayat Pembayaran (MRP > Supplier, dua tingkat buka-tutup) diganti satu tabel bersama dengan kelompok bawaan No MRP > Supplier; filter No MRP, Supplier, No PO, Vendor Produksi, Entitas, Status; rincian invoice di panel samping; kotak centang Batalkan Bayar tetap untuk status PAID.
+- Payment Maklon (`components/finance/payment-maklon-panel.tsx`): empat kartu (Siap dibayar, Dipilih, Transaksi belum dibuat, MRP menunggu bayar). Riwayat pembayaran vendor TIDAK diubah (punya sub tab Per Invoice / Per Kategori Produk).
+- Halaman Finance lain sudah memakai tabel bersama (panel samping dan jumlah per kelompok dari tahap sebelumnya). Belum: PO Approval, Laporan HPP, Dashboard.
+- Diuji di app lokal: total Sudah dibayar 176 invoice Rp 7.707.865.450 (sama dengan jumlah pohon lama), Payment Maklon W41 4 invoice Rp 75.471.100. tsc bersih. BELUM diuji: bayar dan batalkan bayar lewat tampilan baru, Mode Sysadmin, HP.
+
 ## Perbaikan Procurement: panel filter, satu baris, nomor PO, Material Tracking per roll (2026-11-16, tanpa migration) [redesign-procurement]
 Commit `8e45f3e` di branch `redesign-fondasi-tabel`, BELUM di-merge ke `main`.
 - Bug panel filter: panel Filter / Kelompokkan / Favorit dari kotak cari terpotong di tepi kartu kalau tabel hanya berisi satu-dua baris (kartu tabel `overflow-hidden`). `components/mrp/data-table.tsx`: kartu tidak lagi memotong isi; sudut bawah dipotong oleh pembungkus gulir tabel. Portal vendor (`mobileCards`) tetap memotong seperti dulu.

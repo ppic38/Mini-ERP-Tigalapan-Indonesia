@@ -1,6 +1,7 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { KpiCard } from "@/components/ui/kpi-card";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Checkbox } from "@/components/ui/checkbox";
 import { NumberInput } from "@/components/mrp/number-input";
@@ -132,8 +133,8 @@ export function PaymentPanel() {
   // sengaja dipisah dari selector atas supaya keduanya independen (sama seperti selectedMrpId vs
   // expandedMrpApproved di po-material-panel.tsx).
   const [selectedMrpId, setSelectedMrpId] = useState<string>("");
-  const [expandedMrpHistory, setExpandedMrpHistory] = useState<string | null>(null);
-  const [expandedSupplierHistory, setExpandedSupplierHistory] = useState<string | null>(null);
+  const [shownReadyIds, setShownReadyIds] = useState<Set<string> | null>(null);
+  const [shownHistoryIds, setShownHistoryIds] = useState<Set<string> | null>(null);
 
   if (!mounted) return null;
 
@@ -149,31 +150,10 @@ export function PaymentPanel() {
   // Riwayat (bagian bawah) -- SEMUA invoice yang statusnya sudah lewat INVOICED (siap-bayar sudah
   // ditangani di bagian atas), dikelompokkan MRP -> Supplier untuk tabel pohon status/histori.
   const historyInvoices = invoices.filter((i) => !invoiceAwaitingPayment(i) && !isSyntheticSupplier(i.supplier));
-  const historyHierarchy = (() => {
-    const byMrp = new Map<string, Map<string, RawMaterialInvoice[]>>();
-    for (const i of historyInvoices) {
-      if (!byMrp.has(i.mrpId)) byMrp.set(i.mrpId, new Map());
-      const supplierMap = byMrp.get(i.mrpId)!;
-      const key = i.supplier || "— Belum ada supplier —";
-      if (!supplierMap.has(key)) supplierMap.set(key, []);
-      supplierMap.get(key)!.push(i);
-    }
-    return byMrp;
-  })();
-  const historyMrpSummaries = Array.from(historyHierarchy.entries())
-    .map(([mrpId, supplierMap]) => ({
-      mrpId,
-      supplierCount: supplierMap.size,
-      invoiceCount: Array.from(supplierMap.values()).reduce((s, l) => s + l.length, 0),
-      total: Array.from(supplierMap.values()).reduce((s, l) => s + l.reduce((s2, i) => s2 + i.totalBiaya, 0), 0),
-    }))
-    .sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID"));
-
-  function historySupplierSummariesForMrp(mrpId: string) {
-    return Array.from(historyHierarchy.get(mrpId)?.entries() ?? [])
-      .map(([supplier, list]) => ({ supplier, list, invoiceCount: list.length, total: list.reduce((s, i) => s + i.totalBiaya, 0) }))
-      .sort((a, b) => a.supplier.localeCompare(b.supplier, "id-ID"));
-  }
+  const historyRows = historyInvoices.map((i) => ({ ...i, supplier: i.supplier || "— Belum ada supplier —" }));
+  const rupiahSum = (list: RawMaterialInvoice[]) => list.reduce((t, i) => t + i.totalBiaya, 0);
+  const shownReady = shownReadyIds ? scopedReadyInvoices.filter((i) => shownReadyIds.has(i.id)) : scopedReadyInvoices;
+  const shownHistory = shownHistoryIds ? historyRows.filter((i) => shownHistoryIds.has(i.id)) : historyRows;
 
   const selectedList = invoices.filter((i) => selected.has(i.id));
   // Invoice dari PO Material yang belum disetujui (dispensasi Sysadmin, migration 0090) belum bisa dibayar sampai PO-nya approved.
@@ -711,6 +691,14 @@ export function PaymentPanel() {
          panduan panjang dihapus -- alur Bayar/Bukti Pembayaran sudah cukup jelas dari label kolom
          & tombol aksi sendiri. */}
 
+      {/* Kartu angka (pola PPIC): mengikuti filter tabel yang sedang tampil. */}
+      <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+        <KpiCard label="Siap dibayar" value={shownReady.length} sub={`${effectiveMrpId || "semua MRP"} · ${formatRupiah(rupiahSum(shownReady))}`} accent="orange" />
+        <KpiCard label="Dipilih untuk bayar" value={selected.size} sub={formatRupiah(rupiahSum(selectedList))} accent="blue" />
+        <KpiCard label="Sudah dibayar" value={shownHistory.length} sub={formatRupiah(rupiahSum(shownHistory))} accent="teal" />
+        <KpiCard label="MRP menunggu bayar" value={readyMrpIds.length} sub={`${readyInvoices.length} invoice di semua MRP`} accent="purple" />
+      </div>
+
       <div className="flex items-center gap-3 rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
         <div>
           <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">No MRP (siap dibayar)</div>
@@ -762,6 +750,7 @@ export function PaymentPanel() {
             { label: "Transaksi", options: ["Sudah dibuat", "Belum dibuat"], test: (i, v) => (v === "Sudah dibuat" ? !!i.txnCreatedAt : !i.txnCreatedAt) },
           ]}
           emptyText="Tidak ada invoice siap dibayar untuk MRP ini."
+          onFilteredRows={(list) => setShownReadyIds(new Set(list.map((i) => i.id)))}
           collapseSignal={collapseSignal}
           renderExpanded={renderInvoiceDetail}
         />
@@ -960,105 +949,38 @@ export function PaymentPanel() {
          konsep grouping MRP"): begitu invoice keluar dari status INVOICED (dibayar), otomatis
          hilang dari daftar "siap dibayar" di atas & muncul di sini -- tabel pohon MRP -> Supplier,
          MENCAKUP SEMUA MRP (bukan cuma yang lagi dipilih di dropdown atas), murni status/histori. */}
-      <div className="overflow-hidden border border-border-subtle bg-surface-card">
-        <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Riwayat Pembayaran</div>
-        {historyMrpSummaries.length === 0 && (
-          <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada invoice yang sudah dibayar.</div>
-        )}
-        {historyMrpSummaries.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
-              <thead>
-                <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
-                  <th className="px-5 py-[9px] text-left">No MRP / Supplier</th>
-                  <th className="px-3 py-[9px] text-right">Invoice</th>
-                  <th className="px-3 py-[9px] text-right">Nilai</th>
-                </tr>
-              </thead>
-              <tbody>
-                {historyMrpSummaries.map((m) => {
-                  const mrpActive = expandedMrpHistory === m.mrpId;
-                  return (
-                    <Fragment key={m.mrpId}>
-                      <tr
-                        onClick={() => {
-                          const next = mrpActive ? null : m.mrpId;
-                          setExpandedMrpHistory(next);
-                          setExpandedSupplierHistory(null);
-                        }}
-                        className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] hover:bg-[#FAFBFC] " + (mrpActive ? "bg-info-bg" : "")}
-                      >
-                        <td className="px-5 py-[11px]">
-                          <span className="mr-1.5 text-text-muted">{mrpActive ? "▾" : "▸"}</span>
-                          <span className="font-mono font-semibold text-text-primary">{m.mrpId}</span>
-                          <span className="ml-1.5 font-sans text-[10.5px] text-text-muted">{m.supplierCount} supplier</span>
-                        </td>
-                        <td className="px-3 py-[11px] text-right font-mono tabular-nums">{m.invoiceCount}</td>
-                        <td className="px-3 py-[11px] text-right font-mono tabular-nums font-medium">{formatRupiah(m.total)}</td>
-                      </tr>
-                      {mrpActive &&
-                        historySupplierSummariesForMrp(m.mrpId).map((s) => {
-                          const supplierKey = `${m.mrpId}::${s.supplier}`;
-                          const supplierActive = expandedSupplierHistory === supplierKey;
-                          return (
-                            <Fragment key={supplierKey}>
-                              <tr
-                                onClick={() => setExpandedSupplierHistory(supplierActive ? null : supplierKey)}
-                                className={"cursor-pointer border-b border-[#F1F4F7] bg-[#FBFCFD] font-sans text-[11.5px] text-[#31414F] hover:bg-[#F2F5F8] " + (supplierActive ? "bg-info-bg" : "")}
-                              >
-                                <td className="py-[10px] pl-10 pr-3">
-                                  <span className="mr-1.5 text-text-muted">{supplierActive ? "▾" : "▸"}</span>
-                                  <span className="font-medium text-text-primary">{s.supplier}</span>
-                                </td>
-                                <td className="px-3 py-[10px] text-right font-mono tabular-nums">{s.invoiceCount}</td>
-                                <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(s.total)}</td>
-                              </tr>
-                              {supplierActive && (
-                                <tr>
-                                  <td colSpan={3} className="border-b border-[#F1F4F7] bg-white px-4 py-4 pl-10">
-                                    <DataTable
-                                      title={`Invoice material — ${s.supplier}`}
-                                      columns={columns}
-                                      rows={s.list}
-                                      keyOf={(i) => i.id}
-                                      firstColumnLabel=""
-                                      // Revisi 2026-09-17 (owner: "hilangkan checkbox kalau memang sudah tidak
-                                      // bisa ada action apa-apa lagi (sudah dibayar & diterima vendor
-                                      // produksi)") -- checkbox HANYA untuk status PAID (masih bisa
-                                      // "Batalkan Bayar"); DELIVERY/RECEIVING/dst sudah tidak ada aksi apa
-                                      // pun di halaman ini, jadi tidak ditampilkan sama sekali (bukan
-                                      // sekadar di-disable).
-                                      firstColumnRender={(i) =>
-                                        i.status === "PAID" ? (
-                                          <span onClick={(e) => e.stopPropagation()}>
-                                            <Checkbox checked={selected.has(i.id)} onChange={() => toggle(i.id)} />
-                                          </span>
-                                        ) : null
-                                      }
-                                      filterDefs={[
-                                        { label: "No PO", options: Array.from(new Set(s.list.map((i) => poDisplayNo(i.poId, i.entity)))), test: (i, v) => poDisplayNo(i.poId, i.entity) === v },
-                                        { label: "Vendor Produksi", options: Array.from(new Set(s.list.map(vendorProduksiName))), test: (i, v) => vendorProduksiName(i) === v },
-                                        { label: "Entitas", options: Array.from(new Set(s.list.map((i) => i.entity))), test: (i, v) => i.entity === v },
-                                        { label: "Status", options: Array.from(new Set(s.list.map((i) => i.status))), test: (i, v) => i.status === v },
-                                      ]}
-                                      emptyText="Belum ada invoice untuk supplier ini."
-                                      collapseSignal={collapseSignal}
-                                      renderExpanded={renderInvoiceDetail}
-                                    />
-                                  </td>
-                                </tr>
-                              )}
-                            </Fragment>
-                          );
-                        })}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      {historyRows.length === 0 ? (
+        <div className="rounded-lg border border-border-subtle bg-surface-card px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada invoice yang sudah dibayar.</div>
+      ) : (
+        <DataTable
+          title="Riwayat Pembayaran"
+          columns={columns}
+          rows={historyRows}
+          keyOf={(i) => i.id}
+          firstColumnLabel=""
+          // Checkbox HANYA untuk status PAID (masih bisa "Batalkan Bayar"); status lain sudah tidak ada aksi.
+          firstColumnRender={(i) =>
+            i.status === "PAID" ? (
+              <span onClick={(e) => e.stopPropagation()}>
+                <Checkbox checked={selected.has(i.id)} onChange={() => toggle(i.id)} />
+              </span>
+            ) : null
+          }
+          defaultGroupBy={["No MRP", "Supplier"]}
+          filterDefs={[
+            { label: "No MRP", options: Array.from(new Set(historyRows.map((i) => i.mrpId))).sort((a, b) => b.localeCompare(a, "id-ID")), test: (i, v) => i.mrpId === v },
+            { label: "Supplier", options: Array.from(new Set(historyRows.map((i) => i.supplier))).sort(), test: (i, v) => i.supplier === v },
+            { label: "No PO", options: Array.from(new Set(historyRows.map((i) => poDisplayNo(i.poId, i.entity)))), test: (i, v) => poDisplayNo(i.poId, i.entity) === v },
+            { label: "Vendor Produksi", options: Array.from(new Set(historyRows.map(vendorProduksiName))), test: (i, v) => vendorProduksiName(i) === v },
+            { label: "Entitas", options: Array.from(new Set(historyRows.map((i) => i.entity))), test: (i, v) => i.entity === v },
+            { label: "Status", options: Array.from(new Set(historyRows.map((i) => i.status))), test: (i, v) => i.status === v },
+          ]}
+          emptyText="Belum ada invoice yang sudah dibayar."
+          collapseSignal={collapseSignal}
+          renderExpanded={renderInvoiceDetail}
+          onFilteredRows={(list) => setShownHistoryIds(new Set(list.map((i) => i.id)))}
+        />
+      )}
     </>
   );
 }
