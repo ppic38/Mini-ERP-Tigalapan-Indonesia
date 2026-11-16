@@ -135,7 +135,11 @@ export function DataTable<T>({
   onFilteredRows,
   expandIn,
   panelWidth,
+  defaultGroupBy,
 }: {
+  /** Opsional: kelompok bawaan saat tabel dibuka (label filter, urut per tingkat), mis. ["No. MRP", "Supplier"]. Favorit
+   *  bawaan pengguna tetap didahulukan. Pengguna bisa melepasnya lewat keping Kelompok. */
+  defaultGroupBy?: string[];
   /** Tempat rincian baris (`renderExpanded`) dibuka. Bawaan tabel modul internal = "panel" (panel samping kanan, gaya Odoo,
    *  owner 2026-11-16); "row" = baris yang melebar ke bawah seperti dulu. Portal vendor selalu "row". */
   expandIn?: "panel" | "row";
@@ -266,7 +270,7 @@ export function DataTable<T>({
   // Kelompokkan bertingkat (owner 2026-11-16): urutan label = urutan tingkat, mis. ["No. MRP", "Vendor"].
   const [groupBy, setGroupBy] = useState<string[]>(() => {
     const f = parseFavs(readColPrefsRaw(typeof window === "undefined" ? null : favKey));
-    return f.items.find((x) => x.name === f.def)?.group ?? [];
+    return f.items.find((x) => x.name === f.def)?.group ?? defaultGroupBy ?? [];
   });
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const [fullGroups, setFullGroups] = useState<Set<string>>(new Set());
@@ -318,7 +322,7 @@ export function DataTable<T>({
   }
 
   // Pilihan filter dari luar (kartu angka): diterapkan sekali tiap `nonce` berganti, sesudah itu pengguna bebas mengubahnya.
-  const [presetSeen, setPresetSeen] = useState<number | undefined>(undefined);
+  const [presetSeen, setPresetSeen] = useState<number | undefined>(filterPreset?.nonce); // nilai saat tabel dibuka tidak diterapkan ulang (favorit bawaan tetap berlaku)
   if (filterPreset && filterPreset.nonce !== presetSeen) {
     setPresetSeen(filterPreset.nonce);
     setFilterSel(filterPreset.filters);
