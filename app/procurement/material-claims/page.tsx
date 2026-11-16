@@ -6,6 +6,8 @@ import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Button } from "@/components/ui/button";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { Tabs } from "@/components/ui/tabs";
+import { KpiCard } from "@/components/ui/kpi-card";
 import { ClaimReplacementModal } from "@/components/mrp/claim-replacement-modal";
 import { ClaimReplacementBundleModal } from "@/components/mrp/claim-replacement-bundle-modal";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -66,6 +68,8 @@ export default function MaterialClaimsPage() {
   const hargaKainPks = useMrpStore((s) => s.hargaKainPks);
 
   const [tab, setTab] = useState<ViewTab>("AKTIF");
+  const [shownClaimKeys, setShownClaimKeys] = useState<Set<string> | null>(null);
+  const [claimPreset, setClaimPreset] = useState<{ nonce: number; filters: Record<string, string[]>; card: string }>({ nonce: 0, filters: {}, card: "" });
   // Revisi 2026-09-06: key klaim yang sedang buka modal "Buat PV Pengganti" -- null = tidak ada.
   const [replacingKey, setReplacingKey] = useState<string | null>(null);
   // Fitur "PV Pengganti gabungan" (2026-09-14): klaim yang dicentang user (checkbox per baris) +
@@ -416,26 +420,44 @@ export default function MaterialClaimsPage() {
       // klaim fisik (reason "FISIK"), jadi hitung terpisah supaya teksnya tetap akurat.
       subtitle={`${rows.length} klaim (${rows.filter((r) => r.reason === "BERAT").length} selisih berat KURANG dari toleransi −${getWeightTolerancePct()}%, ${rows.filter((r) => r.reason === "FISIK").length} fisik) — ${unresolvedCount} belum selesai`}
     >
-      <div className="flex gap-2 rounded-lg border border-border-subtle bg-surface-card p-1.5">
-        {(
-          [
-            { key: "AKTIF" as const, label: "Klaim Aktif", badge: unresolvedCount },
-            { key: "RIWAYAT" as const, label: "Riwayat / Arsip", badge: 0 },
-          ]
-        ).map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={
-              "flex items-center gap-1.5 rounded-md px-3.5 py-[7px] font-sans text-[12.5px] font-semibold " +
-              (tab === t.key ? "bg-action-primary text-white" : "text-text-muted hover:bg-[#F7F9FB]")
-            }
-          >
-            {t.label}
-            {t.badge > 0 && <span className="flex-shrink-0 rounded-full bg-danger px-[5px] py-px font-mono text-[9px] font-semibold text-white">{t.badge}</span>}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        items={[
+          { key: "AKTIF", label: "Klaim Aktif", badge: unresolvedCount },
+          { key: "RIWAYAT", label: "Riwayat / Arsip" },
+        ]}
+        active={tab}
+        onChange={(k) => setTab(k as "AKTIF" | "RIWAYAT")}
+      />
+
+      {tab === "AKTIF" && (
+        // Kartu angka (pola PPIC): dihitung dari klaim yang sedang lolos filter tabel; "Belum ditindak" diklik = filter Status.
+        <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+          {(() => {
+            const shown = shownClaimKeys ? rows.filter((r) => shownClaimKeys.has(r.key)) : rows;
+            const belum = shown.filter((r) => stageLabel[stage(r.key)].label === "Belum ditindak").length;
+            const selesai = shown.filter((r) => stageLabel[stage(r.key)].label === "Sudah ditindak").length;
+            return (
+              <>
+                <KpiCard
+                  label="Belum ditindak"
+                  value={belum}
+                  sub="klik untuk menyaring"
+                  accent="danger"
+                  active={claimPreset.card === "belum"}
+                  onClick={() =>
+                    setClaimPreset((p) =>
+                      p.card === "belum" ? { nonce: p.nonce + 1, filters: {} as Record<string, string[]>, card: "" } : { nonce: p.nonce + 1, filters: { Status: ["Belum ditindak"] }, card: "belum" }
+                    )
+                  }
+                />
+                <KpiCard label="Sedang diproses" value={shown.length - belum - selesai} sub="klaim, PV, atau retur berjalan" accent="orange" />
+                <KpiCard label="Tanpa bukti foto" value={shown.filter((r) => !r.hasPhoto).length} sub="klaim yang tampil" accent="purple" />
+                <KpiCard label="Klaim tampil" value={shown.length} sub={`${selesai} sudah ditindak`} accent="blue" />
+              </>
+            );
+          })()}
+        </div>
+      )}
 
       {tab === "AKTIF" && selectedKeys.size > 0 && (
         <div className="flex items-center gap-3 rounded-md bg-info-bg px-4 py-2.5">
@@ -483,6 +505,9 @@ export default function MaterialClaimsPage() {
                 test: (r, v) => (v === "Ada" ? r.hasPhoto : !r.hasPhoto),
               },
             ]}
+            filterPreset={claimPreset}
+            defaultGroupBy={["No MRP"]}
+            onFilteredRows={(list) => setShownClaimKeys(new Set(list.map((r) => r.key)))}
             emptyText="Belum ada klaim selisih berat KURANG dari toleransi."
           />
       )}
@@ -509,6 +534,7 @@ export default function MaterialClaimsPage() {
                   (h.resolutionKind === "AUTO_REWEIGH" ? "Timbang ulang sesuai" : h.resolutionKind === "RETUR_REORDER" ? "Retur + pesan ulang" : "Ditutup manual") === v,
               },
             ]}
+            defaultGroupBy={["No MRP"]}
             emptyText="Belum ada klaim yang selesai/diarsipkan."
           />
       )}

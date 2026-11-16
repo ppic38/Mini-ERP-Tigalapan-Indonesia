@@ -157,9 +157,12 @@ function RawMaterialDetailModal({ summary, mrpCreated, onClose }: { summary: Raw
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-6 max-md:p-0" onClick={onClose}>
+    // Redesign 2026-11-16 (pola PPIC): rincian dibuka sebagai panel samping kanan, isinya sama.
+    <div className="fixed inset-0 z-50 flex justify-end bg-[#0B131B]/35" onClick={onClose}>
       <div
-        className="flex max-h-[80vh] w-full max-w-[1320px] flex-col overflow-hidden rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.25)] max-md:h-full max-md:max-h-none max-md:max-w-none max-md:rounded-none"
+        role="dialog"
+        aria-modal="true"
+        className="flex h-full w-full max-w-[1180px] flex-col overflow-hidden bg-white shadow-[-12px_0_32px_rgba(11,19,27,.18)] motion-safe:animate-in motion-safe:slide-in-from-right-8 motion-safe:fade-in motion-safe:duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border-subtle px-5 py-3">
@@ -434,43 +437,39 @@ export default function RawMaterialPage() {
         <KpiCard label="Sisa bahan baku" value={rp(nilaiSisa)} valueClassName="text-[20px]" sub={`${rollSisa} roll belum dipakai · ${rollSelesai} selesai dari ${rollBeli} dibeli`} accent="purple" icon={Boxes} />
       </div>
 
-      <div className="mt-4 rounded-lg border border-border-subtle bg-surface-card">
-        <div className="flex flex-wrap items-center gap-2 rounded-t-lg border-b border-border-subtle bg-[#FAFBFC] px-5 py-2.5">
-          <MultiSelectFilter label="Bulan invoice" options={bulanOptions} value={bulan} onChange={setBulan} labelOf={bulanLabel} />
-          <MultiSelectFilter label="No. MRP" options={Array.from(new Set(allLines.map((l) => l.mrpId))).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))} value={mrp} onChange={setMrp} />
-          <MultiSelectFilter label="Vendor" options={Array.from(new Set(allLines.map((l) => vendorName(l.vendorProduksi)))).sort()} value={vendor} onChange={setVendor} />
-          <MultiSelectFilter label="Kategori produk" options={Array.from(new Set(allLines.map((l) => l.kategori))).sort()} value={kategori} onChange={setKategori} />
-          <MultiSelectFilter label="Jenis bahan" options={Array.from(new Set(allLines.map((l) => l.jenis))).sort()} value={jenis} onChange={setJenis} />
-          {bulan.length + mrp.length + vendor.length + kategori.length + jenis.length > 0 && (
-            <button
-              onClick={() => {
-                setBulan([]);
-                setMrp([]);
-                setVendor([]);
-                setKategori([]);
-                setJenis([]);
-              }}
-              className="font-sans text-[11.5px] font-semibold text-action-primary underline"
-            >
-              Hapus filter
-            </button>
-          )}
-        </div>
-        {bulan.length > 0 && (
-          <div className="border-b border-border-subtle bg-[#FAFBFC] px-5 py-1.5 font-sans text-[10.5px] text-text-muted">
-            Bulan {bulan.map(bulanLabel).join(", ")}: invoice yang dibuat pada bulan itu. Angka WIP dan sisa adalah kondisi saat ini untuk roll dari invoice tersebut.
-          </div>
-        )}
-      </div>
-
-      <div className="mt-4">
+      <div>
         <DataTable
           title="Raw material per MRP dan vendor"
-          subtitle={`${summaries.length} baris · klik baris untuk membuka rincian per warna dan jenis bahan`}
+          subtitle={
+            bulan.length > 0
+              ? `Bulan ${bulan.map(bulanLabel).join(", ")}: invoice yang dibuat pada bulan itu; WIP dan sisa adalah kondisi saat ini.`
+              : `${summaries.length} baris · klik baris untuk membuka rincian per warna dan jenis bahan`
+          }
           headerActions={
-            <Button onClick={() => setExportOpen(true)} disabled={summaries.length === 0} variant="muted" size="xs">
-              Export Excel
-            </Button>
+            <>
+            <MultiSelectFilter label="Bulan invoice" options={bulanOptions} value={bulan} onChange={setBulan} labelOf={bulanLabel} />
+            <MultiSelectFilter label="No. MRP" options={Array.from(new Set(allLines.map((l) => l.mrpId))).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))} value={mrp} onChange={setMrp} />
+            <MultiSelectFilter label="Vendor" options={Array.from(new Set(allLines.map((l) => vendorName(l.vendorProduksi)))).sort()} value={vendor} onChange={setVendor} />
+            <MultiSelectFilter label="Kategori produk" options={Array.from(new Set(allLines.map((l) => l.kategori))).sort()} value={kategori} onChange={setKategori} />
+            <MultiSelectFilter label="Jenis bahan" options={Array.from(new Set(allLines.map((l) => l.jenis))).sort()} value={jenis} onChange={setJenis} />
+            {bulan.length + mrp.length + vendor.length + kategori.length + jenis.length > 0 && (
+              <button
+                onClick={() => {
+                  setBulan([]);
+                  setMrp([]);
+                  setVendor([]);
+                  setKategori([]);
+                  setJenis([]);
+                }}
+                className="font-sans text-[11.5px] font-semibold text-action-primary underline"
+              >
+                Hapus filter
+              </button>
+            )}
+              <Button onClick={() => setExportOpen(true)} disabled={summaries.length === 0} variant="muted" size="xs">
+                Export Excel
+              </Button>
+            </>
           }
           columns={columns}
           rows={summaries}
