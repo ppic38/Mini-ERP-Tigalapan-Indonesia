@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Download } from "lucide-react";
 import { exportResiExcel } from "@/lib/mrp/exportResiExcel";
 import { exportResiTemplateExcel, type ResiSheet, type ResiSheetRow } from "@/lib/mrp/exportResiTemplateExcel";
@@ -8,6 +8,7 @@ import { ResiDownloadDialog } from "@/components/warehouse/resi-download-dialog"
 import { MokaPoDialog, MOKA_PO_NOTE, useMokaPoForm } from "@/components/warehouse/moka-po-dialog";
 import { KoliDownloadDialog } from "@/components/warehouse/koli-download-dialog";
 import { runMokaPoDownload } from "@/components/warehouse/moka-po-download";
+import type { ItemSellingPriceRow } from "@/lib/mrp/masterData";
 import { alertDialog } from "@/components/ui/confirm-dialog";
 import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
@@ -16,6 +17,25 @@ import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatDate, formatPcs, formatRupiah, localDateString, skuKategoriLookup, skuWarnaFor, warehouseReceivableGroups, warnaWithUsia, type WarehouseReceivableGroup } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+
+// Di luar komponen supaya referensinya stabil (popup Download memakainya sebagai dependensi memo).
+const vendorName = (g: WarehouseReceivableGroup) => VENDOR_PRODUKSI[g.vendorProduksi]?.name ?? g.vendorProduksi;
+
+/** Popup Download PO per resi (owner 2026-11-16): template Moka yang sama dengan Download PO di kepala tabel, tetapi hanya item koli yang dipilih (koli yang benar-benar datang;
+ *  resi kadang tidak datang utuh). Komponen tersendiri supaya template Moka (CSV besar di penyimpanan browser) baru dimuat saat popup dibuka, bukan tiap panel resi dibuka. */
+function PoKoliDialog({ group, itemSellingPrices, onClose }: { group: WarehouseReceivableGroup; itemSellingPrices: ItemSellingPriceRow[]; onClose: () => void }) {
+  const mokaForm = useMokaPoForm();
+  /** `kolis` null = seluruh koli. */
+  async function download(kolis: string[] | null) {
+    mokaForm.save();
+    const picked = kolis && kolis.length > 0 ? new Set(kolis) : null;
+    const scoped: WarehouseReceivableGroup = picked ? { ...group, items: group.items.filter((it) => picked.has(it.noKoli ?? it.deliveryKoliId)) } : group;
+    const safe = String(group.noResi ?? group.resiGroupId);
+    const tag = picked ? `${safe}-Koli-${Array.from(picked).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join("-")}` : safe;
+    await runMokaPoDownload(itemSellingPrices, [scoped], mokaForm.supplier, mokaForm.template!.text, tag);
+  }
+  return <KoliDownloadDialog group={group} title="Download PO (Import Moka) Resi" note={MOKA_PO_NOTE} extraFields={mokaForm.fields} extraReady={mokaForm.ready} onDownload={download} onClose={onClose} />;
+}
 
 /** Panel item read-only + form "Bongkar Koli" -- TIDAK ADA input qty manual (Q5 final, konsisten
  *  R10 di spec): Warehouse cuma mengonfirmasi (boleh isi catatan bebas) lalu submit, qty & HPP
@@ -29,7 +49,6 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
   const [hppFilter, setHppFilter] = useState("");
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [poOpen, setPoOpen] = useState(false);
-  const mokaForm = useMokaPoForm();
   const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
 
   // HPP per item selalu tampil begitu ada baris HPP-nya (dari mesin HPP yang sama dengan Laporan HPP Finance: master data harga
@@ -58,18 +77,6 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
     } catch (err) {
       setError("Gagal membuat file Excel: " + (err instanceof Error ? err.message : String(err)));
     }
-  }
-
-  /** Download PO per resi (owner 2026-11-16): template Moka yang sama dengan Download PO di kepala tabel, tetapi hanya item koli yang dipilih di popup (koli yang benar-benar datang;
-   *  resi kadang tidak datang utuh). `kolis` null = seluruh koli. */
-  async function handlePoDownload(kolis: string[] | null) {
-    setError("");
-    mokaForm.save();
-    const picked = kolis && kolis.length > 0 ? new Set(kolis) : null;
-    const scoped: WarehouseReceivableGroup = picked ? { ...group, items: group.items.filter((it) => picked.has(it.noKoli ?? it.deliveryKoliId)) } : group;
-    const safe = String(group.noResi ?? group.resiGroupId);
-    const tag = picked ? `${safe}-Koli-${Array.from(picked).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join("-")}` : safe;
-    await runMokaPoDownload(itemSellingPrices, [scoped], mokaForm.supplier, mokaForm.template!.text, tag);
   }
 
   async function handleBongkar() {
@@ -191,17 +198,7 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
       )}
       {error && <div className="font-sans text-[10.5px] font-medium text-danger-fg">{error}</div>}
       {downloadOpen && <KoliDownloadDialog group={group} onDownload={handleDownload} onClose={() => setDownloadOpen(false)} />}
-      {poOpen && (
-        <KoliDownloadDialog
-          group={group}
-          title="Download PO (Import Moka) Resi"
-          note={MOKA_PO_NOTE}
-          extraFields={mokaForm.fields}
-          extraReady={mokaForm.ready}
-          onDownload={handlePoDownload}
-          onClose={() => setPoOpen(false)}
-        />
-      )}
+      {poOpen && <PoKoliDialog group={group} itemSellingPrices={itemSellingPrices} onClose={() => setPoOpen(false)} />}
     </div>
   );
 }
@@ -226,35 +223,38 @@ export default function WarehousePenerimaanPage() {
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [poOpen, setPoOpen] = useState(false);
 
+  // Perhitungan resi + HPP berat (seluruh data koli, invoice, roll), jadi di-cache: hanya dihitung ulang kalau data store berubah, BUKAN setiap render
+  // (owner 2026-11-16: membuka/menutup popup Download terasa sangat lambat karena halaman menghitung ulang semuanya tiap state popup berubah).
+  const groups = useMemo(() => {
+    if (!mounted) return [] as WarehouseReceivableGroup[];
+    const unsorted = warehouseReceivableGroups(
+      deliveryKolis,
+      vendorInvoices,
+      mrpDetails,
+      staticMrps,
+      productionBatches,
+      productionResults,
+      productionGroupMeta,
+      rawInvoices,
+      warehouseReceipts,
+      ekspedisiRates,
+      itemSellingPrices,
+      hargaMaklon
+    );
+    // Terbaru di atas: tanggal kirim terbaru dulu (hanya tanggal, tanpa jam), sama tanggal -> koli yang paling baru dibuat dulu, lalu kunci resi yang lebih baru.
+    const koliCreatedAt = new Map(deliveryKolis.map((k) => [k.id, k.createdAt ?? ""]));
+    const newest = new Map(unsorted.map((g) => [g.resiGroupId, g.koliIds.reduce((m, id) => ((koliCreatedAt.get(id) ?? "") > m ? (koliCreatedAt.get(id) ?? "") : m), "")]));
+    return [...unsorted].sort(
+      (a, b) =>
+        (b.deliveredAt ?? "").localeCompare(a.deliveredAt ?? "") ||
+        (newest.get(b.resiGroupId) ?? "").localeCompare(newest.get(a.resiGroupId) ?? "") ||
+        b.resiGroupId.localeCompare(a.resiGroupId, undefined, { numeric: true })
+    );
+  }, [mounted, deliveryKolis, vendorInvoices, mrpDetails, staticMrps, productionBatches, productionResults, productionGroupMeta, rawInvoices, warehouseReceipts, ekspedisiRates, itemSellingPrices, hargaMaklon]);
+
   if (!mounted) return null;
 
-  const groupsUnsorted = warehouseReceivableGroups(
-    deliveryKolis,
-    vendorInvoices,
-    mrpDetails,
-    staticMrps,
-    productionBatches,
-    productionResults,
-    productionGroupMeta,
-    rawInvoices,
-    warehouseReceipts,
-    ekspedisiRates,
-    itemSellingPrices,
-    hargaMaklon
-  );
-
-  // Terbaru di atas: tanggal kirim terbaru dulu (hanya tanggal, tanpa jam), sama tanggal -> koli yang paling baru dibuat dulu, lalu kunci resi yang lebih baru.
-  const koliCreatedAt = new Map(deliveryKolis.map((k) => [k.id, k.createdAt ?? ""]));
-  const newestKoliOf = (g: WarehouseReceivableGroup) => g.koliIds.reduce((m, id) => ((koliCreatedAt.get(id) ?? "") > m ? (koliCreatedAt.get(id) ?? "") : m), "");
-  const groups = [...groupsUnsorted].sort(
-    (a, b) =>
-      (b.deliveredAt ?? "").localeCompare(a.deliveredAt ?? "") ||
-      newestKoliOf(b).localeCompare(newestKoliOf(a)) ||
-      b.resiGroupId.localeCompare(a.resiGroupId, undefined, { numeric: true })
-  );
-
   const uniqSorted = (xs: string[]) => Array.from(new Set(xs.filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  const vendorName = (g: WarehouseReceivableGroup) => VENDOR_PRODUKSI[g.vendorProduksi]?.name ?? g.vendorProduksi;
   const hppOf = (g: WarehouseReceivableGroup) => {
     const billable = g.items.filter((it) => it.kind !== "REJECT");
     const missing = billable.some((it) => it.hppPerItem <= 0);
