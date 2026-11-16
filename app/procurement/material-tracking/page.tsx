@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { DataTable, aggSame, aggSum, type ColumnDef, type FilterDef } from "@/components/mrp/data-table";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Tabs } from "@/components/ui/tabs";
+import { MATERIAL_ROLL_STAGES, buildMaterialRolls, type MaterialRollRow } from "@/lib/mrp/materialRolls";
 import { TransferMaterialModal, type TransferCandidate } from "@/components/mrp/transfer-material-modal";
 import { SetDeliveryModal } from "@/components/mrp/set-delivery-modal";
 import { WithdrawVendorModal } from "@/components/mrp/withdraw-vendor-modal";
@@ -24,6 +25,7 @@ import {
   materialPoFullStatusBadge,
   movableRollCountForInvoiceColor,
   mrpDetailFor,
+  poDisplayNo,
   rollArrivalProgress,
   rollArrivalStatus,
   type MaterialPoFullStatus,
@@ -122,7 +124,9 @@ export default function MaterialTrackingPage() {
   // vertikal di 1 halaman -- owner khawatir makin lama makin banyak baris di keduanya jadi
   // menumpuk & membingungkan. Dipisah jadi 2 tab, murni pembungkus navigasi (isi/logic tiap
   // section tidak berubah).
-  const [tab, setTab] = useState<"material" | "produksi-aktif">("material");
+  const [tab, setTab] = useState<"material" | "roll" | "produksi-aktif">("material");
+  const [shownRollKeys, setShownRollKeys] = useState<Set<string> | null>(null);
+  const [rollPreset, setRollPreset] = useState<{ nonce: number; filters: Record<string, string[]>; card: string }>({ nonce: 0, filters: {}, card: "" });
   // Revisi 2026-09-17 (owner: "Material Tracking: card-select, lalu breakdown warna/roll", lalu
   // "pakai konsep row-tree seperti PO Material") -- "Material per line" dikelompokkan Supplier ->
   // Vendor Produksi (baris memanjang dalam SATU container, bukan kartu grid), klik baris invoice
@@ -360,6 +364,53 @@ export default function MaterialTrackingPage() {
     },
   ];
 
+  // ---- Tab Per Roll (owner 2026-11-16): satu baris per roll kain, status sampai roll dipakai produksi ----
+  const allRolls = buildMaterialRolls(
+    rows.filter((r) => r.invoice).map((r) => r.invoice!),
+    productionBatches
+  );
+  const shownRolls = shownRollKeys ? allRolls.filter((r) => shownRollKeys.has(r.key)) : allRolls;
+  const kgFmt = (n: number) => n.toLocaleString("id-ID", { maximumFractionDigits: 1 });
+  const rollStageTone: Record<string, "warning" | "info" | "rework" | "success"> = { Dibayar: "warning", Delivery: "info", "Diterima vendor": "rework", "Di produksi": "success" };
+  const rollFilters: FilterDef<MaterialRollRow>[] = [
+    { label: "Status", options: [...MATERIAL_ROLL_STAGES].filter((st) => allRolls.some((r) => r.status === st)), test: (r, v) => r.status === v },
+    { label: "No. MRP", options: uniqSorted(allRolls.map((r) => r.mrpId)).reverse(), test: (r, v) => r.mrpId === v },
+    { label: "Supplier", options: uniqSorted(allRolls.map((r) => r.supplier)), test: (r, v) => r.supplier === v },
+    { label: "Vendor", options: uniqSorted(allRolls.map((r) => vendorName(r.vendorProduksi))), test: (r, v) => vendorName(r.vendorProduksi) === v },
+    { label: "Warna", options: uniqSorted(allRolls.map((r) => r.warna)), test: (r, v) => r.warna === v },
+    { label: "Lengan", options: ["PENDEK", "PANJANG"], test: (r, v) => r.lengan === v },
+    { label: "Invoice", options: uniqSorted(allRolls.map((r) => r.noInvoice)), test: (r, v) => r.noInvoice === v },
+  ];
+  const rollColumns: ColumnDef<MaterialRollRow>[] = [
+    { key: "mrp", label: "No. MRP", default: true, aggregate: aggSame((r) => r.mrpId), render: (r) => <span className="font-mono">{r.mrpId}</span> },
+    { key: "supplier", label: "Supplier", default: true, aggregate: aggSame((r) => r.supplier), render: (r) => r.supplier },
+    { key: "vendor", label: "Vendor", default: true, aggregate: aggSame((r) => vendorName(r.vendorProduksi)), render: (r) => vendorName(r.vendorProduksi) },
+    { key: "warna", label: "Warna", default: true, aggregate: aggSame((r) => r.warna), render: (r) => r.warna },
+    { key: "lengan", label: "Lengan", default: true, aggregate: aggSame((r) => r.lengan), render: (r) => (r.lengan === "PENDEK" ? "PDK" : "PJG") },
+    { key: "invoice", label: "Invoice", default: false, aggregate: aggSame((r) => r.noInvoice), render: (r) => <span className="font-mono">{r.noInvoice || "—"}</span> },
+    { key: "po", label: "No PO", default: false, render: (r) => <span className="font-mono" title={r.poId}>{poDisplayNo(r.poId, r.entitas)}</span> },
+    { key: "lot", label: "Code Lot", default: false, render: (r) => <span className="font-mono">{r.codeLot || "—"}</span> },
+    { key: "kotor", label: "Berat kotor (kg)", default: true, align: "right", aggregate: aggSum((r) => r.beratKotor, (n) => bold(kgFmt(n))), render: (r) => <span className="font-mono">{kgFmt(r.beratKotor)}</span> },
+    { key: "bersih", label: "Berat bersih (kg)", default: true, align: "right", aggregate: aggSum((r) => r.beratBersih ?? 0, (n) => bold(kgFmt(n))), render: (r) => <span className="font-mono">{r.beratBersih != null ? kgFmt(r.beratBersih) : <span className="text-text-muted">—</span>}</span> },
+    {
+      key: "status",
+      label: "Status",
+      default: true,
+      aggregate: aggSame((r) => r.status, (v) => <StatusPill tone={rollStageTone[v] ?? "neutral"}>{v}</StatusPill>),
+      render: (r) => (
+        <span title={r.tahapProduksi ? `Tahap produksi: ${r.tahapProduksi}` : undefined}>
+          <StatusPill tone={rollStageTone[r.status] ?? "neutral"}>{r.status}</StatusPill>
+        </span>
+      ),
+    },
+    { key: "tahap", label: "Tahap produksi", default: false, aggregate: aggSame((r) => r.tahapProduksi ?? ""), render: (r) => r.tahapProduksi ?? <span className="text-text-muted">—</span> },
+    { key: "tglBayar", label: "Tgl Bayar", default: false, render: (r) => formatDate(r.paidAt) },
+    { key: "tglDelivery", label: "Tgl Delivery", default: true, render: (r) => formatDate(r.deliveryAt) },
+    { key: "tglGr", label: "Tgl GR", default: true, render: (r) => formatDate(r.grAt) },
+    { key: "tglResting", label: "Tgl Resting", default: true, render: (r) => formatDate(r.restingAt) },
+    { key: "tglCutting", label: "Tgl Cutting", default: false, render: (r) => formatDate(r.cuttingAt) },
+  ];
+
   const belumDelivery = shownRows.filter((r) => deliveryLabel(r) === "Belum delivery");
   const arrivedTotals = shownRows.reduce(
     (acc, r) => {
@@ -380,10 +431,11 @@ export default function MaterialTrackingPage() {
       <Tabs
         items={[
           { key: "material", label: "Material", badge: rows.filter((r) => r.invoice?.status === "PAID" && !r.invoice.deliveredAt).length },
+          { key: "roll", label: "Per Roll" },
           { key: "produksi-aktif", label: "PO Produksi aktif" },
         ]}
         active={tab}
-        onChange={(k) => setTab(k as "material" | "produksi-aktif")}
+        onChange={(k) => setTab(k as "material" | "roll" | "produksi-aktif")}
       />
 
       {tab === "material" && (
@@ -444,7 +496,7 @@ export default function MaterialTrackingPage() {
               <span onClick={(e) => e.stopPropagation()}>
                 <Checkbox checked={selected.has(r.id)} onChange={() => toggle(r.id)} />
               </span>
-              <span className="font-mono font-medium">{r.poId}</span>
+              <span className="font-mono font-medium" title={r.poId}>{poDisplayNo(r.poId, r.entitas)}</span>
             </span>
           )}
           filterDefs={trackingFilters}
@@ -455,6 +507,46 @@ export default function MaterialTrackingPage() {
           onFilteredRows={(list) => setShownIds(new Set(list.map((r) => r.id)))}
           emptyText="Belum ada invoice material yang sudah dibayar Finance."
           nowrap
+        />
+      )}
+
+      {tab === "roll" && (
+        <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+          {MATERIAL_ROLL_STAGES.map((st) => {
+            const list = shownRolls.filter((r) => r.status === st);
+            const sub = { Dibayar: "belum di-set delivery", Delivery: "belum ditandai diterima", "Diterima vendor": "belum masuk produksi", "Di produksi": "resting atau lebih" }[st];
+            return (
+              <KpiCard
+                key={st}
+                label={st}
+                value={list.length}
+                sub={`${sub} · ${kgFmt(list.reduce((s, r) => s + r.beratKotor, 0))} kg`}
+                accent={st === "Dibayar" ? "orange" : st === "Delivery" ? "blue" : st === "Diterima vendor" ? "purple" : "teal"}
+                active={rollPreset.card === st}
+                onClick={() =>
+                  setRollPreset((p) => (p.card === st ? { nonce: p.nonce + 1, filters: {} as Record<string, string[]>, card: "" } : { nonce: p.nonce + 1, filters: { Status: [st] }, card: st }))
+                }
+              />
+            );
+          })}
+        </div>
+      )}
+
+      {tab === "roll" && (
+        <DataTable<MaterialRollRow>
+          title="Material per roll"
+          subtitle="Satu baris per roll kain, dari dibayar sampai dipakai produksi"
+          columns={rollColumns}
+          rows={allRolls}
+          keyOf={(r) => r.key}
+          firstColumnLabel="Code Roll"
+          firstColumnRender={(r) => (r.codeRoll ? <span className="font-mono font-medium">{r.codeRoll}</span> : <span className="font-mono text-text-muted">roll {r.no}</span>)}
+          filterDefs={rollFilters}
+          filterPreset={rollPreset}
+          defaultGroupBy={["No. MRP", "Supplier"]}
+          search={{ placeholder: "Cari code roll, invoice, MRP, supplier, vendor, warna…", getText: (r) => `${r.codeRoll} ${r.codeLot} ${r.noInvoice} ${r.poId} ${r.mrpId} ${r.supplier} ${vendorName(r.vendorProduksi)} ${r.warna} ${r.status}` }}
+          onFilteredRows={(list) => setShownRollKeys(new Set(list.map((r) => r.key)))}
+          emptyText="Belum ada roll untuk filter ini."
         />
       )}
 

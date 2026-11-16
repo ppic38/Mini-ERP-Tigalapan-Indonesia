@@ -128,7 +128,7 @@ export function DataTable<T>({
   onRowClick,
   collapseSignal,
   mobileCards,
-  nowrap,
+  nowrap: nowrapProp,
   viewKey,
   pageSize,
   filterPreset,
@@ -221,6 +221,8 @@ export function DataTable<T>({
   // disentuh). Di sana tabel berperilaku persis seperti sebelum redesign: tanpa ingatan kolom, tanpa bagi halaman,
   // filter tetap pilihan tunggal.
   const modern = !pathname.startsWith("/vendor-maklon");
+  // Satu baris per data (owner 2026-11-16: "tampilan buat fit 1 baris"): bawaan untuk tabel modul internal; `nowrap={false}` untuk mengembalikan pembungkusan.
+  const nowrap = nowrapProp ?? modern;
   const viewId = viewKey ?? `${pathname}:${typeof title === "string" ? title : ""}`;
   const storageKey = modern ? "dt-kolom-v1:" + viewId : null;
   const favKey = modern ? "dt-favorit-v1:" + viewId : null;
@@ -670,8 +672,10 @@ export function DataTable<T>({
       </>
     ) : null;
 
+  // Kartu tabel tanpa overflow-hidden: panel Filter / Kelompokkan / Favorit dari kotak cari harus bisa melewati tepi kartu (bug 2026-11-16:
+  // terpotong saat tabel hanya berisi satu-dua baris). Sudut tabel dipotong oleh pembungkus gulir di bawah.
   return (
-    <div className={"overflow-hidden rounded-lg border border-border-subtle bg-surface-card" + (mobileCards ? " m-cards" : "")}>
+    <div className={(mobileCards ? "overflow-hidden " : "") + "rounded-lg border border-border-subtle bg-surface-card" + (mobileCards ? " m-cards" : "")}>
       <div className="dt-head flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border-subtle px-5 py-3">
         <div className="flex-none">
           <span className="font-sans text-[13px] font-semibold text-text-primary">{title}</span>
@@ -746,13 +750,13 @@ export function DataTable<T>({
         </div>
       )}
 
-      <div className={"overflow-x-auto" + (bodyMaxHeight ? " overflow-y-auto" : "")} style={bodyMaxHeight ? { maxHeight: bodyMaxHeight } : undefined}>
+      <div className={"overflow-x-auto rounded-b-lg" + (bodyMaxHeight ? " overflow-y-auto" : "")} style={bodyMaxHeight ? { maxHeight: bodyMaxHeight } : undefined}>
         <table className="w-full border-collapse">
           <thead className={bodyMaxHeight ? "sticky top-0 z-10" : undefined}>
             <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
               <th className={"px-5 py-[9px] " + (nowrap ? "whitespace-nowrap " : "") + (firstColumnAlign === "right" ? "text-right" : "text-left")}>{firstColumnLabel}</th>
               {visibleColumns.map((c) => (
-                <th key={c.key} className={"px-3 py-[9px] " + (nowrap ? "whitespace-nowrap " : "") + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple bg-accent-purple-bg text-accent-purple" : "")}>
+                <th key={c.key} className={(nowrap ? "px-2.5 " : "px-3 ") + "py-[9px] " + (nowrap ? "whitespace-nowrap " : "") + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple bg-accent-purple-bg text-accent-purple" : "")}>
                   {c.label}
                   {c.info && <InfoPopover title={c.info.title}>{c.info.body}</InfoPopover>}
                 </th>
@@ -778,7 +782,7 @@ export function DataTable<T>({
                       </span>
                     </td>
                     {hasAggregate && visibleColumns.map((c) => (
-                      <td key={c.key} className={"px-3 py-[9px] " + (nowrap ? "whitespace-nowrap " : "") + (c.align === "right" ? "text-right font-mono" : "text-left")}>
+                      <td key={c.key} className={(nowrap ? "px-2.5 " : "px-3 ") + "py-[9px] " + (nowrap ? "whitespace-nowrap " : "") + (c.align === "right" ? "text-right font-mono" : "text-left")}>
                         {c.aggregate ? c.aggregate(item.rows) : null}
                       </td>
                     ))}
@@ -811,7 +815,7 @@ export function DataTable<T>({
                   >
                     <td className={"px-5 py-[11px] " + (nowrap ? "whitespace-nowrap " : "") + (firstColumnAlign === "right" ? "text-right" : "text-left")}>{firstColumnRender(r)}</td>
                     {visibleColumns.map((c) => (
-                      <td key={c.key} data-label={c.label} onClick={c.sysadmin ? (e) => e.stopPropagation() : undefined} className={"px-3 py-[11px] " + (nowrap ? "whitespace-nowrap " : "") + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple/40 bg-accent-purple-bg" : "")}>
+                      <td key={c.key} data-label={c.label} onClick={c.sysadmin ? (e) => e.stopPropagation() : undefined} className={(nowrap ? "px-2.5 " : "px-3 ") + "py-[11px] " + (nowrap ? "whitespace-nowrap " : "") + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple/40 bg-accent-purple-bg" : "")}>
                         {c.render(r)}
                       </td>
                     ))}

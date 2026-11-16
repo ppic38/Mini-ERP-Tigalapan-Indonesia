@@ -30,6 +30,7 @@ import {
   maklonPoDeliveryProgress,
   maklonPoInvoiceLockedBy,
   maklonRateExplanation,
+  poDisplayNo,
   materialGroupsByWarna,
   materialPoFullStatus,
   materialPoFullStatusBadge,
@@ -246,6 +247,7 @@ export default function PoApprovalPage() {
     { key: "vendor", label: "Vendor", default: true, aggregate: aggSame((p) => vendorName(p.vendorProduksi)), render: (p) => vendorName(p.vendorProduksi) },
     { key: "roll", label: "Roll", default: true, align: "right", aggregate: aggSum((p) => p.rollCount, (n) => <span className="font-semibold">{n.toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>), render: (p) => <span className="font-mono">{p.rollCount}</span> },
     { key: "nilai", label: "Nilai", default: true, align: "right", aggregate: aggSum((p) => p.amount, (n) => <span className="font-semibold">{formatRupiah(n)}</span>), render: (p) => <span className="font-mono">{formatRupiah(p.amount)}</span> },
+    { key: "entitas", label: "Entitas", default: true, aggregate: aggSame((p) => (poEntitasFinalized(p) ? p.entity : "")), render: (p) => (poEntitasFinalized(p) && p.entity ? p.entity : <span className="text-text-muted">—</span>) },
     { key: "sumber", label: "Sumber", default: false, render: (p) => <RateBadge explanation={materialRateExplanation(hargaKain, hargaKainPks, p.supplier, p.colorBreakdown)} /> },
     { key: "approval", label: "Approval", default: false, aggregate: aggSame((p) => approvalLabel(p)), render: (p) => <StatusPill tone={p.approved ? "success" : "warning"}>{approvalLabel(p)}</StatusPill> },
     {
@@ -864,7 +866,8 @@ export default function PoApprovalPage() {
           rows={allMaterialPOs}
           keyOf={(p) => p.id}
           firstColumnLabel="No PO"
-          firstColumnRender={(p) => <span className="font-mono font-medium">{p.id}</span>}
+          // Nomor PO tampilan tanpa akhiran entitas (poDisplayNo); id asli tetap kunci. Kolom Entitas membedakan PO yang dipecah per entitas.
+          firstColumnRender={(p) => <span className="font-mono font-medium" title={p.id}>{poDisplayNo(p.id, p.entity)}</span>}
           filterDefs={materialFilterDefs}
           filterPreset={poPreset}
           defaultGroupBy={["No. MRP", "Supplier"]}

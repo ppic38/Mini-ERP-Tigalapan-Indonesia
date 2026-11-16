@@ -8,7 +8,7 @@ import { ClosePoReasonModal } from "@/components/mrp/close-po-reason-modal";
 import { PayingVoucherWizard } from "@/components/mrp/paying-voucher-wizard";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
-import { formatDateTime, formatRupiah, invoiceAwaitingPayment, invoiceBadge, materialSupplierNamesForWarna } from "@/lib/mrp/derive";
+import { formatDateTime, formatRupiah, invoiceAwaitingPayment, invoiceBadge, materialSupplierNamesForWarna, poDisplayNo } from "@/lib/mrp/derive";
 import { useMrpStore } from "@/lib/mrp/store";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { MaterialPO, RawMaterialInvoice } from "@/lib/mrp/types";
@@ -284,7 +284,7 @@ export function PayingVoucherMaterialPanel() {
         rows={openPOs}
         keyOf={(p) => p.id}
         firstColumnLabel="No PO"
-        firstColumnRender={(p) => <span className="font-mono font-medium">{p.id}</span>}
+        firstColumnRender={(p) => <span className="font-mono font-medium" title={p.id}>{poDisplayNo(p.id, p.entity)}</span>}
         filterDefs={openFilters}
         defaultGroupBy={["No. MRP", "Supplier"]}
         search={{ placeholder: "Cari no PO, MRP, supplier, vendor…", getText: (p) => `${p.id} ${p.mrpId} ${p.supplier} ${vendorName(p.vendorProduksi)}` }}
