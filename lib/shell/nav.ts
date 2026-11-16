@@ -103,6 +103,8 @@ export const NAV: Record<RoleKey, RoleNav> = {
     entity: "Tigalapan Indonesia",
     items: [
       { label: "Monitoring Produksi", href: "/produksi/monitoring" },
+      // Owner 2026-11-16: monitoring SLA produksi (kendala lewat SLA antar gate, yield per roll / MRP / vendor).
+      { label: "SLA Produksi", href: "/produksi/sla" },
       { label: "Monitoring Reject", href: "/produksi/reject" },
       { label: "Kebutuhan Bahan", href: "/produksi/material-status" },
       { label: "Yield Alert", href: "/produksi/yield-alerts" },
