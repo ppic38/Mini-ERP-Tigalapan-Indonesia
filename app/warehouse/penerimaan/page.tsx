@@ -327,7 +327,7 @@ export default function WarehousePenerimaanPage() {
     g.ongkirValidasi === "VALIDATED" ? "Resi sudah divalidasi Procurement (Invoice Ekspedisi)" : g.ongkirValidasi === "PENDING" ? "Menunggu Procurement memvalidasi invoice ekspedisi resi ini" : "Pengiriman internal, tanpa ongkir";
   const columns: ColumnDef<WarehouseReceivableGroup>[] = [
     { key: "mrp", label: "No MRP", default: true, render: (g) => <span className="font-mono font-semibold">{g.mrpIds.join(", ")}</span> },
-    { key: "vendor", label: "Vendor Produksi", default: true, render: (g) => VENDOR_PRODUKSI[g.vendorProduksi]?.name ?? g.vendorProduksi },
+    { key: "vendor", label: "Vendor", default: true, render: (g) => VENDOR_PRODUKSI[g.vendorProduksi]?.name ?? g.vendorProduksi },
     { key: "jumlahKoli", label: "Koli", default: true, align: "right", render: (g) => <span className="font-mono">{g.koliIds.length}</span> },
     {
       key: "ekspedisi",
@@ -336,11 +336,11 @@ export default function WarehousePenerimaanPage() {
       render: (g) => (g.ekspedisi ? <span title={g.ekspedisi} className="inline-block max-w-[170px] truncate align-bottom">{g.ekspedisi}</span> : "—"),
     },
     { key: "tanggalKirim", label: "Tanggal Kirim", default: true, render: (g) => formatDate(g.deliveredAt) },
-    { key: "qty", label: "Total Qty", default: true, align: "right", render: (g) => <span className="font-mono">{formatPcs(g.totalQty)}</span> },
+    { key: "qty", label: "Qty", default: true, align: "right", render: (g) => <span className="font-mono">{formatPcs(g.totalQty)}</span> },
     {
       // HPP resi ini = Σ qty x HPP/item (mesin HPP yang sama dengan Laporan HPP Finance), tampil walau invoice belum dibayar.
       key: "totalHpp",
-      label: "Total HPP",
+      label: "HPP",
       default: true,
       align: "right",
       render: (g) => {
@@ -428,9 +428,10 @@ export default function WarehousePenerimaanPage() {
         }}
         searchRight
         fitExpanded
+        bordered
         filterDefs={[
           { label: "No MRP", options: uniqSorted(groups.flatMap((g) => g.mrpIds)).reverse(), test: (g, v) => g.mrpIds.includes(v) },
-          { label: "Vendor Produksi", options: uniqSorted(groups.map(vendorName)), test: (g, v) => vendorName(g) === v },
+          { label: "Vendor", options: uniqSorted(groups.map(vendorName)), test: (g, v) => vendorName(g) === v },
           { label: "Status Resi", options: STATUS_RESI.filter((o) => groups.some((g) => ongkirLabelOf(g) === o)), test: (g, v) => ongkirLabelOf(g) === v },
           { label: "Ekspedisi", options: uniqSorted(groups.map((g) => g.ekspedisi)), test: (g, v) => g.ekspedisi === v },
         ]}

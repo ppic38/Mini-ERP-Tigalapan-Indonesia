@@ -60,7 +60,10 @@ export function DataTable<T>({
   nowrap,
   searchRight,
   fitExpanded,
+  bordered,
 }: {
+  /** Opsional: garis tabel penuh (garis tipis antar kolom dan antar baris) pada judul dan sel. Tidak diisi = hanya garis antar baris seperti biasa. */
+  bordered?: boolean;
   /** Opsional: rincian baris yang dibuka (renderExpanded) dibatasi selebar area tabel yang terlihat dan menempel di kiri saat tabel digeser ke samping, jadi tombol/kolom di
    *  kanan rincian tidak ikut terpotong ketika tabelnya sendiri lebih lebar dari layar. Tidak diisi = rincian selebar tabel seperti biasa. */
   fitExpanded?: boolean;
@@ -250,14 +253,14 @@ export function DataTable<T>({
         <table className="w-full border-collapse">
           <thead className={bodyMaxHeight ? "sticky top-0 z-10" : undefined}>
             <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
-              <th className={"px-5 py-[9px] " + (nowrap ? "whitespace-nowrap " : "") + (firstColumnAlign === "right" ? "text-right" : "text-left")}>{firstColumnLabel}</th>
+              <th className={"px-5 py-[9px] " + (bordered ? "border border-[#CBD5E1] " : "") + (nowrap ? "whitespace-nowrap " : "") + (firstColumnAlign === "right" ? "text-right" : "text-left")}>{firstColumnLabel}</th>
               {visibleColumns.map((c) => (
-                <th key={c.key} className={"px-3 py-[9px] " + (nowrap ? "whitespace-nowrap " : "") + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple bg-accent-purple-bg text-accent-purple" : "")}>
+                <th key={c.key} className={"px-3 py-[9px] " + (bordered ? "border border-[#CBD5E1] " : "") + (nowrap ? "whitespace-nowrap " : "") +(c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple bg-accent-purple-bg text-accent-purple" : "")}>
                   {c.label}
                   {c.info && <InfoPopover title={c.info.title}>{c.info.body}</InfoPopover>}
                 </th>
               ))}
-              {(renderExpanded || onRowClick) && <th className="w-8 px-3 py-[9px]" />}
+              {(renderExpanded || onRowClick) && <th className={"w-8 px-3 py-[9px]" + (bordered ? " border border-[#CBD5E1]" : "")} />}
             </tr>
           </thead>
           <tbody>
@@ -274,9 +277,9 @@ export function DataTable<T>({
                     }
                     onClick={renderExpanded ? () => toggleExpanded(key) : onRowClick ? () => onRowClick(r) : undefined}
                   >
-                    <td className={"px-5 py-[11px] " + (nowrap ? "whitespace-nowrap " : "") + (firstColumnAlign === "right" ? "text-right" : "text-left")}>{firstColumnRender(r)}</td>
+                    <td className={"px-5 py-[11px] " + (bordered ? "border border-[#DDE3EA] " : "") + (nowrap ? "whitespace-nowrap " : "") + (firstColumnAlign === "right" ? "text-right" : "text-left")}>{firstColumnRender(r)}</td>
                     {visibleColumns.map((c) => (
-                      <td key={c.key} data-label={c.label} onClick={c.sysadmin ? (e) => e.stopPropagation() : undefined} className={"px-3 py-[11px] " + (nowrap ? "whitespace-nowrap " : "") + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple/40 bg-accent-purple-bg" : "")}>
+                      <td key={c.key} data-label={c.label} onClick={c.sysadmin ? (e) => e.stopPropagation() : undefined} className={"px-3 py-[11px] " + (bordered ? "border border-[#DDE3EA] " : "") + (nowrap ? "whitespace-nowrap " : "") +(c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple/40 bg-accent-purple-bg" : "")}>
                         {c.render(r)}
                       </td>
                     ))}
@@ -286,7 +289,7 @@ export function DataTable<T>({
                       </td>
                     )}
                     {renderExpanded && (
-                      <td data-chevron className="px-3 py-[11px]">
+                      <td data-chevron className={"px-3 py-[11px]" + (bordered ? " border border-[#DDE3EA]" : "")}>
                         {isExpanded ? (
                           <ChevronDown className="h-3.5 w-3.5 flex-none text-text-muted" />
                         ) : (
