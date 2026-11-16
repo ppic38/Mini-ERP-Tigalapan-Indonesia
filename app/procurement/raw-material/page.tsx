@@ -441,7 +441,7 @@ export default function RawMaterialPage() {
         active={tab}
         onChange={(k) => setTab(k as "roll" | "mrp")}
       />
-      {tab === "roll" && <RawMaterialRollTab />}
+      {tab === "roll" && <RawMaterialRollTab focus="roll" />}
       {tab === "mrp" && (
       <>
       <div className="grid grid-cols-4 gap-3.5 max-lg:grid-cols-2 max-sm:grid-cols-1">

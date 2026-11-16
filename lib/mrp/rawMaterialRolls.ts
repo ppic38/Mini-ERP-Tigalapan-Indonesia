@@ -1,38 +1,25 @@
 import type { MrpDetail } from "./store";
-import { invoiceAwaitingPayment, isBillableKoliItem, isSyntheticSupplier } from "./derive";
+import { invoiceAwaitingPayment, isBillableKoliItem } from "./derive";
 import { benangFromKategori } from "./rawMaterialReport";
-import { ROLL_KG_ESTIMATE } from "./seed";
-import type { DeliveryKoli, Lengan, MaterialClaimHistory, MaterialPO, ProductionBatch, RawMaterialInvoice } from "./types";
+import type { DeliveryKoli, Lengan, MaterialClaimHistory, ProductionBatch, RawMaterialInvoice } from "./types";
 
-/** Raw Material per ROLL (Procurement, owner 2026-11-16: "raw material sama dengan posisi stok, namun by roll yang sudah di PO, sudah di paid, dengan
- *  field gabungan antara raw material dan posisi stok"). Satu baris = satu roll kain, dari PO sampai terkirim:
- *   - Roll yang sudah ada di PO Material tetapi belum ada di invoice bahan: satu baris per roll sisa PO, berat dan nilai ESTIMASI
- *     (berat = ROLL_KG_ESTIMATE, nilai = nilai PO / jumlah roll PO).
- *   - Roll di invoice bahan: nilai = harga per kg x berat kotor x faktor diskon invoice (rumus yang SAMA dengan Raw Material dan Posisi Stok, jadi
- *     jumlahnya = nilai kain invoice), lalu tahap fisiknya dengan aturan Posisi Stok (`buildStockPosition`): belum diterima vendor, di vendor,
- *     resting, cutting & FG, roll ditutup, sudah delivery (semua pcs roll itu sudah ada di koli terkirim), diretur.
- *  Item tambahan (rib, kerah, manset) tidak per roll, jadi tidak ada di sini; nilainya tetap di tab Per MRP dan vendor. */
+/** Material per ROLL yang SUDAH DIBAYAR (Procurement > Raw Material dan Finance > Posisi Stok, tabel yang sama; owner 2026-11-16).
+ *  Satu baris = satu roll kain di invoice bahan yang sudah dibayar Finance.
+ *  Nilai roll = harga/kg x berat kotor + porsi rib - porsi diskon, rumus yang SAMA dengan HPP (`rawRollCostShares` di derive.ts):
+ *   - porsi rib    = biaya item tambahan (rib/kerah/manset) warna itu di invoice / total kg kain warna itu x berat roll
+ *   - porsi diskon = diskon invoice / total kg kain invoice x berat roll
+ *  Status berurutan sampai barang jadi dikirim vendor (aturan tahap = Posisi Stok `buildStockPosition`):
+ *   Dibayar -> Dikirim supplier -> Diterima vendor -> Resting -> Cutting & FG -> Roll ditutup -> Sudah delivery; Diretur = roll keluar lewat klaim retur. */
 
-export const RM_ROLL_STATUSES = [
-  "PO, belum invoice",
-  "Belum dibayar",
-  "Belum diterima vendor",
-  "Di vendor",
-  "Resting",
-  "Cutting & FG",
-  "Roll ditutup",
-  "Sudah delivery",
-  "Diretur",
-] as const;
+export const RM_ROLL_STATUSES = ["Dibayar", "Dikirim supplier", "Diterima vendor", "Resting", "Cutting & FG", "Roll ditutup", "Sudah delivery", "Diretur"] as const;
 export type RmRollStatus = (typeof RM_ROLL_STATUSES)[number];
 
-/** Posisi ringkas (sama pengelompokan kartu Posisi Stok Finance). */
-export const RM_ROLL_POSITIONS = ["Belum dibayar", "Belum produksi", "Proses produksi", "Sudah delivery", "Diretur"] as const;
+/** Posisi ringkas untuk kartu (sama pengelompokan Posisi Stok). */
+export const RM_ROLL_POSITIONS = ["Belum produksi", "Proses produksi", "Sudah delivery", "Diretur"] as const;
 export type RmRollPosition = (typeof RM_ROLL_POSITIONS)[number];
 
 export function positionOf(status: RmRollStatus): RmRollPosition {
-  if (status === "PO, belum invoice" || status === "Belum dibayar") return "Belum dibayar";
-  if (status === "Belum diterima vendor" || status === "Di vendor") return "Belum produksi";
+  if (status === "Dibayar" || status === "Dikirim supplier" || status === "Diterima vendor") return "Belum produksi";
   if (status === "Sudah delivery") return "Sudah delivery";
   if (status === "Diretur") return "Diretur";
   return "Proses produksi";
@@ -42,8 +29,6 @@ export type RmRollRow = {
   key: string;
   status: RmRollStatus;
   position: RmRollPosition;
-  /** Berat dan nilai dari PO (roll belum diinvoice). */
-  estimasi: boolean;
   mrpId: string;
   poId: string;
   entitas: string;
@@ -55,21 +40,22 @@ export type RmRollRow = {
   benang: string;
   invoiceId: string;
   noInvoice: string;
-  /** Urutan roll di warna x lengan pada invoice / PO (mulai 1). */
   no: number;
   codeRoll: string;
   beratKotor: number;
   beratBersih?: number;
   hargaPerKg: number;
-  nilaiSebelumDiskon: number;
+  /** harga/kg x berat kotor */
+  nilaiKain: number;
+  ribRoll: number;
+  diskonRoll: number;
+  /** nilaiKain + ribRoll - diskonRoll */
   nilai: number;
-  diskon: number;
-  /** Porsi nilai roll yang pcs-nya sudah terkirim (aturan Posisi Stok). */
+  /** Porsi nilai roll yang pcs-nya sudah terkirim. */
   nilaiTerkirim: number;
   /** Nilai yang masih berupa stok (belum terkirim). Diretur = 0. */
   nilaiStok: number;
   pcsBelumKirim: number;
-  poAt?: string;
   invoiceAt?: string;
   paidAt?: string;
   deliveryAt?: string;
@@ -83,7 +69,6 @@ const day = (iso?: string) => (iso ? iso.slice(0, 10) : undefined);
 const sumQty = (q: Record<string, number> | undefined) => Object.values(q ?? {}).reduce((s, n) => s + (n > 0 ? n : 0), 0);
 
 export function buildRawMaterialRolls(
-  pos: MaterialPO[],
   invoices: RawMaterialInvoice[],
   batches: ProductionBatch[],
   kolis: DeliveryKoli[],
@@ -112,37 +97,36 @@ export function buildRawMaterialRolls(
   const returnedRolls = new Set(claims.filter((c) => c.resolutionKind === "RETUR_REORDER" && c.resolvedAt).map((c) => `${c.invoiceId}|${c.warna}|${c.lengan}|${c.rollIndex}`));
 
   const out: RmRollRow[] = [];
-  const invoicedRolls = new Map<string, number>(); // poId|warna|lengan -> roll di invoice
-
   for (const inv of invoices) {
-    // Sama dengan Posisi Stok: semua invoice kecuali WAITING_INVOICE (termasuk invoice migrasi data awal), supaya jumlah roll dan nilai cocok.
-    if (inv.status === "WAITING_INVOICE") continue;
+    // Hanya material yang SUDAH dibayar Finance.
+    if (inv.status === "WAITING_INVOICE" || invoiceAwaitingPayment(inv)) continue;
     const vendor = inv.destinationVendor || inv.vendorProduksi;
-    const baseTotal = inv.colorEntries.reduce((s, c) => s + c.rolls.reduce((t, kg) => t + c.hargaPerRoll * kg, 0), 0) + inv.addBuys.reduce((s, a) => s + a.totalHarga, 0);
-    const factor = baseTotal > 0 && inv.totalBiaya > 0 ? inv.totalBiaya / baseTotal : 1;
-    const paid = !invoiceAwaitingPayment(inv);
+    const kgOf = (rows: RawMaterialInvoice["colorEntries"]) => rows.reduce((t, e) => t + e.rolls.reduce((a, w) => a + w, 0), 0);
+    const fabricKg = kgOf(inv.colorEntries);
 
     inv.colorEntries.forEach((c) => {
       const key = `${c.warna}|${c.lengan}`;
-      const poKey = `${inv.poId}|${key}`;
-      invoicedRolls.set(poKey, (invoicedRolls.get(poKey) ?? 0) + c.rolls.length);
       const arrivals = inv.rollArrivals[key] ?? [];
       const receipts = inv.rollReceipts[key] ?? [];
       const kategori = kategoriOf(inv.mrpId, c.warna, c.lengan);
+      const colorKg = kgOf(inv.colorEntries.filter((e) => e.warna === c.warna));
+      const ribCost = inv.addBuys.filter((a) => a.warna === c.warna).reduce((t, a) => t + a.totalHarga, 0);
+
       c.rolls.forEach((kg, idx) => {
         const arrival = arrivals[idx] ?? null;
         const receipt = receipts[idx] ?? null;
         const codeRoll = arrival?.codeRoll || receipt?.codeRoll || c.codeRolls?.[idx] || "";
         const batch = codeRoll ? batchByCode.get(codeRoll) : undefined;
-        const sebelum = c.hargaPerRoll * kg;
-        const nilai = sebelum * factor;
+        const nilaiKain = c.hargaPerRoll * kg;
+        const ribRoll = colorKg > 0 ? (ribCost * kg) / colorKg : 0;
+        const diskonRoll = fabricKg > 0 ? ((inv.diskon ?? 0) * kg) / fabricKg : 0;
+        const nilai = nilaiKain + ribRoll - diskonRoll;
 
         let status: RmRollStatus;
         let shippedShare = 0;
         let pcsBelumKirim = 0;
         if (returnedRolls.has(`${inv.id}|${c.warna}|${c.lengan}|${idx}`)) status = "Diretur";
-        else if (!paid) status = "Belum dibayar";
-        else if (!batch) status = arrival ? "Di vendor" : "Belum diterima vendor";
+        else if (!batch) status = arrival ? "Diterima vendor" : inv.deliveredAt ? "Dikirim supplier" : "Dibayar";
         else {
           const basis = batch.closedAt ? sumQty(batch.fgSizeQty) : sumQty(batch.sizeQty);
           const shipped = legacyShipped.has(batch.id) ? basis : Math.min(shippedByBatch.get(batch.id) ?? 0, basis);
@@ -150,19 +134,11 @@ export function buildRawMaterialRolls(
           pcsBelumKirim = basis - shipped;
           status = shippedShare >= 1 ? "Sudah delivery" : batch.closedAt ? "Roll ditutup" : batch.cuttingAt ? "Cutting & FG" : "Resting";
         }
-        // Roll yang belum dibayar tetapi sudah dipakai produksi (dispensasi terima lebih awal) tetap dihitung porsi kirimnya.
-        if (status === "Belum dibayar" && batch) {
-          const basis = batch.closedAt ? sumQty(batch.fgSizeQty) : sumQty(batch.sizeQty);
-          const shipped = legacyShipped.has(batch.id) ? basis : Math.min(shippedByBatch.get(batch.id) ?? 0, basis);
-          shippedShare = basis > 0 ? shipped / basis : 0;
-          pcsBelumKirim = basis - shipped;
-        }
         const nilaiTerkirim = status === "Diretur" ? 0 : nilai * shippedShare;
         out.push({
           key: `${inv.id}|${key}|${idx}`,
           status,
           position: positionOf(status),
-          estimasi: false,
           mrpId: inv.mrpId,
           poId: inv.poId,
           entitas: inv.entity || "",
@@ -179,9 +155,10 @@ export function buildRawMaterialRolls(
           beratKotor: kg,
           beratBersih: receipt?.netKg,
           hargaPerKg: c.hargaPerRoll,
-          nilaiSebelumDiskon: sebelum,
+          nilaiKain,
+          ribRoll,
+          diskonRoll,
           nilai,
-          diskon: sebelum - nilai,
           nilaiTerkirim,
           nilaiStok: status === "Diretur" ? 0 : nilai - nilaiTerkirim,
           pcsBelumKirim,
@@ -195,50 +172,6 @@ export function buildRawMaterialRolls(
         });
       });
     });
-  }
-
-  // Roll PO Material yang belum ada di invoice bahan mana pun.
-  for (const po of pos) {
-    if (po.status === "CANCELLED" || isSyntheticSupplier(po.supplier)) continue;
-    const perRoll = po.rollCount > 0 ? po.amount / po.rollCount : 0;
-    for (const c of po.colorBreakdown) {
-      const key = `${c.warna}|${c.lengan}`;
-      const poKey = `${po.id}|${key}`;
-      const sudah = invoicedRolls.get(poKey) ?? 0;
-      const sisa = Math.max(0, c.rollCount - sudah);
-      invoicedRolls.set(poKey, Math.max(0, sudah - c.rollCount)); // PO bisa memuat warna x lengan yang sama lebih dari sekali
-      const kategori = kategoriOf(po.mrpId, c.warna, c.lengan);
-      for (let i = 0; i < sisa; i++) {
-        out.push({
-          key: `${po.id}|${key}|po${sudah + i}`,
-          status: "PO, belum invoice",
-          position: "Belum dibayar",
-          estimasi: true,
-          mrpId: po.mrpId,
-          poId: po.id,
-          entitas: c.entitas || po.entity || "",
-          supplier: po.supplier || "Belum ada supplier",
-          vendorProduksi: po.vendorProduksi,
-          warna: c.warna,
-          lengan: c.lengan,
-          kategori,
-          benang: benangFromKategori(kategori),
-          invoiceId: "",
-          noInvoice: "",
-          no: sudah + i + 1,
-          codeRoll: "",
-          beratKotor: ROLL_KG_ESTIMATE,
-          hargaPerKg: 0,
-          nilaiSebelumDiskon: perRoll,
-          nilai: perRoll,
-          diskon: 0,
-          nilaiTerkirim: 0,
-          nilaiStok: perRoll,
-          pcsBelumKirim: 0,
-          poAt: day(po.createdAt ?? po.approvalSubmittedAt),
-        });
-      }
-    }
   }
   return out;
 }
