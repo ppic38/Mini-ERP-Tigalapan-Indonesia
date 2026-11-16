@@ -8,7 +8,7 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { ImportDropzone } from "@/components/mrp/import-dropzone";
 import { MrpWarnaBreakdownTable } from "@/components/mrp/mrp-warna-breakdown-table";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
-import { DataTable, type ColumnDef, type FilterDef } from "@/components/mrp/data-table";
+import { DataTable, aggSame, aggSum, type ColumnDef, type FilterDef } from "@/components/mrp/data-table";
 import { SidePanel } from "@/components/ui/side-panel";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { mrpCorrections } from "@/components/sysadmin/ppic-corrections";
@@ -231,10 +231,10 @@ export default function MrpListPage() {
         />
       ),
     },
-    { key: "kategori", label: "Kategori", default: false, render: (r) => `${r.mrp.kategori} · ${r.warnaLabel}` },
-    { key: "qty", label: "Qty", default: true, align: "right", render: (r) => <span className="font-mono">{formatPcs(effectiveMrpQty(r.mrp.id, r.mrp.qty, maklonPOs))}</span> },
+    { key: "kategori", aggregate: aggSame<Row>((r) => r.mrp.kategori), label: "Kategori", default: false, render: (r) => `${r.mrp.kategori} · ${r.warnaLabel}` },
+    { key: "qty", aggregate: aggSum<Row>((r) => effectiveMrpQty(r.mrp.id, r.mrp.qty, maklonPOs), (n) => <span className="font-semibold">{formatPcs(n)}</span>), label: "Qty", default: true, align: "right", render: (r) => <span className="font-mono">{formatPcs(effectiveMrpQty(r.mrp.id, r.mrp.qty, maklonPOs))}</span> },
     {
-      key: "roll",
+      key: "roll", aggregate: aggSum<Row>((r) => r.roll, (n) => <span className="font-semibold">{n.toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>),
       label: "Roll",
       default: true,
       align: "right",
@@ -243,7 +243,7 @@ export default function MrpListPage() {
     },
     { key: "vendor", label: "Vendor", default: false, render: (r) => (r.vendors.length ? r.vendors.join(", ") : "—") },
     {
-      key: "tahapan",
+      key: "tahapan", aggregate: aggSame<Row>((r) => r.stage, (v) => <StageBadge stages={MRP_STAGES} current={v} tone={v === "Ditolak SCM" ? "danger" : undefined} />),
       label: "Status",
       default: true,
       render: (r) => <StageBadge stages={MRP_STAGES} current={r.stage} tone={r.stage === "Ditolak SCM" ? "danger" : undefined} />,

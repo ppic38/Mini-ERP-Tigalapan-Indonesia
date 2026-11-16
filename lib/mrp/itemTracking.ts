@@ -441,6 +441,9 @@ export type AduanTrackRow = {
   jenis: "roll" | "rencana" | "sisa" | "belum";
   /** Jumlah roll di baris ini: 1 untuk baris roll, sisa roll rencana untuk baris "rencana". */
   qtyRoll: number;
+  /** Penanda roll yang sama di beberapa baris size (id roll, atau "rencana|{id aduan}"). Dipakai menjumlah roll tanpa
+   *  menghitung satu roll dua kali (aduan M-L = satu roll di dua baris). Kosong untuk baris sisa. */
+  rollKey: string;
   kategori: string;
   warna: string;
   lengan: Lengan;
@@ -504,6 +507,7 @@ export function buildAduanTracking(
     codeRoll,
     jenis,
     qtyRoll: 0,
+    rollKey: "",
     kategori: kategoriOf.get(`${mrpId}|${warna}|${lengan}`) ?? "",
     warna,
     lengan,
@@ -536,6 +540,7 @@ export function buildAduanTracking(
       const info = aduanById.get(b.aduanRowId);
       r = blank(key, b.mrpId, b.vendorProduksi, info?.a.kode ?? b.kode ?? "", b.codeRoll ?? "", "roll", b.warna, b.lengan, size);
       r.qtyRoll = 1;
+      r.rollKey = b.id;
       r.restingAt = b.restingAt ? dayKey(b.restingAt) : undefined;
       r.cuttingAt = b.cuttingAt ? dayKey(b.cuttingAt) : undefined;
       r.closedAt = b.closedAt ? dayKey(b.closedAt) : undefined;
@@ -585,6 +590,7 @@ export function buildAduanTracking(
       }
       const r = blank(`rencana|${aduanId}|${s.size}`, info.mrpId, info.a.vendor, info.a.kode, "", "rencana", info.a.warna, info.a.lengan, s.size);
       r.qtyRoll = restRolls;
+      r.rollKey = `rencana|${aduanId}`;
       r.target = rest;
       rows.set(r.key, r);
     }

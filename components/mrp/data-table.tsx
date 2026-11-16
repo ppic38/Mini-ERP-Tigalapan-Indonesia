@@ -17,7 +17,24 @@ export type ColumnDef<T> = {
   /** Kolom "Aksi Sysadmin" (owner 2026-10-06): hanya tampil di mode Sysadmin, SELALU tampil (tidak ada di
    *  menu Kolom), ditaruh paling kanan dan diwarnai ungu supaya jelas ini bagian Sysadmin. */
   sysadmin?: boolean;
+  /** Opsional: isi sel kolom ini di baris kelompok (Kelompokkan), dihitung dari semua baris kelompok itu. Pakai `aggSum`
+   *  untuk angka yang bisa dijumlah dan `aggSame` untuk nilai yang hanya ditampilkan kalau semua baris sama. Tidak diisi = kosong. */
+  aggregate?: (rows: T[]) => ReactNode;
 };
+
+/** Jumlah satu angka di baris kelompok. */
+export function aggSum<T>(get: (row: T) => number, format: (n: number) => ReactNode = (n) => n.toLocaleString("id-ID", { maximumFractionDigits: 2 })) {
+  return (rows: T[]) => format(rows.reduce((total, r) => total + (get(r) || 0), 0));
+}
+
+/** Nilai yang sama di semua baris kelompok; kalau berbeda-beda, sel dikosongkan (owner 2026-11-16). */
+export function aggSame<T>(get: (row: T) => string, render: (value: string) => ReactNode = (v) => v) {
+  return (rows: T[]) => {
+    if (rows.length === 0) return null;
+    const first = get(rows[0]);
+    return rows.every((r) => get(r) === first) ? render(first) : null;
+  };
+}
 
 export type FilterDef<T> = {
   label: string;
@@ -394,11 +411,12 @@ export function DataTable<T>({
   const sysadminMode = useSysadminMode();
   const visibleColumns = [...inUserOrder(columns.filter((c) => !c.sysadmin && visible.has(c.key))), ...(sysadminMode ? columns.filter((c) => c.sysadmin) : [])];
   const fullSpan = visibleColumns.length + 1 + (renderExpanded || onRowClick ? 1 : 0);
-  type Item = { kind: "row"; row: T } | { kind: "group"; name: string; path: string; depth: number; count: number; open: boolean } | { kind: "more"; path: string; rest: number };
+  const hasAggregate = visibleColumns.some((c) => c.aggregate);
+  type Item = { kind: "row"; row: T } | { kind: "group"; name: string; path: string; depth: number; count: number; open: boolean; rows: T[] } | { kind: "more"; path: string; rest: number };
   const flatten = (nodes: GroupNode[], depth: number): Item[] =>
     nodes.flatMap((g): Item[] => {
       const open = openGroups.has(g.path);
-      const head: Item = { kind: "group", name: g.name, path: g.path, depth, count: g.rows.length, open };
+      const head: Item = { kind: "group", name: g.name, path: g.path, depth, count: g.rows.length, open, rows: g.rows };
       if (!open) return [head];
       if (g.children.length > 0) return [head, ...flatten(g.children, depth + 1)];
       const shown = fullGroups.has(g.path) ? g.rows : g.rows.slice(0, GROUP_PREVIEW);
@@ -732,13 +750,20 @@ export function DataTable<T>({
                     className={"cursor-pointer border-b border-[#E3E8EE] font-sans text-xs font-semibold text-text-primary hover:bg-[#EDF1F5] " + (item.depth === 0 ? "bg-[#F4F6F9]" : "bg-[#F9FAFC]")}
                     onClick={() => setOpenGroups(toggleIn(openGroups, item.path))}
                   >
-                    <td colSpan={fullSpan} className="py-[9px] pr-5" style={{ paddingLeft: 20 + item.depth * 18 }}>
+                    {/* Baris kelompok: nama + jumlah baris di kolom pertama, lalu total / nilai yang sama per kolom (aggregate). */}
+                    <td colSpan={hasAggregate ? 1 : fullSpan} className="whitespace-nowrap py-[9px] pr-3" style={{ paddingLeft: 20 + item.depth * 18 }}>
                       <span className="inline-flex items-center gap-2">
                         {item.open ? <ChevronDown className="h-3.5 w-3.5 flex-none" /> : <ChevronRight className="h-3.5 w-3.5 flex-none" />}
                         {item.name}
                         <span className="font-medium text-text-muted">{item.count} baris</span>
                       </span>
                     </td>
+                    {hasAggregate && visibleColumns.map((c) => (
+                      <td key={c.key} className={"px-3 py-[9px] " + (nowrap ? "whitespace-nowrap " : "") + (c.align === "right" ? "text-right font-mono" : "text-left")}>
+                        {c.aggregate ? c.aggregate(item.rows) : null}
+                      </td>
+                    ))}
+                    {hasAggregate && (renderExpanded || onRowClick) && <td />}
                   </tr>
                 );
               if (item.kind === "more")

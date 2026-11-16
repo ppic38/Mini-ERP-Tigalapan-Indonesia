@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { alertDialog } from "@/components/ui/confirm-dialog";
-import { DataTable, type ColumnDef, type FilterDef } from "@/components/mrp/data-table";
+import { DataTable, aggSame, aggSum, type ColumnDef, type FilterDef } from "@/components/mrp/data-table";
 import { StageBadge } from "@/components/ui/stage-badge";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatDate, formatPcs, localDateString } from "@/lib/mrp/derive";
@@ -93,11 +93,14 @@ export function ItemTrackingView() {
   ];
 
   const pcs = (n: number) => <span className={n === 0 ? "text-text-muted" : undefined}>{formatPcs(n)}</span>;
+  // Baris kelompok (owner 2026-11-16): angka dijumlah; teks dan status hanya tampil kalau sama di semua baris, kalau berbeda dikosongkan.
+  const sumPcs = (get: (r: AduanTrackRow) => number) => aggSum<AduanTrackRow>(get, (n) => <span className="font-semibold">{formatPcs(n)}</span>);
+  const sameText = (get: (r: AduanTrackRow) => string) => aggSame<AduanTrackRow>(get);
   const columns: ColumnDef<AduanTrackRow>[] = [
-    { key: "mrp", label: "No. MRP", default: true, render: (r) => <span className="font-mono">{r.mrpId}</span> },
-    { key: "vendor", label: "Vendor", default: true, render: (r) => vendorLabel(r.vendorProduksi) },
+    { key: "mrp", aggregate: sameText((r) => r.mrpId), label: "No. MRP", default: true, render: (r) => <span className="font-mono">{r.mrpId}</span> },
+    { key: "vendor", aggregate: sameText((r) => vendorLabel(r.vendorProduksi)), label: "Vendor", default: true, render: (r) => vendorLabel(r.vendorProduksi) },
     {
-      key: "kode",
+      key: "kode", aggregate: sameText((r) => r.kode),
       label: "Aduan",
       default: true,
       render: (r) =>
@@ -118,30 +121,36 @@ export function ItemTrackingView() {
     },
     {
       key: "qtyRoll",
+      // Roll dijumlah per roll, bukan per baris: satu roll aduan M-L tampil di dua baris size tetapi tetap dihitung satu.
+      aggregate: (list) => {
+        const seen = new Map<string, number>();
+        for (const r of list) if (r.rollKey) seen.set(r.rollKey, r.qtyRoll);
+        return <span className="font-semibold">{formatPcs(sum([...seen.values()]))}</span>;
+      },
       label: "Roll",
       default: true,
       align: "right",
       info: { title: "Roll", body: "1 untuk baris roll. Baris yang belum resting memuat jumlah roll aduan yang belum di-resting." },
       render: (r) => (r.qtyRoll > 0 ? <span className="font-mono">{r.qtyRoll}</span> : <span className="text-text-muted">-</span>),
     },
-    { key: "kategori", label: "Kategori", default: false, render: (r) => r.kategori || "-" },
-    { key: "target", label: "Target", default: true, align: "right", render: (r) => pcs(r.target) },
-    { key: "cutting", label: "Cutting", default: true, align: "right", info: { title: "Cutting", body: "Hasil cutting roll ini untuk size ini." }, render: (r) => pcs(r.cutting) },
-    { key: "fg", label: "Finish Good", default: true, align: "right", info: { title: "Finish Good", body: "Finish Good roll ini (termasuk yang sudah dikemas dan dikirim)." }, render: (r) => pcs(r.fg) },
-    { key: "reject", label: "Reject", default: false, align: "right", render: (r) => pcs(r.reject) },
-    { key: "diKoli", label: "Di koli", default: true, align: "right", render: (r) => pcs(r.diKoli) },
-    { key: "dikirim", label: "Dikirim", default: true, align: "right", render: (r) => pcs(r.dikirim) },
-    { key: "diterima", label: "Diterima DC", default: true, align: "right", render: (r) => pcs(r.diterima) },
+    { key: "kategori", aggregate: sameText((r) => r.kategori), label: "Kategori", default: false, render: (r) => r.kategori || "-" },
+    { key: "target", aggregate: sumPcs((r) => r.target), label: "Target", default: true, align: "right", render: (r) => pcs(r.target) },
+    { key: "cutting", aggregate: sumPcs((r) => r.cutting), label: "Cutting", default: true, align: "right", info: { title: "Cutting", body: "Hasil cutting roll ini untuk size ini." }, render: (r) => pcs(r.cutting) },
+    { key: "fg", aggregate: sumPcs((r) => r.fg), label: "Finish Good", default: true, align: "right", info: { title: "Finish Good", body: "Finish Good roll ini (termasuk yang sudah dikemas dan dikirim)." }, render: (r) => pcs(r.fg) },
+    { key: "reject", aggregate: sumPcs((r) => r.reject), label: "Reject", default: false, align: "right", render: (r) => pcs(r.reject) },
+    { key: "diKoli", aggregate: sumPcs((r) => r.diKoli), label: "Di koli", default: true, align: "right", render: (r) => pcs(r.diKoli) },
+    { key: "dikirim", aggregate: sumPcs((r) => r.dikirim), label: "Dikirim", default: true, align: "right", render: (r) => pcs(r.dikirim) },
+    { key: "diterima", aggregate: sumPcs((r) => r.diterima), label: "Diterima DC", default: true, align: "right", render: (r) => pcs(r.diterima) },
     {
-      key: "status",
+      key: "status", aggregate: aggSame<AduanTrackRow>((r) => r.status, (v) => <StageBadge stages={FLOW} current={v} tone={v === "Diterima DC" || v === "Selesai" ? "done" : undefined} />),
       label: "Status",
       default: true,
       render: (r) => <StageBadge stages={FLOW} current={r.status} tone={r.status === "Diterima DC" || r.status === "Selesai" ? "done" : undefined} />,
     },
-    { key: "belumCutting", label: "Sisa belum cutting", default: false, align: "right", render: (r) => pcs(r.belumCutting) },
-    { key: "fgWip", label: "FG belum dikemas", default: false, align: "right", render: (r) => pcs(r.fgWip) },
-    { key: "perjalanan", label: "Di perjalanan", default: false, align: "right", render: (r) => pcs(r.perjalanan) },
-    { key: "tibaDc", label: "Tiba DC (belum validasi)", default: false, align: "right", render: (r) => pcs(r.tibaDc) },
+    { key: "belumCutting", aggregate: sumPcs((r) => r.belumCutting), label: "Sisa belum cutting", default: false, align: "right", render: (r) => pcs(r.belumCutting) },
+    { key: "fgWip", aggregate: sumPcs((r) => r.fgWip), label: "FG belum dikemas", default: false, align: "right", render: (r) => pcs(r.fgWip) },
+    { key: "perjalanan", aggregate: sumPcs((r) => r.perjalanan), label: "Di perjalanan", default: false, align: "right", render: (r) => pcs(r.perjalanan) },
+    { key: "tibaDc", aggregate: sumPcs((r) => r.tibaDc), label: "Tiba DC (belum validasi)", default: false, align: "right", render: (r) => pcs(r.tibaDc) },
     { key: "tglPo", label: "Tgl PO Material", default: true, render: (r) => <span className="whitespace-nowrap">{dateText(r.poMaterialAt)}</span> },
     { key: "tglDelivery", label: "Tgl Delivery", default: true, info: { title: "Tgl Delivery", body: "Tanggal bahan dikirim ke vendor (Set Delivery invoice bahan). Baris roll memakai invoice yang memuat code roll itu." }, render: (r) => <span className="whitespace-nowrap">{dateText(r.deliveryAt)}</span> },
     { key: "tglGr", label: "Tgl GR", default: true, info: { title: "Tgl GR", body: "Tanggal roll diterima vendor (Good Receive). Baris yang belum resting tidak punya tanggal ini." }, render: (r) => <span className="whitespace-nowrap">{dateText(r.grAt)}</span> },
