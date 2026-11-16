@@ -3,6 +3,10 @@
 import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { useMrpStore } from "@/lib/mrp/store";
+import { syncVendorSheetsIfDueAction } from "@/lib/mrp/actions";
+
+// Jarak minimum antar pemeriksaan "sudah waktunya baca spreadsheet vendor?" dari satu tab (server sendiri juga membatasi 5 menit per vendor).
+const SHEET_SYNC_CHECK_MS = 5 * 60_000;
 
 // Refetch snapshot penuh (~30 tabel) paling sering tiap ini banyak detik -- mencegah beberapa
 // pemicu (mount, focus, interval) numpuk jadi fetch beruntun kalau kebetulan berdekatan waktunya.
@@ -144,8 +148,23 @@ export function StoreHydrator() {
     }
     scheduleVersionCheck(VERSION_CHECK_INTERVAL_MS);
 
+    // Sinkron spreadsheet vendor (khusus BAYU, owner 2026-11-16): minta server memeriksa apakah sudah waktunya membaca spreadsheet (maksimal sekali per 5 menit per tab).
+    // Server menjalankannya di latar belakang dan langsung membalas, jadi tidak menahan halaman; hasilnya masuk lewat pengecekan versi data di atas. Tanpa tautan
+    // yang aktif ini hanya satu query kecil. Galat (belum login, migration belum jalan) diabaikan.
+    let lastSheetCheck = 0;
+    function maybeSheetSync() {
+      const now = Date.now();
+      if (stopped || authFailed || document.visibilityState !== "visible" || now - lastSheetCheck < SHEET_SYNC_CHECK_MS) return;
+      lastSheetCheck = now;
+      syncVendorSheetsIfDueAction().catch(() => {});
+    }
+    const sheetFirstTimer = setTimeout(maybeSheetSync, 6_000);
+    const sheetTimer = setInterval(maybeSheetSync, 60_000);
+
     return () => {
       stopped = true;
+      clearTimeout(sheetFirstTimer);
+      clearInterval(sheetTimer);
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
       clearInterval(interval);

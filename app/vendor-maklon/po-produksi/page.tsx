@@ -5,6 +5,9 @@ import { alertDialog } from "@/components/ui/confirm-dialog";
 import Link from "next/link";
 import { ChevronDown, ChevronRight, Download } from "lucide-react";
 import { exportMaklonPoRasioExcel, poPartsOfVendor } from "@/lib/mrp/exportPoExcel";
+import { exportVendorSheetTemplate } from "@/lib/mrp/exportVendorSheetTemplate";
+import { isSheetSyncVendor } from "@/lib/mrp/vendorSheet";
+import { SheetSyncCard } from "@/components/vendor-maklon/sheet-sync-card";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill, type PillTone } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
@@ -451,6 +454,25 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
     }
   }
 
+  const productionBatches = useMrpStore((s) => s.productionBatches);
+  const productionGroupMeta = useMrpStore((s) => s.productionGroupMeta);
+  const productionResults = useMrpStore((s) => s.productionResults);
+  const [sheetBusyId, setSheetBusyId] = useState<string | null>(null);
+  async function downloadSheetTemplate(p: MergedPO) {
+    setSheetBusyId(p.id);
+    try {
+      const detail = mrpDetailFor(p.mrpId, mrpDetails);
+      await exportVendorSheetTemplate(
+        { mrpId: p.mrpId, vendorId: p.vendorProduksi, batches: productionBatches, aduanRows: detail?.aduanRows ?? [], metas: productionGroupMeta, results: productionResults },
+        `Template-Sheet-${p.mrpId}-${p.vendorProduksi}.xlsx`
+      );
+    } catch (err) {
+      void alertDialog({ title: "Gagal membuat file", message: err instanceof Error ? err.message : String(err), tone: "danger" });
+    } finally {
+      setSheetBusyId(null);
+    }
+  }
+
   const columns: ColumnDef<MergedPO>[] = [
     { key: "noPo", label: "No PO", default: false, render: (p) => <span className="font-mono font-medium">{p.parts.map((x) => x.id).join(" + ")}</span> },
     { key: "qty", label: "Qty", default: true, align: "right", render: (p) => formatPcs(p.qty) + " pcs" },
@@ -607,6 +629,26 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
         </button>
       ),
     },
+    // Khusus vendor yang memakai sinkron spreadsheet (BAYU, owner 2026-11-16): template Produksi / Reject / Rework terisi keadaan ERP saat ini.
+    ...(isSheetSyncVendor(vendorId)
+      ? [
+          {
+            key: "templateSheet",
+            label: "Template Sheet",
+            default: true,
+            render: (p: MergedPO) => (
+              <button
+                onClick={() => void downloadSheetTemplate(p)}
+                disabled={sheetBusyId === p.id}
+                className="inline-flex items-center gap-1 rounded-md border border-[#CBD5DF] px-2.5 py-1 font-sans text-[11px] font-semibold text-action-primary hover:bg-[#F2F4F7] disabled:opacity-50"
+              >
+                <Download size={12} />
+                {sheetBusyId === p.id ? "Membuat…" : "Excel"}
+              </button>
+            ),
+          } as ColumnDef<MergedPO>,
+        ]
+      : []),
   ];
 
   return (
@@ -621,6 +663,7 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
       entityOverride="Vendor Produksi"
     >
       <div className="vp-po-page">
+      {isSheetSyncVendor(vendorId) && <SheetSyncCard />}
       <DataTable
         title="PO produksi saya"
         mobileCards

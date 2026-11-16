@@ -17,7 +17,10 @@
 // komentar di masing-masing fungsi kalau ada penyesuaian dari bentuk aslinya.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
 import type { ActionResult } from "./action-result";
+import { SHEET_SYNC_VENDORS, isSheetSyncVendor, normalizeSheetUrl, parseSheetTabs, planSheetSync, reworkKey, type ErpState, type SheetIssue, type SheetOp, type SheetSyncSummary, type VendorSheetStatus } from "./vendorSheet";
 
 /** Bungkus aksi supaya alasan gagalnya sampai ke user di production (lihat action-result.ts). */
 async function toActionResult<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
@@ -150,7 +153,14 @@ function vendorOnlyError(session: { internalRoles: string[] }): Error {
   return new Error("Forbidden: aksi ini hanya untuk vendor produksi.");
 }
 
+/** Sinkronisasi spreadsheet vendor (owner 2026-11-16): kode server menjalankan aksi vendor yang sudah ada (cutting, finish good, reject, rework) ATAS NAMA vendor tanpa cookie sesi,
+ *  sehingga aturan validasi dan penguncinya persis sama dengan input lewat portal. Hanya diisi oleh `runVendorSheetSync` di bawah (variabel ini tidak diekspor, jadi tidak bisa
+ *  dipakai dari browser); di luar blok itu `getStore()` undefined dan semua pemeriksaan sesi berjalan seperti biasa. */
+const vendorActorOverride = new AsyncLocalStorage<{ vendorId: string; actorName: string; actorLabel: string }>();
+
 async function requireVendorSession(): Promise<string> {
+  const forced = vendorActorOverride.getStore();
+  if (forced) return forced.vendorId;
   const session = await requireSession();
   if (!session.vendorId) throw vendorOnlyError(session);
   return session.vendorId;
@@ -163,6 +173,8 @@ async function requireVendorSession(): Promise<string> {
  *  HANYA di action yang ingin dicatat ke vendor_action_log (lihat logVendorAction) -- action lain
  *  yang tidak butuh jejak "siapa klik apa" tetap pakai requireVendorSession biasa, tidak berubah. */
 async function requireVendorSessionWithActor(): Promise<{ vendorId: string; vendorUserId: string | null; actorName: string; actorLabel: string }> {
+  const forced = vendorActorOverride.getStore();
+  if (forced) return { vendorId: forced.vendorId, vendorUserId: null, actorName: forced.actorName, actorLabel: forced.actorLabel };
   const session = await requireSession();
   if (!session.vendorId) throw vendorOnlyError(session);
   // `actorLabel` = teks yang disematkan di baris data (migration 0078) supaya daftar di portal vendor bisa menampilkan "oleh siapa".
@@ -8555,5 +8567,272 @@ export async function resubmitPoAction(type: PoType, id: string): Promise<Action
         await notifyNextApprovers(t, next);
       }
     }
+  });
+}
+
+// =========================================================================================================================================================
+// Sinkronisasi spreadsheet vendor (owner 2026-11-16, khusus vendor BAYU). BAYU punya sistem ERP sendiri yang mengisi spreadsheet (template dari ERP kita), spreadsheet
+// di-"Publish to web", dan ERP kita membaca isinya (Hasil Cutting + Finish Good per roll x size, klasifikasi Reject, Rework) supaya tidak diinput dua kali.
+// Isi sheet = keadaan yang diinginkan; perubahan dihitung murni di vendorSheet.ts (idempoten) lalu dijalankan lewat Impl aksi vendor yang sama dengan portal
+// (aturan validasi dan penguncinya TIDAK dilonggarkan: baris yang ditolak ERP dilaporkan, baris lain tetap masuk). Migration 0092 (vendor_sheet_sync).
+// =========================================================================================================================================================
+
+/** Sinkron berikutnya paling cepat sekian ms setelah yang terakhir dimulai (pemicu otomatis dari halaman). */
+const SHEET_SYNC_MIN_INTERVAL_MS = 5 * 60_000;
+/** Jarak minimum untuk tombol "Sinkron sekarang" (mencegah dobel klik / dua pemicu bersamaan). */
+const SHEET_SYNC_MANUAL_GUARD_MS = 20_000;
+/** Batas perubahan per sinkron supaya satu proses tidak kehabisan waktu; sisanya dikerjakan pada sinkron berikutnya (sheet tetap = keadaan yang diinginkan). */
+const SHEET_SYNC_MAX_OPS_AUTO = 12;
+const SHEET_SYNC_MAX_OPS_MANUAL = 25;
+const SHEET_MAX_BYTES = 8 * 1024 * 1024;
+
+function plainSheetCell(v: unknown): unknown {
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) return v;
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    if ("result" in o) return plainSheetCell(o.result);
+    if (Array.isArray(o.richText)) return (o.richText as { text?: string }[]).map((t) => t.text ?? "").join("");
+    if ("text" in o) return plainSheetCell(o.text);
+    if ("error" in o) return null;
+    return String(v);
+  }
+  return v;
+}
+
+/** Unduh XLSX seluruh dokumen yang dipublikasikan ke web lalu ubah tiap tab jadi baris-baris sel. Alamat dibentuk dari id yang sudah divalidasi (bukan URL mentah dari pengguna). */
+async function fetchPublishedSheetTabs(fetchUrl: string): Promise<Record<string, unknown[][]>> {
+  let res: Response;
+  try {
+    res = await fetch(fetchUrl, { cache: "no-store", redirect: "follow", signal: AbortSignal.timeout(20_000), headers: { "User-Agent": "Mozilla/5.0 (ERP sheet sync)" } });
+  } catch (e) {
+    throw new Error(`Spreadsheet tidak bisa dijangkau: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (!res.ok) throw new Error(`Google Sheets menolak permintaan (HTTP ${res.status}). Pastikan dokumen masih dipublikasikan ke web dan tautannya benar.`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length > SHEET_MAX_BYTES) throw new Error("Spreadsheet terlalu besar (maksimal 8 MB).");
+  if (buf.length < 4 || buf[0] !== 0x50 || buf[1] !== 0x4b) {
+    throw new Error('Isi tautan bukan file Excel. Saat "Publikasikan ke web", pilih "Seluruh dokumen" dan format "Microsoft Excel (.xlsx)" (bukan satu sheet / halaman web).');
+  }
+  const ExcelJS = (await import("exceljs")).default;
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buf as unknown as ArrayBuffer);
+  const tabs: Record<string, unknown[][]> = {};
+  wb.eachSheet((ws) => {
+    const rows: unknown[][] = [];
+    ws.eachRow({ includeEmpty: false }, (row, n) => {
+      const vals = (row.values as unknown[]).slice(1).map(plainSheetCell);
+      rows[n - 1] = vals;
+    });
+    tabs[ws.name] = Array.from(rows, (r) => r ?? []);
+  });
+  return tabs;
+}
+
+/** Keadaan ERP yang relevan dengan isi sheet: roll (hasil cutting, Finish Good, tanda alih size/hasil tambahan), klasifikasi reject, dan rework yang sudah tercatat. */
+async function loadErpStateForSheet(db: SupabaseClient, vendorId: string, mrpIds: string[]): Promise<ErpState> {
+  if (mrpIds.length === 0) return { batches: [], metas: [], rework: {} };
+  const [batchRes, metaRes, reworkRes] = await Promise.all([
+    db
+      .from("production_batches")
+      .select("id,mrp_id,code_roll,warna,lengan,cutting_at,closed_at,size_shifts,extra_results,production_batch_sizes(size,qty),production_batch_fg_sizes(size,qty)")
+      .eq("vendor_produksi", vendorId)
+      .in("mrp_id", mrpIds),
+    db.from("production_group_meta").select("group_key,reject_material_qty,reject_proses_qty").eq("vendor_produksi", vendorId),
+    db.from("production_results").select("mrp_id,warna,lengan,note,production_result_sizes(size,qty)").eq("vendor_produksi", vendorId).eq("kind", "REJECT").like("note", "Rework %").in("mrp_id", mrpIds),
+  ]);
+  if (batchRes.error) throw new Error(batchRes.error.message);
+  if (metaRes.error) throw new Error(metaRes.error.message);
+  if (reworkRes.error) throw new Error(reworkRes.error.message);
+  const qtyMap = (rows: { size: string; qty: number }[] | null) => Object.fromEntries((rows ?? []).filter((r) => Number(r.qty) > 0).map((r) => [r.size as string, Number(r.qty)]));
+  const batches: ErpState["batches"] = (batchRes.data ?? [])
+    .filter((b) => !!b.code_roll)
+    .map((b) => ({
+      id: b.id as string,
+      mrpId: String(b.mrp_id).toUpperCase(),
+      codeRoll: String(b.code_roll).toUpperCase(),
+      warna: b.warna as string,
+      lengan: b.lengan as string,
+      cuttingAt: (b.cutting_at as string | null) ?? null,
+      closed: !!b.closed_at,
+      cut: qtyMap(b.production_batch_sizes as { size: string; qty: number }[] | null),
+      fg: qtyMap(b.production_batch_fg_sizes as { size: string; qty: number }[] | null),
+      hasShiftsOrExtras: (Array.isArray(b.size_shifts) && b.size_shifts.length > 0) || (Array.isArray(b.extra_results) && b.extra_results.length > 0),
+    }));
+  const metas: ErpState["metas"] = (metaRes.data ?? []).map((m) => ({
+    groupKey: m.group_key as string,
+    rejectMaterial: m.reject_material_qty === null || m.reject_material_qty === undefined ? null : Number(m.reject_material_qty),
+    rejectProses: m.reject_proses_qty === null || m.reject_proses_qty === undefined ? null : Number(m.reject_proses_qty),
+  }));
+  const rework: Record<string, number> = {};
+  for (const r of reworkRes.data ?? []) {
+    const m = /^Rework (\d+) pcs ke (PENDEK|PANJANG) size (\S+) \((KIDS|DEWASA)\)$/.exec(String(r.note ?? ""));
+    if (!m) continue;
+    const from = ((r.production_result_sizes as { size: string; qty: number }[] | null) ?? []).find((s) => Number(s.qty) < 0);
+    if (!from) continue;
+    const key = reworkKey({ mrpId: String(r.mrp_id).toUpperCase(), warna: r.warna as string, fromLengan: r.lengan as string, fromSize: String(from.size).toUpperCase(), usia: m[4], toLengan: m[2], toSize: m[3].toUpperCase() });
+    rework[key] = (rework[key] ?? 0) + Number(m[1]);
+  }
+  return { batches, metas, rework };
+}
+
+async function saveSheetSyncResult(db: SupabaseClient, vendorId: string, patch: { status: string; summary: SheetSyncSummary; hash?: string | null }) {
+  const row: Record<string, unknown> = { last_status: patch.status, last_summary: patch.summary, updated_at: new Date().toISOString() };
+  if (patch.hash !== undefined) row.content_hash = patch.hash;
+  await db.from("vendor_sheet_sync").update(row).eq("vendor_produksi", vendorId);
+}
+
+/** Satu putaran sinkron untuk satu vendor: unduh, baca, rencanakan, jalankan (maksimal `maxOps`), simpan hasilnya. Tidak melempar galat; kegagalan dicatat di tabel dan dikembalikan. */
+async function runVendorSheetSync(vendorId: string, maxOps: number): Promise<{ status: string; summary: SheetSyncSummary }> {
+  const db = supabaseServer();
+  const empty: SheetSyncSummary = { applied: 0, appliedLabels: [], unchanged: 0, pending: 0, issues: [], tabsFound: [] };
+  try {
+    const { data: link, error } = await db.from("vendor_sheet_sync").select("sheet_url,enabled,content_hash,last_status").eq("vendor_produksi", vendorId).maybeSingle();
+    if (error) throw new Error(/vendor_sheet_sync/.test(error.message) ? "Jalankan migration 0092 (vendor_sheet_sync) di Supabase dulu." : error.message);
+    if (!link || !link.enabled) return { status: "OK", summary: { ...empty, note: "Sinkron spreadsheet tidak aktif." } };
+    const url = normalizeSheetUrl(link.sheet_url as string);
+    if (!url.ok) throw new Error(url.error);
+
+    const tabs = await fetchPublishedSheetTabs(url.fetchUrl);
+    const hash = createHash("sha256").update(JSON.stringify(tabs)).digest("hex");
+    if (link.last_status === "OK" && link.content_hash === hash) {
+      // Isi sheet sama dengan yang terakhir berhasil diterapkan: tidak ada yang dikerjakan (juga supaya perubahan yang dibuat vendor langsung di portal tidak ditimpa sheet lama).
+      const summary: SheetSyncSummary = { ...empty, tabsFound: Object.keys(tabs), note: "Isi spreadsheet tidak berubah sejak sinkron terakhir." };
+      await saveSheetSyncResult(db, vendorId, { status: "OK", summary });
+      return { status: "OK", summary };
+    }
+    const parsed = parseSheetTabs(tabs);
+    const mrpIds = Array.from(new Set([...parsed.produksi.map((r) => r.mrpId), ...parsed.reject.map((r) => r.mrpId), ...parsed.rework.map((r) => r.mrpId)]));
+    const erp = await loadErpStateForSheet(db, vendorId, mrpIds);
+    const plan = planSheetSync(parsed, erp, today());
+
+    const issues: SheetIssue[] = [...parsed.issues, ...plan.issues];
+    const toRun: SheetOp[] = plan.ops.slice(0, maxOps);
+    const pending = plan.ops.length - toRun.length;
+    const appliedLabels: string[] = [];
+    const vendorName = VENDOR_PRODUKSI[vendorId]?.name ?? vendorId;
+    await vendorActorOverride.run({ vendorId, actorName: "Sinkron spreadsheet", actorLabel: `Sinkron spreadsheet (${vendorName})` }, async () => {
+      for (const op of toRun) {
+        try {
+          if (op.kind === "CUTTING") await updateBatchesToCuttingImpl([op.batchId], op.cuttingAt, { [op.batchId]: op.sizeQty });
+          else if (op.kind === "FG") await saveFgProgressImpl(op.batchId, op.sizeQty);
+          else if (op.kind === "REJECT_SPLIT") await setGroupRejectSplitImpl(op.groupKey, op.material, op.proses);
+          else await reworkRejectSizeAction({ ...op.input, vendorProduksi: vendorId, lengan: op.input.lengan as Lengan, toLengan: op.input.toLengan as Lengan, usia: op.input.usia as Usia });
+          appliedLabels.push(`${op.kind === "CUTTING" ? "Cutting" : op.kind === "FG" ? "Finish Good" : op.kind === "REJECT_SPLIT" ? "Klasifikasi reject" : "Rework"}: ${op.label}`);
+        } catch (e) {
+          issues.push({ tab: op.kind === "REJECT_SPLIT" ? "Reject" : op.kind === "REWORK" ? "Rework" : "Produksi", message: `${op.label}: ${e instanceof Error ? e.message : String(e)}` });
+        }
+      }
+    });
+    const summary: SheetSyncSummary = {
+      applied: appliedLabels.length,
+      appliedLabels: appliedLabels.slice(0, 40),
+      unchanged: plan.unchanged,
+      pending,
+      issues: issues.slice(0, 80),
+      tabsFound: parsed.tabsFound,
+      note: pending > 0 ? `${pending} perubahan lagi menunggu (dikerjakan pada sinkron berikutnya).` : parsed.tabsFound.length === 0 ? 'Tab "Produksi", "Reject", atau "Rework" tidak ditemukan di spreadsheet.' : undefined,
+    };
+    const status = issues.length > 0 || pending > 0 || parsed.tabsFound.length === 0 ? "ADA_MASALAH" : "OK";
+    // Hash hanya disimpan bila semuanya bersih; kalau ada masalah/tertunda, sinkron berikutnya memproses ulang (keadaan ERP bisa sudah berubah).
+    await saveSheetSyncResult(db, vendorId, { status, summary, hash: status === "OK" ? hash : null });
+    return { status, summary };
+  } catch (e) {
+    const summary: SheetSyncSummary = { ...empty, issues: [{ tab: "-", message: e instanceof Error ? e.message : String(e) }] };
+    try {
+      await saveSheetSyncResult(db, vendorId, { status: "GAGAL", summary, hash: null });
+    } catch {
+      /* pencatatan hasil tidak boleh menutupi galat aslinya */
+    }
+    return { status: "GAGAL", summary };
+  }
+}
+
+async function requireSheetSyncVendor(): Promise<string> {
+  const vendorId = await requireVendorSession();
+  if (!isSheetSyncVendor(vendorId)) throw new Error("Forbidden: sinkron spreadsheet hanya tersedia untuk vendor tertentu.");
+  return vendorId;
+}
+
+/** Tautan dan hasil sinkron terakhir milik vendor yang login (null = belum ada tautan). */
+export async function getVendorSheetStatusAction(): Promise<ActionResult<VendorSheetStatus>> {
+  return toActionResultKeepAuth(async () => {
+    const vendorId = await requireSheetSyncVendor();
+    const { data, error } = await supabaseServer().from("vendor_sheet_sync").select("sheet_url,enabled,last_sync_at,last_status,last_summary").eq("vendor_produksi", vendorId).maybeSingle();
+    if (error) throw new Error(/vendor_sheet_sync/.test(error.message) ? "Jalankan migration 0092 (vendor_sheet_sync) di Supabase dulu." : error.message);
+    if (!data) return null;
+    return { url: data.sheet_url as string, enabled: !!data.enabled, lastSyncAt: (data.last_sync_at as string | null) ?? null, lastStatus: (data.last_status as string | null) ?? null, summary: (data.last_summary as SheetSyncSummary | null) ?? null };
+  });
+}
+
+/** Simpan tautan publish-to-web. Dicoba dulu (diunduh dan dibaca); tersimpan hanya kalau terbaca dan memuat minimal satu tab template. Belum menerapkan data apa pun. */
+export async function saveVendorSheetLinkAction(rawUrl: string, enabled: boolean): Promise<ActionResult<{ tabsFound: string[]; issues: SheetIssue[]; rows: number }>> {
+  return toActionResultKeepAuth(async () => {
+    const actor = await requireVendorSessionWithActor();
+    if (!isSheetSyncVendor(actor.vendorId)) throw new Error("Forbidden: sinkron spreadsheet hanya tersedia untuk vendor tertentu.");
+    const url = normalizeSheetUrl(rawUrl);
+    if (!url.ok) throw new Error(url.error);
+    const tabs = await fetchPublishedSheetTabs(url.fetchUrl);
+    const parsed = parseSheetTabs(tabs);
+    if (parsed.tabsFound.length === 0) throw new Error(`Spreadsheet terbaca, tetapi tidak ada tab "Produksi", "Reject", atau "Rework". Tab yang ada: ${Object.keys(tabs).join(", ") || "(kosong)"}. Pakai template dari ERP.`);
+    const db = supabaseServer();
+    const { error } = await db.from("vendor_sheet_sync").upsert({
+      vendor_produksi: actor.vendorId,
+      sheet_url: `https://docs.google.com/spreadsheets/d/e/${url.id}/pub`,
+      enabled,
+      last_sync_at: null,
+      last_status: null,
+      last_summary: null,
+      content_hash: null,
+      updated_at: new Date().toISOString(),
+      updated_by: actor.actorLabel,
+    });
+    if (error) throw new Error(/vendor_sheet_sync/.test(error.message) ? "Jalankan migration 0092 (vendor_sheet_sync) di Supabase dulu." : error.message);
+    await logVendorAction(actor, "SET_SHEET_LINK", "vendor_sheet_sync", actor.vendorId);
+    return { tabsFound: parsed.tabsFound, issues: parsed.issues.slice(0, 40), rows: parsed.produksi.length + parsed.reject.length + parsed.rework.length };
+  });
+}
+
+/** Tombol "Sinkron sekarang" di portal vendor: dijalankan dan ditunggu (maksimal 25 perubahan per klik; sisanya lewat klik/sinkron berikutnya). */
+export async function syncVendorSheetNowAction(): Promise<ActionResult<{ status: string; summary: SheetSyncSummary }>> {
+  return toActionResultKeepAuth(async () => {
+    const vendorId = await requireSheetSyncVendor();
+    const db = supabaseServer();
+    const { data: link, error } = await db.from("vendor_sheet_sync").select("last_sync_at").eq("vendor_produksi", vendorId).maybeSingle();
+    if (error) throw new Error(/vendor_sheet_sync/.test(error.message) ? "Jalankan migration 0092 (vendor_sheet_sync) di Supabase dulu." : error.message);
+    if (!link) throw new Error("Belum ada tautan spreadsheet. Simpan tautan Publish to web dulu.");
+    const last = link.last_sync_at ? Date.parse(link.last_sync_at as string) : 0;
+    if (Date.now() - last < SHEET_SYNC_MANUAL_GUARD_MS) throw new Error("Sinkron baru saja berjalan. Tunggu beberapa detik lalu coba lagi.");
+    await db.from("vendor_sheet_sync").update({ last_sync_at: new Date().toISOString() }).eq("vendor_produksi", vendorId);
+    return runVendorSheetSync(vendorId, SHEET_SYNC_MAX_OPS_MANUAL);
+  });
+}
+
+/** Dipanggil dari halaman (vendor yang punya tautan, atau pengguna internal): kalau sudah lewat 5 menit dari sinkron terakhir, sinkron dijalankan DI LATAR BELAKANG
+ *  (`after`) sehingga halaman tidak menunggu; hasilnya muncul lewat pengecekan versi data biasa. Tanpa tautan = hanya satu query kecil. */
+export async function syncVendorSheetsIfDueAction(): Promise<ActionResult<{ started: string[] }>> {
+  return toActionResultKeepAuth(async () => {
+    const session = await requireSession();
+    const vendorIds = session.vendorId ? (isSheetSyncVendor(session.vendorId) ? [session.vendorId] : []) : SHEET_SYNC_VENDORS;
+    if (vendorIds.length === 0) return { started: [] };
+    const db = supabaseServer();
+    const { data, error } = await db.from("vendor_sheet_sync").select("vendor_produksi,last_sync_at").in("vendor_produksi", vendorIds).eq("enabled", true);
+    if (error) return { started: [] }; // tabel belum ada (migration 0092 belum dijalankan): diam saja, bukan galat untuk halaman biasa
+    const started: string[] = [];
+    for (const row of data ?? []) {
+      const last = row.last_sync_at ? Date.parse(row.last_sync_at as string) : 0;
+      if (Date.now() - last < SHEET_SYNC_MIN_INTERVAL_MS) continue;
+      // Rebut giliran: hanya satu pemicu yang berhasil memajukan last_sync_at dari nilai yang sama.
+      let claim = db.from("vendor_sheet_sync").update({ last_sync_at: new Date().toISOString() }).eq("vendor_produksi", row.vendor_produksi as string);
+      claim = row.last_sync_at ? claim.eq("last_sync_at", row.last_sync_at as string) : claim.is("last_sync_at", null);
+      const { data: won } = await claim.select("vendor_produksi");
+      if (!won || won.length === 0) continue;
+      const vendorId = row.vendor_produksi as string;
+      started.push(vendorId);
+      after(async () => {
+        await runVendorSheetSync(vendorId, SHEET_SYNC_MAX_OPS_AUTO);
+      });
+    }
+    return { started };
   });
 }
