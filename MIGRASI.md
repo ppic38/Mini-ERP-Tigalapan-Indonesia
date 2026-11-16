@@ -6,6 +6,7 @@ Hanya tampilan; aksi bayar, perhitungan, dan data tidak berubah.
 - Payment Maklon (`components/finance/payment-maklon-panel.tsx`): empat kartu (Siap dibayar, Dipilih, Transaksi belum dibuat, MRP menunggu bayar). Riwayat pembayaran vendor TIDAK diubah (punya sub tab Per Invoice / Per Kategori Produk).
 - Halaman Finance lain sudah memakai tabel bersama (panel samping dan jumlah per kelompok dari tahap sebelumnya). Belum: PO Approval, Laporan HPP, Dashboard.
 - Diuji di app lokal: total Sudah dibayar 176 invoice Rp 7.707.865.450 (sama dengan jumlah pohon lama), Payment Maklon W41 4 invoice Rp 75.471.100. tsc bersih. BELUM diuji: bayar dan batalkan bayar lewat tampilan baru, Mode Sysadmin, HP.
+- Finance > PO Approval > PO Material (`components/finance/po-material-panel.tsx`): "Riwayat PO Material" (pohon MRP > Supplier > Vendor, tiga tingkat buka-tutup) diganti tabel bersama: kelompok bawaan No. MRP > Supplier, satu baris per PO (vendor produksi, No PO tanpa akhiran entitas, roll, nilai, status dengan rantai approval L1-L4), jumlah roll dan nilai per kelompok, rincian warna di panel samping, kolom Aksi Sysadmin tetap. Antrean menunggu approval di atasnya tidak diubah. Uji: W44 12 PO 507 roll, FABRIKU 3 PO 108 roll (sama dengan pohon lama). PO Maklon belum.
 
 ## Perbaikan Procurement: panel filter, satu baris, nomor PO, Material Tracking per roll (2026-11-16, tanpa migration) [redesign-procurement]
 Commit `8e45f3e` di branch `redesign-fondasi-tabel`, BELUM di-merge ke `main`.
