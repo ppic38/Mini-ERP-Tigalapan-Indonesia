@@ -2,6 +2,13 @@
 
 Status: USULAN, belum dijalankan. Redesign tidak mengambil nomor migration; nomor dan eksekusi SQL tetap milik tim IT.
 
+## Tabel yang diisi bersama owner
+
+Daftar tahap yang perlu SLA, usulan angkanya, dan kolom "Disepakati" yang diisi owner ada di spreadsheet
+"SLA Lead Time Antar Gate": https://claude.ai/artifact/Jn7ScZHgrgeJxaztxgxymy (20 baris, kolom "Kunci (untuk IT)" = nilai `key`
+di tabel `sla_settings` di bawah). Tim IT mengisi tabel database dari kolom "Disepakati", bukan dari kolom "Usulan".
+Spreadsheet itu privat sampai owner membagikannya dari menu Share.
+
 ## Kenapa perlu
 
 Halaman SCM > Monitoring (tab Kendala SLA) dan Produksi > SLA Produksi menandai pekerjaan yang terlambat antar gate.
