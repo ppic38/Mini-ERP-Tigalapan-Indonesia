@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { formatPcs, type WarehouseReceivableGroup } from "@/lib/mrp/derive";
@@ -13,10 +13,19 @@ export function KoliDownloadDialog({
   group,
   onDownload,
   onClose,
+  title = "Download Excel Resi",
+  note = "Item yang sama dalam satu koli digabung jadi satu baris (qty dijumlah, HPP/item rata-rata tertimbang).",
+  extraFields,
+  extraReady = true,
 }: {
   group: WarehouseReceivableGroup;
   onDownload: (kolis: string[] | null) => Promise<void>;
   onClose: () => void;
+  /** Download PO memakai popup yang sama: judul, catatan, dan isian tambahan (supplier, template Moka) diganti lewat props ini. */
+  title?: string;
+  note?: ReactNode;
+  extraFields?: ReactNode;
+  extraReady?: boolean;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -68,9 +77,12 @@ export function KoliDownloadDialog({
       <div className="flex max-h-[90vh] w-full max-w-[440px] flex-col overflow-hidden rounded-[9px] bg-surface-card shadow-[0_12px_32px_rgba(11,19,27,.28)]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2.5 bg-info-bg px-5 py-3">
           <span className="h-2 w-2 rounded-full bg-accent-blue" />
-          <span className="font-sans text-xs font-semibold text-info-fg">Download Excel Resi {group.noResi ?? group.resiGroupId}</span>
+          <span className="font-sans text-xs font-semibold text-info-fg">
+            {title} {group.noResi ?? group.resiGroupId}
+          </span>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {extraFields && <div className="mb-4 flex flex-col gap-3 border-b border-[#EEF1F4] pb-4">{extraFields}</div>}
           <div className="flex items-center justify-between">
             <span className="block font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Koli yang diunduh</span>
             <span className="font-sans text-[10.5px] text-text-muted">
@@ -93,7 +105,7 @@ export function KoliDownloadDialog({
               {options.length === 0 && <div className="px-3 py-4 text-center font-sans text-[11.5px] text-text-muted">Resi ini belum punya koli berisi item.</div>}
             </div>
           </div>
-          <p className="mt-2 font-sans text-[10.5px] text-text-muted">Item yang sama dalam satu koli digabung jadi satu baris (qty dijumlah, HPP/item rata-rata tertimbang).</p>
+          <p className="mt-2 font-sans text-[10.5px] text-text-muted">{note}</p>
         </div>
         <div className="flex items-center justify-between gap-2 border-t border-[#EEF1F4] px-5 py-3">
           <span className="font-sans text-[11px] text-text-muted">{formatPcs(pickedPcs)} pcs</span>
@@ -101,7 +113,7 @@ export function KoliDownloadDialog({
             <Button onClick={onClose} variant="ghost" size="md">
               Batal
             </Button>
-            <Button onClick={() => void download()} variant="primary" size="md" disabled={busy || picked.size === 0}>
+            <Button onClick={() => void download()} variant="primary" size="md" disabled={busy || picked.size === 0 || !extraReady}>
               {busy ? "Menyiapkan…" : "Download"}
             </Button>
           </div>

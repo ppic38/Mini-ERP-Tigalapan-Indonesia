@@ -5,9 +5,9 @@ import { Download } from "lucide-react";
 import { exportResiExcel } from "@/lib/mrp/exportResiExcel";
 import { exportResiTemplateExcel, type ResiSheet, type ResiSheetRow } from "@/lib/mrp/exportResiTemplateExcel";
 import { ResiDownloadDialog } from "@/components/warehouse/resi-download-dialog";
-import { MokaPoDialog } from "@/components/warehouse/moka-po-dialog";
+import { MokaPoDialog, MOKA_PO_NOTE, useMokaPoForm } from "@/components/warehouse/moka-po-dialog";
 import { KoliDownloadDialog } from "@/components/warehouse/koli-download-dialog";
-import { buildMokaPoCsv, downloadCsv, type MokaPoItem } from "@/lib/mrp/exportMokaPo";
+import { runMokaPoDownload } from "@/components/warehouse/moka-po-download";
 import { alertDialog } from "@/components/ui/confirm-dialog";
 import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
@@ -28,6 +28,8 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
   const [koliFilter, setKoliFilter] = useState("");
   const [hppFilter, setHppFilter] = useState("");
   const [downloadOpen, setDownloadOpen] = useState(false);
+  const [poOpen, setPoOpen] = useState(false);
+  const mokaForm = useMokaPoForm();
   const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
 
   // HPP per item selalu tampil begitu ada baris HPP-nya (dari mesin HPP yang sama dengan Laporan HPP Finance: master data harga
@@ -56,6 +58,18 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
     } catch (err) {
       setError("Gagal membuat file Excel: " + (err instanceof Error ? err.message : String(err)));
     }
+  }
+
+  /** Download PO per resi (owner 2026-11-16): template Moka yang sama dengan Download PO di kepala tabel, tetapi hanya item koli yang dipilih di popup (koli yang benar-benar datang;
+   *  resi kadang tidak datang utuh). `kolis` null = seluruh koli. */
+  async function handlePoDownload(kolis: string[] | null) {
+    setError("");
+    mokaForm.save();
+    const picked = kolis && kolis.length > 0 ? new Set(kolis) : null;
+    const scoped: WarehouseReceivableGroup = picked ? { ...group, items: group.items.filter((it) => picked.has(it.noKoli ?? it.deliveryKoliId)) } : group;
+    const safe = String(group.noResi ?? group.resiGroupId);
+    const tag = picked ? `${safe}-Koli-${Array.from(picked).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join("-")}` : safe;
+    await runMokaPoDownload(itemSellingPrices, [scoped], mokaForm.supplier, mokaForm.template!.text, tag);
   }
 
   async function handleBongkar() {
@@ -96,11 +110,16 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
         <span className="font-sans text-[10.5px] text-text-muted">
           {visibleItems.length} dari {group.items.length} baris
         </span>
-        {/* Popup: unduh seluruh koli resi ini atau koli tertentu saja (tidak terpengaruh filter di atas). */}
-        <Button variant="accent" size="sm" disabled={group.items.length === 0} onClick={() => setDownloadOpen(true)} className="ml-auto inline-flex items-center gap-1.5">
-          <Download className="h-3.5 w-3.5" />
-          Download Excel
-        </Button>
+        {/* Popup: unduh seluruh koli resi ini atau koli tertentu saja (tidak terpengaruh filter di atas). Download Excel = surat jalan; Download PO = template Import PO Moka (HPP). */}
+        <div className="ml-auto flex items-center gap-2">
+          <Button variant="ghost" size="sm" disabled={group.items.length === 0} onClick={() => setPoOpen(true)} title="Isi template Import PO Moka dari koli yang dipilih">
+            Download PO
+          </Button>
+          <Button variant="accent" size="sm" disabled={group.items.length === 0} onClick={() => setDownloadOpen(true)} className="inline-flex items-center gap-1.5">
+            <Download className="h-3.5 w-3.5" />
+            Download Excel
+          </Button>
+        </div>
       </div>
       <div className="overflow-x-auto rounded-md border border-[#E4E9EE] bg-white">
         <table className="w-full min-w-[760px] border-collapse">
@@ -172,6 +191,17 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
       )}
       {error && <div className="font-sans text-[10.5px] font-medium text-danger-fg">{error}</div>}
       {downloadOpen && <KoliDownloadDialog group={group} onDownload={handleDownload} onClose={() => setDownloadOpen(false)} />}
+      {poOpen && (
+        <KoliDownloadDialog
+          group={group}
+          title="Download PO (Import Moka) Resi"
+          note={MOKA_PO_NOTE}
+          extraFields={mokaForm.fields}
+          extraReady={mokaForm.ready}
+          onDownload={handlePoDownload}
+          onClose={() => setPoOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -280,55 +310,8 @@ export default function WarehousePenerimaanPage() {
     }
   }
 
-  /** Download PO (owner 2026-11-10): isi template Moka "Import - Items Purchase Order" dari resi terpilih. Item digabung per Item (MOKA) (qty dijumlah, HPP rata-rata tertimbang); reject tidak ikut (tanpa HPP). */
-  async function downloadMokaPo(selected: WarehouseReceivableGroup[], supplierEmail: string, templateText: string) {
-    try {
-      const skuByKey = new Map<string, { sku: string | null; itemName: string }>();
-      for (const r of itemSellingPrices) {
-        const key = `${r.warna}|${r.lengan}|${r.size}`;
-        if (!skuByKey.has(key)) skuByKey.set(key, { sku: r.sku, itemName: r.itemName });
-      }
-      const acc = new Map<string, MokaPoItem & { nilai: number; qtyCost: number }>();
-      for (const g of selected) {
-        for (const it of g.items) {
-          if (it.kind === "REJECT") continue;
-          const warna = warnaWithUsia(it.warna, it.usia);
-          const skuWarna = skuWarnaFor(it.warna, it.usia);
-          const itemMoka = `${skuWarna} ${it.lengan === "PENDEK" ? "PDK" : "PJG"} ${it.size}`;
-          const master = skuByKey.get(`${warna}|${it.lengan}|${it.size}`) ?? skuByKey.get(`${skuWarna}|${it.lengan}|${it.size}`);
-          // Item RIB di Moka tidak memuat PDK/PJG ("BENHUR KID + RIB XS", "HITAM + RIB L"): cadangan pencocokan tanpa lengan.
-          const alt = skuWarna.includes("+ RIB") ? [`${skuWarna} ${it.size}`] : undefined;
-          const cur = acc.get(itemMoka) ?? { itemMoka, itemName: master?.itemName ?? null, alt, sku: master?.sku ?? null, qty: 0, hppPerItem: null, nilai: 0, qtyCost: 0 };
-          cur.qty += it.qty;
-          if (it.hppPerItem > 0) {
-            cur.nilai += it.qty * it.hppPerItem;
-            cur.qtyCost += it.qty;
-          }
-          acc.set(itemMoka, cur);
-        }
-      }
-      const items: MokaPoItem[] = Array.from(acc.values()).map((x) => ({ itemMoka: x.itemMoka, itemName: x.itemName, alt: x.alt, sku: x.sku, qty: x.qty, hppPerItem: x.qtyCost > 0 ? x.nilai / x.qtyCost : null }));
-      const res = buildMokaPoCsv(templateText, supplierEmail, items);
-      if (res.error) {
-        await alertDialog({ title: "Template tidak bisa dipakai", message: res.error, tone: "danger" });
-        return;
-      }
-      if (res.filledRows === 0) {
-        await alertDialog({ title: "Tidak ada item yang cocok", message: "Tidak satu pun item resi terpilih ditemukan di template Moka (dicocokkan lewat kolom Items Name), jadi file tidak dibuat.", tone: "danger" });
-        return;
-      }
-      downloadCsv(res.csv, `PO-Moka-${localDateString(new Date())}.csv`);
-      const list = (xs: MokaPoItem[]) => Array.from(new Set(xs.map((x) => x.itemMoka))).slice(0, 12).join(", ");
-      const warnings: string[] = [];
-      if (res.notFound.length > 0) warnings.push(`${res.notFound.length} item tidak ditemukan di template Moka dan TIDAK ikut file: ${list(res.notFound)}${res.notFound.length > 12 ? ", …" : ""}.`);
-      if (res.noCost.length > 0) warnings.push(`${res.noCost.length} item belum punya HPP, kolom Unit Cost dikosongkan: ${list(res.noCost)}${res.noCost.length > 12 ? ", …" : ""}.`);
-      if (warnings.length > 0) {
-        await alertDialog({ title: `File PO dibuat (${res.filledRows} item, ${res.filledQty.toLocaleString("id-ID")} pcs)`, message: warnings.join("\n\n") });
-      }
-    } catch (e) {
-      await alertDialog({ title: "Gagal membuat file PO", message: e instanceof Error ? e.message : "Terjadi kesalahan saat membuat file PO.", tone: "danger" });
-    }
-  }
+  /** Download PO dari kepala tabel (pilih resi): isi template Moka, logikanya di `runMokaPoDownload`. */
+  const downloadMokaPo = (selected: WarehouseReceivableGroup[], supplierEmail: string, templateText: string) => runMokaPoDownload(itemSellingPrices, selected, supplierEmail, templateText);
 
   const readyCount = groups.filter((g) => !g.gateReason).length;
   const waitingCount = groups.length - readyCount;

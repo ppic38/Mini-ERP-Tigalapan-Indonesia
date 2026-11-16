@@ -20,19 +20,12 @@ function loadStored(): Stored | null {
   }
 }
 
-/** Popup "Download PO" Penerimaan Warehouse (owner 2026-11-10): pilih resi (sama seperti Download Excel), pilih supplier Moka, dan unggah template
- *  "Import - Items Purchase Order" dari Moka; hasilnya file template yang sama dengan kolom Supplier Email, Order (qty), dan Unit Cost (HPP) terisi. */
-export function MokaPoDialog({
-  groups,
-  vendorName,
-  onDownload,
-  onClose,
-}: {
-  groups: WarehouseReceivableGroup[];
-  vendorName: (g: WarehouseReceivableGroup) => string;
-  onDownload: (selected: WarehouseReceivableGroup[], supplierEmail: string, templateText: string) => Promise<void>;
-  onClose: () => void;
-}) {
+export const MOKA_PO_NOTE =
+  "Satu file CSV = template Moka yang sama, hanya baris item dari pilihan yang diisi: Supplier Email (supplier di atas), Order (qty, item yang sama digabung), dan Unit Cost (HPP per item, dibulatkan ke rupiah). Reject tidak ikut.";
+
+/** Isian Download PO Moka (supplier + template CSV Moka) dipakai bersama popup pilih resi (kepala tabel) dan popup pilih koli (rincian satu resi, owner 2026-11-16).
+ *  `ready` = supplier dan template sudah ada; `save()` mengingat supplier terakhir di browser; `fields` = JSX isian untuk `extraFields` popup. */
+export function useMokaPoForm() {
   const [supplier, setSupplier] = useState(() => {
     try {
       return window.localStorage.getItem(SUPPLIER_KEY) ?? "";
@@ -67,23 +60,19 @@ export function MokaPoDialog({
 
   const label = "block font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted";
   const sel = "mt-1 w-full rounded-md border border-[#DDE4EB] px-[11px] py-[9px] font-sans text-[12.5px] font-medium text-text-primary";
-  return (
-    <ResiDownloadDialog
-      groups={groups}
-      vendorName={vendorName}
-      onClose={onClose}
-      title="Download PO (Import Moka)"
-      showSheetCount={false}
-      extraReady={!!supplier && !!template}
-      onDownload={async (selected) => {
-        try {
-          window.localStorage.setItem(SUPPLIER_KEY, supplier);
-        } catch {
-          /* abaikan */
-        }
-        await onDownload(selected, supplier, template!.text);
-      }}
-      extraFields={
+  const save = () => {
+    try {
+      window.localStorage.setItem(SUPPLIER_KEY, supplier);
+    } catch {
+      /* abaikan */
+    }
+  };
+  return {
+    supplier,
+    template,
+    ready: !!supplier && !!template,
+    save,
+    fields: (
         <>
           <div>
             <label className={label}>Supplier</label>
@@ -116,8 +105,38 @@ export function MokaPoDialog({
             {fileError && <div className="mt-1 font-sans text-[10.5px] font-medium text-danger-fg">{fileError}</div>}
           </div>
         </>
-      }
-      note="Satu file CSV = template Moka yang sama, hanya baris item dari resi terpilih yang diisi: Supplier Email (supplier di atas), Order (qty, item yang sama digabung), dan Unit Cost (HPP per item, dibulatkan ke rupiah). Reject tidak ikut."
+    ),
+  };
+}
+
+/** Popup "Download PO" Penerimaan Warehouse (owner 2026-11-10): pilih resi (sama seperti Download Excel), pilih supplier Moka, dan unggah template
+ *  "Import - Items Purchase Order" dari Moka; hasilnya file template yang sama dengan kolom Supplier Email, Order (qty), dan Unit Cost (HPP) terisi. */
+export function MokaPoDialog({
+  groups,
+  vendorName,
+  onDownload,
+  onClose,
+}: {
+  groups: WarehouseReceivableGroup[];
+  vendorName: (g: WarehouseReceivableGroup) => string;
+  onDownload: (selected: WarehouseReceivableGroup[], supplierEmail: string, templateText: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const form = useMokaPoForm();
+  return (
+    <ResiDownloadDialog
+      groups={groups}
+      vendorName={vendorName}
+      onClose={onClose}
+      title="Download PO (Import Moka)"
+      showSheetCount={false}
+      extraReady={form.ready}
+      onDownload={async (selected) => {
+        form.save();
+        await onDownload(selected, form.supplier, form.template!.text);
+      }}
+      extraFields={form.fields}
+      note={MOKA_PO_NOTE}
     />
   );
 }
