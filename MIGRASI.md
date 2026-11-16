@@ -1,5 +1,12 @@
 # Migrasi Project — Status & Riwayat
 
+## Vendor Produksi tahap 1 (desktop saja): menu atas dan tabel bersama gaya Odoo (2026-11-16, tanpa migration) [redesign-vendor]
+Owner: "Ya, desktop saja" (portal vendor ikut pola modul lain HANYA di layar >= 1024 px; tampilan HP tidak berubah). Ini mengubah keputusan lama "modul vendor produksi jangan disentuh" untuk desktop.
+- `components/mrp/data-table.tsx`: `modern` kini = bukan portal vendor ATAU layar desktop (`matchMedia("(min-width: 64rem)")` lewat useSyncExternalStore; render server = HP). Di vendor desktop tabel bersama mendapat kotak cari Odoo, filter ganda, kelompok, favorit, ingatan kolom, bagi halaman, panel samping; di HP tetap filter pilihan tunggal dan kartu seperti sebelumnya.
+- `components/shell/app-shell.tsx` + `top-nav.tsx`: portal vendor di desktop memakai menu di bar atas (label "Vendor Produksi", tanpa tombol pindah modul karena vendor hanya punya satu portal, menu Panduan ikut di bar atas); sidebar kiri jadi laci. HP tetap bar menu bawah.
+- Akun UJI lokal: vendor CECEP (CE) diberi password hanya di database LOKAL (nilai di `.env.local`, `VENDOR_TEST_PASSWORD_CE`, tidak di-commit). Hilang setiap `db-sync.sh all --reset`; buat ulang kalau perlu menguji portal vendor.
+- Diuji: login CECEP di app lokal, PO Produksi Saya di 1366 px (menu atas, kotak cari Odoo) dan 375 px (tampilan HP sama seperti sebelumnya). BELUM: Good Receive, Produksi, Pengiriman, Invoice & Payment masih tabel buatan sendiri (belum pola Odoo); label status di portal vendor belum memakai status standar.
+
 ## Inspeksi status, Laporan HPP gaya Odoo, modul SCM (approval + monitoring), antrean Approval PO satu tabel (2026-11-16, tanpa migration) [redesign-scm]
 Owner (tujuh poin): filter tidak bisa diciutkan, cek logika status, cek bug, alur gate-to-gate (aduan pola + MRP -> PO material -> code roll saat diterima -> pergerakan sampai GR DC sebagai FG), Laporan HPP tabel Odoo tanpa filter MRP + tanggal kirim, SCM hanya approval dan monitoring progress, lalu vendor produksi.
 - Tabel bersama (`components/mrp/data-table.tsx`): bagian filter yang sudah punya centang kini bisa diciutkan (dulu selalu terbuka). Buka/tutup disimpan per bagian (`Map`), bawaan tetap terbuka kalau ada centang.
