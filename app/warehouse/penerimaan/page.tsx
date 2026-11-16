@@ -429,6 +429,7 @@ export default function WarehousePenerimaanPage() {
         searchRight
         fitExpanded
         bordered
+        singleExpand
         filterDefs={[
           { label: "No MRP", options: uniqSorted(groups.flatMap((g) => g.mrpIds)).reverse(), test: (g, v) => g.mrpIds.includes(v) },
           { label: "Vendor", options: uniqSorted(groups.map(vendorName)), test: (g, v) => vendorName(g) === v },

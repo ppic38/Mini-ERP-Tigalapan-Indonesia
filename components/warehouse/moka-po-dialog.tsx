@@ -136,7 +136,8 @@ export function MokaPoDialog({
         await onDownload(selected, form.supplier, form.template!.text);
       }}
       extraFields={form.fields}
-      note={MOKA_PO_NOTE}
+      pickKoli
+      note={`${MOKA_PO_NOTE} Klik "Pilih koli" pada sebuah resi untuk hanya mengisi koli yang datang.`}
     />
   );
 }
