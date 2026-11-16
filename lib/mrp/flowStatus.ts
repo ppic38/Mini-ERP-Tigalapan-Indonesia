@@ -3,6 +3,7 @@ import { invoiceAwaitingPayment, isBillableKoliItem, koliOngkirShare, sellingPri
 import type {
   DeliveryKoli,
   MaklonPO,
+  MaterialClaimHistory,
   MaterialPO,
   ProductionBatch,
   RawMaterialInvoice,
@@ -149,21 +150,44 @@ export function invoiceRollFlowStage(inv: RawMaterialInvoice, arrived: boolean, 
   return "Paid";
 }
 
-/** Tahap satu invoice bahan (satu kiriman) = tahap PALING AWAL roll-rollnya. Invoice tanpa roll memakai status invoicenya. */
-export function invoiceFlowStage(inv: RawMaterialInvoice, batchByCode: Map<string, ProductionBatch>, shipping: Map<string, BatchShipping>): FlowStage {
-  let best: FlowStage | null = null;
+/** Kunci roll yang sudah keluar lewat klaim retur selesai (`invoiceId|warna|lengan|rollIndex`): tidak lagi menahan status kiriman / MRP. */
+export function returnedRollKeys(claims: MaterialClaimHistory[]): Set<string> {
+  return new Set(claims.filter((c) => c.resolutionKind === "RETUR_REORDER" && c.resolvedAt).map((c) => `${c.invoiceId}|${c.warna}|${c.lengan}|${c.rollIndex}`));
+}
+
+export type FlowBreakdown = { stage: FlowStage; rollsByStage: Partial<Record<FlowStage, number>> };
+
+/** Tahap satu invoice bahan (satu kiriman) = tahap PALING AWAL roll-rollnya, plus jumlah roll per tahap (untuk tooltip). Roll yang diretur
+ *  tidak dihitung. Invoice tanpa roll memakai status invoicenya. */
+export function invoiceFlowStage(
+  inv: RawMaterialInvoice,
+  batchByCode: Map<string, ProductionBatch>,
+  shipping: Map<string, BatchShipping>,
+  returned: Set<string> = new Set()
+): FlowBreakdown {
+  const rollsByStage: Partial<Record<FlowStage, number>> = {};
   for (const c of inv.colorEntries) {
     const key = `${c.warna}|${c.lengan}`;
     const arrivals = inv.rollArrivals[key] ?? [];
     const receipts = inv.rollReceipts[key] ?? [];
     c.rolls.forEach((_, idx) => {
+      if (returned.has(`${inv.id}|${c.warna}|${c.lengan}|${idx}`)) return;
       const code = arrivals[idx]?.codeRoll || receipts[idx]?.codeRoll || c.codeRolls?.[idx] || "";
       const batch = code ? batchByCode.get(code) : undefined;
       const st = invoiceRollFlowStage(inv, !!arrivals[idx], batch, batch ? shipping.get(batch.id) : undefined);
-      if (!best || flowRank(st) < flowRank(best)) best = st;
+      rollsByStage[st] = (rollsByStage[st] ?? 0) + 1;
     });
   }
-  return best ?? invoiceRollFlowStage(inv, false, undefined, undefined);
+  const first = (FLOW_STAGES as readonly FlowStage[]).find((st) => (rollsByStage[st] ?? 0) > 0);
+  return { stage: first ?? invoiceRollFlowStage(inv, false, undefined, undefined), rollsByStage };
+}
+
+/** "Receiving Material: 9 roll / Cutting: 45 roll" -- teks tooltip rincian roll per tahap. */
+export function rollsByStageText(by: Partial<Record<FlowStage, number>>): string {
+  return (FLOW_STAGES as readonly FlowStage[])
+    .filter((st) => (by[st] ?? 0) > 0)
+    .map((st) => `${st}: ${by[st]} roll`)
+    .join(String.fromCharCode(10));
 }
 
 // ---------------------------------------------------------------- MRP -------------------------------------------------------------------------------------
@@ -177,7 +201,8 @@ export function mrpFlowStage(
   materialPOs: MaterialPO[],
   invoices: RawMaterialInvoice[],
   batchByCode: Map<string, ProductionBatch>,
-  shipping: Map<string, BatchShipping>
+  shipping: Map<string, BatchShipping>,
+  returned: Set<string> = new Set()
 ): MrpFlow {
   const rollsByStage: Partial<Record<FlowStage, number>> = {};
   const bump = (s: FlowStage, n = 1) => (rollsByStage[s] = (rollsByStage[s] ?? 0) + n);
@@ -198,6 +223,7 @@ export function mrpFlowStage(
       const arrivals = inv.rollArrivals[key] ?? [];
       const receipts = inv.rollReceipts[key] ?? [];
       c.rolls.forEach((_, idx) => {
+        if (returned.has(`${inv.id}|${c.warna}|${c.lengan}|${idx}`)) return;
         const code = arrivals[idx]?.codeRoll || receipts[idx]?.codeRoll || c.codeRolls?.[idx] || "";
         const batch = code ? batchByCode.get(code) : undefined;
         bump(invoiceRollFlowStage(inv, !!arrivals[idx], batch, batch ? shipping.get(batch.id) : undefined));

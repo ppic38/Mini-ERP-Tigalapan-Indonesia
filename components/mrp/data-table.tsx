@@ -277,7 +277,9 @@ export function DataTable<T>({
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const [fullGroups, setFullGroups] = useState<Set<string>>(new Set());
   const [favName, setFavName] = useState("");
-  const [openFilterSections, setOpenFilterSections] = useState<Set<string>>(new Set());
+  // Buka/tutup bagian filter di panel: bawaan terbuka kalau ada nilai yang dicentang; klik judul selalu bisa membuka ATAU menutup (bug 2026-11-16:
+  // bagian yang punya centang dulu tidak bisa diciutkan).
+  const [openFilterSections, setOpenFilterSections] = useState<Map<string, boolean>>(new Map());
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const panelMode = modern && !!renderExpanded && expandIn !== "row";
@@ -564,11 +566,11 @@ export function DataTable<T>({
               {filterDefList.length === 0 && <div className="px-2 py-1 font-sans text-xs text-text-muted">Tabel ini tidak punya filter.</div>}
               {filterDefList.map((f, i) => {
                 const sel = selOf(f);
-                const isOpen = openFilterSections.has(f.label) || sel.length > 0;
+                const isOpen = openFilterSections.get(f.label) ?? sel.length > 0;
                 const opts = optionsFor(i);
                 return (
                   <div key={f.label} className="border-b border-[#F1F4F7] last:border-b-0">
-                    <button className={menuItem + " font-medium"} onClick={() => setOpenFilterSections(toggleIn(openFilterSections, f.label))}>
+                    <button className={menuItem + " font-medium"} onClick={() => setOpenFilterSections(new Map(openFilterSections).set(f.label, !isOpen))}>
                       {isOpen ? <ChevronDown className="h-3 w-3 flex-none" /> : <ChevronRight className="h-3 w-3 flex-none" />}
                       <span className="flex-1 truncate">{f.label}</span>
                       {sel.length > 0 && <span className="rounded bg-info-bg px-1.5 text-[10px] font-semibold text-info-fg">{sel.length}</span>}

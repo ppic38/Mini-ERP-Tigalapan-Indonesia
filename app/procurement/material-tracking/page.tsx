@@ -9,7 +9,7 @@ import { DataTable, aggSame, aggSum, type ColumnDef, type FilterDef } from "@/co
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Tabs } from "@/components/ui/tabs";
 import { MATERIAL_ROLL_STAGES, buildMaterialRolls, type MaterialRollRow } from "@/lib/mrp/materialRolls";
-import { batchShippingMap, flowTone, invoiceFlowStage, type FlowStage } from "@/lib/mrp/flowStatus";
+import { batchShippingMap, flowTone, invoiceFlowStage, returnedRollKeys, rollsByStageText, type FlowStage } from "@/lib/mrp/flowStatus";
 import { TransferMaterialModal, type TransferCandidate } from "@/components/mrp/transfer-material-modal";
 import { SetDeliveryModal } from "@/components/mrp/set-delivery-modal";
 import { WithdrawVendorModal } from "@/components/mrp/withdraw-vendor-modal";
@@ -59,6 +59,7 @@ type TrackingRow = {
   status: MaterialPoFullStatus;
   /** Status staging standar kiriman ini (lib/mrp/flowStatus.ts): tahap paling awal roll-rollnya. */
   flow: FlowStage;
+  flowRolls: Partial<Record<FlowStage, number>>;
   invoice?: RawMaterialInvoice;
 };
 
@@ -67,8 +68,8 @@ type TrackingRow = {
  *  (PAID, PRODUCTION, dst.) memakai lencana bawaan. Hanya tampilan; nilai status di data tidak berubah. */
 // Revisi 2026-11-16 (owner: "status hanya sampai good receipt, belum berubah"): status kiriman kini status staging standar dari roll-rollnya
 // (Paid ... Receiving Material, Resting, Cutting, Finish Good, Done FG, Packing, Delivery, GR DC), bukan lagi field status invoice yang berhenti di RECEIVING.
-function trackingStatusBadge(r: { flow: FlowStage }) {
-  return { label: r.flow, tone: flowTone(r.flow) };
+function trackingStatusBadge(r: { flow: FlowStage; flowRolls?: Partial<Record<FlowStage, number>> }) {
+  return { label: r.flow, tone: flowTone(r.flow), title: r.flowRolls ? rollsByStageText(r.flowRolls) : undefined };
 }
 
 /** Tanggal satu kiriman (satu invoice): kapan dikirim (Set Delivery), kapan roll pertama diterima vendor, dan kapan roll TERAKHIR
@@ -111,6 +112,7 @@ export default function MaterialTrackingPage() {
   const productionResults = useMrpStore((s) => s.productionResults);
   const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
   const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
+  const materialClaimHistory = useMrpStore((s) => s.materialClaimHistory);
   const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
   const setInvoicesDelivery = useMrpStore((s) => s.setInvoicesDelivery);
   const transferMaterial = useMrpStore((s) => s.transferMaterial);
@@ -185,6 +187,7 @@ export default function MaterialTrackingPage() {
   };
   const flowBatchByCode = new Map(productionBatches.filter((b) => b.codeRoll).map((b) => [b.codeRoll as string, b]));
   const flowShipping = batchShippingMap(deliveryKolis, warehouseReceipts);
+  const flowReturned = returnedRollKeys(materialClaimHistory);
   const invoiceRows: TrackingRow[] = invoices.map((i) => {
     const po = materialPOs.find((p) => p.id === i.poId);
     const batchStartedProduction = i.status === "WAITING_PRODUCTION" || i.status === "PRODUCTION_DONE";
@@ -210,7 +213,10 @@ export default function MaterialTrackingPage() {
         batchStartedProduction && po
           ? materialPoFullStatus(po, invoices, productionBatches, productionResults, mrpDetails, deliveryKolis, vendorInvoices, maklonPOs)
           : invoiceOwnStatus[i.status],
-      flow: invoiceFlowStage(i, flowBatchByCode, flowShipping),
+      ...(() => {
+        const f = invoiceFlowStage(i, flowBatchByCode, flowShipping, flowReturned);
+        return { flow: f.stage, flowRolls: f.rollsByStage };
+      })(),
       invoice: i,
     };
   });
@@ -291,7 +297,18 @@ export default function MaterialTrackingPage() {
       label: "Status",
       default: true,
       aggregate: aggSame((r) => trackingStatusBadge(r).label, (v) => <StatusPill tone={rows.map(trackingStatusBadge).find((b) => b.label === v)?.tone ?? "neutral"}>{v}</StatusPill>),
-      render: (r) => <StatusPill tone={trackingStatusBadge(r).tone}>{trackingStatusBadge(r).label}</StatusPill>,
+      render: (r) => {
+        const b = trackingStatusBadge(r);
+        // Rincian roll per tahap (owner 2026-11-16): status = tahap paling AWAL, jadi tampilkan juga berapa roll yang sudah lebih maju.
+        const total = Object.values(r.flowRolls).reduce((s, n) => s + (n ?? 0), 0);
+        const ahead = total - (r.flowRolls[r.flow] ?? 0);
+        return (
+          <span className="flex items-center gap-1.5" title={b.title}>
+            <StatusPill tone={b.tone}>{b.label}</StatusPill>
+            {ahead > 0 && <span className="font-sans text-[10.5px] text-text-muted">+{ahead} roll lebih maju</span>}
+          </span>
+        );
+      },
     },
     { key: "tglInvoice", label: "Tgl Invoice", default: false, render: (r) => formatDate(r.tglInvoice) },
     { key: "tglBayar", label: "Tgl Bayar", default: false, render: (r) => formatDate(r.tglPayment) },
