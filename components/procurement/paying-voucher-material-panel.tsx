@@ -1,6 +1,9 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { useState } from "react";
+import { DataTable, aggSame, aggSum, type ColumnDef, type FilterDef } from "@/components/mrp/data-table";
+import { SidePanel } from "@/components/ui/side-panel";
+import { KpiCard } from "@/components/ui/kpi-card";
 import { ClosePoReasonModal } from "@/components/mrp/close-po-reason-modal";
 import { PayingVoucherWizard } from "@/components/mrp/paying-voucher-wizard";
 import { Button } from "@/components/ui/button";
@@ -17,8 +20,7 @@ import { viewAttachments } from "@/lib/mrp/attachments";
 // Revisi 2026-09-08 (bug fix popup blocked): openPreviewWindow/fillPreviewWindow -- lihat
 // catatan panjang di lib/mrp/clientFiles.ts.
 import { viewInvoiceBuktiPv } from "@/lib/mrp/viewInvoicePv";
-import { SysadminTd, SysadminTh } from "@/components/sysadmin/correction-dialog";
-import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { materialInvoiceVoidCorrections } from "@/components/sysadmin/procurement-corrections";
 
 function viewPaymentProof(invoiceId: string) {
@@ -39,7 +41,6 @@ function viewPaymentProof(invoiceId: string) {
  *  gaya visual (border, StatusPill, chevron ▸/▾) dengan tabel PO Material supaya kedua halaman
  *  terasa satu keluarga desain. */
 export function PayingVoucherMaterialPanel() {
-  const sysadminMode = useSysadminMode();
   const materialPOs = useMrpStore((s) => s.materialPOs);
   const invoices = useMrpStore((s) => s.invoices);
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
@@ -63,92 +64,17 @@ export function PayingVoucherMaterialPanel() {
     return true;
   }
 
-  // Pohon "Belum Invoice": No MRP -> Supplier -> leaf = 1 PO material (sama pola grouping dengan
-  // materialMrpSummaries/supplierSummariesForMrp di po-approval/page.tsx).
-  const [expandedMrpBelum, setExpandedMrpBelum] = useState<string | null>(null);
-  const [expandedSupplierBelum, setExpandedSupplierBelum] = useState<string | null>(null);
-  const [expandedPoBelum, setExpandedPoBelum] = useState<string | null>(null);
-
-  // Pohon "Riwayat PV": No MRP -> Supplier -> leaf = 1 invoice/PV.
-  const [expandedMrpRiwayat, setExpandedMrpRiwayat] = useState<string | null>(null);
-  const [expandedSupplierRiwayat, setExpandedSupplierRiwayat] = useState<string | null>(null);
-  const [expandedInvoiceRiwayat, setExpandedInvoiceRiwayat] = useState<string | null>(null);
+  // Pola PPIC (owner 2026-11-16): dua pohon tabel lama (No MRP -> Supplier -> PO / PV) diganti tabel bersama dengan kelompok
+  // bawaan No. MRP > Supplier, rincian di panel samping, kartu mengikuti filter. Wizard Buat PV dibuka di panel samping.
+  const [shownOpenIds, setShownOpenIds] = useState<Set<string> | null>(null);
+  const [shownInvIds, setShownInvIds] = useState<Set<string> | null>(null);
 
   const openPOs = materialPOs.filter((po) => po.status !== "CANCELLED" && (po.approved || po.earlyRelease) && po.invoicedRolls < po.rollCount);
+  const vendorName = (id: string) => VENDOR_PRODUKSI[id]?.name ?? id;
+  const supplierOf = (s: string) => s || "Belum ada supplier";
+  const uniqSorted = (xs: string[]) => Array.from(new Set(xs.filter(Boolean))).sort((a, b) => a.localeCompare(b, "id-ID", { numeric: true }));
+  const sortedInvoices = [...invoices].sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID", { numeric: true }));
 
-  const belumMrpSummaries = (() => {
-    const map = new Map<string, MaterialPO[]>();
-    for (const po of openPOs) {
-      if (!map.has(po.mrpId)) map.set(po.mrpId, []);
-      map.get(po.mrpId)!.push(po);
-    }
-    return Array.from(map.entries())
-      .map(([mrpId, pos]) => ({
-        mrpId,
-        pos,
-        supplierCount: new Set(pos.map((p) => p.supplier || "— Belum ada supplier —")).size,
-        totalRollSisa: pos.reduce((sum, p) => sum + (p.rollCount - p.invoicedRolls), 0),
-        totalRoll: pos.reduce((sum, p) => sum + p.rollCount, 0),
-        totalNilai: pos.reduce((sum, p) => sum + p.amount, 0),
-      }))
-      .sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID"));
-  })();
-
-  function belumSupplierSummariesForMrp(pos: MaterialPO[]) {
-    const map = new Map<string, MaterialPO[]>();
-    for (const p of pos) {
-      const key = p.supplier || "— Belum ada supplier —";
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(p);
-    }
-    return Array.from(map.entries())
-      .map(([supplier, ps]) => ({
-        supplier,
-        pos: ps,
-        vendorCount: new Set(ps.map((p) => p.vendorProduksi)).size,
-        totalRollSisa: ps.reduce((sum, p) => sum + (p.rollCount - p.invoicedRolls), 0),
-        totalRoll: ps.reduce((sum, p) => sum + p.rollCount, 0),
-        totalNilai: ps.reduce((sum, p) => sum + p.amount, 0),
-      }))
-      .sort((a, b) => a.supplier.localeCompare(b.supplier, "id-ID"));
-  }
-
-  const riwayatMrpSummaries = (() => {
-    const map = new Map<string, RawMaterialInvoice[]>();
-    for (const inv of invoices) {
-      if (!map.has(inv.mrpId)) map.set(inv.mrpId, []);
-      map.get(inv.mrpId)!.push(inv);
-    }
-    return Array.from(map.entries())
-      .map(([mrpId, invs]) => ({
-        mrpId,
-        invs,
-        supplierCount: new Set(invs.map((i) => i.supplier || "— Belum ada supplier —")).size,
-        totalNilai: invs.reduce((sum, i) => sum + i.totalBiaya, 0),
-      }))
-      .sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID"));
-  })();
-
-  function riwayatSupplierSummariesForMrp(invs: RawMaterialInvoice[]) {
-    const map = new Map<string, RawMaterialInvoice[]>();
-    for (const i of invs) {
-      const key = i.supplier || "— Belum ada supplier —";
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(i);
-    }
-    return Array.from(map.entries())
-      .map(([supplier, is_]) => ({
-        supplier,
-        invs: is_,
-        vendorCount: new Set(is_.map((i) => i.destinationVendor)).size,
-        totalNilai: is_.reduce((sum, i) => sum + i.totalBiaya, 0),
-      }))
-      .sort((a, b) => a.supplier.localeCompare(b.supplier, "id-ID"));
-  }
-
-  // Rincian per warna/lengan 1 invoice (leaf tingkat 3, tab "Riwayat PV") -- rate di ColorEntry
-  // adalah harga PER KG (lihat catatan sama di components/finance/payment-panel.tsx), subtotal =
-  // hargaPerRoll * total kg semua roll warna itu.
   function invoiceColorBreakdown(inv: RawMaterialInvoice) {
     return (
       <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
@@ -179,451 +105,292 @@ export function PayingVoucherMaterialPanel() {
     );
   }
 
+  /** Rincian warna PO yang belum di-PV-kan: total roll, yang sudah di-PV-kan, sisa, dan entitasnya (owner 2026-10-18). */
+  function poColorBreakdown(p: MaterialPO) {
+    const remaining = p.rollCount - p.invoicedRolls;
+    return (
+      <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
+        <table className="w-full border-collapse font-sans text-[11.5px] text-[#31414F]">
+          <thead>
+            <tr className="bg-[#F2F4F7] text-[10px] font-medium uppercase tracking-wider text-text-muted">
+              <th className="px-3 py-1.5 text-left">Warna · lengan</th>
+              <th className="px-3 py-1.5 text-right">Roll total</th>
+              <th className="px-3 py-1.5 text-right">Sudah di-PV</th>
+              <th className="px-3 py-1.5 text-right">Sisa</th>
+              <th className="px-3 py-1.5 text-left">Entitas</th>
+            </tr>
+          </thead>
+          <tbody>
+            {p.colorBreakdown.map((c) => {
+              const done = p.invoicedByColor[`${c.warna}|${c.lengan}`] ?? 0;
+              const sisa = Math.max(0, c.rollCount - done);
+              return (
+                <tr key={c.warna + c.lengan} className="border-t border-[#F1F4F7]">
+                  <td className="px-3 py-1.5 font-medium text-text-primary">
+                    {c.warna} · {c.lengan}
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">{c.rollCount}</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums text-text-muted">{done}</td>
+                  <td className={"px-3 py-1.5 text-right font-mono tabular-nums " + (sisa === 0 ? "text-success-fg" : "font-semibold text-text-primary")}>{sisa}</td>
+                  <td className="px-3 py-1.5 text-text-muted">{c.entitas ?? "—"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-accent-blue bg-info-bg font-semibold text-info-fg">
+              <td className="px-3 py-1.5">{p.colorBreakdown.length} baris warna</td>
+              <td className="px-3 py-1.5 text-right font-mono tabular-nums">{p.rollCount}</td>
+              <td className="px-3 py-1.5 text-right font-mono tabular-nums">{p.invoicedRolls}</td>
+              <td className="px-3 py-1.5 text-right font-mono tabular-nums">{remaining}</td>
+              <td className="px-3 py-1.5" />
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    );
+  }
+
   const selectedPo = openPOs.find((p) => p.id === selectedPoId) ?? null;
   const afterSubmitPo = afterSubmitPoId ? materialPOs.find((p) => p.id === afterSubmitPoId) : null;
   const closingPo = closingPoId ? materialPOs.find((p) => p.id === closingPoId) : null;
   const remainingAfter = afterSubmitPo ? afterSubmitPo.rollCount - afterSubmitPo.invoicedRolls : 0;
 
+  const shownOpen = shownOpenIds ? openPOs.filter((p) => shownOpenIds.has(p.id)) : openPOs;
+  const shownInv = shownInvIds ? sortedInvoices.filter((i) => shownInvIds.has(i.id)) : sortedInvoices;
+  const fmtRoll = (n: number) => n.toLocaleString("id-ID", { maximumFractionDigits: 2 });
+  const bold = (x: React.ReactNode) => <span className="font-semibold">{x}</span>;
+
+  const openFilters: FilterDef<MaterialPO>[] = [
+    { label: "No. MRP", options: uniqSorted(openPOs.map((p) => p.mrpId)).reverse(), test: (p, v) => p.mrpId === v },
+    { label: "Supplier", options: uniqSorted(openPOs.map((p) => supplierOf(p.supplier))), test: (p, v) => supplierOf(p.supplier) === v },
+    { label: "Vendor", options: uniqSorted(openPOs.map((p) => vendorName(p.vendorProduksi))), test: (p, v) => vendorName(p.vendorProduksi) === v },
+  ];
+  const openColumns: ColumnDef<MaterialPO>[] = [
+    { key: "mrp", label: "No. MRP", default: true, aggregate: aggSame((p) => p.mrpId), render: (p) => <span className="font-mono">{p.mrpId}</span> },
+    { key: "supplier", label: "Supplier", default: true, aggregate: aggSame((p) => supplierOf(p.supplier)), render: (p) => supplierOf(p.supplier) },
+    { key: "vendor", label: "Vendor", default: true, aggregate: aggSame((p) => vendorName(p.vendorProduksi)), render: (p) => vendorName(p.vendorProduksi) },
+    { key: "sisa", label: "Roll sisa", default: true, align: "right", aggregate: aggSum((p) => p.rollCount - p.invoicedRolls, (n) => bold(fmtRoll(n))), render: (p) => <span className="font-mono">{fmtRoll(p.rollCount - p.invoicedRolls)}</span> },
+    { key: "roll", label: "Roll total", default: true, align: "right", aggregate: aggSum((p) => p.rollCount, (n) => bold(fmtRoll(n))), render: (p) => <span className="font-mono text-text-muted">{fmtRoll(p.rollCount)}</span> },
+    { key: "nilai", label: "Nilai", default: true, align: "right", aggregate: aggSum((p) => p.amount, (n) => bold(formatRupiah(n))), render: (p) => <span className="font-mono">{formatRupiah(p.amount)}</span> },
+    {
+      key: "aksi",
+      label: "Aksi",
+      default: true,
+      render: (p) => (
+        <span className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+          <Button
+            onClick={() => {
+              setQueue(null);
+              setSelectedPoId(p.id);
+              setAfterSubmitPoId(null);
+            }}
+            variant="primary"
+            size="xs"
+          >
+            Buat PV
+          </Button>
+          <Button onClick={() => setClosingPoId(p.id)} variant="danger" size="xs">
+            Close
+          </Button>
+        </span>
+      ),
+    },
+  ];
+
+  const invStatus = (inv: RawMaterialInvoice) => invoiceBadge(inv.status);
+  const invFilters: FilterDef<RawMaterialInvoice>[] = [
+    { label: "No. MRP", options: uniqSorted(invoices.map((i) => i.mrpId)).reverse(), test: (i, v) => i.mrpId === v },
+    { label: "Supplier", options: uniqSorted(invoices.map((i) => supplierOf(i.supplier))), test: (i, v) => supplierOf(i.supplier) === v },
+    { label: "Vendor", options: uniqSorted(invoices.map((i) => vendorName(i.destinationVendor))), test: (i, v) => vendorName(i.destinationVendor) === v },
+    { label: "Status", options: uniqSorted(invoices.map((i) => invStatus(i).label)), test: (i, v) => invStatus(i).label === v },
+    { label: "Bukti bayar", options: ["Ada", "Belum"], test: (i, v) => (i.buktiBayarAt ? "Ada" : "Belum") === v },
+  ];
+  const invColumns: ColumnDef<RawMaterialInvoice>[] = [
+    { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (inv) => <SysadminActionsBar compact actions={materialInvoiceVoidCorrections(inv)} /> },
+    { key: "mrp", label: "No. MRP", default: true, aggregate: aggSame((i) => i.mrpId), render: (i) => <span className="font-mono">{i.mrpId}</span> },
+    { key: "supplier", label: "Supplier", default: true, aggregate: aggSame((i) => supplierOf(i.supplier)), render: (i) => supplierOf(i.supplier) },
+    { key: "vendor", label: "Vendor", default: true, aggregate: aggSame((i) => vendorName(i.destinationVendor)), render: (i) => vendorName(i.destinationVendor) },
+    { key: "nilai", label: "Nilai", default: true, align: "right", aggregate: aggSum((i) => i.totalBiaya, (n) => bold(formatRupiah(n))), render: (i) => <span className="font-mono">{formatRupiah(i.totalBiaya)}</span> },
+    {
+      key: "status",
+      label: "Status",
+      default: true,
+      aggregate: aggSame((i) => invStatus(i).label, (v) => <StatusPill tone={invoices.map(invStatus).find((b) => b.label === v)?.tone ?? "neutral"}>{v}</StatusPill>),
+      render: (inv) => (
+        <span className="flex flex-col items-start gap-1">
+          <StatusPill tone={invStatus(inv).tone}>{invStatus(inv).label}</StatusPill>
+          {inv.status !== "INVOICED" && invoiceAwaitingPayment(inv) && (
+            <span title="Material sudah diterima vendor lebih awal (dispensasi Sysadmin), tagihan belum dibayar Finance">
+              <StatusPill tone="warning">TERIMA AWAL · BELUM DIBAYAR</StatusPill>
+            </span>
+          )}
+        </span>
+      ),
+    },
+    {
+      key: "lampiran",
+      label: "Lampiran Invoice",
+      default: true,
+      render: (inv) =>
+        inv.buktiPvAvailable ? (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              void viewInvoiceBuktiPv(inv.id);
+            }}
+            className="font-sans text-[11px] font-semibold text-action-primary underline"
+          >
+            Lihat / Download
+          </button>
+        ) : (
+          <span className="font-sans text-[11px] text-text-muted">—</span>
+        ),
+    },
+    {
+      key: "bukti",
+      label: "Bukti Bayar",
+      default: true,
+      render: (inv) =>
+        inv.buktiBayarAt ? (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              viewPaymentProof(inv.id);
+            }}
+            className="font-sans text-[11px] font-semibold text-action-primary underline"
+          >
+            Lihat / Download
+          </button>
+        ) : (
+          <span className="font-sans text-[11px] text-text-muted">—</span>
+        ),
+    },
+    { key: "tglBukti", label: "Tgl Upload Bukti", default: true, render: (inv) => <span className="font-sans text-[11px]">{inv.buktiBayarAt ? formatDateTime(inv.buktiBayarAt) : "—"}</span> },
+  ];
+
   return (
     <>
-      {/* Item revisi 2026-09-17 (owner: "bukan tab -- buat tabel yang berbeda saja tapi masih satu
-         halaman"): dulu sempat dicoba sebagai sub-tab "Belum Invoice"/"Riwayat PV" (perlu diklik
-         buat pindah) -- owner menegaskan maunya 2 tabel terpisah TAMPIL SEKALIGUS di halaman yang
-         sama, bukan disembunyikan di balik tab. Kedua tabel di bawah SELALU dirender bersamaan. */}
-      <div className="overflow-hidden border border-border-subtle bg-surface-card">
-          <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">PO Material — belum invoice</div>
-          {belumMrpSummaries.length === 0 && (
-            <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Tidak ada PO material yang perlu diinvoice.</div>
-          )}
-          {belumMrpSummaries.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
-                    <th className="px-5 py-[9px] text-left">No MRP / Supplier / Vendor Produksi</th>
-                    <th className="px-3 py-[9px] text-right">Roll Sisa</th>
-                    <th className="px-3 py-[9px] text-right">Roll Total</th>
-                    <th className="px-3 py-[9px] text-right">Nilai</th>
-                    <th className="px-3 py-[9px] text-left">Status</th>
-                    <th className="px-3 py-[9px] text-left">Aksi</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {belumMrpSummaries.map((m) => {
-                    const mrpActive = expandedMrpBelum === m.mrpId;
-                    return (
-                      <Fragment key={m.mrpId}>
-                        <tr
-                          onClick={() => {
-                            const next = mrpActive ? null : m.mrpId;
-                            setExpandedMrpBelum(next);
-                            setExpandedSupplierBelum(null);
-                            setExpandedPoBelum(null);
-                            // Item revisi 2026-09-17 (bug report owner: "klik card MRP/supplier lain
-                            // tapi container Buat PV masih stuck terbuka") -- wizard (selectedPoId)
-                            // & banner "sisa roll" (afterSubmitPoId) SENGAJA tidak terikat ke baris
-                            // pohon mana pun (dirender sekali di bawah tabel, lihat JSX di bawah),
-                            // jadi navigasi pindah MRP/supplier/PO TIDAK PERNAH otomatis menutupnya
-                            // kalau tidak di-reset manual di sini -- ditutup eksplisit di SETIAP titik
-                            // navigasi (klik baris MRP/Supplier/PO mana pun), bukan cuma tombol Batal.
-                            setSelectedPoId(null);
-                            setAfterSubmitPoId(null);
-                          }}
-                          className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] hover:bg-[#FAFBFC] " + (mrpActive ? "bg-info-bg" : "")}
-                        >
-                          <td className="px-5 py-[11px]">
-                            <span className="mr-1.5 text-text-muted">{mrpActive ? "▾" : "▸"}</span>
-                            <span className="font-mono font-semibold text-text-primary">{m.mrpId}</span>
-                            <span className="ml-1.5 font-sans text-[10.5px] text-text-muted">{m.supplierCount} supplier</span>
-                          </td>
-                          <td className="px-3 py-[11px] text-right font-mono tabular-nums">{m.totalRollSisa}</td>
-                          <td className="px-3 py-[11px] text-right font-mono tabular-nums text-text-muted">{m.totalRoll}</td>
-                          <td className="px-3 py-[11px] text-right font-mono tabular-nums font-medium">{formatRupiah(m.totalNilai)}</td>
-                          <td className="px-3 py-[11px]">
-                            <StatusPill tone="warning">{m.pos.length} PO</StatusPill>
-                          </td>
-                          <td className="px-3 py-[11px]" />
-                        </tr>
-                        {mrpActive &&
-                          belumSupplierSummariesForMrp(m.pos).map((s) => {
-                            const supplierKey = `${m.mrpId}::${s.supplier}`;
-                            const supplierActive = expandedSupplierBelum === supplierKey;
-                            return (
-                              <Fragment key={supplierKey}>
-                                <tr
-                                  onClick={() => {
-                                    const next = supplierActive ? null : supplierKey;
-                                    setExpandedSupplierBelum(next);
-                                    setExpandedPoBelum(null);
-                                    setSelectedPoId(null);
-                                    setAfterSubmitPoId(null);
-                                  }}
-                                  className={"cursor-pointer border-b border-[#F1F4F7] bg-[#FBFCFD] font-sans text-[11.5px] text-[#31414F] hover:bg-[#F2F5F8] " + (supplierActive ? "bg-info-bg" : "")}
-                                >
-                                  <td className="py-[10px] pl-10 pr-3">
-                                    <span className="mr-1.5 text-text-muted">{supplierActive ? "▾" : "▸"}</span>
-                                    <span className="font-medium text-text-primary">{s.supplier}</span>
-                                    <span className="ml-1.5 font-mono text-[10.5px] text-text-muted">{s.vendorCount} vendor</span>
-                                  </td>
-                                  <td className="px-3 py-[10px] text-right font-mono tabular-nums">{s.totalRollSisa}</td>
-                                  <td className="px-3 py-[10px] text-right font-mono tabular-nums text-text-muted">{s.totalRoll}</td>
-                                  <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(s.totalNilai)}</td>
-                                  <td className="px-3 py-[10px]">
-                                    <StatusPill tone="warning">{s.pos.length} PO</StatusPill>
-                                  </td>
-                                  <td className="px-3 py-[10px]" />
-                                </tr>
-                                {supplierActive &&
-                                  s.pos.map((p) => {
-                                    const poActive = expandedPoBelum === p.id;
-                                    const remaining = p.rollCount - p.invoicedRolls;
-                                    return (
-                                      <Fragment key={p.id}>
-                                      <tr
-                                        onClick={() => {
-                                          setExpandedPoBelum(poActive ? null : p.id);
-                                          // Kalau wizard sedang terbuka untuk PO LAIN, klik baris PO
-                                          // ini (bukan tombol Buat PV, itu sudah stopPropagation)
-                                          // menutupnya juga -- lihat catatan di baris MRP di atas.
-                                          setSelectedPoId(null);
-                                          setAfterSubmitPoId(null);
-                                        }}
-                                        className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-[11.5px] text-[#31414F] hover:bg-[#FAFBFC] " + (poActive ? "bg-info-bg" : "")}
-                                      >
-                                        <td className="py-[10px] pl-16 pr-3">
-                                          <span className="mr-1.5 text-text-muted">{poActive ? "▾" : "▸"}</span>
-                                          <span className="font-medium text-text-primary">{VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi}</span>
-                                          <span className="ml-1.5 font-mono text-[10.5px] text-text-muted">{p.id}</span>
-                                        </td>
-                                        <td className="px-3 py-[10px] text-right font-mono tabular-nums">{remaining}</td>
-                                        <td className="px-3 py-[10px] text-right font-mono tabular-nums text-text-muted">{p.rollCount}</td>
-                                        <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(p.amount)}</td>
-                                        <td className="px-3 py-[10px]">
-                                          <StatusPill tone="warning">Belum Invoice</StatusPill>
-                                        </td>
-                                        <td className="px-3 py-[10px]">
-                                          <div className="flex items-center gap-1.5">
-                                            <Button
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                setQueue(null);
-                                                setSelectedPoId(p.id);
-                                                setAfterSubmitPoId(null);
-                                              }}
-                                              variant="primary"
-                                              size="xs"
-                                            >
-                                              Buat PV
-                                            </Button>
-                                            <Button
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                setClosingPoId(p.id);
-                                              }}
-                                              variant="danger"
-                                              size="xs"
-                                            >
-                                              Close
-                                            </Button>
-                                          </div>
-                                        </td>
-                                      </tr>
-                                      {/* Revisi 2026-10-18 (owner: "ketika card di click itu bisa ketahuan warna apa saja yang ada di situ"):
-                                         rincian warna PO -- total roll, yang sudah di-PV-kan, sisa, dan entitasnya. */}
-                                      {poActive && (
-                                        <tr>
-                                          <td colSpan={6} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
-                                            <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
-                                              <table className="w-full border-collapse font-sans text-[11.5px] text-[#31414F]">
-                                                <thead>
-                                                  <tr className="bg-[#F2F4F7] text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                                                    <th className="px-3 py-1.5 text-left">Warna · lengan</th>
-                                                    <th className="px-3 py-1.5 text-right">Roll total</th>
-                                                    <th className="px-3 py-1.5 text-right">Sudah di-PV</th>
-                                                    <th className="px-3 py-1.5 text-right">Sisa</th>
-                                                    <th className="px-3 py-1.5 text-left">Entitas</th>
-                                                  </tr>
-                                                </thead>
-                                                <tbody>
-                                                  {p.colorBreakdown.map((c) => {
-                                                    const done = p.invoicedByColor[`${c.warna}|${c.lengan}`] ?? 0;
-                                                    const sisa = Math.max(0, c.rollCount - done);
-                                                    return (
-                                                      <tr key={c.warna + c.lengan} className="border-t border-[#F1F4F7]">
-                                                        <td className="px-3 py-1.5 font-medium text-text-primary">
-                                                          {c.warna} · {c.lengan}
-                                                        </td>
-                                                        <td className="px-3 py-1.5 text-right font-mono tabular-nums">{c.rollCount}</td>
-                                                        <td className="px-3 py-1.5 text-right font-mono tabular-nums text-text-muted">{done}</td>
-                                                        <td className={"px-3 py-1.5 text-right font-mono tabular-nums " + (sisa === 0 ? "text-success-fg" : "font-semibold text-text-primary")}>{sisa}</td>
-                                                        <td className="px-3 py-1.5 text-text-muted">{c.entitas ?? "—"}</td>
-                                                      </tr>
-                                                    );
-                                                  })}
-                                                </tbody>
-                                                <tfoot>
-                                                  <tr className="border-t-2 border-accent-blue bg-info-bg font-semibold text-info-fg">
-                                                    <td className="px-3 py-1.5">{p.colorBreakdown.length} baris warna</td>
-                                                    <td className="px-3 py-1.5 text-right font-mono tabular-nums">{p.rollCount}</td>
-                                                    <td className="px-3 py-1.5 text-right font-mono tabular-nums">{p.invoicedRolls}</td>
-                                                    <td className="px-3 py-1.5 text-right font-mono tabular-nums">{remaining}</td>
-                                                    <td className="px-3 py-1.5" />
-                                                  </tr>
-                                                </tfoot>
-                                              </table>
-                                            </div>
-                                          </td>
-                                        </tr>
-                                      )}
-                                      </Fragment>
-                                    );
-                                  })}
-                              </Fragment>
-                            );
-                          })}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {selectedPo && (
-            <div className="border-t border-border-subtle p-4">
-              <PayingVoucherWizard
-                // key=po.id -- WAJIB supaya React benar-benar me-remount wizard tiap kali PO yang
-                // dipilih berganti (bukan cuma re-render instance yang sama dengan prop baru).
-                // Tanpa ini, semua useState di dalam wizard (activeKey/warna terpilih, entries,
-                // dst.) yang di-inisialisasi dari `po` HANYA jalan sekali saat mount pertama --
-                // begitu user pindah dari PO A ke PO B lewat "Buat PV", activeKey nyangkut di
-                // warna PO A yang tidak ada di PO B, jadi form pilih warna/harga per roll tidak
-                // muncul sama sekali (harus mulai dari PO paling atas dulu baru "kepancing" state
-                // segar).
-                key={`${selectedPo.id}:${queue?.poId === selectedPo.id ? queue.seq : 0}`}
-                po={selectedPo}
-                mrpDetails={mrpDetails}
-                onCancel={() => {
-                  setQueue(null);
-                  setSelectedPoId(null);
-                }}
-                autoFile={queue?.poId === selectedPo.id ? queue.current : null}
-                onQueue={(rest) => setQueue({ poId: selectedPo.id, files: rest, total: rest.length + 1, done: 0, current: null, seq: 0 })}
-                queueInfo={queue?.poId === selectedPo.id ? { position: queue.done + 1, total: queue.total, remaining: queue.files.length } : null}
-                onSkipQueued={() => {
-                  advanceQueue(selectedPo.id);
-                }}
-                onCancelQueue={() => setQueue(null)}
-                onBookDirect={(input) => bookInvoice(selectedPo.id, input)}
-                onBatchDone={(leftover) => {
-                  // Ringkasan banyak invoice selesai: sisa yang belum tersimpan dikerjakan satu per satu; kalau tidak ada, tutup wizard.
-                  if (leftover.length > 0) {
-                    const [first, ...rest] = leftover;
-                    setQueue({ poId: selectedPo.id, files: rest, total: leftover.length, done: 0, current: first, seq: 1 });
-                  } else {
-                    setAfterSubmitPoId(selectedPo.id);
-                    setSelectedPoId(null);
-                  }
-                }}
-                onSubmit={async (input) => {
-                  // WAJIB di-await -- lihat catatan panjang di paying-voucher-wizard.tsx. Kalau
-                  // bookInvoice gagal (throw), biarkan error itu naik ke try/catch wizard (JANGAN
-                  // ditangkap di sini) supaya wizard TIDAK ikut-ikutan pindah ke state "sukses"
-                  // kalau sebenarnya gagal.
-                  await bookInvoice(selectedPo.id, input);
-                  // Masih ada invoice di antrean untuk PO ini -> buka wizard lagi dengan file berikutnya (tanpa menutup).
-                  if (advanceQueue(selectedPo.id)) return;
-                  setAfterSubmitPoId(selectedPo.id);
-                  setSelectedPoId(null);
-                }}
-              />
-            </div>
-          )}
-
-          {afterSubmitPo && remainingAfter > 0 && (
-            <div className="border-t border-[#F0DFC2] bg-warning-bg px-5 py-4">
-              <div className="font-sans text-xs font-semibold text-warning-fg">Sisa {remainingAfter} roll belum tercover invoice ini.</div>
-              <div className="mt-2 flex gap-2">
-                <button
-                  onClick={() => {
-                    setSelectedPoId(afterSubmitPo.id);
-                    setAfterSubmitPoId(null);
-                  }}
-                  className="rounded-md bg-action-primary px-3.5 py-[7px] font-sans text-xs font-semibold text-white"
-                >
-                  Buat invoice sisa
-                </button>
-                <button onClick={() => setAfterSubmitPoId(null)} className="rounded-md border border-[#CBD5DF] px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary">
-                  Nanti saja
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-      <div className="overflow-hidden border border-border-subtle bg-surface-card">
-          <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Riwayat Paying Voucher</div>
-          {riwayatMrpSummaries.length === 0 && (
-            <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada PV yang pernah diajukan.</div>
-          )}
-          {riwayatMrpSummaries.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
-                    <th className="px-5 py-[9px] text-left">No MRP / Supplier / Vendor Produksi</th>
-                    <th className="px-3 py-[9px] text-right">Nilai</th>
-                    <th className="px-3 py-[9px] text-left">Status</th>
-                    <th className="px-3 py-[9px] text-left">Lampiran Invoice</th>
-                    <th className="px-3 py-[9px] text-left">Bukti Pembayaran</th>
-                    <th className="px-3 py-[9px] text-left">Tgl Upload Bukti</th>
-                    <SysadminTh />
-                  </tr>
-                </thead>
-                <tbody>
-                  {riwayatMrpSummaries.map((m) => {
-                    const mrpActive = expandedMrpRiwayat === m.mrpId;
-                    return (
-                      <Fragment key={m.mrpId}>
-                        <tr
-                          onClick={() => {
-                            const next = mrpActive ? null : m.mrpId;
-                            setExpandedMrpRiwayat(next);
-                            setExpandedSupplierRiwayat(null);
-                            setExpandedInvoiceRiwayat(null);
-                          }}
-                          className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] hover:bg-[#FAFBFC] " + (mrpActive ? "bg-info-bg" : "")}
-                        >
-                          <td className="px-5 py-[11px]">
-                            <span className="mr-1.5 text-text-muted">{mrpActive ? "▾" : "▸"}</span>
-                            <span className="font-mono font-semibold text-text-primary">{m.mrpId}</span>
-                            <span className="ml-1.5 font-sans text-[10.5px] text-text-muted">{m.supplierCount} supplier</span>
-                          </td>
-                          <td className="px-3 py-[11px] text-right font-mono tabular-nums font-medium">{formatRupiah(m.totalNilai)}</td>
-                          <td className="px-3 py-[11px]">
-                            <StatusPill tone="neutral">{m.invs.length} PV</StatusPill>
-                          </td>
-                          <td className="px-3 py-[11px]" />
-                          <td className="px-3 py-[11px]" />
-                          <td className="px-3 py-[11px]" />
-                          <SysadminTd className="py-[11px]" />
-                        </tr>
-                        {mrpActive &&
-                          riwayatSupplierSummariesForMrp(m.invs).map((s) => {
-                            const supplierKey = `${m.mrpId}::${s.supplier}`;
-                            const supplierActive = expandedSupplierRiwayat === supplierKey;
-                            return (
-                              <Fragment key={supplierKey}>
-                                <tr
-                                  onClick={() => {
-                                    const next = supplierActive ? null : supplierKey;
-                                    setExpandedSupplierRiwayat(next);
-                                    setExpandedInvoiceRiwayat(null);
-                                  }}
-                                  className={"cursor-pointer border-b border-[#F1F4F7] bg-[#FBFCFD] font-sans text-[11.5px] text-[#31414F] hover:bg-[#F2F5F8] " + (supplierActive ? "bg-info-bg" : "")}
-                                >
-                                  <td className="py-[10px] pl-10 pr-3">
-                                    <span className="mr-1.5 text-text-muted">{supplierActive ? "▾" : "▸"}</span>
-                                    <span className="font-medium text-text-primary">{s.supplier}</span>
-                                    <span className="ml-1.5 font-mono text-[10.5px] text-text-muted">{s.vendorCount} vendor</span>
-                                  </td>
-                                  <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(s.totalNilai)}</td>
-                                  <td className="px-3 py-[10px]">
-                                    <StatusPill tone="neutral">{s.invs.length} PV</StatusPill>
-                                  </td>
-                                  <td className="px-3 py-[10px]" />
-                                  <td className="px-3 py-[10px]" />
-                                  <td className="px-3 py-[10px]" />
-                                  <SysadminTd />
-                                </tr>
-                                {supplierActive &&
-                                  s.invs.map((inv) => {
-                                    const invActive = expandedInvoiceRiwayat === inv.id;
-                                    const badge = invoiceBadge(inv.status);
-                                    return (
-                                      <Fragment key={inv.id}>
-                                        <tr
-                                          onClick={() => setExpandedInvoiceRiwayat(invActive ? null : inv.id)}
-                                          className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-[11.5px] text-[#31414F] hover:bg-[#FAFBFC] " + (invActive ? "bg-info-bg" : "")}
-                                        >
-                                          <td className="py-[10px] pl-16 pr-3">
-                                            <span className="mr-1.5 text-text-muted">{invActive ? "▾" : "▸"}</span>
-                                            <span className="font-medium text-text-primary">{VENDOR_PRODUKSI[inv.destinationVendor]?.name ?? inv.destinationVendor}</span>
-                                            <span className="ml-1.5 font-mono text-[10.5px] text-text-muted">{inv.noInvoiceVendor || inv.id}</span>
-                                          </td>
-                                          <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(inv.totalBiaya)}</td>
-                                          <td className="px-3 py-[10px]">
-                                            <div className="flex flex-col items-start gap-1">
-                                              <StatusPill tone={badge.tone}>{badge.label}</StatusPill>
-                                              {inv.status !== "INVOICED" && invoiceAwaitingPayment(inv) && (
-                                                <span title="Material sudah diterima vendor lebih awal (dispensasi Sysadmin), tagihan belum dibayar Finance">
-                                                  <StatusPill tone="warning">TERIMA AWAL · BELUM DIBAYAR</StatusPill>
-                                                </span>
-                                              )}
-                                            </div>
-                                          </td>
-                                          <td className="px-3 py-[10px]">
-                                            {inv.buktiPvAvailable ? (
-                                              <button
-                                                onClick={(e) => {
-                                                  e.stopPropagation();
-                                                  void viewInvoiceBuktiPv(inv.id);
-                                                }}
-                                                className="font-sans text-[11px] font-semibold text-action-primary underline"
-                                              >
-                                                Lihat / Download
-                                              </button>
-                                            ) : (
-                                              <span className="font-sans text-[11px] text-text-muted">—</span>
-                                            )}
-                                          </td>
-                                          <td className="px-3 py-[10px]">
-                                            {inv.buktiBayarAt ? (
-                                              <button
-                                                onClick={(e) => {
-                                                  e.stopPropagation();
-                                                  viewPaymentProof(inv.id);
-                                                }}
-                                                className="font-sans text-[11px] font-semibold text-action-primary underline"
-                                              >
-                                                Lihat / Download
-                                              </button>
-                                            ) : (
-                                              <span className="font-sans text-[11px] text-text-muted">—</span>
-                                            )}
-                                          </td>
-                                          <td className="px-3 py-[10px] font-sans text-[11px] text-[#31414F]">{inv.buktiBayarAt ? formatDateTime(inv.buktiBayarAt) : "—"}</td>
-                                          <SysadminTd actions={materialInvoiceVoidCorrections(inv)} />
-                                        </tr>
-                                        {invActive && (
-                                          <tr>
-                                            <td colSpan={6 + (sysadminMode ? 1 : 0)} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
-                                              {invoiceColorBreakdown(inv)}
-                                            </td>
-                                          </tr>
-                                        )}
-                                      </Fragment>
-                                    );
-                                  })}
-                              </Fragment>
-                            );
-                          })}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+      <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+        <KpiCard label="PO belum invoice" value={shownOpen.length} sub="PO Material yang tampil" accent="orange" />
+        <KpiCard label="Roll belum di-PV" value={fmtRoll(shownOpen.reduce((s, p) => s + p.rollCount - p.invoicedRolls, 0))} sub="roll" accent="purple" />
+        <KpiCard label="PV tercatat" value={shownInv.length} sub="riwayat yang tampil" accent="blue" />
+        <KpiCard label="Nilai PV" value={formatRupiah(shownInv.reduce((s, i) => s + i.totalBiaya, 0))} valueClassName="text-[20px]" sub="riwayat yang tampil" accent="teal" />
       </div>
 
+      <DataTable<MaterialPO>
+        title="PO Material belum invoice"
+        columns={openColumns}
+        rows={openPOs}
+        keyOf={(p) => p.id}
+        firstColumnLabel="No PO"
+        firstColumnRender={(p) => <span className="font-mono font-medium">{p.id}</span>}
+        filterDefs={openFilters}
+        defaultGroupBy={["No. MRP", "Supplier"]}
+        search={{ placeholder: "Cari no PO, MRP, supplier, vendor…", getText: (p) => `${p.id} ${p.mrpId} ${p.supplier} ${vendorName(p.vendorProduksi)}` }}
+        renderExpanded={(p) => poColorBreakdown(p)}
+        onFilteredRows={(list) => setShownOpenIds(new Set(list.map((p) => p.id)))}
+        emptyText="Tidak ada PO material yang perlu diinvoice."
+        nowrap
+      />
+
+      {afterSubmitPo && remainingAfter > 0 && (
+        <div className="rounded-lg border border-[#F0DFC2] bg-warning-bg px-5 py-4">
+          <div className="font-sans text-xs font-semibold text-warning-fg">
+            {afterSubmitPo.id}: sisa {remainingAfter} roll belum tercover invoice ini.
+          </div>
+          <div className="mt-2 flex gap-2">
+            <button
+              onClick={() => {
+                setSelectedPoId(afterSubmitPo.id);
+                setAfterSubmitPoId(null);
+              }}
+              className="rounded-md bg-action-primary px-3.5 py-[7px] font-sans text-xs font-semibold text-white"
+            >
+              Buat invoice sisa
+            </button>
+            <button onClick={() => setAfterSubmitPoId(null)} className="rounded-md border border-[#CBD5DF] px-3.5 py-[7px] font-sans text-xs font-semibold text-action-primary">
+              Nanti saja
+            </button>
+          </div>
+        </div>
+      )}
+
+      <DataTable<RawMaterialInvoice>
+        title="Riwayat Paying Voucher"
+        columns={invColumns}
+        rows={sortedInvoices}
+        keyOf={(i) => i.id}
+        firstColumnLabel="No Invoice"
+        firstColumnRender={(i) => <span className="font-mono font-medium">{i.noInvoiceVendor || i.id}</span>}
+        filterDefs={invFilters}
+        defaultGroupBy={["No. MRP", "Supplier"]}
+        search={{ placeholder: "Cari no invoice, MRP, supplier, vendor…", getText: (i) => `${i.noInvoiceVendor} ${i.id} ${i.mrpId} ${i.supplier} ${vendorName(i.destinationVendor)} ${invStatus(i).label}` }}
+        renderExpanded={(inv) => invoiceColorBreakdown(inv)}
+        onFilteredRows={(list) => setShownInvIds(new Set(list.map((i) => i.id)))}
+        emptyText="Belum ada PV yang pernah diajukan."
+        nowrap
+      />
+
       <div className="rounded-lg border border-border-subtle bg-surface-card px-5 py-4 text-center font-sans text-xs text-text-muted">
-        Status lengkap tiap PO material (invoice, delivery, receiving, dst) dipindahkan ke halaman{" "}
+        Status lengkap tiap PO material (invoice, delivery, receiving, dst) ada di halaman{" "}
         <a href="/procurement/material-tracking" className="font-semibold text-action-primary">
           Material Tracking
         </a>
         .
       </div>
+
+      {/* Wizard Buat PV di panel samping (pola PPIC: form besar di panel). Isi wizard dan alurnya tidak berubah. */}
+      <SidePanel
+        open={!!selectedPo}
+        onClose={() => {
+          setQueue(null);
+          setSelectedPoId(null);
+        }}
+        title={selectedPo ? `Buat PV · ${selectedPo.id}` : ""}
+        subtitle={selectedPo ? `${selectedPo.mrpId} · ${supplierOf(selectedPo.supplier)} · ${vendorName(selectedPo.vendorProduksi)}` : undefined}
+        width={1180}
+      >
+        {selectedPo && (
+          <PayingVoucherWizard
+            // key=po.id -- WAJIB supaya wizard di-remount tiap kali PO yang dipilih berganti (state di dalam wizard
+            // diinisialisasi dari `po` hanya saat mount).
+            key={`${selectedPo.id}:${queue?.poId === selectedPo.id ? queue.seq : 0}`}
+            po={selectedPo}
+            mrpDetails={mrpDetails}
+            onCancel={() => {
+              setQueue(null);
+              setSelectedPoId(null);
+            }}
+            autoFile={queue?.poId === selectedPo.id ? queue.current : null}
+            onQueue={(rest) => setQueue({ poId: selectedPo.id, files: rest, total: rest.length + 1, done: 0, current: null, seq: 0 })}
+            queueInfo={queue?.poId === selectedPo.id ? { position: queue.done + 1, total: queue.total, remaining: queue.files.length } : null}
+            onSkipQueued={() => {
+              advanceQueue(selectedPo.id);
+            }}
+            onCancelQueue={() => setQueue(null)}
+            onBookDirect={(input) => bookInvoice(selectedPo.id, input)}
+            onBatchDone={(leftover) => {
+              // Ringkasan banyak invoice selesai: sisa yang belum tersimpan dikerjakan satu per satu; kalau tidak ada, tutup wizard.
+              if (leftover.length > 0) {
+                const [first, ...rest] = leftover;
+                setQueue({ poId: selectedPo.id, files: rest, total: leftover.length, done: 0, current: first, seq: 1 });
+              } else {
+                setAfterSubmitPoId(selectedPo.id);
+                setSelectedPoId(null);
+              }
+            }}
+            onSubmit={async (input) => {
+              // WAJIB di-await (lihat paying-voucher-wizard.tsx): kalau bookInvoice gagal, error naik ke wizard.
+              await bookInvoice(selectedPo.id, input);
+              // Masih ada invoice di antrean untuk PO ini -> buka wizard lagi dengan file berikutnya (tanpa menutup).
+              if (advanceQueue(selectedPo.id)) return;
+              setAfterSubmitPoId(selectedPo.id);
+              setSelectedPoId(null);
+            }}
+          />
+        )}
+      </SidePanel>
 
       {closingPo && (
         <ClosePoReasonModal
