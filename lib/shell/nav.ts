@@ -65,8 +65,10 @@ export const NAV: Record<RoleKey, RoleNav> = {
       { label: "Approval PO", href: "/scm/approval-po" },
       { label: "Monitoring", href: "/scm/monitoring" },
       { label: "Tracking Item", href: "/scm/item-tracking" },
-      { label: "Material per Warna", href: "/scm/material-per-warna" },
-      { label: "Laporan HPP", href: "/scm/laporan-hpp" },
+      // Owner 2026-11-16: menu SCM hanya approval dan monitoring progress. Dua menu ini disembunyikan (halaman tetap ada lewat URL;
+      // Material per Warna juga di Procurement, Laporan HPP juga di Finance).
+      // { label: "Material per Warna", href: "/scm/material-per-warna" },
+      // { label: "Laporan HPP", href: "/scm/laporan-hpp" },
       // Revisi 2026-09-30 (owner): Master Data SCM -- saat ini toleransi selisih berat (berlaku semua vendor produksi).
       { label: "Master Data", href: "/scm/master-data" },
     ],

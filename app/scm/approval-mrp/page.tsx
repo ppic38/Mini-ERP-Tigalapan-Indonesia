@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
+import { KpiCard } from "@/components/ui/kpi-card";
 import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { MrpWarnaBreakdownTable } from "@/components/mrp/mrp-warna-breakdown-table";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
@@ -88,8 +89,14 @@ export default function ScmApprovalMrpPage() {
       activeHref="/scm/approval-mrp"
       breadcrumb={["Dashboard", "Approval MRP"]}
       title="Approval MRP"
-      subtitle={`${pending.length} MRP dari PPIC menunggu keputusan Anda`}
     >
+      {/* Kartu angka (pola PPIC). */}
+      <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+        <KpiCard label="Menunggu approval" value={pending.length} sub={`${formatPcs(pending.reduce((s, d) => s + effectiveMrpQty(d.mrp.id, d.mrp.qty, maklonPOs), 0))} pcs`} accent="orange" />
+        <KpiCard label="Disetujui" value={history.filter((d) => d.ppicApproval === "PPIC_APPROVED").length} sub="MRP" accent="teal" />
+        <KpiCard label="Ditolak" value={history.filter((d) => d.ppicApproval === "REJECTED").length} sub="MRP" accent="purple" />
+        <KpiCard label="Hak keputusan" value={mayDecide ? "Ya" : "Tidak"} sub={mayDecide ? "akun ini boleh menyetujui" : "hanya akun scm02"} accent="blue" />
+      </div>
       <DataTable
         title="Menunggu approval"
         columns={pendingColumns}
