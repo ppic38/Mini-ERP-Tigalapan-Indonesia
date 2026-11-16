@@ -59,7 +59,11 @@ export function DataTable<T>({
   mobileCards,
   nowrap,
   searchRight,
+  fitExpanded,
 }: {
+  /** Opsional: rincian baris yang dibuka (renderExpanded) dibatasi selebar area tabel yang terlihat dan menempel di kiri saat tabel digeser ke samping, jadi tombol/kolom di
+   *  kanan rincian tidak ikut terpotong ketika tabelnya sendiri lebih lebar dari layar. Tidak diisi = rincian selebar tabel seperti biasa. */
+  fitExpanded?: boolean;
   /** Opsional: kotak cari ditaruh paling kanan di bar filter (filter dropdown di kiri, sesuai urutan `filterDefs`). Tidak diisi = kotak cari paling kiri seperti biasa. */
   searchRight?: boolean;
   /** Opsional -- di layar HP/tablet tegak (< 1024px) tiap baris jadi KARTU bertumpuk (label kolom di depan nilainya) alih-alih
@@ -122,6 +126,15 @@ export function DataTable<T>({
   const [filterValues, setFilterValues] = useState<string[]>((filterDefs ?? []).map(() => ""));
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [scrollW, setScrollW] = useState(0);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!fitExpanded || !el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setScrollW(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fitExpanded]);
   const prevCollapseSignal = useRef(collapseSignal);
   useEffect(() => {
     if (collapseSignal !== undefined && collapseSignal !== prevCollapseSignal.current) {
@@ -233,7 +246,7 @@ export function DataTable<T>({
         </div>
       )}
 
-      <div className={"overflow-x-auto" + (bodyMaxHeight ? " overflow-y-auto" : "")} style={bodyMaxHeight ? { maxHeight: bodyMaxHeight } : undefined}>
+      <div ref={scrollRef} className={"overflow-x-auto" + (bodyMaxHeight ? " overflow-y-auto" : "")} style={bodyMaxHeight ? { maxHeight: bodyMaxHeight } : undefined}>
         <table className="w-full border-collapse">
           <thead className={bodyMaxHeight ? "sticky top-0 z-10" : undefined}>
             <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
@@ -285,7 +298,13 @@ export function DataTable<T>({
                   {renderExpanded && isExpanded && (
                     <tr className="border-b border-[#F1F4F7] last:border-b-0">
                       <td colSpan={visibleColumns.length + 2} className="bg-[#FAFBFC] px-5 py-4">
-                        {renderExpanded(r)}
+                        {fitExpanded && scrollW > 0 ? (
+                          <div className="sticky left-5" style={{ width: Math.max(scrollW - 40, 320) }}>
+                            {renderExpanded(r)}
+                          </div>
+                        ) : (
+                          renderExpanded(r)
+                        )}
                       </td>
                     </tr>
                   )}

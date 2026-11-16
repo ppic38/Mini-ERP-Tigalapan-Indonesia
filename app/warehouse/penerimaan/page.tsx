@@ -320,12 +320,21 @@ export default function WarehousePenerimaanPage() {
   // Tampilan tabel (owner 2026-11-09): No MRP (W39, W40, tanpa kategori), Jumlah Koli, Ekspedisi, No Resi (kolom pertama), Tanggal Kirim, Total Qty, Total HPP, dan Status
   // = apakah resi sudah divalidasi Procurement (Invoice Ekspedisi), BUKAN lagi status pembayaran invoice vendor. Syarat Bongkar (invoice vendor ada dan tidak direvisi, ongkir tervalidasi)
   // tetap berlaku dan tampil di panel rincian baris serta kolom opsional "Syarat Bongkar".
-  const ongkirLabelOf = (g: WarehouseReceivableGroup) => (g.ongkirValidasi === "VALIDATED" ? "Resi sudah divalidasi" : g.ongkirValidasi === "PENDING" ? "Menunggu validasi Procurement" : "Tanpa ongkir (internal)");
+  // Label dipendekkan (owner 2026-11-16: tabel terpotong di layar); keterangan lengkap ada di tooltip kolom Status.
+  const STATUS_RESI = ["Sudah divalidasi", "Menunggu validasi", "Tanpa ongkir"];
+  const ongkirLabelOf = (g: WarehouseReceivableGroup) => (g.ongkirValidasi === "VALIDATED" ? STATUS_RESI[0] : g.ongkirValidasi === "PENDING" ? STATUS_RESI[1] : STATUS_RESI[2]);
+  const ongkirTitleOf = (g: WarehouseReceivableGroup) =>
+    g.ongkirValidasi === "VALIDATED" ? "Resi sudah divalidasi Procurement (Invoice Ekspedisi)" : g.ongkirValidasi === "PENDING" ? "Menunggu Procurement memvalidasi invoice ekspedisi resi ini" : "Pengiriman internal, tanpa ongkir";
   const columns: ColumnDef<WarehouseReceivableGroup>[] = [
     { key: "mrp", label: "No MRP", default: true, render: (g) => <span className="font-mono font-semibold">{g.mrpIds.join(", ")}</span> },
     { key: "vendor", label: "Vendor Produksi", default: true, render: (g) => VENDOR_PRODUKSI[g.vendorProduksi]?.name ?? g.vendorProduksi },
-    { key: "jumlahKoli", label: "Jumlah Koli", default: true, align: "right", render: (g) => <span className="font-mono">{g.koliIds.length}</span> },
-    { key: "ekspedisi", label: "Ekspedisi", default: true, render: (g) => g.ekspedisi || "—" },
+    { key: "jumlahKoli", label: "Koli", default: true, align: "right", render: (g) => <span className="font-mono">{g.koliIds.length}</span> },
+    {
+      key: "ekspedisi",
+      label: "Ekspedisi",
+      default: true,
+      render: (g) => (g.ekspedisi ? <span title={g.ekspedisi} className="inline-block max-w-[170px] truncate align-bottom">{g.ekspedisi}</span> : "—"),
+    },
     { key: "tanggalKirim", label: "Tanggal Kirim", default: true, render: (g) => formatDate(g.deliveredAt) },
     { key: "qty", label: "Total Qty", default: true, align: "right", render: (g) => <span className="font-mono">{formatPcs(g.totalQty)}</span> },
     {
@@ -340,7 +349,7 @@ export default function WarehousePenerimaanPage() {
         return (
           <span className="font-mono">
             {formatRupiah(h.value)}
-            {(h.anyEstimasi || h.missing) && <span className="ml-1.5 font-sans text-[9.5px] font-semibold text-warning-fg">{h.missing ? "belum lengkap" : "estimasi"}</span>}
+            {(h.anyEstimasi || h.missing) && <span className="ml-1.5 font-sans text-[9.5px] font-semibold text-warning-fg">{h.missing ? "belum lengkap" : "est."}</span>}
           </span>
         );
       },
@@ -351,11 +360,11 @@ export default function WarehousePenerimaanPage() {
       default: true,
       render: (g) =>
         g.ongkirValidasi === "VALIDATED" ? (
-          <span className="font-sans text-[11px] font-semibold text-success-fg">✓ {ongkirLabelOf(g)}</span>
+          <span title={ongkirTitleOf(g)} className="font-sans text-[11px] font-semibold text-success-fg">✓ {ongkirLabelOf(g)}</span>
         ) : g.ongkirValidasi === "PENDING" ? (
-          <span className="font-sans text-[11px] font-semibold text-danger-fg">{ongkirLabelOf(g)}</span>
+          <span title={ongkirTitleOf(g)} className="font-sans text-[11px] font-semibold text-danger-fg">{ongkirLabelOf(g)}</span>
         ) : (
-          <span className="font-sans text-[11px] text-text-muted">{ongkirLabelOf(g)}</span>
+          <span title={ongkirTitleOf(g)} className="font-sans text-[11px] text-text-muted">{ongkirLabelOf(g)}</span>
         ),
     },
     { key: "noKoli", label: "No Koli", default: false, render: (g) => g.noKoli },
@@ -418,10 +427,11 @@ export default function WarehousePenerimaanPage() {
           getText: (g) => [g.noResi, g.resiGroupId, g.noKoli, g.mrpLabel, g.mrpId, g.invoiceIds.join(" ")].filter(Boolean).join(" "),
         }}
         searchRight
+        fitExpanded
         filterDefs={[
           { label: "No MRP", options: uniqSorted(groups.flatMap((g) => g.mrpIds)).reverse(), test: (g, v) => g.mrpIds.includes(v) },
           { label: "Vendor Produksi", options: uniqSorted(groups.map(vendorName)), test: (g, v) => vendorName(g) === v },
-          { label: "Status Resi", options: ["Resi sudah divalidasi", "Menunggu validasi Procurement", "Tanpa ongkir (internal)"].filter((o) => groups.some((g) => ongkirLabelOf(g) === o)), test: (g, v) => ongkirLabelOf(g) === v },
+          { label: "Status Resi", options: STATUS_RESI.filter((o) => groups.some((g) => ongkirLabelOf(g) === o)), test: (g, v) => ongkirLabelOf(g) === v },
           { label: "Ekspedisi", options: uniqSorted(groups.map((g) => g.ekspedisi)), test: (g, v) => g.ekspedisi === v },
         ]}
         firstColumnLabel="No Resi"
