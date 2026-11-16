@@ -58,7 +58,10 @@ export function DataTable<T>({
   collapseSignal,
   mobileCards,
   nowrap,
+  searchRight,
 }: {
+  /** Opsional: kotak cari ditaruh paling kanan di bar filter (filter dropdown di kiri, sesuai urutan `filterDefs`). Tidak diisi = kotak cari paling kiri seperti biasa. */
+  searchRight?: boolean;
   /** Opsional -- di layar HP/tablet tegak (< 1024px) tiap baris jadi KARTU bertumpuk (label kolom di depan nilainya) alih-alih
    *  tabel yang digeser ke samping. Hanya dipakai halaman portal vendor; yang lain tidak berubah sama sekali. */
   mobileCards?: boolean;
@@ -205,7 +208,7 @@ export function DataTable<T>({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={search.placeholder ?? "Cari…"}
-              className="w-[220px] max-w-full rounded-md max-md:w-full border border-border-subtle bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-medium text-[#31414F]"
+              className={(searchRight ? "order-last ml-auto max-md:order-none max-md:ml-0 " : "") + "w-[220px] max-w-full rounded-md max-md:w-full border border-border-subtle bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-medium text-[#31414F]"}
             />
           )}
           {filterDefs?.map((f, i) => (

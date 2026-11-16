@@ -69,10 +69,34 @@ function styleBody(ws: Worksheet, rowNo: number, idx: number, fmts: (string | nu
   });
 }
 
-/** `kategoriOf`: kategori item dari Master SKU (lihat skuKategoriLookup di derive.ts); kosong kalau item tidak ada di Master SKU. */
-export type ResiExportOptions = { kategoriOf?: (warna: string, usia: string | undefined, lengan: string, size: string) => string };
+/** `kategoriOf`: kategori item dari Master SKU (lihat skuKategoriLookup di derive.ts); kosong kalau item tidak ada di Master SKU.
+ *  `koli`: nomor koli yang diunduh (owner 2026-11-16: unduh satu koli atau seluruh koli); kosong/tidak diisi = seluruh koli resi. */
+export type ResiExportOptions = { kategoriOf?: (warna: string, usia: string | undefined, lengan: string, size: string) => string; koli?: string[] };
 
 const jenisLenganUkuran = (lengan: string, size: string) => `${lengan === "PENDEK" ? "PENDEK" : "PANJANG"} ${size}`;
+
+type ResiItem = WarehouseReceivableGroup["items"][number];
+const koliOf = (it: ResiItem) => it.noKoli ?? it.deliveryKoliId;
+
+/** Item kembar dalam satu koli digabung jadi satu baris (owner 2026-11-16, keluhan Moka: koli 7 memuat NAVY 24S PDK S lima baris karena berasal dari beberapa roll).
+ *  Kunci = koli + warna (dengan usia) + lengan + size + jenis. Qty dijumlahkan; HPP/item = rata-rata tertimbang qty, sehingga Qty x HPP/item tetap sama dengan jumlah
+ *  nilai per roll. Baris tanpa HPP (reject, atau HPP belum ada) tidak digabung dengan yang ber-HPP supaya nilainya tidak bergeser. "Estimasi" kalau salah satu baris estimasi. */
+export function mergeResiItems(items: ResiItem[]): ResiItem[] {
+  const out = new Map<string, ResiItem & { nilai: number }>();
+  for (const it of items) {
+    const withHpp = it.kind !== "REJECT" && it.hppPerItem > 0;
+    const key = [koliOf(it), warnaWithUsia(it.warna, it.usia), it.lengan, it.size, it.kind, withHpp ? "H" : "-"].join("|");
+    const cur = out.get(key);
+    if (cur) {
+      cur.qty += it.qty;
+      cur.nilai += withHpp ? it.qty * it.hppPerItem : 0;
+      cur.sementara = cur.sementara || it.sementara;
+    } else {
+      out.set(key, { ...it, nilai: withHpp ? it.qty * it.hppPerItem : 0 });
+    }
+  }
+  return Array.from(out.values()).map(({ nilai, ...it }) => ({ ...it, hppPerItem: it.qty > 0 && nilai > 0 ? nilai / it.qty : it.hppPerItem }));
+}
 
 export async function buildResiWorkbook(group: WarehouseReceivableGroup, opts: ResiExportOptions = {}): Promise<Workbook> {
   const kategoriOf = opts.kategoriOf ?? (() => "");
@@ -88,7 +112,10 @@ export async function buildResiWorkbook(group: WarehouseReceivableGroup, opts: R
 
   // Baris item: koli (angka dulu), warna, lengan, size, lalu jenis (FG, Rework, Reject).
   const kindRank = (k: string) => (k === "FG" ? 0 : k === "REWORK" ? 1 : 2);
-  const items = [...group.items].sort(
+  const koliPicked = opts.koli && opts.koli.length > 0 ? new Set(opts.koli) : null;
+  const scoped = koliPicked ? group.items.filter((it) => koliPicked.has(koliOf(it))) : group.items;
+  const koliLabel = koliPicked ? Array.from(koliPicked).sort((a, b) => a.localeCompare(b, "id-ID", { numeric: true })).join(", ") : "";
+  const items = mergeResiItems(scoped).sort(
     (a, b) =>
       (a.noKoli ?? a.deliveryKoliId).localeCompare(b.noKoli ?? b.deliveryKoliId, "id-ID", { numeric: true }) ||
       a.warna.localeCompare(b.warna, "id-ID") ||
@@ -103,11 +130,11 @@ export async function buildResiWorkbook(group: WarehouseReceivableGroup, opts: R
   const RIN = "'Rincian Item'";
   rin.columns = [{ width: 20 }, { width: 26 }, { width: 32 }, { width: 12 }, { width: 10 }, { width: 14 }, { width: 14 }, { width: 18 }, { width: 20 }, { width: 22 }, { width: 16 }, { width: 24 }];
   rin.mergeCells(1, 1, 1, 12);
-  rin.getCell(1, 1).value = `Penerimaan Warehouse — Resi ${noResi}`;
+  rin.getCell(1, 1).value = `Penerimaan Warehouse — Resi ${noResi}${koliPicked ? ` · Koli ${koliLabel}` : ""}`;
   rin.getCell(1, 1).font = { name: FONT, size: 15, bold: true, color: { argb: INK } };
   rin.getRow(1).height = 26;
   rin.mergeCells(2, 1, 2, 12);
-  rin.getCell(2, 1).value = `Diunduh ${stamp} · HPP/item dari data HPP Finance; "Estimasi" = roll bahan belum ditutup, angkanya masih bisa berubah. Nilai HPP = Qty x HPP/item (rumus).`;
+  rin.getCell(2, 1).value = `Diunduh ${stamp} · HPP/item dari data HPP Finance; "Estimasi" = roll bahan belum ditutup, angkanya masih bisa berubah. Item yang sama dalam satu koli digabung jadi satu baris (qty dijumlah, HPP/item = rata-rata tertimbang). Nilai HPP = Qty x HPP/item (rumus).`;
   rin.getCell(2, 1).font = { name: FONT, size: 9, italic: true, color: { argb: MUTED } };
   rin.getCell(2, 1).alignment = { wrapText: true, vertical: "top" };
   rin.getRow(2).height = 28;
@@ -119,7 +146,7 @@ export async function buildResiWorkbook(group: WarehouseReceivableGroup, opts: R
     ["Tanggal Kirim", group.deliveredAt ? new Date(group.deliveredAt).toLocaleDateString("id-ID", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—"],
     ["No MRP", group.mrpLabel || group.mrpId],
     ["Vendor Produksi", vendor],
-    ["No Koli", group.noKoli],
+    ["No Koli", koliPicked ? `Koli ${koliLabel}` : group.noKoli],
     ["No Invoice Vendor", group.invoiceIds.length > 0 ? group.invoiceIds.join(", ") : "—"],
     ["Status", status],
     ["Status WMS", group.wmsReceivedAt ? `Diterima WMS · ${new Date(group.wmsReceivedAt).toLocaleDateString("id-ID")}` : "Belum dikonfirmasi WMS"],
