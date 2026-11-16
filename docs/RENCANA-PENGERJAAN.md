@@ -152,6 +152,31 @@ Tiap modul = satu branch pendek. Langkah: nyalakan kerangka Odoo, pindahkan filt
 "tugas + riwayat" menjadi satu daftar dengan filter bawaan, pindahkan rincian ke panel samping, pasang kartu.
 Rekomendasi per halaman ada di docs/DESAIN-DAN-FITUR.md (PPIC bagian 9, Finance bagian 4).
 
+**POLA ACUAN = MODUL PPIC (disetujui owner 2026-11-16: "ikuti type PPIC ke modul-modul lain").** Lihat app/mrp/ppic/page.tsx,
+components/mrp/item-tracking-view.tsx, dan MIGRASI.md entri [redesign-ppic]. Unsur pola itu:
+1. Satu kotak cari gaya Odoo sebaris judul tabel (keping filter/kelompok, saran, panel Filter / Kelompokkan bertingkat / Favorit).
+2. Kartu angka di atas tabel (maks. 4, kecuali Tracking Item 7) yang dihitung dari baris yang lolos filter (`onFilteredRows`)
+   dan bisa diklik sebagai filter (`filterPreset`).
+3. Satu kolom Status tahapan (`StageBadge`) menggantikan beberapa kolom status; kolom status lama tetap ada di menu Kolom.
+4. Rincian baris di panel samping, bukan baris melebar / pop-up; impor dan form besar juga di panel.
+5. Baris kelompok menjumlahkan angka (`aggSum`) dan menampilkan teks/status hanya kalau sama (`aggSame`).
+6. Judul kolom singkat; tanggal penting sebagai kolom tabel.
+
+**Sudah berlaku untuk SEMUA modul internal lewat tabel bersama (2026-11-16):** unsur 1, unsur 4 untuk semua tabel yang
+memakai `renderExpanded` (bawaan kini panel samping), dan unsur 5 untuk kolom angka di 16 halaman (Procurement Raw Material,
+Invoice Ekspedisi, Monitor Invoice Maklon; Finance Payment Material/Maklon/Ekspedisi, Posisi Stok, Saldo Deposit, Invoice Maklon;
+Produksi Kebutuhan Bahan, Monitoring, Reject; SCM Approval MRP, Monitoring; Warehouse Penerimaan, Riwayat).
+
+**Sisa per modul (unsur 2, 3, 6, dan tabel yang belum memakai DataTable):**
+- Procurement: Purchase Order (`app/procurement/po-approval/page.tsx`, 1.238 baris, 2 tabel buatan sendiri + PoApprovalQueue),
+  Material Tracking (853 baris, 2 tabel sendiri, FilterBar), Paying Voucher (3 panel), Klaim Material; kartu dan status tahapan.
+- Finance: PO Approval (PoMaterialPanel, PoMaklonPanel, tabel sendiri), Laporan HPP (pohon sendiri), Dashboard; kartu Payment.
+- SCM / GM: PoApprovalQueue (dipakai Procurement, SCM, GM; prioritas tampilan HP untuk approval), Approval MRP dua tabel jadi satu.
+- Produksi: Monitoring Produksi (4 tabel sendiri di rincian), Yield Alert kartu + status.
+- Warehouse: kartu Penerimaan mengikuti filter, "Siap dibongkar" sebagai filter bawaan.
+- Sysadmin: Akun & Password, Log Audit, Kirim ke WOS (tanpa DataTable).
+- Dashboard tiap modul (Fase 4) belum dikerjakan.
+
 - [~] **E1. PPIC** (disetujui owner; sebagian selesai 2026-11-16, lihat catatan B6-B7). Kotak impor jadi tombol + panel; pita tahapan di Ringkasan; Tracking Item
       (ikut berubah di SCM); Master Data jadi menu Pengaturan.
 - [ ] **E2. Procurement.** Purchase Order: kartu "MRP tanpa PO" jadi keping/penanda; 3 tab tetap. Paying Voucher:
