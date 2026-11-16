@@ -73,7 +73,7 @@ export function SidePanel({
             <X size={18} />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        <div className="side-panel-body min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
         {footer && <div className="flex flex-none flex-wrap items-center gap-2 border-t border-border-subtle bg-[#FAFBFC] px-5 py-3">{footer}</div>}
       </div>
     </div>

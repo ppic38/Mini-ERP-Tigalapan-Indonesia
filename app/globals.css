@@ -1183,3 +1183,38 @@
   .welcome-fade-up, .welcome-word { animation: none; opacity: 1; }
   .welcome-cursor, .welcome-glow { animation: none; }
 }
+
+/* Panel samping (redesign 2026-11-16, owner: "tabel di pop up side harus fit"): isi tabel satu baris per data; tabel yang lebih lebar dari
+   panel digulir ke samping di dalam kotaknya sendiri, bukan dilipat. */
+.side-panel-body table th,
+.side-panel-body table td {
+  white-space: nowrap;
+}
+.side-panel-body table {
+  min-width: 100%;
+}
+.side-panel-body .overflow-hidden:has(> table) {
+  overflow-x: auto;
+}
+/* Kotak rincian yang dibangun dari baris grid (mis. rincian warna PO: Warna | Lengan | Roll | Harga | Subtotal | Entitas) ditampilkan
+   sebagai tabel: lebar kolom mengikuti isi terpanjang, satu baris per data, kolom tetap sejajar antarbaris. */
+.side-panel-body {
+  overflow-x: auto;
+}
+.side-panel-body .rounded-md.border:has(> .grid > span) {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+}
+.side-panel-body .rounded-md.border:has(> .grid > span) > .grid {
+  display: table-row;
+}
+.side-panel-body .rounded-md.border:has(> .grid > span) > .grid > * {
+  display: table-cell;
+  white-space: nowrap;
+  padding: 6px 10px;
+  vertical-align: middle;
+}
+.side-panel-body .rounded-md.border:has(> .grid > span) > .grid + .grid > * {
+  border-top: 1px solid #f1f4f7;
+}
