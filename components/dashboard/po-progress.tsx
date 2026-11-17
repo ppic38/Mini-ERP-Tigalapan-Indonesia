@@ -6,6 +6,8 @@ import { DataTable, type FilterDef } from "@/components/mrp/data-table";
 import type { MrpProgressRow } from "@/components/mrp/mrp-progress";
 import { formatPcs } from "@/lib/mrp/derive";
 import { FLOW_STAGES, flowRank, type FlowStage } from "@/lib/mrp/flowStatus";
+import { yieldPct, type RollYieldRow } from "@/lib/mrp/opsMonitor";
+import { YIELD_ALERT_THRESHOLD_PCT } from "@/lib/mrp/derive";
 
 /** "Progres PO hingga delivery" (owner 2026-11-17, sesuai gambar contoh): persentase roll tiap MRP yang sudah melewati 11 gate, dari PV sampai
  *  GR DC. Filter dan pencarian memakai kotak cari Odoo tabel bersama (`DataTable` dengan `body`), kartu dan matriks mengikuti filter.
@@ -51,6 +53,41 @@ function bottleneck(r: MrpProgressRow): Gate | null {
   return best;
 }
 
+/** KPI per MRP (owner 2026-11-17): HPP % = HPP AKTUAL (Laporan HPP, FG yang sudah terkirim dan diinvoice vendor) kalau sudah ada, selain itu
+ *  ESTIMASI (nilai PO Material + PO Produksi + estimasi ongkir / nilai jual, `mrpHppEstimate`). Yield = hasil cutting / target roll yang sudah
+ *  dicutting (`buildRollYields`, sama dengan Yield Alert). Gabungan beberapa MRP = tertimbang (jumlah HPP / jumlah nilai jual; jumlah cutting /
+ *  jumlah target). */
+type HppAgg = { hpp: number; jual: number };
+type Kpi = { hppNum: number; hppDen: number; hppActual: boolean; target: number; cutting: number };
+function kpiOf(r: MrpProgressRow, hppActual: Map<string, HppAgg>, yields: RollYieldRow[]): Kpi {
+  const act = hppActual.get(r.mrp.id);
+  const ys = yields.filter((y) => y.mrpId === r.mrp.id);
+  const target = ys.reduce((s, y) => s + y.target, 0);
+  const cutting = ys.reduce((s, y) => s + y.cutting, 0);
+  if (act && act.jual > 0) return { hppNum: act.hpp, hppDen: act.jual, hppActual: true, target, cutting };
+  const est = r.hpp.material + r.hpp.maklon > 0 && r.hpp.hargaJual > 0;
+  return { hppNum: est ? r.hpp.total : 0, hppDen: est ? r.hpp.hargaJual : 0, hppActual: false, target, cutting };
+}
+const fmtPct = (p: number | null) => (p == null ? "—" : p.toLocaleString("id-ID", { maximumFractionDigits: 1 }) + "%");
+const hppTone = (p: number | null) => (p == null ? "text-text-muted" : p > 100 ? "text-danger-fg" : p > 80 ? "text-warning-fg" : "text-success-fg");
+const yieldTone = (p: number | null) => (p == null ? "text-text-muted" : p < YIELD_ALERT_THRESHOLD_PCT ? "text-danger-fg" : "text-success-fg");
+
+function KpiCells({ k, label }: { k: Kpi; label?: string }) {
+  const h = k.hppDen > 0 ? (k.hppNum / k.hppDen) * 100 : null;
+  const y = yieldPct(k.cutting, k.target);
+  return (
+    <>
+      <td className="border-l border-border-subtle px-2 text-center">
+        <div className={"font-mono text-[12.5px] font-semibold tabular-nums " + hppTone(h)}>{fmtPct(h)}</div>
+        {h != null && <div className="font-sans text-[10px] text-text-muted">{label ?? (k.hppActual ? "aktual" : "estimasi")}</div>}
+      </td>
+      <td className="px-2 text-center">
+        <div className={"font-mono text-[12.5px] font-semibold tabular-nums " + yieldTone(y)}>{fmtPct(y)}</div>
+      </td>
+    </>
+  );
+}
+
 /** Skala satu hue biru (terang -> gelap); 0% tanpa warna. */
 function heat(p: number): { background: string; color: string } | null {
   if (p <= 0) return null;
@@ -76,13 +113,24 @@ function HeatCell({ p, title, bold }: { p: number; title: string; bold?: boolean
   );
 }
 
-export function PoProgress({ rows }: { rows: MrpProgressRow[] }) {
+export function PoProgress({ rows, hppActual, yields }: { rows: MrpProgressRow[]; hppActual: Map<string, HppAgg>; yields: RollYieldRow[] }) {
   const [shownIds, setShownIds] = useState<Set<string> | null>(null);
   const [view, setView] = useState<"matriks" | "ringkasan">("matriks");
   const [selected, setSelected] = useState<string | null>(null);
   const shown = shownIds ? rows.filter((r) => shownIds.has(r.mrp.id)) : rows;
   const roll = shown.reduce((s, r) => s + totalRolls(r), 0);
   const sel = shown.find((r) => r.mrp.id === selected) ?? shown[0];
+  const kpi = (r: MrpProgressRow) => kpiOf(r, hppActual, yields);
+  const sumKpi = (list: MrpProgressRow[]): Kpi =>
+    list.map(kpi).reduce(
+      (a, k) => ({ hppNum: a.hppNum + k.hppNum, hppDen: a.hppDen + k.hppDen, hppActual: a.hppActual || k.hppActual, target: a.target + k.target, cutting: a.cutting + k.cutting }),
+      { hppNum: 0, hppDen: 0, hppActual: false, target: 0, cutting: 0 }
+    );
+  const tot = sumKpi(shown);
+  const totHpp = tot.hppDen > 0 ? (tot.hppNum / tot.hppDen) * 100 : null;
+  const totYield = yieldPct(tot.cutting, tot.target);
+  const nActual = shown.filter((r) => kpi(r).hppActual).length;
+  const nEst = shown.filter((r) => !kpi(r).hppActual && kpi(r).hppDen > 0).length;
 
   const uniq = (xs: string[]) => Array.from(new Set(xs.filter(Boolean))).sort();
   const filterDefs: FilterDef<MrpProgressRow>[] = [
@@ -148,6 +196,9 @@ export function PoProgress({ rows }: { rows: MrpProgressRow[] }) {
                 {g.label}
               </th>
             ))}
+            <th colSpan={2} className="border-b border-l border-border-subtle py-2 text-center text-[12px] font-semibold text-action-primary">
+              KPI
+            </th>
           </tr>
           <tr className="bg-[#F5F8FC]">
             {GROUPS.map((g, gi) =>
@@ -160,6 +211,8 @@ export function PoProgress({ rows }: { rows: MrpProgressRow[] }) {
                 </th>
               ))
             )}
+            <th className="border-b border-l border-border-subtle px-2 py-2 text-center text-[11.5px] font-semibold text-text-muted">HPP</th>
+            <th className="border-b border-border-subtle px-2 py-2 text-center text-[11.5px] font-semibold text-text-muted">Yield</th>
           </tr>
         </thead>
         <tbody>
@@ -173,6 +226,7 @@ export function PoProgress({ rows }: { rows: MrpProgressRow[] }) {
                   const n = rollsAtLeast(r.rollsByStage, g.from);
                   return <HeatCell key={g.from} p={t ? Math.round((n / t) * 100) : 0} title={`${r.mrp.id} · ${g.label}: ${formatPcs(n)} dari ${formatPcs(t)} roll`} />;
                 })}
+                <KpiCells k={kpi(r)} />
               </tr>
             );
           })}
@@ -183,6 +237,7 @@ export function PoProgress({ rows }: { rows: MrpProgressRow[] }) {
               {GATES.map((g) => (
                 <HeatCell key={g.from} p={pctOf(shown, g.from)} title={`Semua MRP tampil · ${g.label}`} bold />
               ))}
+              <KpiCells k={tot} label="gabungan" />
             </tr>
           )}
         </tbody>
@@ -203,6 +258,8 @@ export function PoProgress({ rows }: { rows: MrpProgressRow[] }) {
               </th>
             ))}
             <th className="px-3 text-left">Tertahan di</th>
+            <th className="border-l border-border-subtle px-2 text-center">HPP</th>
+            <th className="px-2 text-center">Yield</th>
           </tr>
         </thead>
         <tbody>
@@ -218,6 +275,7 @@ export function PoProgress({ rows }: { rows: MrpProgressRow[] }) {
                   </td>
                 ))}
                 <td className="px-3">{b ? `${b.label} (${pctOf([r], b.from)}%)` : "—"}</td>
+                <KpiCells k={kpi(r)} />
               </tr>
             );
           })}
@@ -235,6 +293,22 @@ export function PoProgress({ rows }: { rows: MrpProgressRow[] }) {
           {formatPcs(totalRolls(sel))} roll · {sel.stage}
           {sel.vendors.length > 0 && ` · ${sel.vendors.join(", ")}`}
         </div>
+        {(() => {
+          const k = kpi(sel);
+          const h = k.hppDen > 0 ? (k.hppNum / k.hppDen) * 100 : null;
+          const y = yieldPct(k.cutting, k.target);
+          return (
+            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 font-sans text-[12px]">
+              <span>
+                HPP {k.hppActual ? "aktual" : "estimasi"}: <b className={hppTone(h)}>{fmtPct(h)}</b>
+              </span>
+              <span>
+                Yield cutting: <b className={yieldTone(y)}>{fmtPct(y)}</b>
+                <span className="text-text-muted"> ({formatPcs(k.cutting)} dari {formatPcs(k.target)} pcs)</span>
+              </span>
+            </div>
+          );
+        })()}
       </div>
       <div className="grid gap-2.5 border-t border-border-subtle bg-surface-card p-3 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1.6fr_1.3fr]">
         {GROUPS.map((g) => {
@@ -270,10 +344,24 @@ export function PoProgress({ rows }: { rows: MrpProgressRow[] }) {
           </div>
         </div>
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
         {card("Material diterima", "Receiving Material")}
         {card("Delivery", "Delivery", true)}
         {card("GR DC", "GR DC")}
+        <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3">
+          <div className="font-sans text-[12px] font-medium text-text-muted">HPP</div>
+          <div className={"mt-0.5 font-heading text-[28px] font-bold leading-tight tabular-nums " + hppTone(totHpp)}>{fmtPct(totHpp)}</div>
+          <div className="font-sans text-[11px] text-text-muted">
+            {nActual} MRP aktual · {nEst} estimasi
+          </div>
+        </div>
+        <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3">
+          <div className="font-sans text-[12px] font-medium text-text-muted">Yield cutting</div>
+          <div className={"mt-0.5 font-heading text-[28px] font-bold leading-tight tabular-nums " + yieldTone(totYield)}>{fmtPct(totYield)}</div>
+          <div className="font-sans text-[11px] text-text-muted">
+            {formatPcs(tot.cutting)} dari {formatPcs(tot.target)} pcs
+          </div>
+        </div>
       </div>
       <DataTable<MrpProgressRow>
         title="Seluruh gate MRP"

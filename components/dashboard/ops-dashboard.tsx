@@ -144,7 +144,7 @@ export function OpsDashboard() {
       </div>
 
       {/* Progres PO hingga delivery (owner 2026-11-17): matriks 11 gate dengan filter gaya Odoo. */}
-      <PoProgress rows={active} />
+      <PoProgress rows={active} hppActual={hpp.byMrp} yields={yields} />
 
       <div className="grid gap-4 xl:grid-cols-2">
         {/* Pembelian material */}
