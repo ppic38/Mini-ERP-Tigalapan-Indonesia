@@ -1,5 +1,10 @@
 # Migrasi Project — Status & Riwayat
 
+## Vendor Produksi > Cutting: dropdown MRP juga memuat MRP yang sudah selesai (2026-11-17, tanpa migration)
+Owner (vendor CECEP): MRP W42_HITAM_MLS tampil di dropdown tab Finish Good tetapi tidak di tab Cutting. Penyebab: dropdown Cutting (`components/mrp/production-cutting-tab.tsx`, `readyMrpIds`) hanya memuat MRP dengan pekerjaan berjalan (PO PRODUCTION dengan bahan diterima, masih ada roll yang bisa di-Resting, atau roll yang butuh input cutting); MRP yang semua target FG-nya tercapai (status PO otomatis DELIVERY, `advanceMaklonToDeliveryIfFullyDone`) gugur, padahal tab Finish Good memuat semua MRP yang pernah dicutting. Akibatnya riwayat dan edit hasil cutting MRP selesai tidak bisa dibuka.
+- Perbaikan: grup baru "Sudah selesai (riwayat)" di bawah MRP yang masih berjalan, berisi MRP yang punya roll (batch) vendor ini tetapi tidak masuk daftar berjalan, berlabel "(selesai)". Isi tab setelah memilih MRP tidak berubah (hanya bergantung pada MRP terpilih), jadi riwayat dan Edit hasil cutting berlaku seperti biasa dengan aturan kunci yang sama (terkunci hanya kalau roll sudah masuk resi). Daftar MRP berjalan, penanda "roll belum selesai", dan badge sidebar tidak berubah.
+- Status PO W42_HITAM_MLS di database belum dicek (dugaan: DELIVERY dan tidak ada roll tersisa). Diuji: tsc; belum dicoba di browser dengan login vendor CECEP.
+
 ## Modul Produksi: No. Order, sort, cari item per PO, kategori, rincian aduan pola di Yield Alert (2026-11-17, tanpa migration)
 Permintaan owner (modul Produksi): tambah informasi No. Order, bisa sort dan cari item di suatu PO vendor; cek aduan pola dan size detail di Yield Alert; filter kategori (kolom kategori = Kids, Tunik, Panjang + RIB, Combed 24S, 30S, dst.).
 - `components/mrp/data-table.tsx` (komponen bersama, opsional dan kompatibel mundur): `ColumnDef.sortValue` dan prop `firstColumnSortValue` membuat judul kolom bisa diklik (naik, turun, kembali ke urutan asli; angka sebagai angka, teks urutan natural "W9" sebelum "W10", kosong selalu di bawah). Tabel yang tidak mengisinya tidak berubah.

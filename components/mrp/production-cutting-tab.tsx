@@ -311,6 +311,10 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
     )
   );
   const readyMrps = mrpDetails.filter((d) => readyMrpIds.includes(d.mrp.id));
+  // MRP yang SUDAH selesai (semua target tercapai, status PO pindah ke DELIVERY, tidak ada roll tersisa) tetap bisa dibuka untuk melihat riwayat
+  // dan mengedit hasil cutting (selama roll belum masuk resi), seperti dropdown "sudah tercutting" di tab Finish Good. Ditaruh di bawah MRP yang masih berjalan.
+  const doneMrpIdSet = new Set(productionBatches.filter((b) => b.vendorProduksi === vendorId).map((b) => b.mrpId));
+  const doneMrps = mrpDetails.filter((d) => doneMrpIdSet.has(d.mrp.id) && !readyMrpIds.includes(d.mrp.id));
 
   const selectedDetail = mrpDetails.find((d) => d.mrp.id === selectedMrpId);
   const aduanRows = (selectedDetail?.aduanRows ?? []).filter((a) => a.vendor === vendorId);
@@ -932,8 +936,18 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
               {pendingMarker(countCuttingAwaitingUpdateForMrp(d.mrp.id, vendorId, productionBatches, invoices, claimDicts, maklonPOs), "roll belum selesai")}
             </option>
           ))}
+          {doneMrps.length > 0 && (
+            <optgroup label="Sudah selesai (riwayat)">
+              {doneMrps.map((d) => (
+                <option key={d.mrp.id} value={d.mrp.id}>
+                  {d.mrp.id} (selesai)
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
-        {readyMrps.length === 0 && <div className="mt-2 font-sans text-xs text-text-muted">Belum ada MRP dengan bahan siap dan pekerjaan belum selesai.</div>}
+        {readyMrps.length === 0 && doneMrps.length === 0 && <div className="mt-2 font-sans text-xs text-text-muted">Belum ada MRP dengan bahan siap dan pekerjaan belum selesai.</div>}
+        {readyMrps.length === 0 && doneMrps.length > 0 && <div className="mt-2 font-sans text-xs text-text-muted">Belum ada MRP dengan pekerjaan yang masih berjalan. MRP yang sudah selesai ada di grup &quot;Sudah selesai&quot;.</div>}
       </div>
 
       {pendingApprovalGroups.length > 0 && (
