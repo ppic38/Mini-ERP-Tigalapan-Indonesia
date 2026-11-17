@@ -3,6 +3,7 @@ import { Inter, Space_Grotesk, IBM_Plex_Mono } from "next/font/google";
 import { StoreHydrator } from "@/components/shell/store-hydrator";
 import { BusyOverlay } from "@/components/shell/busy-overlay";
 import { DialogHost } from "@/components/ui/confirm-dialog";
+import { THEME_BOOT_SCRIPT } from "@/lib/shell/theme";
 import "./globals.css";
 
 const inter = Inter({
@@ -33,7 +34,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="id"
       className={`${inter.variable} ${spaceGrotesk.variable} ${plexMono.variable} h-full antialiased`}
+      // Kelas `dark` dipasang skrip di <head> sebelum React mengambil alih (mode gelap), jadi atribut class boleh berbeda dari render server.
+      suppressHydrationWarning
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
+      </head>
       <body className="min-h-full flex flex-col">
         <StoreHydrator />
         <BusyOverlay />

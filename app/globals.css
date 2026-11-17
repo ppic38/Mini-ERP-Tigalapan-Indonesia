@@ -1218,3 +1218,199 @@
 .side-panel-body .rounded-md.border:has(> .grid > span) > .grid + .grid > * {
   border-top: 1px solid #f1f4f7;
 }
+
+/* ================= Mode gelap (owner 2026-11-17: "buat toggle dark and light") =================
+   Tombol di bar atas memasang kelas `.dark` di <html> (disimpan per browser, `erp-theme`). Token warna gelap ada di blok `.dark` di atas;
+   di bawah ini warna yang ditulis langsung di komponen (mis. text-[#31414F], bg-white) dipetakan ke padanan gelapnya, supaya tidak perlu
+   mengubah ratusan file. Portal Vendor Produksi tampilan HP (.vp-mobile) memakai tokennya sendiri dan tetap terang. */
+.dark {
+  color-scheme: dark;
+  --surface-raised: #1F2C39;
+  --line-strong: #33424F;
+}
+.dark .bg-white,
+.dark .hover\:bg-white:hover {
+  background-color: var(--surface-card) !important;
+}
+.dark .bg-\[\#F7F9FB\],
+.dark .hover\:bg-\[\#F7F9FB\]:hover,
+.dark .bg-\[\#FAFBFC\],
+.dark .hover\:bg-\[\#FAFBFC\]:hover,
+.dark .bg-\[\#F2F4F7\],
+.dark .hover\:bg-\[\#F2F4F7\]:hover,
+.dark .bg-\[\#F2F5F8\],
+.dark .hover\:bg-\[\#F2F5F8\]:hover,
+.dark .bg-\[\#FBFCFD\],
+.dark .hover\:bg-\[\#FBFCFD\]:hover,
+.dark .bg-\[\#F5F8FC\],
+.dark .hover\:bg-\[\#F5F8FC\]:hover,
+.dark .bg-\[\#F1F4F8\],
+.dark .hover\:bg-\[\#F1F4F8\]:hover,
+.dark .bg-\[\#EEF0F3\],
+.dark .hover\:bg-\[\#EEF0F3\]:hover,
+.dark .bg-\[\#EEF1F4\],
+.dark .hover\:bg-\[\#EEF1F4\]:hover,
+.dark .bg-\[\#F3F8FE\],
+.dark .hover\:bg-\[\#F3F8FE\]:hover,
+.dark .bg-\[\#F3F8FD\],
+.dark .hover\:bg-\[\#F3F8FD\]:hover,
+.dark .bg-\[\#EEF3F8\],
+.dark .hover\:bg-\[\#EEF3F8\]:hover,
+.dark .bg-\[\#E5E9F0\],
+.dark .hover\:bg-\[\#E5E9F0\]:hover,
+.dark .bg-\[\#F8FAFC\],
+.dark .hover\:bg-\[\#F8FAFC\]:hover,
+.dark .bg-\[\#F3F4F7\],
+.dark .hover\:bg-\[\#F3F4F7\]:hover,
+.dark .bg-\[\#F1F4F7\],
+.dark .hover\:bg-\[\#F1F4F7\]:hover,
+.dark .bg-\[\#F8FBFF\],
+.dark .hover\:bg-\[\#F8FBFF\]:hover,
+.dark .bg-\[\#F1F5F9\],
+.dark .hover\:bg-\[\#F1F5F9\]:hover,
+.dark .bg-\[\#FFFCF5\],
+.dark .hover\:bg-\[\#FFFCF5\]:hover,
+.dark .bg-\[\#DCE6F0\],
+.dark .hover\:bg-\[\#DCE6F0\]:hover,
+.dark .bg-\[\#DCEBF8\],
+.dark .hover\:bg-\[\#DCEBF8\]:hover,
+.dark .bg-\[\#DCE7F8\],
+.dark .hover\:bg-\[\#DCE7F8\]:hover {
+  background-color: var(--surface-raised) !important;
+}
+.dark .text-\[\#31414F\],
+.dark .hover\:text-\[\#31414F\]:hover,
+.dark .text-\[\#475569\],
+.dark .hover\:text-\[\#475569\]:hover,
+.dark .text-\[\#4B5B6B\],
+.dark .hover\:text-\[\#4B5B6B\]:hover,
+.dark .text-\[\#1F1500\],
+.dark .hover\:text-\[\#1F1500\]:hover {
+  color: #C9D4DF !important;
+}
+.dark .text-\[\#94A3B0\],
+.dark .hover\:text-\[\#94A3B0\]:hover,
+.dark .text-\[\#9AA4BE\],
+.dark .hover\:text-\[\#9AA4BE\]:hover,
+.dark .text-\[\#7E93A8\],
+.dark .hover\:text-\[\#7E93A8\]:hover,
+.dark .text-\[\#5E7288\],
+.dark .hover\:text-\[\#5E7288\]:hover,
+.dark .text-\[\#7C89A6\],
+.dark .hover\:text-\[\#7C89A6\]:hover,
+.dark .text-\[\#9FB0C0\],
+.dark .hover\:text-\[\#9FB0C0\]:hover,
+.dark .text-\[\#B8C4D0\],
+.dark .hover\:text-\[\#B8C4D0\]:hover,
+.dark .text-\[\#C6D3DF\],
+.dark .hover\:text-\[\#C6D3DF\]:hover {
+  color: var(--text-muted) !important;
+}
+.dark .border-\[\#F1F4F7\],
+.dark .border-\[\#CBD5DF\],
+.dark .border-\[\#DDE4EB\],
+.dark .border-\[\#E4E9EE\],
+.dark .border-\[\#E4E8EE\],
+.dark .border-\[\#EEF1F4\],
+.dark .border-\[\#E5E7EB\],
+.dark .border-\[\#D9E0E8\],
+.dark .border-\[\#E8EEF4\],
+.dark .border-\[\#DDE5EE\],
+.dark .border-\[\#F7F9FB\],
+.dark .border-t-\[\#E4E8EE\],
+.dark .border-t-\[\#C9D3DF\],
+.dark .divide-\[\#F1F4F7\] {
+  border-color: var(--border-subtle) !important;
+}
+.dark .border-\[\#CFE0EF\],
+.dark .border-\[\#A8C5DF\],
+.dark .border-\[\#BCD3E8\],
+.dark .border-\[\#E4EEF8\],
+.dark .border-\[\#8FB3D3\],
+.dark .border-\[\#C9D9F5\] {
+  border-color: #2B4A66 !important;
+}
+.dark .border-\[\#F0DFC2\] {
+  border-color: #5A4520 !important;
+}
+.dark .border-\[\#EFC9C4\],
+.dark .border-\[\#F0C9C9\],
+.dark .border-\[\#F0C4C4\],
+.dark .border-\[\#F1C9C9\] {
+  border-color: #5C2B2B !important;
+}
+.dark .border-\[\#B7DFC5\],
+.dark .border-\[\#BFE3CF\] {
+  border-color: #1F4A36 !important;
+}
+.dark .bg-\[\#EAF7EF\] { background-color: rgba(55, 169, 113, 0.16) !important; }
+.dark .bg-\[\#E6DDFA\] { background-color: rgba(138, 111, 181, 0.2) !important; }
+/* Panel samping dan modal: bayangan lebih pekat di latar gelap. */
+.dark [role="dialog"] { box-shadow: -12px 0 32px rgba(0, 0, 0, 0.5); }
+/* Kotak isian dan pilihan bawaan browser. */
+.dark input:not([type="checkbox"]):not([type="radio"]),
+.dark select,
+.dark textarea {
+  background-color: var(--surface-card);
+  color: var(--text-primary);
+  border-color: var(--line-strong);
+}
+
+/* Mode gelap, tambahan: latar terang lain yang ditemukan lewat pemindaian kode. */
+.dark .bg-\[\#FCFCFD\],
+.dark .hover\:bg-\[\#FCFCFD\]:hover,
+.dark .bg-\[\#F9FAFC\],
+.dark .hover\:bg-\[\#F9FAFC\]:hover,
+.dark .bg-\[\#F8FBFE\],
+.dark .hover\:bg-\[\#F8FBFE\]:hover,
+.dark .bg-\[\#F8FAFF\],
+.dark .hover\:bg-\[\#F8FAFF\]:hover,
+.dark .bg-\[\#F5F9FE\],
+.dark .hover\:bg-\[\#F5F9FE\]:hover,
+.dark .bg-\[\#F5F8FF\],
+.dark .hover\:bg-\[\#F5F8FF\]:hover,
+.dark .bg-\[\#F4F6F9\],
+.dark .hover\:bg-\[\#F4F6F9\]:hover,
+.dark .bg-\[\#EEF4FF\],
+.dark .hover\:bg-\[\#EEF4FF\]:hover,
+.dark .bg-\[\#EEF0FC\],
+.dark .hover\:bg-\[\#EEF0FC\]:hover,
+.dark .bg-\[\#EDF1F5\],
+.dark .hover\:bg-\[\#EDF1F5\]:hover,
+.dark .bg-\[\#EAEFF4\],
+.dark .hover\:bg-\[\#EAEFF4\]:hover,
+.dark .bg-\[\#E4E9EE\],
+.dark .hover\:bg-\[\#E4E9EE\]:hover,
+.dark .bg-\[\#E2EDFC\],
+.dark .hover\:bg-\[\#E2EDFC\]:hover {
+  background-color: var(--surface-raised) !important;
+}
+.dark .bg-\[\#FDECEA\],
+.dark .hover\:bg-\[\#FDECEA\]:hover,
+.dark .bg-\[\#FCF3F1\],
+.dark .hover\:bg-\[\#FCF3F1\]:hover,
+.dark .bg-\[\#FBEDEB\],
+.dark .hover\:bg-\[\#FBEDEB\]:hover {
+  background-color: rgba(214, 69, 69, 0.16) !important;
+}
+.dark .bg-\[\#FFFBF3\],
+.dark .hover\:bg-\[\#FFFBF3\]:hover,
+.dark .bg-\[\#FFF8F0\],
+.dark .hover\:bg-\[\#FFF8F0\]:hover {
+  background-color: rgba(214, 150, 50, 0.14) !important;
+}
+.dark .bg-\[\#F5FBF7\],
+.dark .hover\:bg-\[\#F5FBF7\]:hover,
+.dark .bg-\[\#E7F5F5\],
+.dark .hover\:bg-\[\#E7F5F5\]:hover {
+  background-color: rgba(55, 169, 113, 0.14) !important;
+}
+.dark .bg-\[\#CBD5DF\],
+.dark .hover\:bg-\[\#CBD5DF\]:hover,
+.dark .bg-\[\#A9B5C1\],
+.dark .hover\:bg-\[\#A9B5C1\]:hover {
+  background-color: var(--line-strong) !important;
+}
+.dark .text-\[\#B91C1C\] { color: #F08A8A !important; }
+.dark .text-\[\#4A4FB0\] { color: #A9ADF0 !important; }
+.dark .text-\[\#1F6E6E\] { color: #6FCFCF !important; }

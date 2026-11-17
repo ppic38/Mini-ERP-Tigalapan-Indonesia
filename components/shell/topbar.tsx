@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { ThemeToggle } from "@/components/shell/theme-toggle";
 import { Bell, Menu } from "lucide-react";
 import type { Notification } from "@/lib/mrp/types";
 
@@ -40,7 +41,10 @@ export function Topbar({
   showNotifications = false,
   onOpenMenu,
   leading,
+  hideThemeToggle = false,
 }: {
+  /** Sembunyikan tombol mode gelap (portal Vendor Produksi selalu terang). */
+  hideThemeToggle?: boolean;
   /** Isi sisi kiri bar di layar lebar (menu modul gaya Odoo). Kalau diisi, nama peran di kiri hanya tampil di
    *  layar kecil; kalau kosong, bar tampil seperti semula. */
   leading?: ReactNode;
@@ -71,6 +75,7 @@ export function Topbar({
       <div className={"hidden truncate font-sans text-[13px] font-semibold text-text-primary sm:block" + (leading ? " lg:hidden" : "")}>{role}</div>
       {leading}
       <div className="ml-auto flex flex-none min-w-0 items-center gap-2.5 sm:gap-[14px]">
+        {!hideThemeToggle && <ThemeToggle />}
         {showNotifications && (
         <>
         <div className="relative">

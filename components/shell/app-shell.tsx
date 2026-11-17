@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/shell/sidebar";
 import { Topbar } from "@/components/shell/topbar";
+import { useForceLightTheme } from "@/components/shell/theme-toggle";
 import { TopNavMenu } from "@/components/shell/top-nav";
 import { VendorBottomNav, VendorPoSwitch } from "@/components/shell/vendor-bottom-nav";
 import { NAV, PROFILE_HREF, SYSADMIN_GROUP_ORDER, sysadminNavGroups } from "@/lib/shell/nav";
@@ -307,6 +308,8 @@ export function AppShell({
     ? Object.assign({}, ...SYSADMIN_GROUP_ORDER.map((r) => computeBadges(r) ?? {}))
     : computeBadges(role);
 
+  // Dipanggil sebelum return awal di bawah (aturan urutan hook React).
+  useForceLightTheme(role === "vendorMaklon" && !sysadminMode);
   if (!mounted || (isGated && !authorized)) return null;
 
   // Akun anggota tim vendor (migration 0057) -- sidebar disaring ke halaman yang diizinkan saja
@@ -368,6 +371,7 @@ export function AppShell({
             selain itu `contents` = tidak mengubah tata letak sama sekali. */}
         <div ref={vendorShell ? trackHeadHeight : undefined} className={vendorShell ? "vp-sticky-head" : "contents"}>
         <Topbar
+          hideThemeToggle={vendorShell}
           onOpenMenu={() => setNavOpen(true)}
           leading={
             vendorTopNav ? (

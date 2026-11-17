@@ -1,5 +1,12 @@
 # Migrasi Project — Status & Riwayat
 
+## Tombol mode gelap / terang (2026-11-17, tanpa migration) [redesign-tema]
+Owner: "buat toggle dark and light". Hanya tampilan; data dan logika tidak berubah.
+- Tombol bulan / matahari di bar atas semua modul internal (`components/shell/theme-toggle.tsx`, dipasang di `components/shell/topbar.tsx`). Pilihan disimpan per browser (localStorage `erp-theme`), bukan per akun. Skrip kecil di `<head>` (`lib/shell/theme.ts`, dipakai `app/layout.tsx`) memasang kelas `.dark` di `<html>` sebelum halaman digambar, jadi tidak berkedip putih saat dimuat ulang.
+- Warna gelap: token di blok `.dark` yang sudah ada di `app/globals.css`, ditambah pemetaan warna yang ditulis langsung di komponen (bg-white, latar abu/biru muda, teks abu tua, garis, latar merah/oranye/hijau muda) ke padanan gelapnya di akhir `globals.css`, supaya tidak perlu mengubah ratusan file. Komponen baru yang memakai warna heks terang baru harus ditambahkan ke daftar itu.
+- Portal Vendor Produksi SELALU terang (tampilan HP vendor tidak didesain untuk gelap): tombol tidak tampil di sana, kelas `.dark` dilepas selama shell vendor tampil (`useForceLightTheme`) dan tidak dipasang saat halaman `/vendor-maklon/*` dimuat. Mode Sysadmin yang melihat portal vendor ikut pilihan Sysadmin.
+- Diuji di app lokal (1366 px): Dashboard PPIC (kartu, matriks 11 gate), MRP + panel samping, Tracking Item, SCM Monitoring, Finance Payment; pemindaian otomatis tidak menemukan latar terang tersisa di halaman itu; pilihan bertahan setelah muat ulang; portal vendor tetap terang; kembali ke terang normal. BELUM dilihat satu per satu: halaman lain (Procurement, Warehouse, Produksi, Sysadmin), HP.
+
 ## Dashboard operasional: progres produksi, pembelian material, SLA lewat, KPI Yield dan HPP % (2026-11-16, tanpa migration) [redesign-dashboard]
 Owner: "update menu dashboard, fokus ke progress produksi dan pembelian material, SLA yang lewat, KPI (Yield, HPP %)". Fase 4 RENCANA: hanya baca, nol query baru, angka dari fungsi yang sama dengan halaman sumbernya, dirancang untuk HP.
 - `components/dashboard/ops-dashboard.tsx` (`OpsDashboard`), dipasang di atas isi lama menu Dashboard PPIC, Procurement, Finance, dan GM (kartu tugas modul masing-masing tetap ada di bawah, judul "Tugas modul ini").
