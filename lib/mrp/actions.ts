@@ -2713,7 +2713,21 @@ export async function saveBatchExtraFgAction(batchId: string, entries: { lengan:
     if (!batch) throw new Error("Roll tidak ditemukan.");
     assertSameVendor(actor.vendorId, batch.vendor_produksi, "Roll ini");
     await assertCuttingNotPending(db, batchId);
+    // Grup tujuan yang sudah "Finish Good Selesai" (tahap 1) tetap boleh menerima FG hasil tambahan (sama seperti roll baru): reject otomatis grup itu
+    // dihitung ulang sesudahnya. Kalau reject grup itu sudah pernah dirework/dibuang, ditolak supaya hitungan reject tidak kehilangan dasarnya
+    // (sama dengan aturan "Buka lagi" roll). Final Produksi (tahap 2) tetap mengunci (diperiksa di saveBatchExtraFg).
+    const confirmedGroupKeys: { groupKey: string; lengan: Lengan }[] = [];
+    for (const lg of Array.from(new Set(entries.map((e) => e.lengan)))) {
+      const groupKey = `${batch.mrp_id}|${batch.warna}|${lg}`;
+      const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at").eq("group_key", groupKey).eq("vendor_produksi", batch.vendor_produksi).maybeSingle();
+      if (!meta?.fg_confirmed_at) continue;
+      if (await groupHasReworkOrWaste(db, groupKey, batch.vendor_produksi)) {
+        throw new Error(`Reject ${batch.warna} · ${lg} sudah dirework/dibuang -- Finish Good hasil tambahan tidak bisa diubah lagi supaya hitungan reject tetap konsisten.`);
+      }
+      confirmedGroupKeys.push({ groupKey, lengan: lg as Lengan });
+    }
     await saveBatchExtraFg(db, batch, entries);
+    for (const g of confirmedGroupKeys) await recomputeAutoRejectForGroup(db, g.groupKey, batch.mrp_id, batch.vendor_produksi, batch.warna, g.lengan);
     await logVendorAction(actor, `Input Finish Good hasil tambahan sisa kain roll ${batch.code_roll ?? batch.id}`, "production_batches", batchId);
   });
 }

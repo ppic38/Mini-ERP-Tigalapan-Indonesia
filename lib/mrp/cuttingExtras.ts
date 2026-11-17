@@ -44,11 +44,13 @@ async function deleteResults(db: Db, ids: string[]): Promise<void> {
   await db.from("production_results").delete().in("id", ids);
 }
 
-/** Pesan kalau Finish Good grup tujuan sudah dikunci ("Selesai Produksi" tahap 1 atau 2), kosong kalau masih boleh diubah. */
-async function lockedGroups(db: Db, vendor: string, keys: string[]): Promise<string[]> {
+/** Pesan kalau Finish Good grup tujuan sudah dikunci ("Selesai Produksi" tahap 1 atau 2), kosong kalau masih boleh diubah.
+ *  `finalOnly` = hanya Final Produksi (tahap 2) yang dianggap terkunci: dipakai input FG hasil tambahan, yang tetap boleh diisi sesudah
+ *  "Finish Good Selesai" (tahap 1), sama seperti roll baru; reject grupnya dihitung ulang oleh pemanggil. */
+async function lockedGroups(db: Db, vendor: string, keys: string[], finalOnly = false): Promise<string[]> {
   if (keys.length === 0) return [];
   const { data: metas } = await db.from("production_group_meta").select("group_key,fg_confirmed_at,done_at").in("group_key", keys).eq("vendor_produksi", vendor);
-  return (metas ?? []).filter((m) => m.fg_confirmed_at || m.done_at).map((m) => String(m.group_key).split("|").slice(1).join(" · "));
+  return (metas ?? []).filter((m) => m.done_at || (!finalOnly && m.fg_confirmed_at)).map((m) => String(m.group_key).split("|").slice(1).join(" · "));
 }
 
 /** FG hasil tambahan sisa kain langsung bisa dikirim begitu diinput (owner 2026-11-11, tanpa menunggu grup tujuan Selesai), jadi Finish Good-nya tidak boleh dikurangi atau dihapus
@@ -174,8 +176,8 @@ export async function persistBatchExtras(db: Db, batch: BatchRef, list: CuttingE
   return stored;
 }
 
-/** Input Finish Good hasil tambahan sebuah roll (tab Finish Good): fgQty per baris, 0..qty (hasil cutting). Ditolak kalau grup tujuannya
- *  sudah dikonfirmasi Selesai Produksi. */
+/** Input Finish Good hasil tambahan sebuah roll (tab Finish Good): fgQty per baris, 0..qty (hasil cutting). Ditolak hanya kalau grup tujuannya
+ *  sudah Final Produksi; sesudah "Finish Good Selesai" (tahap 1) tetap boleh (pemanggil menghitung ulang reject grupnya). */
 export async function saveBatchExtraFg(db: Db, batch: BatchRef, entries: { lengan: string; usia: string; size: string; fgQty: number }[]): Promise<void> {
   const { data, error } = await db.from("production_batches").select("extra_results").eq("id", batch.id).maybeSingle();
   if (error) throw new Error(error.message);
@@ -192,8 +194,8 @@ export async function saveBatchExtraFg(db: Db, batch: BatchRef, entries: { lenga
     await assertExtraFgNotBelowShipped(db, batch, x, e.fgQty);
     touched.push(x);
   }
-  const locked = await lockedGroups(db, batch.vendor_produksi, Array.from(new Set(touched.map((x) => `${batch.mrp_id}|${batch.warna}|${x.lengan}`))));
-  if (locked.length > 0) throw new Error(`Finish Good grup ${locked.join(", ")} sudah dikonfirmasi Selesai Produksi -- buka kuncinya dulu di tab Finish Good.`);
+  const locked = await lockedGroups(db, batch.vendor_produksi, Array.from(new Set(touched.map((x) => `${batch.mrp_id}|${batch.warna}|${x.lengan}`))), true);
+  if (locked.length > 0) throw new Error(`Finish Good grup ${locked.join(", ")} sudah Final Produksi -- buka kunci Final dulu.`);
   const recordedAt = new Date().toISOString();
   for (const e of entries) {
     const x = current.find((c) => c.lengan === e.lengan && c.usia === e.usia && c.size === e.size)!;
