@@ -1,5 +1,13 @@
 # Migrasi Project — Status & Riwayat
 
+## Portal Vendor Produksi kembali ke tampilan lama, desktop maupun HP (2026-11-17, tanpa migration) [redesign-vendor]
+Owner: "untuk produksi di skip saja semua perubahan UI-nya", diperjelas "seluruh perubahan yang ada di vendor". Membatalkan entri "Vendor Produksi tahap 1 (desktop saja)" di bawah.
+- Commit `d25a289` di-revert: portal vendor di desktop kembali memakai sidebar kiri (tanpa menu atas "Vendor Produksi"), dan tabel bersama di `/vendor-maklon/*` kembali ke filter pilihan tunggal tanpa kotak cari Odoo, kelompok, favorit, ingatan kolom, bagi halaman, panel samping (`modern` = bukan portal vendor, seperti sebelum redesign).
+- Urut kolom dengan klik judul (`components/mrp/data-table.tsx`) kini hanya untuk modul internal; tabel vendor tidak bisa diklik judulnya, sama seperti dulu.
+- Tombol mode gelap tetap tidak tampil di portal vendor, dan portal vendor selalu terang.
+- TIDAK dibatalkan karena bukan perubahan tampilan redesign: cek nomor koli kembar dalam satu resi di Pengiriman (`281437b`, aturan owner 13 Nov, server juga menolak).
+- Diuji di app lokal (1366 px): PO Produksi Saya akun CECEP tampil dengan sidebar dan filter lama, tanpa urut kolom; MRP PPIC tetap punya menu atas dan urut kolom. tsc bersih.
+
 ## Tombol mode gelap / terang (2026-11-17, tanpa migration) [redesign-tema]
 Owner: "buat toggle dark and light". Hanya tampilan; data dan logika tidak berubah.
 - Tombol bulan / matahari di bar atas semua modul internal (`components/shell/theme-toggle.tsx`, dipasang di `components/shell/topbar.tsx`). Pilihan disimpan per browser (localStorage `erp-theme`), bukan per akun. Skrip kecil di `<head>` (`lib/shell/theme.ts`, dipakai `app/layout.tsx`) memasang kelas `.dark` di `<html>` sebelum halaman digambar, jadi tidak berkedip putih saat dimuat ulang.

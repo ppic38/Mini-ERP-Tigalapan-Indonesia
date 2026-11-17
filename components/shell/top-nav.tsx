@@ -21,8 +21,7 @@ export function TopNavMenu({
   badgeOverrides,
 }: {
   moduleLabel: string;
-  /** Kosong = tanpa tombol pindah modul (portal Vendor Produksi). */
-  moduleRole?: InternalRole;
+  moduleRole: InternalRole;
   items: NavItem[];
   activeHref?: string;
   badgeOverrides?: Record<string, number>;
@@ -52,17 +51,15 @@ export function TopNavMenu({
 
   return (
     <div className="hidden min-w-0 flex-1 items-center gap-1 self-stretch lg:flex">
-      {moduleRole && (
-        <button
-          type="button"
-          onClick={() => setSwitcherOpen(true)}
-          aria-label="Pindah modul"
-          title="Pindah modul"
-          className="-ml-2 flex h-9 w-9 flex-none items-center justify-center rounded-md text-text-muted hover:bg-[#F1F4F8] hover:text-text-primary"
-        >
-          <LayoutGrid size={19} strokeWidth={2} />
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={() => setSwitcherOpen(true)}
+        aria-label="Pindah modul"
+        title="Pindah modul"
+        className="-ml-2 flex h-9 w-9 flex-none items-center justify-center rounded-md text-text-muted hover:bg-[#F1F4F8] hover:text-text-primary"
+      >
+        <LayoutGrid size={19} strokeWidth={2} />
+      </button>
       <span className="mr-2 flex flex-none items-center gap-2 font-heading text-[14px] font-bold tracking-tight text-text-primary">
         {current && (
           <span className="flex h-6 w-6 items-center justify-center rounded-md" style={{ background: current.color }}>
@@ -144,7 +141,7 @@ export function TopNavMenu({
           )}
         </div>
       )}
-      {switcherOpen && moduleRole && <ModuleSwitcher currentRole={moduleRole} onClose={() => setSwitcherOpen(false)} />}
+      {switcherOpen && <ModuleSwitcher currentRole={moduleRole} onClose={() => setSwitcherOpen(false)} />}
     </div>
   );
 }

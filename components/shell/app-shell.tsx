@@ -338,10 +338,7 @@ export function AppShell({
   const vendorShell = role === "vendorMaklon" && !sysadminMode;
   // Kerangka menu atas gaya Odoo (redesign paket B, owner 2026-11-16): semua modul internal. TIDAK berlaku untuk
   // portal Vendor Produksi (tidak disentuh) dan Mode Sysadmin (sidebar bertumpuk, menunggu keputusan owner).
-  // Revisi 2026-11-16 (owner: "begitu pula dengan vendor produksi", desktop saja): portal vendor ikut menu atas di layar lebar; di HP tetap
-  // bar menu bawah (VendorBottomNav) dan laci, karena menu atas memang hanya tampil >= lg.
-  const vendorTopNav = TOP_NAV_ENABLED && vendorShell;
-  const topNav = (TOP_NAV_ENABLED && isGated && !sysadminMode) || vendorTopNav;
+  const topNav = TOP_NAV_ENABLED && isGated && !sysadminMode;
 
   return (
     <div className={"flex min-h-screen bg-surface-page" + (vendorShell ? " vp-mobile" : "")}>
@@ -374,14 +371,7 @@ export function AppShell({
           hideThemeToggle={vendorShell}
           onOpenMenu={() => setNavOpen(true)}
           leading={
-            vendorTopNav ? (
-              <TopNavMenu
-                moduleLabel="Vendor Produksi"
-                items={[...sidebarItems, { label: "Panduan", href: "/vendor-maklon/panduan" }]}
-                activeHref={activeHref}
-                badgeOverrides={badgeOverrides}
-              />
-            ) : topNav ? (
+            topNav ? (
               <TopNavMenu moduleLabel={nav.role} moduleRole={role as InternalRole} items={sidebarItems} activeHref={activeHref} badgeOverrides={badgeOverrides} />
             ) : undefined
           }

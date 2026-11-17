@@ -64,18 +64,6 @@ function compareSortKeys(a: { n: number | null; t: string }, b: { n: number | nu
 }
 
 /** Jumlah satu angka di baris kelompok. */
-/** Lebar layar desktop (sama batas tampilan HP di globals.css: < 64rem = HP / tablet tegak). */
-const DESKTOP_QUERY = "(min-width: 64rem)";
-function subscribeDesktop(cb: () => void) {
-  if (typeof window === "undefined") return () => {};
-  const mq = window.matchMedia(DESKTOP_QUERY);
-  mq.addEventListener("change", cb);
-  return () => mq.removeEventListener("change", cb);
-}
-function readDesktop() {
-  return typeof window !== "undefined" && window.matchMedia(DESKTOP_QUERY).matches;
-}
-
 export function aggSum<T>(get: (row: T) => number, format: (n: number) => ReactNode = (n) => n.toLocaleString("id-ID", { maximumFractionDigits: 2 })) {
   return (rows: T[]) => format(rows.reduce((total, r) => total + (get(r) || 0), 0));
 }
@@ -273,10 +261,10 @@ export function DataTable<T>({
   // hilang tiap halaman dibuka). Yang disimpan SELISIH dari bawaan (kolom yang sengaja ditampilkan / disembunyikan),
   // bukan daftar lengkap -- supaya kolom baru yang ditambahkan ke tabel di kemudian hari tetap ikut bawaannya.
   const pathname = usePathname();
-  // Portal vendor produksi: perilaku baru (kotak cari Odoo, kelompok, favorit, panel samping) HANYA di layar desktop (>= 1024 px, keputusan
-  // owner 2026-11-16 "desktop saja"). Di HP / tablet tegak tabel vendor tetap persis seperti sebelum redesign (kartu, filter pilihan tunggal).
-  const isDesktop = useSyncExternalStore(subscribeDesktop, readDesktop, () => false);
-  const modern = !pathname.startsWith("/vendor-maklon") || isDesktop;
+  // Portal vendor produksi TIDAK ikut perilaku baru (keputusan owner: modul itu sudah dirapikan sendiri dan tidak
+  // disentuh). Di sana tabel berperilaku persis seperti sebelum redesign: tanpa ingatan kolom, tanpa bagi halaman,
+  // filter tetap pilihan tunggal.
+  const modern = !pathname.startsWith("/vendor-maklon");
   // Satu baris per data (owner 2026-11-16: "tampilan buat fit 1 baris"): bawaan untuk tabel modul internal; `nowrap={false}` untuk mengembalikan pembungkusan.
   const nowrap = nowrapProp ?? modern;
   const viewId = viewKey ?? `${pathname}:${typeof title === "string" ? title : ""}`;
@@ -837,9 +825,9 @@ export function DataTable<T>({
           <thead className={bodyMaxHeight ? "sticky top-0 z-10" : undefined}>
             <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
               <th
-                onClick={firstColumnLabel ? () => toggleSort("__first") : undefined}
-                title={firstColumnLabel ? "Klik untuk mengurutkan" : undefined}
-                className={"select-none px-5 py-[9px] " + (firstColumnLabel ? "cursor-pointer hover:text-text-primary " : "") + (nowrap ? "whitespace-nowrap " : "") + (firstColumnAlign === "right" ? "text-right" : "text-left")}
+                onClick={modern && firstColumnLabel ? () => toggleSort("__first") : undefined}
+                title={modern && firstColumnLabel ? "Klik untuk mengurutkan" : undefined}
+                className={"select-none px-5 py-[9px] " + (modern && firstColumnLabel ? "cursor-pointer hover:text-text-primary " : "") + (nowrap ? "whitespace-nowrap " : "") + (firstColumnAlign === "right" ? "text-right" : "text-left")}
               >
                 {firstColumnLabel}
                 {sortMark("__first")}
@@ -847,9 +835,9 @@ export function DataTable<T>({
               {visibleColumns.map((c) => (
                 <th
                   key={c.key}
-                  onClick={c.sysadmin ? undefined : () => toggleSort(c.key)}
-                  title={c.sysadmin ? undefined : "Klik untuk mengurutkan"}
-                  className={"select-none " + (c.sysadmin ? "" : "cursor-pointer hover:text-text-primary ") + (nowrap ? "px-2.5 " : "px-3 ") + "py-[9px] " + (nowrap ? "whitespace-nowrap " : "") + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple bg-accent-purple-bg text-accent-purple" : "")}
+                  onClick={c.sysadmin || !modern ? undefined : () => toggleSort(c.key)}
+                  title={c.sysadmin || !modern ? undefined : "Klik untuk mengurutkan"}
+                  className={"select-none " + (c.sysadmin || !modern ? "" : "cursor-pointer hover:text-text-primary ") + (nowrap ? "px-2.5 " : "px-3 ") + "py-[9px] " + (nowrap ? "whitespace-nowrap " : "") + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple bg-accent-purple-bg text-accent-purple" : "")}
                 >
                   {c.label}
                   {sortMark(c.key)}
