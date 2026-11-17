@@ -119,7 +119,7 @@ export function SheetSyncSummaryCard({ links, loaded, error, reload }: { links: 
       </div>
       <p className="mt-1 font-sans text-[11.5px] leading-relaxed text-text-muted">
         Satu spreadsheet = satu MRP. Unduh <b>Template Sheet</b> MRP itu, unggah ke Google Sheets, publikasikan ke web (File &gt; Bagikan &gt; Publikasikan ke web &gt; Seluruh dokumen &gt; Microsoft Excel .xlsx), lalu klik <b>Tambah</b> di kolom Spreadsheet
-        dan tempel tautannya. Tautan baru bisa disimpan setelah minimal satu roll MRP itu di-Good Receive; data tiap roll baru diterima setelah rollnya di-Good Receive dan di-Resting. ERP lalu membaca spreadsheet otomatis tiap beberapa menit saat ada
+        dan tempel tautannya. Tautan baru bisa disimpan setelah MRP itu punya invoice material berstatus Delivery. Spreadsheet memuat tab Penerimaan (Good Receive), Resting, Produksi (cutting, finish good), Reject, dan Rework; pengiriman dan pengajuan invoice tetap di ERP. Data tiap roll diterima berurutan (terima, resting, cutting, finish good). ERP lalu membaca spreadsheet otomatis tiap beberapa menit saat ada
         yang membuka ERP, jadi tombol sinkron hanya perlu dipakai kalau ada data yang belum sinkron.
       </p>
       {error && <div className="mt-2 font-sans text-[11.5px] font-medium text-danger-fg">{error}</div>}

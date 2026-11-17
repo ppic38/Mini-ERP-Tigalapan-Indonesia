@@ -1,11 +1,24 @@
-import type { Workbook } from "exceljs";
+import type { Workbook, Worksheet } from "exceljs";
 import { targetSizesForBatch } from "./derive";
-import { PRODUKSI_HEADERS, REJECT_HEADERS, REWORK_HEADERS, SHEET_TAB_PRODUKSI, SHEET_TAB_REJECT, SHEET_TAB_REWORK, SHEET_TZ_OFFSET_MIN } from "./vendorSheet";
-import type { AduanPolaRow, ProductionBatch, ProductionGroupMeta, ProductionResult } from "./types";
+import {
+  PENERIMAAN_HEADERS,
+  PRODUKSI_HEADERS,
+  REJECT_HEADERS,
+  RESTING_HEADERS,
+  REWORK_HEADERS,
+  SHEET_TAB_PENERIMAAN,
+  SHEET_TAB_PRODUKSI,
+  SHEET_TAB_REJECT,
+  SHEET_TAB_RESTING,
+  SHEET_TAB_REWORK,
+  SHEET_TZ_OFFSET_MIN,
+} from "./vendorSheet";
+import type { AduanPolaRow, ProductionBatch, ProductionGroupMeta, ProductionResult, RawMaterialInvoice } from "./types";
 
-// Template spreadsheet sinkron vendor (owner 2026-11-16, khusus BAYU): satu file per PO/MRP berisi tab "Produksi" (satu baris per roll x size), "Reject" (klasifikasi reject
-// per warna·lengan), "Rework" (rework yang sudah tercatat), dan "Petunjuk". Terisi dengan keadaan ERP saat ini; vendor/sistemnya mengisi kolom Hasil Cutting, Finish Good,
-// dst., lalu mempublikasikan spreadsheet ke web dan menempelkan tautannya di portal. Pembacaan memakai JUDUL KOLOM (lib/mrp/vendorSheet.ts), jadi judulnya tidak boleh diubah.
+// Template spreadsheet sinkron vendor (owner 2026-11-16/17, khusus BAYU): satu file per MRP. Tab "Penerimaan" (pengganti Good Receive, satu baris per roll invoice supplier), "Resting"
+// (satu baris per roll yang kode rollnya sudah diketahui), "Produksi" (satu baris per roll x size dengan target), "Reject" (klasifikasi per warna·lengan), "Rework" (yang sudah tercatat),
+// dan "Petunjuk". Terisi dengan keadaan ERP saat ini; vendor/sistemnya mengisi kolom kuning, lalu mempublikasikan spreadsheet ke web dan menempelkan tautannya di portal.
+// Pembacaan memakai JUDUL KOLOM (lib/mrp/vendorSheet.ts), jadi judulnya tidak boleh diubah. Pengiriman dan pengajuan invoice tetap di ERP.
 
 const SIZE_ORDER = ["XXS", "XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL", "6XL"];
 const sizeRank = (s: string) => {
@@ -14,9 +27,11 @@ const sizeRank = (s: string) => {
 };
 const lenganLabel = (l: string) => (l === "PENDEK" ? "Pendek" : "Panjang");
 const HEAD_BG = "FF2563EB";
+const INPUT_BG = "FFFFF7D6";
 /** Jam dinding WIB (UTC+7) sebagai Date berkomponen-UTC, supaya Excel menampilkan jam WIB; pembacaan di ERP mengembalikannya ke WIB (lihat SHEET_TZ_OFFSET_MIN di vendorSheet.ts). */
 const wibWall = (iso: string) => new Date(Date.parse(iso) + SHEET_TZ_OFFSET_MIN * 60000);
-const INPUT_BG = "FFFFF7D6";
+const FMT_DT = "yyyy-mm-dd hh:mm";
+const FMT_D = "yyyy-mm-dd";
 
 export type VendorSheetTemplateInput = {
   mrpId: string;
@@ -25,6 +40,19 @@ export type VendorSheetTemplateInput = {
   aduanRows: AduanPolaRow[];
   metas: ProductionGroupMeta[];
   results: ProductionResult[];
+  invoices: RawMaterialInvoice[];
+};
+
+type RollInfo = {
+  invoiceId: string;
+  supplier: string;
+  warna: string;
+  lengan: string;
+  rollIndex: number;
+  grossKg: number;
+  code: string;
+  arrivedAt?: string;
+  netKg?: number;
 };
 
 export async function buildVendorSheetTemplate(input: VendorSheetTemplateInput): Promise<Workbook> {
@@ -33,7 +61,7 @@ export async function buildVendorSheetTemplate(input: VendorSheetTemplateInput):
   wb.creator = "Mini ERP Tigalapan";
   wb.created = new Date();
 
-  const head = (ws: import("exceljs").Worksheet, headers: string[], inputCols: number[], widths: number[]) => {
+  const head = (ws: Worksheet, headers: string[], inputCols: number[], widths: number[]) => {
     ws.columns = widths.map((w) => ({ width: w }));
     const row = ws.getRow(1);
     headers.forEach((h, i) => {
@@ -46,49 +74,114 @@ export async function buildVendorSheetTemplate(input: VendorSheetTemplateInput):
     row.height = 22;
     ws.views = [{ state: "frozen", ySplit: 1 }];
   };
-  const shadeInputs = (ws: import("exceljs").Worksheet, rowNo: number, cols: number[]) => {
+  const shadeInputs = (ws: Worksheet, rowNo: number, cols: number[]) => {
     for (const c of cols) ws.getRow(rowNo).getCell(c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: INPUT_BG } };
   };
+  const put = (ws: Worksheet, rowNo: number, values: (string | number | Date | null)[]) => {
+    values.forEach((v, i) => {
+      if (v !== null && v !== "") ws.getRow(rowNo).getCell(i + 1).value = v as string | number | Date;
+    });
+  };
 
-  const batches = input.batches
-    .filter((b) => b.mrpId === input.mrpId && b.vendorProduksi === input.vendorId && b.codeRoll)
-    .sort((a, b) => (a.codeRoll ?? "").localeCompare(b.codeRoll ?? "", "id-ID", { numeric: true }));
+  const batches = input.batches.filter((b) => b.mrpId === input.mrpId && b.vendorProduksi === input.vendorId && b.codeRoll);
+  const batchByCode = new Map(batches.map((b) => [(b.codeRoll ?? "").toUpperCase(), b]));
 
-  // ---------- Produksi ----------
-  const prod = wb.addWorksheet(SHEET_TAB_PRODUKSI);
-  head(prod, PRODUKSI_HEADERS, [7, 8, 9], [10, 18, 24, 10, 8, 9, 14, 14, 14]);
-  let r = 2;
-  for (const b of batches) {
-    const target = targetSizesForBatch(b, input.aduanRows);
-    const sizes = Array.from(new Set([...Object.keys(target), ...Object.keys(b.sizeQty ?? {}), ...Object.keys(b.fgSizeQty ?? {})])).sort((a, c) => sizeRank(a) - sizeRank(c) || a.localeCompare(c, "id-ID", { numeric: true }));
-    for (const size of sizes) {
-      const cut = b.sizeQty?.[size];
-      const fg = b.fgSizeQty?.[size];
-      const row = prod.getRow(r);
-      [b.mrpId, b.codeRoll, b.warna, lenganLabel(b.lengan), size, target[size] ?? "", b.cuttingAt ? wibWall(b.cuttingAt) : "", cut && cut > 0 ? cut : "", fg && fg > 0 ? fg : ""].forEach((v, i) => {
-        row.getCell(i + 1).value = v === "" ? null : (v as string | number);
+  // Semua roll invoice material MRP ini yang tujuannya vendor ini (urut invoice, warna, lengan, roll).
+  const rolls: RollInfo[] = [];
+  for (const inv of input.invoices) {
+    if (inv.mrpId !== input.mrpId || inv.destinationVendor !== input.vendorId) continue;
+    for (const entry of inv.colorEntries) {
+      const key = `${entry.warna}|${entry.lengan}`;
+      const arrivals = inv.rollArrivals[key] ?? [];
+      const receipts = inv.rollReceipts[key] ?? [];
+      entry.rolls.forEach((gross, i) => {
+        const arrival = arrivals[i] ?? null;
+        const receipt = receipts[i] ?? null;
+        rolls.push({
+          invoiceId: inv.id,
+          supplier: inv.supplier,
+          warna: entry.warna,
+          lengan: entry.lengan,
+          rollIndex: i,
+          grossKg: gross,
+          code: receipt?.codeRoll ?? arrival?.codeRoll ?? entry.codeRolls?.[i] ?? "",
+          arrivedAt: arrival?.arrivedAt,
+          netKg: receipt?.netKg,
+        });
       });
+    }
+  }
+  rolls.sort((a, b) => a.invoiceId.localeCompare(b.invoiceId, "id-ID", { numeric: true }) || a.warna.localeCompare(b.warna, "id-ID") || a.lengan.localeCompare(b.lengan) || a.rollIndex - b.rollIndex);
+
+  // ---------- Penerimaan ----------
+  const pen = wb.addWorksheet(SHEET_TAB_PENERIMAAN);
+  head(pen, PENERIMAAN_HEADERS, [8, 9], [10, 20, 18, 24, 10, 8, 16, 18, 14]);
+  let r = 2;
+  for (const x of rolls) {
+    put(pen, r, [input.mrpId, x.invoiceId, x.supplier, x.warna, lenganLabel(x.lengan), x.rollIndex + 1, x.grossKg, x.code, x.arrivedAt ? wibWall(x.arrivedAt) : null]);
+    shadeInputs(pen, r, [8, 9]);
+    pen.getRow(r).getCell(9).numFmt = FMT_D;
+    r++;
+  }
+  if (r > 2) pen.autoFilter = { from: { row: 1, column: 1 }, to: { row: r - 1, column: PENERIMAAN_HEADERS.length } };
+
+  // ---------- Resting (roll yang kode rollnya sudah diketahui) ----------
+  const rest = wb.addWorksheet(SHEET_TAB_RESTING);
+  head(rest, RESTING_HEADERS, [6, 7, 8, 9], [10, 18, 24, 10, 16, 16, 10, 14, 18, 12]);
+  r = 2;
+  for (const x of rolls.filter((x) => x.code)) {
+    const b = batchByCode.get(x.code.toUpperCase());
+    put(rest, r, [input.mrpId, x.code, x.warna, lenganLabel(x.lengan), x.grossKg, x.netKg ?? null, b?.gramasi ?? null, b?.setting ?? null, b?.restingAt ? wibWall(b.restingAt) : null, b?.kode ?? null]);
+    shadeInputs(rest, r, [6, 7, 8, 9]);
+    rest.getRow(r).getCell(9).numFmt = FMT_DT;
+    r++;
+  }
+  if (r > 2) rest.autoFilter = { from: { row: 1, column: 1 }, to: { row: r - 1, column: RESTING_HEADERS.length } };
+
+  // ---------- Produksi (roll x size; roll yang belum di-Resting memakai target dari baris Aduan Pola) ----------
+  const prod = wb.addWorksheet(SHEET_TAB_PRODUKSI);
+  head(prod, PRODUKSI_HEADERS, [7, 8, 9], [10, 18, 24, 10, 8, 9, 18, 14, 14]);
+  const usedByAduan = new Map<string, number>();
+  for (const b of batches) usedByAduan.set(b.aduanRowId, (usedByAduan.get(b.aduanRowId) ?? 0) + 1);
+  const rowsOut: { code: string; warna: string; lengan: string; cuttingAt?: string; target: Record<string, number>; cut: Record<string, number>; fg: Record<string, number> }[] = [];
+  const seenCodes = new Set<string>();
+  for (const b of [...batches].sort((a, c) => (a.codeRoll ?? "").localeCompare(c.codeRoll ?? "", "id-ID", { numeric: true }))) {
+    seenCodes.add((b.codeRoll ?? "").toUpperCase());
+    rowsOut.push({ code: b.codeRoll!, warna: b.warna, lengan: b.lengan, cuttingAt: b.cuttingAt, target: targetSizesForBatch(b, input.aduanRows), cut: b.sizeQty ?? {}, fg: b.fgSizeQty ?? {} });
+  }
+  for (const x of rolls.filter((x) => x.code && !seenCodes.has(x.code.toUpperCase()))) {
+    // Belum di-Resting: pilih baris Aduan Pola seperti layar Resting (warna·lengan sama, yang masih punya jatah roll lebih dulu) dan bagi targetnya per roll.
+    const cands = input.aduanRows.filter((a) => a.vendor === input.vendorId && a.warna === x.warna && a.lengan === x.lengan);
+    const pick = cands.find((a) => (usedByAduan.get(a.id) ?? 0) < a.qtyRoll) ?? cands[0];
+    if (!pick || pick.qtyRoll <= 0) continue;
+    usedByAduan.set(pick.id, (usedByAduan.get(pick.id) ?? 0) + 1);
+    const target: Record<string, number> = {};
+    for (const s of pick.sizes) target[s.size] = Math.round(s.qty / pick.qtyRoll);
+    rowsOut.push({ code: x.code, warna: x.warna, lengan: x.lengan, target, cut: {}, fg: {} });
+  }
+  r = 2;
+  for (const it of rowsOut) {
+    const sizes = Array.from(new Set([...Object.keys(it.target), ...Object.keys(it.cut), ...Object.keys(it.fg)])).sort((a, c) => sizeRank(a) - sizeRank(c) || a.localeCompare(c, "id-ID", { numeric: true }));
+    for (const size of sizes) {
+      const cut = it.cut[size];
+      const fg = it.fg[size];
+      put(prod, r, [input.mrpId, it.code, it.warna, lenganLabel(it.lengan), size, it.target[size] ?? null, it.cuttingAt ? wibWall(it.cuttingAt) : null, cut && cut > 0 ? cut : null, fg && fg > 0 ? fg : null]);
       shadeInputs(prod, r, [7, 8, 9]);
-      prod.getRow(r).getCell(7).numFmt = "yyyy-mm-dd hh:mm";
+      prod.getRow(r).getCell(7).numFmt = FMT_DT;
       r++;
     }
   }
-  prod.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, r - 1), column: PRODUKSI_HEADERS.length } };
+  if (r > 2) prod.autoFilter = { from: { row: 1, column: 1 }, to: { row: r - 1, column: PRODUKSI_HEADERS.length } };
 
   // ---------- Reject ----------
   const rej = wb.addWorksheet(SHEET_TAB_REJECT);
   head(rej, REJECT_HEADERS, [4, 5], [10, 24, 10, 16, 16]);
   const groups = new Map<string, { warna: string; lengan: string }>();
-  for (const b of batches) groups.set(`${b.mrpId}|${b.warna}|${b.lengan}`, { warna: b.warna, lengan: b.lengan });
+  for (const it of rowsOut) groups.set(`${input.mrpId}|${it.warna}|${it.lengan}`, { warna: it.warna, lengan: it.lengan });
   r = 2;
   for (const [key, g] of Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0], "id-ID"))) {
     const meta = input.metas.find((m) => m.groupKey === key && m.vendorProduksi === input.vendorId);
-    const row = rej.getRow(r);
-    row.getCell(1).value = input.mrpId;
-    row.getCell(2).value = g.warna;
-    row.getCell(3).value = lenganLabel(g.lengan);
-    if (meta?.rejectMaterialQty !== undefined) row.getCell(4).value = meta.rejectMaterialQty;
-    if (meta?.rejectProsesQty !== undefined) row.getCell(5).value = meta.rejectProsesQty;
+    put(rej, r, [input.mrpId, g.warna, lenganLabel(g.lengan), meta?.rejectMaterialQty ?? null, meta?.rejectProsesQty ?? null]);
     shadeInputs(rej, r, [4, 5]);
     r++;
   }
@@ -110,33 +203,33 @@ export async function buildVendorSheetTemplate(input: VendorSheetTemplateInput):
   }
   r = 2;
   for (const a of agg.values()) {
-    const row = rw.getRow(r);
-    [input.mrpId, a.warna, lenganLabel(a.fromLengan), a.fromSize, a.usia === "KIDS" ? "Kids" : "Dewasa", lenganLabel(a.toLengan), a.toSize, a.qty].forEach((v, i) => {
-      row.getCell(i + 1).value = v;
-    });
+    put(rw, r, [input.mrpId, a.warna, lenganLabel(a.fromLengan), a.fromSize, a.usia === "KIDS" ? "Kids" : "Dewasa", lenganLabel(a.toLengan), a.toSize, a.qty]);
     shadeInputs(rw, r, [8]);
     r++;
   }
 
   // ---------- Petunjuk ----------
   const help = wb.addWorksheet("Petunjuk");
-  help.columns = [{ width: 110 }];
+  help.columns = [{ width: 120 }];
   const lines = [
     `Template sinkron ERP Tigalapan — MRP ${input.mrpId}`,
     "",
     "Cara pakai:",
-    "1. Unggah file ini ke Google Sheets (jangan ubah nama tab Produksi / Reject / Rework dan JANGAN ubah judul kolom di baris 1).",
-    "2. Sistem Anda mengisi kolom berwarna kuning: Waktu Cutting (tanggal + jam WIB, wajib untuk hasil cutting baru), Hasil Cutting, Finish Good (tab Produksi); Reject Material dan Reject Produksi (tab Reject); Qty Rework (tab Rework).",
+    "1. Unggah file ini ke Google Sheets. JANGAN ubah nama tab (Penerimaan / Resting / Produksi / Reject / Rework) dan JANGAN ubah judul kolom di baris 1. Satu spreadsheet = satu MRP.",
+    "2. Sistem Anda mengisi kolom berwarna kuning. Waktu = tanggal + jam WIB (mis. 2026-11-10 14:30); Tgl Terima cukup tanggal.",
     "3. Google Sheets: File > Bagikan > Publikasikan ke web > pilih \"Seluruh dokumen\" dan format \"Microsoft Excel (.xlsx)\" > Publikasikan. Salin tautannya.",
-    "4. Portal ERP > PO Produksi Saya > kolom Spreadsheet (baris MRP ini) > Tambah: tempel tautan dan Simpan. Satu spreadsheet = satu MRP. Selanjutnya ERP membaca spreadsheet otomatis; pakai tombol Sinkron kalau ada data yang belum sinkron.",
+    "4. Portal ERP > PO Produksi Saya > kolom Spreadsheet (baris MRP ini) > Tambah: tempel tautan dan Simpan. Selanjutnya ERP membaca spreadsheet otomatis; pakai tombol Sinkron kalau ada data yang belum sinkron.",
     "",
-    "Aturan baca:",
-    "- Satu baris per roll x size (tab Produksi). Code Roll dan No MRP harus sama persis dengan di ERP. Data sebuah roll baru diterima setelah rollnya di-Good Receive dan di-Resting di ERP (roll dibuat lewat Resting, bukan lewat spreadsheet); roll dari invoice yang belum tiba dilaporkan dan diterima belakangan.",
-    "- Sel kosong = tidak diubah. Angka 0 berarti nol. Hasil Cutting yang sudah ada di ERP tidak dihapus oleh sel kosong/0.",
-    "- Finish Good tidak boleh melebihi Hasil Cutting. Roll yang sudah ditutup, sudah masuk resi, atau punya alih size/hasil tambahan sisa kain tidak diubah dari spreadsheet (dilaporkan di portal).",
-    "- Reject: isi Reject Material DAN Reject Produksi; jumlahnya harus sama dengan total reject warna·lengan itu di ERP (reject dihitung setelah Selesai Produksi di tab Finish Good).",
-    "- Rework: tulis total rework per kombinasi (asal -> tujuan). ERP hanya menambah selisihnya; mengurangi rework tidak dilakukan otomatis.",
-    "- Publish to web memakan waktu beberapa menit untuk memuat perubahan terbaru dari Google.",
+    "Urutan tahap (satu putaran baca mengerjakan semuanya berurutan): Penerimaan -> Resting -> Cutting -> Finish Good -> Reject -> Rework. Pengiriman (koli, resi), pengajuan invoice, Tutup Roll, dan Selesai Produksi tetap di ERP.",
+    "",
+    "Tab Penerimaan (pengganti Good Receive): isi Code Roll dan Tgl Terima per roll. Hanya untuk invoice yang sudah berstatus Delivery (sudah dibayar dan diset Delivery oleh Procurement); roll dari invoice lain ditahan sampai statusnya Delivery. Item tambahan (add buy) dan klaim cutting tetap di ERP.",
+    "Tab Resting: isi Berat Bersih, Gramasi, Setting, dan Waktu Resting (tanggal + jam) per roll yang sudah diterima. Selisih berat bersih yang lebih ringan dari toleransi SCM harus diajukan sebagai klaim di ERP lebih dulu (baris ditahan). Kode Aduan boleh dikosongkan; ERP memilih baris Aduan Pola otomatis seperti layar Resting.",
+    "Tab Produksi: satu baris per roll x size. Isi Waktu Cutting (tanggal + jam, wajib untuk hasil cutting baru), Hasil Cutting, dan Finish Good. Finish Good tidak boleh melebihi Hasil Cutting. Data sebuah roll baru diterima setelah rollnya diterima dan di-Resting.",
+    "Tab Reject: isi Reject Material DAN Reject Produksi; jumlahnya harus sama dengan total reject warna·lengan itu di ERP (reject dihitung setelah Selesai Produksi di tab Finish Good ERP).",
+    "Tab Rework: tulis total rework per kombinasi (asal -> tujuan). ERP hanya menambah selisihnya; mengurangi rework tidak dilakukan otomatis.",
+    "",
+    "Aturan baca: sel kosong = tidak diubah; angka 0 berarti nol. Roll yang sudah ditutup, sudah masuk resi, atau punya alih size/hasil tambahan sisa kain tidak diubah dari spreadsheet (dilaporkan di portal). Roll/invoice baru yang datang belakangan: unduh template baru atau tambahkan baris dengan kolom yang sama.",
+    "Publish to web memakan waktu beberapa menit untuk memuat perubahan terbaru dari Google.",
   ];
   lines.forEach((t, i) => {
     const c = help.getCell(i + 1, 1);

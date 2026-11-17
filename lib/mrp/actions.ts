@@ -20,7 +20,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import type { ActionResult } from "./action-result";
-import { SHEET_SYNC_VENDORS, filterSheetToMrp, isSheetSyncVendor, normalizeSheetUrl, parseSheetTabs, planSheetSync, reworkKey, type ErpState, type SheetIssue, type SheetOp, type SheetSyncSummary, type VendorMrpSheetLink } from "./vendorSheet";
+import { SHEET_SYNC_VENDORS, filterSheetToMrp, isSheetSyncVendor, normalizeSheetUrl, parseSheetTabs, pendingBatchRef, planSheetSync, reworkKey, type ErpInvoiceRoll, type ErpState, type RestLine, type SheetIssue, type SheetOp, type SheetSyncSummary, type VendorMrpSheetLink } from "./vendorSheet";
 
 /** Bungkus aksi supaya alasan gagalnya sampai ke user di production (lihat action-result.ts). */
 async function toActionResult<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
@@ -8632,36 +8632,59 @@ async function fetchPublishedSheetTabs(fetchUrl: string): Promise<Record<string,
   return tabs;
 }
 
-/** Roll yang sudah di-Good Receive untuk satu MRP + vendor (`mrpId|CODEROLL`): invoice material MRP itu yang tujuannya vendor ini, roll dengan received_at dan code_roll terisi. */
-async function loadReceivedRolls(db: SupabaseClient, vendorId: string, mrpId: string): Promise<string[]> {
-  const { data: invs, error } = await db.from("raw_material_invoices").select("id").eq("mrp_id", mrpId).or(`destination_vendor.eq.${vendorId},and(destination_vendor.is.null,vendor_produksi.eq.${vendorId})`);
+/** Semua roll di invoice material MRP itu yang tujuannya vendor ini (dasar tab Penerimaan dan Resting): status invoice, berat, penerimaan, dan penimbangan. */
+async function loadInvoiceRolls(db: SupabaseClient, vendorId: string, mrpId: string): Promise<ErpInvoiceRoll[]> {
+  const { data: invs, error } = await db.from("raw_material_invoices").select("id,status").eq("mrp_id", mrpId).or(`destination_vendor.eq.${vendorId},and(destination_vendor.is.null,vendor_produksi.eq.${vendorId})`);
   if (error) throw new Error(error.message);
-  const invIds = (invs ?? []).map((i) => i.id as string);
-  if (invIds.length === 0) return [];
-  const { data: colors, error: cErr } = await db.from("raw_material_invoice_colors").select("id").in("invoice_id", invIds);
+  const statusOf = new Map((invs ?? []).map((i) => [i.id as string, String(i.status)]));
+  if (statusOf.size === 0) return [];
+  const { data: colors, error: cErr } = await db.from("raw_material_invoice_colors").select("id,invoice_id,warna,lengan").in("invoice_id", Array.from(statusOf.keys()));
   if (cErr) throw new Error(cErr.message);
-  const colorIds = (colors ?? []).map((c) => c.id as string);
-  if (colorIds.length === 0) return [];
-  const { data: rolls, error: rErr } = await db.from("raw_material_invoice_rolls").select("code_roll,received_at").in("invoice_color_id", colorIds).not("received_at", "is", null).not("code_roll", "is", null);
+  const colorOf = new Map((colors ?? []).map((c) => [c.id as string, c]));
+  if (colorOf.size === 0) return [];
+  const { data: rolls, error: rErr } = await db
+    .from("raw_material_invoice_rolls")
+    .select("invoice_color_id,roll_index,gross_kg,net_kg,received_at,code_roll,weigh_confirmed_at")
+    .in("invoice_color_id", Array.from(colorOf.keys()));
   if (rErr) throw new Error(rErr.message);
-  return (rolls ?? []).map((r) => `${mrpId.toUpperCase()}|${String(r.code_roll).toUpperCase()}`);
+  const out: ErpInvoiceRoll[] = [];
+  for (const r of rolls ?? []) {
+    const c = colorOf.get(r.invoice_color_id as string);
+    if (!c) continue;
+    out.push({
+      invoiceId: c.invoice_id as string,
+      invoiceStatus: statusOf.get(c.invoice_id as string) ?? "",
+      warna: c.warna as string,
+      lengan: c.lengan as string,
+      rollIndex: Number(r.roll_index),
+      grossKg: Number(r.gross_kg ?? 0),
+      netKg: r.net_kg === null || r.net_kg === undefined ? null : Number(r.net_kg),
+      weighConfirmed: !!r.weigh_confirmed_at,
+      receivedAt: (r.received_at as string | null) ?? null,
+      codeRoll: (r.code_roll as string | null) ?? null,
+    });
+  }
+  return out;
 }
 
-/** Keadaan ERP yang relevan dengan isi sheet satu MRP: roll (hasil cutting, Finish Good, tanda alih size/hasil tambahan), klasifikasi reject, rework yang sudah tercatat, roll yang sudah di-Good Receive. */
+/** Keadaan ERP yang relevan dengan isi sheet satu MRP: roll invoice (penerimaan, penimbangan), baris Aduan Pola, batch (resting, hasil cutting, Finish Good, tanda alih size/hasil tambahan),
+ *  klasifikasi reject, dan rework yang sudah tercatat. */
 async function loadErpStateForSheet(db: SupabaseClient, vendorId: string, mrpId: string): Promise<ErpState> {
-  const [batchRes, metaRes, reworkRes, receivedRolls] = await Promise.all([
+  const [batchRes, metaRes, reworkRes, invoiceRolls, aduanRes] = await Promise.all([
     db
       .from("production_batches")
-      .select("id,mrp_id,code_roll,warna,lengan,cutting_at,closed_at,size_shifts,extra_results,production_batch_sizes(size,qty),production_batch_fg_sizes(size,qty)")
+      .select("id,mrp_id,code_roll,warna,lengan,aduan_row_id,resting_at,cutting_at,closed_at,size_shifts,extra_results,production_batch_sizes(size,qty),production_batch_fg_sizes(size,qty)")
       .eq("vendor_produksi", vendorId)
       .eq("mrp_id", mrpId),
     db.from("production_group_meta").select("group_key,reject_material_qty,reject_proses_qty").eq("vendor_produksi", vendorId).eq("mrp_id", mrpId),
     db.from("production_results").select("mrp_id,warna,lengan,note,production_result_sizes(size,qty)").eq("vendor_produksi", vendorId).eq("mrp_id", mrpId).eq("kind", "REJECT").like("note", "Rework %"),
-    loadReceivedRolls(db, vendorId, mrpId),
+    loadInvoiceRolls(db, vendorId, mrpId),
+    db.from("aduan_pola_rows").select("id,kode,warna,lengan,qty_roll").eq("vendor", vendorId).eq("mrp_id", mrpId),
   ]);
   if (batchRes.error) throw new Error(batchRes.error.message);
   if (metaRes.error) throw new Error(metaRes.error.message);
   if (reworkRes.error) throw new Error(reworkRes.error.message);
+  if (aduanRes.error) throw new Error(aduanRes.error.message);
   const qtyMap = (rows: { size: string; qty: number }[] | null) => Object.fromEntries((rows ?? []).filter((r) => Number(r.qty) > 0).map((r) => [r.size as string, Number(r.qty)]));
   const batches: ErpState["batches"] = (batchRes.data ?? [])
     .filter((b) => !!b.code_roll)
@@ -8671,12 +8694,16 @@ async function loadErpStateForSheet(db: SupabaseClient, vendorId: string, mrpId:
       codeRoll: String(b.code_roll).toUpperCase(),
       warna: b.warna as string,
       lengan: b.lengan as string,
+      restingAt: (b.resting_at as string | null) ?? null,
       cuttingAt: (b.cutting_at as string | null) ?? null,
       closed: !!b.closed_at,
       cut: qtyMap(b.production_batch_sizes as { size: string; qty: number }[] | null),
       fg: qtyMap(b.production_batch_fg_sizes as { size: string; qty: number }[] | null),
       hasShiftsOrExtras: (Array.isArray(b.size_shifts) && b.size_shifts.length > 0) || (Array.isArray(b.extra_results) && b.extra_results.length > 0),
     }));
+  const usedByAduan = new Map<string, number>();
+  for (const b of batchRes.data ?? []) if (b.aduan_row_id) usedByAduan.set(b.aduan_row_id as string, (usedByAduan.get(b.aduan_row_id as string) ?? 0) + 1);
+  const aduanRows: ErpState["aduanRows"] = (aduanRes.data ?? []).map((a) => ({ id: a.id as string, kode: String(a.kode), warna: a.warna as string, lengan: a.lengan as string, qtyRoll: Number(a.qty_roll ?? 0), used: usedByAduan.get(a.id as string) ?? 0 }));
   const metas: ErpState["metas"] = (metaRes.data ?? []).map((m) => ({
     groupKey: m.group_key as string,
     rejectMaterial: m.reject_material_qty === null || m.reject_material_qty === undefined ? null : Number(m.reject_material_qty),
@@ -8691,7 +8718,7 @@ async function loadErpStateForSheet(db: SupabaseClient, vendorId: string, mrpId:
     const key = reworkKey({ mrpId: String(r.mrp_id).toUpperCase(), warna: r.warna as string, fromLengan: r.lengan as string, fromSize: String(from.size).toUpperCase(), usia: m[4], toLengan: m[2], toSize: m[3].toUpperCase() });
     rework[key] = (rework[key] ?? 0) + Number(m[1]);
   }
-  return { batches, metas, rework, receivedRolls };
+  return { batches, metas, rework, invoiceRolls, aduanRows };
 }
 
 async function saveSheetSyncResult(db: SupabaseClient, vendorId: string, mrpId: string, patch: { status: string; summary: SheetSyncSummary; hash?: string | null }) {
@@ -8729,15 +8756,76 @@ async function runVendorSheetSync(vendorId: string, mrpId: string, maxOps: numbe
     const appliedLabels: string[] = [];
     const vendorName = VENDOR_PRODUKSI[vendorId]?.name ?? vendorId;
     await vendorActorOverride.run({ vendorId, actorName: "Sinkron spreadsheet", actorLabel: `Sinkron spreadsheet (${vendorName})` }, async () => {
+      // Roll yang gagal diterima/di-Resting menahan operasi lanjutannya; batch yang baru dibuat Resting dicatat supaya Cutting/FG di putaran yang sama bisa memakainya.
+      const failedRolls = new Set<string>();
+      const pendingIds = new Map<string, string>();
+      const resolveRef = (ref: string): string | undefined => (ref.startsWith("pending:") ? pendingIds.get(ref) : ref);
+      const registerBatches = (mrp: string, created: { id: string; codeRoll?: string }[]) => {
+        for (const c of created) if (c.codeRoll) pendingIds.set(pendingBatchRef(mrp, c.codeRoll), c.id);
+      };
       for (const op of toRun) {
+        const tabOf = op.kind === "RECEIVE" ? "Penerimaan" : op.kind === "REST" ? "Resting" : op.kind === "REJECT_SPLIT" ? "Reject" : op.kind === "REWORK" ? "Rework" : "Produksi";
+        const kindLabel = { RECEIVE: "Penerimaan", REST: "Resting", CUTTING: "Cutting", FG: "Finish Good", REJECT_SPLIT: "Klasifikasi reject", REWORK: "Rework" }[op.kind];
         try {
-          if (op.kind === "CUTTING") await updateBatchesToCuttingImpl([op.batchId], op.cuttingAt, { [op.batchId]: op.sizeQty });
-          else if (op.kind === "FG") await saveFgProgressImpl(op.batchId, op.sizeQty);
-          else if (op.kind === "REJECT_SPLIT") await setGroupRejectSplitImpl(op.groupKey, op.material, op.proses);
-          else await reworkRejectSizeAction({ ...op.input, vendorProduksi: vendorId, lengan: op.input.lengan as Lengan, toLengan: op.input.toLengan as Lengan, usia: op.input.usia as Usia });
-          appliedLabels.push(`${op.kind === "CUTTING" ? "Cutting" : op.kind === "FG" ? "Finish Good" : op.kind === "REJECT_SPLIT" ? "Klasifikasi reject" : "Rework"}: ${op.label}`);
+          if (op.kind === "RECEIVE") {
+            await receiveMaterialBatchImpl(op.invoiceId, op.warna, op.lengan as Lengan, op.rolls, []);
+            // Impl mencatat tanggal terima = hari ini; tanggal yang benar adalah tanggal di sheet.
+            const { error: dErr } = await db.from("raw_material_invoice_rolls").update({ received_at: op.date }).eq("invoice_color_id", `${op.invoiceId}-${op.warna}-${op.lengan}`).in("roll_index", op.rolls.map((r) => r.rollIndex));
+            if (dErr) throw new Error(dErr.message);
+          } else if (op.kind === "REST") {
+            const okLines: RestLine[] = [];
+            for (const line of op.lines) {
+              const code = line.codeRoll.toUpperCase();
+              if (failedRolls.has(code)) {
+                issues.push({ tab: "Resting", message: `Resting roll ${line.codeRoll}: ditahan karena penerimaan roll ini gagal.` });
+                continue;
+              }
+              if (line.needsWeigh) {
+                try {
+                  // Sama dengan layar Resting di portal: berat bersih disimpan dulu (server menolak selisih berat di luar toleransi / roll yang masih diklaim).
+                  await receiveRawMaterialRollAction(line.invoiceId, line.warna, line.lengan as Lengan, line.rollIndex, line.netKg);
+                } catch (e) {
+                  failedRolls.add(code);
+                  issues.push({ tab: "Resting", message: `Resting roll ${line.codeRoll}: ${e instanceof Error ? e.message : String(e)}` });
+                  continue;
+                }
+              }
+              okLines.push(line);
+            }
+            if (okLines.length > 0) {
+              const toInput = (l: RestLine) => ({ aduanRowId: l.aduanRowId, gramasi: l.gramasi, codeRoll: l.codeRoll, setting: l.setting });
+              try {
+                registerBatches(op.mrpId, await startProductionBatchesImpl({ mrpId: op.mrpId, restingAt: op.restingAt, lines: okLines.map(toInput) }));
+                for (const l of okLines) appliedLabels.push(`Resting: roll ${l.codeRoll} (${op.mrpId})`);
+              } catch (e) {
+                // Satu roll bermasalah menggagalkan seluruh sesi (dibatalkan Impl); ulangi satu per satu supaya yang lain tetap masuk dan yang bermasalah terlapor.
+                for (const l of okLines) {
+                  try {
+                    registerBatches(op.mrpId, await startProductionBatchesImpl({ mrpId: op.mrpId, restingAt: op.restingAt, lines: [toInput(l)] }));
+                    appliedLabels.push(`Resting: roll ${l.codeRoll} (${op.mrpId})`);
+                  } catch (e2) {
+                    failedRolls.add(l.codeRoll.toUpperCase());
+                    issues.push({ tab: "Resting", message: `Resting roll ${l.codeRoll}: ${e2 instanceof Error ? e2.message : String(e2)}` });
+                  }
+                }
+                if (okLines.length === 0) throw e;
+              }
+            }
+            continue; // label diterapkan per roll di atas
+          } else if (op.kind === "CUTTING" || op.kind === "FG") {
+            const id = resolveRef(op.batchRef);
+            if (!id) throw new Error("roll ini belum di-Resting (Resting-nya gagal atau belum terjadi), jadi belum bisa diisi hasilnya");
+            if (op.kind === "CUTTING") await updateBatchesToCuttingImpl([id], op.cuttingAt, { [id]: op.sizeQty });
+            else await saveFgProgressImpl(id, op.sizeQty);
+          } else if (op.kind === "REJECT_SPLIT") {
+            await setGroupRejectSplitImpl(op.groupKey, op.material, op.proses);
+          } else {
+            await reworkRejectSizeAction({ ...op.input, vendorProduksi: vendorId, lengan: op.input.lengan as Lengan, toLengan: op.input.toLengan as Lengan, usia: op.input.usia as Usia });
+          }
+          appliedLabels.push(`${kindLabel}: ${op.label}`);
         } catch (e) {
-          issues.push({ tab: op.kind === "REJECT_SPLIT" ? "Reject" : op.kind === "REWORK" ? "Rework" : "Produksi", message: `${op.label}: ${e instanceof Error ? e.message : String(e)}` });
+          if (op.kind === "RECEIVE") for (const r of op.rolls) failedRolls.add(r.codeRoll.toUpperCase());
+          issues.push({ tab: tabOf, message: `${op.label}: ${e instanceof Error ? e.message : String(e)}` });
         }
       }
     });
@@ -8748,7 +8836,7 @@ async function runVendorSheetSync(vendorId: string, mrpId: string, maxOps: numbe
       pending,
       issues: issues.slice(0, 80),
       tabsFound: parsed.tabsFound,
-      note: pending > 0 ? `${pending} perubahan lagi menunggu (dikerjakan pada sinkron berikutnya).` : parsed.tabsFound.length === 0 ? 'Tab "Produksi", "Reject", atau "Rework" tidak ditemukan di spreadsheet.' : undefined,
+      note: pending > 0 ? `${pending} perubahan lagi menunggu (dikerjakan pada sinkron berikutnya).` : parsed.tabsFound.length === 0 ? 'Tab "Penerimaan", "Resting", "Produksi", "Reject", atau "Rework" tidak ditemukan di spreadsheet.' : undefined,
     };
     const status = issues.length > 0 || pending > 0 || parsed.tabsFound.length === 0 ? "ADA_MASALAH" : "OK";
     // Hash hanya disimpan bila semuanya bersih; kalau ada masalah/tertunda, sinkron berikutnya memproses ulang (keadaan ERP bisa sudah berubah, mis. roll baru di-Good Receive).
@@ -8802,12 +8890,15 @@ export async function saveVendorSheetLinkAction(mrpId: string, rawUrl: string): 
     const { data: po, error: poErr } = await db.from("maklon_pos").select("id").eq("mrp_id", mrp).eq("vendor_produksi", actor.vendorId).limit(1);
     if (poErr) throw new Error(poErr.message);
     if (!po || po.length === 0) throw new Error(`MRP ${mrp} bukan PO produksi vendor Anda.`);
-    // Gerbang Good Receive: tautan baru boleh disimpan setelah minimal satu roll MRP ini diterima di halaman Good Receive.
-    const received = await loadReceivedRolls(db, actor.vendorId, mrp);
-    if (received.length === 0) throw new Error(`MRP ${mrp} belum punya roll yang di-Good Receive. Tautan spreadsheet baru bisa disimpan setelah minimal satu roll material diterima di halaman Good Receive.`);
+    // Gerbang: tautan baru boleh disimpan setelah MRP ini punya invoice material yang sudah bisa diterima (status Delivery/Receiving) -- penerimaan roll itu sendiri sekarang bisa
+    // lewat tab Penerimaan di spreadsheet, jadi syaratnya bukan lagi "sudah ada roll yang diterima".
+    const rollsOfMrp = await loadInvoiceRolls(db, actor.vendorId, mrp);
+    if (!rollsOfMrp.some((r) => r.receivedAt || r.invoiceStatus === "DELIVERY" || r.invoiceStatus === "RECEIVING")) {
+      throw new Error(`MRP ${mrp} belum punya invoice material berstatus Delivery. Tautan spreadsheet baru bisa disimpan setelah materialnya siap diterima (invoice supplier sudah dibayar dan diset Delivery oleh Procurement).`);
+    }
     const tabs = await fetchPublishedSheetTabs(url.fetchUrl);
     const parsed = filterSheetToMrp(parseSheetTabs(tabs), mrp);
-    if (parsed.tabsFound.length === 0) throw new Error(`Spreadsheet terbaca, tetapi tidak ada tab "Produksi", "Reject", atau "Rework". Tab yang ada: ${Object.keys(tabs).join(", ") || "(kosong)"}. Pakai template dari ERP.`);
+    if (parsed.tabsFound.length === 0) throw new Error(`Spreadsheet terbaca, tetapi tidak ada tab "Penerimaan", "Resting", "Produksi", "Reject", atau "Rework". Tab yang ada: ${Object.keys(tabs).join(", ") || "(kosong)"}. Pakai template dari ERP.`);
     const { error } = await db.from("vendor_mrp_sheets").upsert({
       vendor_produksi: actor.vendorId,
       mrp_id: mrp,

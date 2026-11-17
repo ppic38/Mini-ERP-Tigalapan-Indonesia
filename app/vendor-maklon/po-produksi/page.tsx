@@ -466,7 +466,7 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
     try {
       const detail = mrpDetailFor(p.mrpId, mrpDetails);
       await exportVendorSheetTemplate(
-        { mrpId: p.mrpId, vendorId: p.vendorProduksi, batches: productionBatches, aduanRows: detail?.aduanRows ?? [], metas: productionGroupMeta, results: productionResults },
+        { mrpId: p.mrpId, vendorId: p.vendorProduksi, batches: productionBatches, aduanRows: detail?.aduanRows ?? [], metas: productionGroupMeta, results: productionResults, invoices },
         `Template-Sheet-${p.mrpId}-${p.vendorProduksi}.xlsx`
       );
     } catch (err) {
