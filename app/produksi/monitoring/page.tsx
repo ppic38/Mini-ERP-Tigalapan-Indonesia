@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
@@ -26,6 +26,7 @@ import {
 } from "@/lib/mrp/derive";
 import { exportMonitoringProduksiExcel, type MonitoringExportGroup, type MonitoringExportRoll } from "@/lib/mrp/exportMonitoringProduksiExcel";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+import { itemKategoriLabel, poOwnGroupKeys } from "@/lib/mrp/produksiInfo";
 import type { Lengan, MaklonPO, RawMaterialInvoice } from "@/lib/mrp/types";
 
 /** Item 2026-09-18 (owner: "gabung saja Monitoring Produksi dengan Deadline Produksi") --
@@ -230,7 +231,10 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const [rollDetailKey, setRollDetailKey] = useState<string | null>(null);
 
-  const rows = vendorItemSizeProgress(po.mrpId, po.vendorProduksi, mrpDetails, productionBatches, productionResults);
+  const maklonPOs = useMrpStore((s) => s.maklonPOs);
+  // PO awal + susulan satu vendor: tiap PO hanya menampilkan warna·lengan miliknya (bukan semua warna vendor di MRP itu).
+  const ownKeys = poOwnGroupKeys(po, mrpDetails, maklonPOs);
+  const rows = vendorItemSizeProgress(po.mrpId, po.vendorProduksi, mrpDetails, productionBatches, productionResults).filter((r) => !ownKeys || ownKeys.has(r.warna + "|" + r.lengan));
 
   const groups = new Map<string, { warna: string; lengan: string; rows: typeof rows }>();
   for (const r of rows) {
@@ -265,6 +269,7 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
             <tr className="bg-[#F2F4F7] font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
               <th className="w-6 py-1.5 pl-3"></th>
               <th className="whitespace-nowrap px-2 py-1.5 text-left">Warna / Lengan</th>
+              <th className="whitespace-nowrap px-2 py-1.5 text-left">Kategori</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-left">Deadline</th>
               <th className="whitespace-nowrap px-2 py-1.5 text-left">Sisa Waktu</th>
               <th className="w-full px-2 py-1.5 text-left">Progres FG (dari hasil cutting aktual)</th>
@@ -306,6 +311,7 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
                         </span>
                       )}
                     </td>
+                    <td className="whitespace-nowrap px-2 py-2 font-sans text-[10.5px] text-text-muted">{itemKategoriLabel(po.mrpId, g.warna, g.lengan as Lengan, mrpDetails)}</td>
                     <td className="whitespace-nowrap px-2 py-2 font-mono text-[10.5px] text-text-muted">{info.deadline ? formatDate(info.deadline) : "—"}</td>
                     <td className="whitespace-nowrap px-2 py-2 font-mono text-[10.5px] text-text-muted">
                       {info.daysLeft != null ? (info.daysLeft < 0 ? `${-info.daysLeft} hari lewat` : `${info.daysLeft} hari lagi`) : "—"}
@@ -357,7 +363,7 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
                   </tr>
                   {open && (
                     <tr className="border-t border-[#F1F4F7] bg-[#FAFBFC]">
-                      <td colSpan={13} className="px-3 py-2 pl-9">
+                      <td colSpan={14} className="px-3 py-2 pl-9">
                         {shifts.length > 0 && (
                           <div className="mb-2 flex flex-col gap-0.5 font-sans text-[11px] text-[#31414F]">
                             <span className="text-[10px] font-medium uppercase tracking-wider text-text-muted">Alih size (sisa kain)</span>
@@ -406,6 +412,179 @@ function MaklonPoItemProgress({ po }: { po: MaklonPO }) {
 
 type MrpGroup = { mrpId: string; vendorPOs: MaklonPO[] };
 
+/** Satu baris = satu item (warna · lengan) di satu PO vendor, untuk daftar "Per Item": bisa dicari, diurutkan, dan difilter (No. Order, MRP, vendor, kategori, lengan, status). */
+type ItemRow = {
+  key: string;
+  poId: string;
+  mrpId: string;
+  vendorKey: string;
+  vendorName: string;
+  kategori: string;
+  warna: string;
+  lengan: Lengan;
+  sizes: ReturnType<typeof vendorItemSizeProgress>;
+  target: number;
+  cutting: number;
+  finishGood: number;
+  reject: number;
+  rework: number;
+  rollReceived: number;
+  rollTotal: number;
+  yieldPct: number | null;
+  info: DeadlineInfo;
+  status: { label: string; tone: "neutral" | "info" | "warning" | "success" | "danger" };
+};
+
+function ItemListView({ pos }: { pos: MaklonPO[] }) {
+  const maklonPOs = useMrpStore((s) => s.maklonPOs);
+  const mrpDetails = useMrpStore((s) => s.mrpDetails);
+  const productionBatches = useMrpStore((s) => s.productionBatches);
+  const productionResults = useMrpStore((s) => s.productionResults);
+  const invoices = useMrpStore((s) => s.invoices);
+  const [rollDetail, setRollDetail] = useState<ItemRow | null>(null);
+
+  const rows = useMemo(() => {
+    const out: ItemRow[] = [];
+    const sizesCache = new Map<string, ReturnType<typeof vendorItemSizeProgress>>();
+    for (const po of pos) {
+      const ck = po.mrpId + "|" + po.vendorProduksi;
+      if (!sizesCache.has(ck)) sizesCache.set(ck, vendorItemSizeProgress(po.mrpId, po.vendorProduksi, mrpDetails, productionBatches, productionResults));
+      const own = poOwnGroupKeys(po, mrpDetails, maklonPOs);
+      const byGroup = new Map<string, ReturnType<typeof vendorItemSizeProgress>>();
+      for (const r of sizesCache.get(ck)!) {
+        const gk = r.warna + "|" + r.lengan;
+        if (own && !own.has(gk)) continue;
+        if (!byGroup.has(gk)) byGroup.set(gk, []);
+        byGroup.get(gk)!.push(r);
+      }
+      for (const [gk, groupRows] of byGroup) {
+        const { warna, lengan } = groupRows[0];
+        const s = groupRows.reduce(
+          (a, r) => ({ target: a.target + r.target, cutting: a.cutting + r.cutting, finishGood: a.finishGood + r.finishGood, reject: a.reject + r.reject, rework: a.rework + r.rework }),
+          { target: 0, cutting: 0, finishGood: 0, reject: 0, rework: 0 }
+        );
+        const info = deadlineInfoFor(po.mrpId, po.vendorProduksi, warna, invoices);
+        out.push({
+          key: po.id + "|" + gk,
+          poId: po.id,
+          mrpId: po.mrpId,
+          vendorKey: po.vendorProduksi,
+          vendorName: VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi,
+          kategori: itemKategoriLabel(po.mrpId, warna, lengan as Lengan, mrpDetails),
+          warna,
+          lengan: lengan as Lengan,
+          sizes: groupRows,
+          ...s,
+          rollReceived: completedRollCountForColor(po.mrpId, po.vendorProduksi, warna, lengan as Lengan, productionBatches),
+          rollTotal: totalRollCountForColor(po.mrpId, po.vendorProduksi, warna, lengan as Lengan, invoices),
+          yieldPct: cuttingYieldForGroup(po.mrpId, po.vendorProduksi, warna, lengan as Lengan, mrpDetails, productionBatches).yieldPct,
+          info,
+          status: statusFor(s.finishGood, s.cutting > 0 ? s.cutting : s.target, s.cutting > 0, info),
+        });
+      }
+    }
+    return out;
+  }, [pos, maklonPOs, mrpDetails, productionBatches, productionResults, invoices]);
+
+  const fgPct = (r: ItemRow) => (r.cutting > 0 ? Math.min(100, (r.finishGood / r.cutting) * 100) : 0);
+  const columns: ColumnDef<ItemRow>[] = [
+    { key: "po", label: "No. Order", default: true, sortValue: (r) => r.poId, render: (r) => <span className="font-mono">{r.poId}</span> },
+    { key: "vendor", label: "Vendor", default: true, sortValue: (r) => r.vendorName, render: (r) => r.vendorName },
+    { key: "kategori", label: "Kategori", default: true, sortValue: (r) => r.kategori, render: (r) => r.kategori },
+    { key: "warna", label: "Warna", default: true, sortValue: (r) => r.warna, render: (r) => <span className="font-medium">{r.warna}</span> },
+    { key: "lengan", label: "Lengan", default: true, sortValue: (r) => r.lengan, render: (r) => r.lengan },
+    { key: "target", label: "Qty PO", default: true, align: "right", sortValue: (r) => r.target, render: (r) => <span className="font-mono">{formatPcs(r.target)}</span> },
+    { key: "cutting", label: "Hasil Cutting", default: true, align: "right", sortValue: (r) => r.cutting, render: (r) => <span className="font-mono">{formatPcs(r.cutting)}</span> },
+    { key: "fg", label: "Finish Good", default: true, align: "right", sortValue: (r) => r.finishGood, render: (r) => <span className="font-mono">{formatPcs(r.finishGood)}</span> },
+    { key: "fgPct", label: "% FG", default: true, align: "right", sortValue: fgPct, render: (r) => <span className="font-mono font-semibold">{fgPct(r).toFixed(0)}%</span> },
+    {
+      key: "yield",
+      label: "Yield Cutting",
+      default: true,
+      align: "right",
+      sortValue: (r) => r.yieldPct,
+      render: (r) => (
+        <span className={"font-mono font-semibold " + (r.yieldPct == null ? "text-text-muted" : r.yieldPct < YIELD_ALERT_THRESHOLD_PCT ? "text-warning-fg" : "text-success-fg")}>
+          {r.yieldPct == null ? "—" : `${r.yieldPct.toFixed(1)}%`}
+        </span>
+      ),
+    },
+    { key: "roll", label: "Roll selesai/total", default: true, align: "right", sortValue: (r) => (r.rollTotal > 0 ? r.rollReceived / r.rollTotal : null), render: (r) => <span className="font-mono">{r.rollTotal > 0 ? `${r.rollReceived}/${r.rollTotal}` : "—"}</span> },
+    { key: "deadline", label: "Deadline", default: true, sortValue: (r) => r.info.deadline ?? null, render: (r) => <span className="font-mono">{r.info.deadline ? formatDate(r.info.deadline) : "—"}</span> },
+    {
+      key: "sisa",
+      label: "Sisa Waktu",
+      default: true,
+      sortValue: (r) => r.info.daysLeft,
+      render: (r) => <span className="font-mono">{r.info.daysLeft == null ? "—" : r.info.daysLeft < 0 ? `${-r.info.daysLeft} hari lewat` : `${r.info.daysLeft} hari lagi`}</span>,
+    },
+    { key: "rr", label: "Reject / Rework", default: false, sortValue: (r) => r.reject + r.rework, render: (r) => `${r.reject > 0 ? `−${formatPcs(r.reject)} reject` : ""}${r.reject > 0 && r.rework > 0 ? " · " : ""}${r.rework > 0 ? `${formatPcs(r.rework)} rework` : ""}` || "—" },
+    { key: "status", label: "Status", default: true, sortValue: (r) => r.status.label, render: (r) => <StatusPill tone={r.status.tone}>{r.status.label}</StatusPill> },
+  ];
+
+  const uniq = (f: (r: ItemRow) => string) => Array.from(new Set(rows.map(f))).sort((a, b) => a.localeCompare(b, "id", { numeric: true }));
+  return (
+    <>
+      <DataTable
+        title="Item per PO vendor"
+        subtitle="Satu baris per warna · lengan di satu No. Order. Klik judul kolom untuk mengurutkan, klik baris untuk rincian size."
+        columns={columns}
+        rows={rows}
+        keyOf={(r) => r.key}
+        firstColumnLabel="No. MRP"
+        firstColumnRender={(r) => <span className="font-mono">{r.mrpId}</span>}
+        firstColumnSortValue={(r) => r.mrpId}
+        nowrap
+        search={{
+          placeholder: "Cari no. order, MRP, vendor, kategori, warna, lengan…",
+          getText: (r) => [r.poId, r.mrpId, r.vendorName, r.kategori, r.warna, r.lengan].join(" "),
+        }}
+        filterDefs={[
+          { label: "No MRP", options: uniq((r) => r.mrpId), test: (r, v) => r.mrpId === v },
+          { label: "No. Order", options: uniq((r) => r.poId), test: (r, v) => r.poId === v },
+          { label: "Vendor", options: uniq((r) => r.vendorName), test: (r, v) => r.vendorName === v },
+          { label: "Kategori", options: uniq((r) => r.kategori), test: (r, v) => r.kategori === v },
+          { label: "Lengan", options: uniq((r) => r.lengan), test: (r, v) => r.lengan === v },
+          { label: "Status", options: uniq((r) => r.status.label), test: (r, v) => r.status.label === v },
+        ]}
+        renderExpanded={(r) => (
+          <div className="flex flex-col gap-2 font-sans text-[11.5px] text-[#31414F]">
+            <div className="flex flex-wrap gap-1.5">
+              {r.sizes.map((s) => {
+                const sizeDenom = s.cutting > 0 ? s.cutting : s.target;
+                return (
+                  <span
+                    key={s.size}
+                    title={`${s.target === 0 ? "Di luar rencana · " : ""}Target ${s.target} · Cutting ${s.cutting} · FG ${s.finishGood}${s.reject ? ` · Reject ${s.reject}` : ""}${s.rework ? ` · Rework ${s.rework}` : ""}`}
+                    className="rounded border border-[#E4E9EE] bg-white px-2 py-1 font-mono text-[10.5px]"
+                  >
+                    <span className="font-semibold">{s.size}</span> {formatPcs(s.finishGood)}/{formatPcs(sizeDenom)}
+                    {s.reject > 0 && <span className="text-danger-fg"> −{s.reject}</span>}
+                    {s.rework > 0 && <span className="text-warning-fg"> +{s.rework}rw</span>}
+                  </span>
+                );
+              })}
+            </div>
+            <div>
+              <button type="button" onClick={() => setRollDetail(r)} className="rounded border border-[#CBD5DF] bg-white px-2 py-0.5 text-[10.5px] font-semibold text-action-primary hover:bg-[#F2F5F8]">
+                Detail roll
+              </button>
+            </div>
+          </div>
+        )}
+        emptyText="Belum ada item di PO vendor produksi yang disetujui."
+      />
+      {rollDetail && (
+        <RollDetailModal
+          title={`${rollDetail.warna} · ${rollDetail.lengan} · ${rollDetail.vendorName} · ${rollDetail.poId}`}
+          rolls={rollDetailsForGroup(productionBatches, rollDetail.mrpId, rollDetail.vendorKey, rollDetail.warna, rollDetail.lengan)}
+          onClose={() => setRollDetail(null)}
+        />
+      )}
+    </>
+  );
+}
+
 /** Baris ringkas 1 vendor (dipakai di dalam drill-down langkah 1) -- mirror kolom
  *  "Progress kirim/tagih" yang tadinya di kolom tabel utama, sekarang jadi baris klik-able. */
 function VendorPoRow({
@@ -431,6 +610,7 @@ function VendorPoRow({
       onClick={onSelect}
       className={"flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left " + (selected ? "border-action-primary bg-info-bg" : "border-[#E4E9EE] bg-white hover:bg-[#FAFBFC]")}
     >
+      <span className="w-[190px] flex-none truncate font-mono text-[10.5px] text-text-muted" title="No. Order (PO produksi)">{po.id}</span>
       <span className="w-[140px] flex-none truncate font-sans text-[12px] font-semibold text-[#31414F]">{VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi}</span>
       <span className="w-[90px] flex-none font-mono text-[11px] text-text-muted">{formatPcs(po.qty)} pcs</span>
       <span className="w-[110px] flex-none font-mono text-[11px] text-text-muted">{formatRupiah(po.amount)}</span>
@@ -516,6 +696,7 @@ export default function ProduksiMonitoringPage() {
   const productionBatches = useMrpStore((s) => s.productionBatches);
   const productionResults = useMrpStore((s) => s.productionResults);
   const invoices = useMrpStore((s) => s.invoices);
+  const [view, setView] = useState<"mrp" | "item">("item");
 
   if (!mounted) return null;
 
@@ -551,15 +732,18 @@ export default function ProduksiMonitoringPage() {
     return worst ?? null;
   }
 
+  const vendorLabel = (g: MrpGroup) => (g.vendorPOs.length === 1 ? (VENDOR_PRODUKSI[g.vendorPOs[0].vendorProduksi]?.name ?? g.vendorPOs[0].vendorProduksi) : `${g.vendorPOs.length} vendor`);
   const columns: ColumnDef<MrpGroup>[] = [
     {
-      key: "vendorCount",
-      label: "Vendor",
+      key: "noOrder",
+      label: "No. Order",
       default: true,
-      render: (g) => (g.vendorPOs.length === 1 ? (VENDOR_PRODUKSI[g.vendorPOs[0].vendorProduksi]?.name ?? g.vendorPOs[0].vendorProduksi) : `${g.vendorPOs.length} vendor`),
+      sortValue: (g) => g.vendorPOs[0]?.id ?? "",
+      render: (g) => <span className="font-mono text-[11px]">{g.vendorPOs.length <= 2 ? g.vendorPOs.map((p) => p.id).join(", ") : `${g.vendorPOs.length} PO`}</span>,
     },
-    { key: "qty", label: "Total Qty", default: true, align: "right", render: (g) => formatPcs(g.vendorPOs.reduce((a, p) => a + p.qty, 0)) + " pcs" },
-    { key: "nilai", label: "Total Nilai", default: true, align: "right", render: (g) => formatRupiah(g.vendorPOs.reduce((a, p) => a + p.amount, 0)) },
+    { key: "vendorCount", label: "Vendor", default: true, sortValue: vendorLabel, render: vendorLabel },
+    { key: "qty", label: "Total Qty", default: true, align: "right", sortValue: (g) => g.vendorPOs.reduce((a, p) => a + p.qty, 0), render: (g) => formatPcs(g.vendorPOs.reduce((a, p) => a + p.qty, 0)) + " pcs" },
+    { key: "nilai", label: "Total Nilai", default: true, align: "right", sortValue: (g) => g.vendorPOs.reduce((a, p) => a + p.amount, 0), render: (g) => formatRupiah(g.vendorPOs.reduce((a, p) => a + p.amount, 0)) },
     {
       key: "status",
       label: "Status",
@@ -597,19 +781,48 @@ export default function ProduksiMonitoringPage() {
       title="Monitoring Produksi"
       subtitle={`${rows.length} MRP dengan PO vendor produksi — progres kirim & tagih, deadline & progres per item`}
     >
-      <DataTable
-        title="MRP dengan PO vendor produksi"
-        subtitle="Klik baris untuk pilih vendor, lalu lihat progres produksi & deadline per item (warna/lengan/size)"
-        columns={columns}
-        rows={rows}
-        keyOf={(g) => g.mrpId}
-        headerActions={<ExportExcelButton pos={approved} fileName={`Monitoring-Produksi-${new Date().toISOString().slice(0, 10)}.xlsx`} label="⤓ Download Excel (semua MRP)" />}
-        firstColumnLabel="No. MRP"
-        firstColumnRender={(g) => <span className="font-mono">{g.mrpId}</span>}
-        renderExpanded={(g) => <MrpVendorDrilldown group={g} />}
-        filterDefs={[{ label: "No MRP", options: Array.from(new Set(rows.map((g) => g.mrpId))), test: (g, v) => g.mrpId === v }]}
-        emptyText="Belum ada PO vendor produksi yang disetujui Finance."
-      />
+      <div className="mb-3 inline-flex overflow-hidden rounded-md border border-[#CBD5DF] bg-white font-sans text-[12px] font-semibold">
+        {([
+          ["item", "Per Item (cari & urutkan)"],
+          ["mrp", "Per MRP (ringkas)"],
+        ] as const).map(([k, label]) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setView(k)}
+            className={"px-3.5 py-[7px] " + (view === k ? "bg-action-primary text-white" : "text-action-primary hover:bg-[#F2F5F8]")}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {view === "item" ? (
+        <>
+          <div className="mb-2 flex justify-end">
+            <ExportExcelButton pos={approved} fileName={`Monitoring-Produksi-${new Date().toISOString().slice(0, 10)}.xlsx`} label="⤓ Download Excel (semua MRP)" />
+          </div>
+          <ItemListView pos={approved} />
+        </>
+      ) : (
+        <DataTable
+          title="MRP dengan PO vendor produksi"
+          subtitle="Klik baris untuk pilih vendor, lalu lihat progres produksi & deadline per item (warna/lengan/size)"
+          columns={columns}
+          rows={rows}
+          keyOf={(g) => g.mrpId}
+          headerActions={<ExportExcelButton pos={approved} fileName={`Monitoring-Produksi-${new Date().toISOString().slice(0, 10)}.xlsx`} label="⤓ Download Excel (semua MRP)" />}
+          firstColumnLabel="No. MRP"
+          firstColumnRender={(g) => <span className="font-mono">{g.mrpId}</span>}
+          firstColumnSortValue={(g) => g.mrpId}
+          renderExpanded={(g) => <MrpVendorDrilldown group={g} />}
+          search={{
+            placeholder: "Cari no. order, MRP, vendor…",
+            getText: (g) => [g.mrpId, ...g.vendorPOs.map((p) => `${p.id} ${VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi}`)].join(" "),
+          }}
+          filterDefs={[{ label: "No MRP", options: Array.from(new Set(rows.map((g) => g.mrpId))), test: (g, v) => g.mrpId === v }]}
+          emptyText="Belum ada PO vendor produksi yang disetujui Finance."
+        />
+      )}
     </AppShell>
   );
 }

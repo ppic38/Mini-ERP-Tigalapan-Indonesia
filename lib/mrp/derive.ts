@@ -2695,6 +2695,11 @@ export type ProductionYieldAlertRow = {
   actualQty: number;
   yieldPct: number;
   resolved: boolean;
+  /** Baris Aduan Pola asal roll ini, jumlah roll batch ini, dan rincian per size (target prorata aduan vs hasil cutting aktual) -- untuk rincian di halaman Yield Alert. */
+  aduanRowId?: string;
+  qtyRoll?: number;
+  targetBySize?: Record<string, number>;
+  actualBySize?: Record<string, number>;
 };
 
 /** Roll yang sudah dicutting & diisi hasil aduannya tapi yield-nya (aktual/target) di bawah
@@ -2729,6 +2734,10 @@ export function productionYieldAlertsList(
       actualQty,
       yieldPct,
       resolved: !!resolutions[b.id],
+      aduanRowId: b.aduanRowId,
+      qtyRoll: b.qtyRoll,
+      targetBySize: target,
+      actualBySize: { ...b.sizeQty },
     });
   }
   return out.sort((a, b) => (a.cuttingAt < b.cuttingAt ? 1 : -1));

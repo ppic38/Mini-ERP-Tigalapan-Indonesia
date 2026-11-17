@@ -16,6 +16,9 @@ export type ColumnDef<T> = {
   /** Kolom "Aksi Sysadmin" (owner 2026-10-06): hanya tampil di mode Sysadmin, SELALU tampil (tidak ada di
    *  menu Kolom), ditaruh paling kanan dan diwarnai ungu supaya jelas ini bagian Sysadmin. */
   sysadmin?: boolean;
+  /** Opsional: kalau diisi, judul kolom bisa diklik untuk mengurutkan (naik, turun, lalu kembali ke urutan asli). Nilai angka diurutkan
+   *  sebagai angka, teks tanpa membedakan huruf besar/kecil dan dengan angka natural ("W9" sebelum "W10"); null/kosong selalu di bawah. */
+  sortValue?: (row: T) => string | number | null | undefined;
 };
 
 export type FilterDef<T> = {
@@ -61,7 +64,10 @@ export function DataTable<T>({
   searchRight,
   fitExpanded,
   bordered,
+  firstColumnSortValue,
 }: {
+  /** Opsional: kolom pertama (firstColumnLabel) ikut bisa diurutkan lewat klik judulnya. Tidak diisi = tidak bisa diurutkan seperti biasa. */
+  firstColumnSortValue?: (row: T) => string | number | null | undefined;
   /** Opsional: garis tabel penuh (garis tipis antar kolom dan antar baris) pada judul dan sel. Tidak diisi = hanya garis antar baris seperti biasa. */
   bordered?: boolean;
   /** Opsional: rincian baris yang dibuka (renderExpanded) dibatasi selebar area tabel yang terlihat dan menempel di kiri saat tabel digeser ke samping, jadi tombol/kolom di
@@ -128,6 +134,8 @@ export function DataTable<T>({
   const [colOpen, setColOpen] = useState(false);
   const [filterValues, setFilterValues] = useState<string[]>((filterDefs ?? []).map(() => ""));
   const [searchQuery, setSearchQuery] = useState("");
+  // Urutan: kunci kolom ("__first" = kolom pertama) + arah; null = urutan asli dari `rows`.
+  const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollW, setScrollW] = useState(0);
@@ -166,12 +174,34 @@ export function DataTable<T>({
   }
 
   const trimmedQuery = searchQuery.trim().toLowerCase();
-  const filtered = rows.filter(
+  const filteredBase = rows.filter(
     (r) =>
       (alwaysShowKey != null && keyOf(r) === alwaysShowKey) ||
       ((filterDefs ?? []).every((f, i) => !filterValues[i] || f.test(r, filterValues[i])) &&
         (!search || !trimmedQuery || search.getText(r).toLowerCase().includes(trimmedQuery)))
   );
+  const sortGetter = sort ? (sort.key === "__first" ? firstColumnSortValue : columns.find((c) => c.key === sort.key)?.sortValue) : undefined;
+  const filtered =
+    sort && sortGetter
+      ? [...filteredBase].sort((a, b) => {
+          const va = sortGetter(a);
+          const vb = sortGetter(b);
+          const ea = va == null || va === "";
+          const eb = vb == null || vb === "";
+          if (ea || eb) return ea === eb ? 0 : ea ? 1 : -1; // kosong selalu di bawah, apa pun arahnya
+          const c =
+            typeof va === "number" && typeof vb === "number"
+              ? va - vb
+              : String(va).localeCompare(String(vb), "id", { numeric: true, sensitivity: "base" });
+          return sort.dir === "asc" ? c : -c;
+        })
+      : filteredBase;
+  function toggleSort(key: string) {
+    setSort((prev) => (!prev || prev.key !== key ? { key, dir: "asc" } : prev.dir === "asc" ? { key, dir: "desc" } : null));
+  }
+  function sortMark(key: string) {
+    return sort?.key === key ? (sort.dir === "asc" ? " ▲" : " ▼") : "";
+  }
   // Filter saling memengaruhi (permintaan owner 2026-11-05): pilihan sebuah filter hanya memuat nilai yang MASIH ADA di baris yang lolos SEMUA filter lain
   // (dan kotak cari). Contoh: pilih MRP W39 -> filter Vendor hanya berisi vendor yang punya baris di W39. Pilihan yang sedang aktif selalu tetap tampil.
   // Tanpa filter lain/pencarian yang aktif, daftar pilihannya apa adanya seperti sebelumnya.
@@ -253,10 +283,10 @@ export function DataTable<T>({
         <table className="w-full border-collapse">
           <thead className={bodyMaxHeight ? "sticky top-0 z-10" : undefined}>
             <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
-              <th className={"px-5 py-[9px] " + (bordered ? "border border-[#CBD5E1] " : "") + (nowrap ? "whitespace-nowrap " : "") + (firstColumnAlign === "right" ? "text-right" : "text-left")}>{firstColumnLabel}</th>
+              <th className={"px-5 py-[9px] " + (bordered ? "border border-[#CBD5E1] " : "") + (nowrap ? "whitespace-nowrap " : "") + (firstColumnAlign === "right" ? "text-right" : "text-left") + (firstColumnSortValue ? " cursor-pointer select-none hover:text-accent-blue" : "")} onClick={firstColumnSortValue ? () => toggleSort("__first") : undefined} title={firstColumnSortValue ? "Klik untuk mengurutkan" : undefined}>{firstColumnLabel}{firstColumnSortValue ? sortMark("__first") : ""}</th>
               {visibleColumns.map((c) => (
-                <th key={c.key} className={"px-3 py-[9px] " + (bordered ? "border border-[#CBD5E1] " : "") + (nowrap ? "whitespace-nowrap " : "") +(c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple bg-accent-purple-bg text-accent-purple" : "")}>
-                  {c.label}
+                <th key={c.key} className={"px-3 py-[9px] " + (bordered ? "border border-[#CBD5E1] " : "") + (nowrap ? "whitespace-nowrap " : "") +(c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple bg-accent-purple-bg text-accent-purple" : "") + (c.sortValue ? " cursor-pointer select-none hover:text-accent-blue" : "")} onClick={c.sortValue ? () => toggleSort(c.key) : undefined} title={c.sortValue ? "Klik untuk mengurutkan" : undefined}>
+                  {c.label}{c.sortValue ? sortMark(c.key) : ""}
                   {c.info && <InfoPopover title={c.info.title}>{c.info.body}</InfoPopover>}
                 </th>
               ))}
