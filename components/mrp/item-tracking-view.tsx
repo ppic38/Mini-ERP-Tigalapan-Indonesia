@@ -6,7 +6,7 @@ import { alertDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, aggSame, aggSum, type ColumnDef, type FilterDef } from "@/components/mrp/data-table";
 import { StageBadge } from "@/components/ui/stage-badge";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatDate, formatPcs, localDateString } from "@/lib/mrp/derive";
+import { formatDate, formatPcs, localDateString, skuItemNameLookup } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { getWosKoliStatusAction, type WosKoliStatusResult } from "@/lib/mrp/wosStatusActions";
 import { ADUAN_STAGES, buildAduanTracking, buildItemTracking, itemWithBreakdown, lenganShort, type AduanStage, type AduanTrackRow, type ItemTrackRow } from "@/lib/mrp/itemTracking";
@@ -43,6 +43,7 @@ export function ItemTrackingView() {
   const invoices = useMrpStore((s) => s.invoices);
   const materialPOs = useMrpStore((s) => s.materialPOs);
   const today = localDateString(new Date());
+  const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
 
   // Filter Tanggal Kirim (owner 2026-11-07): baris yang punya pengiriman pada rentang itu; angkanya tetap angka penuh baris.
   const [dateFrom, setDateFrom] = useState("");
@@ -196,6 +197,7 @@ export function ItemTrackingView() {
           aduans: mrpDetails.flatMap((d) => d.aduanRows),
           aduanMrpIds: Object.fromEntries(mrpDetails.flatMap((d) => d.aduanRows.map((a) => [a.id, d.mrp.id] as const))),
           materialPOs,
+          itemSkuOf: skuItemNameLookup(itemSellingPrices),
         },
         `WIP-Tracking-Item-${today}.xlsx`
       );

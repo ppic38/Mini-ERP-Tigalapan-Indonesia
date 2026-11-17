@@ -52,6 +52,13 @@ hasil query berakhiran CR dan pola `pg_dump -t/-T` tidak cocok dengan apa pun TA
 Cara cek `LIVE_DB_URL` terisi yang BENAR (pola `.*` ikut cocok dengan nilai kosong):
 `awk -F= '/^LIVE_DB_URL=/{v=substr($0,14); gsub(//,"",v); print length(v)}' .env.db-sync` -- harus > 0.
 
+**Gabung dengan main (2026-11-17)**: branch `redesign-fondasi-tabel` sudah memuat semua commit tim IT sampai `1923df5` (merge commit
+sesudah `820a1f0`; `820a1f0` = titik mundur sebelum penggabungan). Konflik di tabel bersama, Tracking Item, Produksi Monitoring,
+Warehouse Penerimaan, dan MIGRASI.md diselesaikan dengan MEMPERTAHANKAN kedua sisi (prop baru IT `bordered`, `fitExpanded`,
+`searchRight`, `firstColumnSortValue`, `sortValue` tetap jalan). Tabel `vendor_mrp_sheets` (migration 0093) dikunci untuk `partner_ro`
+sehingga tidak tersalin oleh db-sync; di database LOKAL sudah dibuat dari file migration 0093 (kosong), dan skrip mempertahankannya
+pada sinkron berikutnya. Jadi kini ada 13 tabel terkunci. Migration 0092 memang dihapus oleh 0093 (live konsisten).
+
 **Pekerjaan berikutnya**: lihat **docs/RENCANA-PENGERJAAN.md** (dokumen serah-terima redesign: keputusan owner,
 hasil inspeksi, paket kerja A-E dengan tanda selesai). Keputusan desain dan rekomendasi per halaman ada di
 docs/DESAIN-DAN-FITUR.md; contoh layout di docs/mockup/.

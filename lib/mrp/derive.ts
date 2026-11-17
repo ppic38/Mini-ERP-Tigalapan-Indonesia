@@ -2722,6 +2722,11 @@ export type ProductionYieldAlertRow = {
   actualQty: number;
   yieldPct: number;
   resolved: boolean;
+  /** Baris Aduan Pola asal roll ini, jumlah roll batch ini, dan rincian per size (target prorata aduan vs hasil cutting aktual) -- untuk rincian di halaman Yield Alert. */
+  aduanRowId?: string;
+  qtyRoll?: number;
+  targetBySize?: Record<string, number>;
+  actualBySize?: Record<string, number>;
 };
 
 /** Roll yang sudah dicutting & diisi hasil aduannya tapi yield-nya (aktual/target) di bawah
@@ -2756,6 +2761,10 @@ export function productionYieldAlertsList(
       actualQty,
       yieldPct,
       resolved: !!resolutions[b.id],
+      aduanRowId: b.aduanRowId,
+      qtyRoll: b.qtyRoll,
+      targetBySize: target,
+      actualBySize: { ...b.sizeQty },
     });
   }
   return out.sort((a, b) => (a.cuttingAt < b.cuttingAt ? 1 : -1));
@@ -4461,6 +4470,18 @@ export function skuKategoriLookup(rows: ItemSellingPriceRow[]): (warna: string, 
     const u = usia as Usia | undefined;
     return byKey.get(`${warnaWithUsia(warna, u)}|${lengan}|${size}`) ?? byKey.get(`${skuWarnaFor(warna, u)}|${lengan}|${size}`) ?? "";
   };
+}
+
+/** Nama item di Master SKU (`item_name`, mis. "MLS PUTIH 24S PDK L") untuk warna ERP + lengan + size, dicari dengan nama warna ERP lalu nama warna hasil Mapping Warna
+ *  (varian Kids lewat akhiran " KID"), sama dengan pencarian nama item di unduhan Warehouse. Kosong kalau item tidak ada di Master SKU (tidak ditebak). Dipakai kolom "Item (SKU)"
+ *  di export Tracking Item (owner 2026-11-16). */
+export function skuItemNameLookup(rows: ItemSellingPriceRow[]): (warna: string, lengan: string, size: string) => string {
+  const byKey = new Map<string, string>();
+  for (const r of rows) {
+    const key = `${r.warna}|${r.lengan}|${r.size}`;
+    if (r.itemName && !byKey.has(key)) byKey.set(key, r.itemName);
+  }
+  return (warna, lengan, size) => byKey.get(`${warna}|${lengan}|${size}`) ?? byKey.get(`${skuWarnaFor(warna)}|${lengan}|${size}`) ?? "";
 }
 
 /** Id roll (ProductionBatch) yang sudah MASUK RESI pengiriman (owner 2026-11-10: hasil cutting roll terkunci saat itu, bukan lagi saat Finish Good diisi): ada item-nya di koli yang

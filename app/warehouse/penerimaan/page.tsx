@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Download } from "lucide-react";
 import { exportResiExcel } from "@/lib/mrp/exportResiExcel";
 import { exportResiTemplateExcel, type ResiSheet, type ResiSheetRow } from "@/lib/mrp/exportResiTemplateExcel";
 import { ResiDownloadDialog } from "@/components/warehouse/resi-download-dialog";
-import { MokaPoDialog } from "@/components/warehouse/moka-po-dialog";
-import { buildMokaPoCsv, downloadCsv, type MokaPoItem } from "@/lib/mrp/exportMokaPo";
+import { MokaPoDialog, MOKA_PO_NOTE, useMokaPoForm } from "@/components/warehouse/moka-po-dialog";
+import { KoliDownloadDialog } from "@/components/warehouse/koli-download-dialog";
+import { runMokaPoDownload } from "@/components/warehouse/moka-po-download";
+import type { ItemSellingPriceRow } from "@/lib/mrp/masterData";
 import { alertDialog } from "@/components/ui/confirm-dialog";
 import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
@@ -15,6 +17,25 @@ import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatDate, formatPcs, formatRupiah, localDateString, skuKategoriLookup, skuWarnaFor, warehouseReceivableGroups, warnaWithUsia, type WarehouseReceivableGroup } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
+
+// Di luar komponen supaya referensinya stabil (popup Download memakainya sebagai dependensi memo).
+const vendorName = (g: WarehouseReceivableGroup) => VENDOR_PRODUKSI[g.vendorProduksi]?.name ?? g.vendorProduksi;
+
+/** Popup Download PO per resi (owner 2026-11-16): template Moka yang sama dengan Download PO di kepala tabel, tetapi hanya item koli yang dipilih (koli yang benar-benar datang;
+ *  resi kadang tidak datang utuh). Komponen tersendiri supaya template Moka (CSV besar di penyimpanan browser) baru dimuat saat popup dibuka, bukan tiap panel resi dibuka. */
+function PoKoliDialog({ group, itemSellingPrices, onClose }: { group: WarehouseReceivableGroup; itemSellingPrices: ItemSellingPriceRow[]; onClose: () => void }) {
+  const mokaForm = useMokaPoForm();
+  /** `kolis` null = seluruh koli. */
+  async function download(kolis: string[] | null) {
+    mokaForm.save();
+    const picked = kolis && kolis.length > 0 ? new Set(kolis) : null;
+    const scoped: WarehouseReceivableGroup = picked ? { ...group, items: group.items.filter((it) => picked.has(it.noKoli ?? it.deliveryKoliId)) } : group;
+    const safe = String(group.noResi ?? group.resiGroupId);
+    const tag = picked ? `${safe}-Koli-${Array.from(picked).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join("-")}` : safe;
+    await runMokaPoDownload(itemSellingPrices, [scoped], mokaForm.supplier, mokaForm.template!.text, tag);
+  }
+  return <KoliDownloadDialog group={group} title="Download PO (Import Moka) Resi" note={MOKA_PO_NOTE} extraFields={mokaForm.fields} extraReady={mokaForm.ready} onDownload={download} onClose={onClose} />;
+}
 
 /** Panel item read-only + form "Bongkar Koli" -- TIDAK ADA input qty manual (Q5 final, konsisten
  *  R10 di spec): Warehouse cuma mengonfirmasi (boleh isi catatan bebas) lalu submit, qty & HPP
@@ -26,7 +47,8 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
   const [error, setError] = useState("");
   const [koliFilter, setKoliFilter] = useState("");
   const [hppFilter, setHppFilter] = useState("");
-  const [downloading, setDownloading] = useState(false);
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const [poOpen, setPoOpen] = useState(false);
   const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
 
   // HPP per item selalu tampil begitu ada baris HPP-nya (dari mesin HPP yang sama dengan Laporan HPP Finance: master data harga
@@ -45,16 +67,15 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
     return true;
   });
 
-  async function handleDownload() {
-    setDownloading(true);
+  /** `kolis` null = seluruh koli resi; selain itu hanya koli yang dipilih di popup (nama file memuat nomor kolinya). */
+  async function handleDownload(kolis: string[] | null) {
     setError("");
     try {
       const safe = String(group.noResi ?? group.resiGroupId).replace(/[^A-Za-z0-9_-]+/g, "_");
-      await exportResiExcel(group, `Resi-${safe}.xlsx`, { kategoriOf: skuKategoriLookup(itemSellingPrices) });
+      const koliPart = kolis && kolis.length > 0 ? "-Koli-" + kolis.map((k) => k.replace(/[^A-Za-z0-9_-]+/g, "_")).join("-") : "";
+      await exportResiExcel(group, `Resi-${safe}${koliPart}.xlsx`, { kategoriOf: skuKategoriLookup(itemSellingPrices), koli: kolis ?? undefined });
     } catch (err) {
       setError("Gagal membuat file Excel: " + (err instanceof Error ? err.message : String(err)));
-    } finally {
-      setDownloading(false);
     }
   }
 
@@ -96,11 +117,16 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
         <span className="font-sans text-[10.5px] text-text-muted">
           {visibleItems.length} dari {group.items.length} baris
         </span>
-        {/* Unduh SELURUH isi resi ini (bukan hanya baris yang lolos filter di atas). */}
-        <Button variant="accent" size="sm" disabled={downloading || group.items.length === 0} onClick={handleDownload} className="ml-auto inline-flex items-center gap-1.5">
-          <Download className="h-3.5 w-3.5" />
-          {downloading ? "Menyiapkan…" : "Download Excel"}
-        </Button>
+        {/* Popup: unduh seluruh koli resi ini atau koli tertentu saja (tidak terpengaruh filter di atas). Download Excel = surat jalan; Download PO = template Import PO Moka (HPP). */}
+        <div className="ml-auto flex items-center gap-2">
+          <Button variant="ghost" size="sm" disabled={group.items.length === 0} onClick={() => setPoOpen(true)} title="Isi template Import PO Moka dari koli yang dipilih">
+            Download PO
+          </Button>
+          <Button variant="accent" size="sm" disabled={group.items.length === 0} onClick={() => setDownloadOpen(true)} className="inline-flex items-center gap-1.5">
+            <Download className="h-3.5 w-3.5" />
+            Download Excel
+          </Button>
+        </div>
       </div>
       <div className="overflow-x-auto rounded-md border border-[#E4E9EE] bg-white">
         <table className="w-full min-w-[760px] border-collapse">
@@ -171,6 +197,8 @@ function ReceivableGroupPanel({ group }: { group: WarehouseReceivableGroup }) {
         </div>
       )}
       {error && <div className="font-sans text-[10.5px] font-medium text-danger-fg">{error}</div>}
+      {downloadOpen && <KoliDownloadDialog group={group} onDownload={handleDownload} onClose={() => setDownloadOpen(false)} />}
+      {poOpen && <PoKoliDialog group={group} itemSellingPrices={itemSellingPrices} onClose={() => setPoOpen(false)} />}
     </div>
   );
 }
@@ -195,37 +223,38 @@ export default function WarehousePenerimaanPage() {
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [poOpen, setPoOpen] = useState(false);
 
+  // Perhitungan resi + HPP berat (seluruh data koli, invoice, roll), jadi di-cache: hanya dihitung ulang kalau data store berubah, BUKAN setiap render
+  // (owner 2026-11-16: membuka/menutup popup Download terasa sangat lambat karena halaman menghitung ulang semuanya tiap state popup berubah).
+  const groups = useMemo(() => {
+    if (!mounted) return [] as WarehouseReceivableGroup[];
+    const unsorted = warehouseReceivableGroups(
+      deliveryKolis,
+      vendorInvoices,
+      mrpDetails,
+      staticMrps,
+      productionBatches,
+      productionResults,
+      productionGroupMeta,
+      rawInvoices,
+      warehouseReceipts,
+      ekspedisiRates,
+      itemSellingPrices,
+      hargaMaklon
+    );
+    // Terbaru di atas: tanggal kirim terbaru dulu (hanya tanggal, tanpa jam), sama tanggal -> koli yang paling baru dibuat dulu, lalu kunci resi yang lebih baru.
+    const koliCreatedAt = new Map(deliveryKolis.map((k) => [k.id, k.createdAt ?? ""]));
+    const newest = new Map(unsorted.map((g) => [g.resiGroupId, g.koliIds.reduce((m, id) => ((koliCreatedAt.get(id) ?? "") > m ? (koliCreatedAt.get(id) ?? "") : m), "")]));
+    return [...unsorted].sort(
+      (a, b) =>
+        (b.deliveredAt ?? "").localeCompare(a.deliveredAt ?? "") ||
+        (newest.get(b.resiGroupId) ?? "").localeCompare(newest.get(a.resiGroupId) ?? "") ||
+        b.resiGroupId.localeCompare(a.resiGroupId, undefined, { numeric: true })
+    );
+  }, [mounted, deliveryKolis, vendorInvoices, mrpDetails, staticMrps, productionBatches, productionResults, productionGroupMeta, rawInvoices, warehouseReceipts, ekspedisiRates, itemSellingPrices, hargaMaklon]);
+
   if (!mounted) return null;
 
-  const groupsUnsorted = warehouseReceivableGroups(
-    deliveryKolis,
-    vendorInvoices,
-    mrpDetails,
-    staticMrps,
-    productionBatches,
-    productionResults,
-    productionGroupMeta,
-    rawInvoices,
-    warehouseReceipts,
-    ekspedisiRates,
-    itemSellingPrices,
-    hargaMaklon
-  );
-
-  // Terbaru di atas: tanggal kirim terbaru dulu, sama tanggal -> kunci resi yang lebih baru dulu.
-  const groups = [...groupsUnsorted].sort((a, b) => (b.deliveredAt ?? "").localeCompare(a.deliveredAt ?? "") || b.resiGroupId.localeCompare(a.resiGroupId, undefined, { numeric: true }));
-
-  const statusLabelOf = (g: WarehouseReceivableGroup) => {
-    if (!g.gateReason) return "Siap dibongkar";
-    if (g.gateReason === "Menunggu Procurement memvalidasi invoice ekspedisi resi ini") return "Menunggu Procurement memvalidasi ongkir";
-    if (g.gateReason.startsWith("Belum ada invoice") || g.gateReason.startsWith("Sebagian item")) return "Belum ada invoice vendor";
-    if (g.gateReason.includes("revisi")) return "Invoice dalam revisi";
-    return "Lainnya";
-  };
   const uniqSorted = (xs: string[]) => Array.from(new Set(xs.filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  const vendorName = (g: WarehouseReceivableGroup) => VENDOR_PRODUKSI[g.vendorProduksi]?.name ?? g.vendorProduksi;
-  // Tanggal kirim terbaru di atas pada pilihan filter.
-  const tanggalOptions = Array.from(new Set(groups.map((g) => formatDate(g.deliveredAt)).filter((d) => d && d !== "—")));
   const hppOf = (g: WarehouseReceivableGroup) => {
     const billable = g.items.filter((it) => it.kind !== "REJECT");
     const missing = billable.some((it) => it.hppPerItem <= 0);
@@ -281,55 +310,8 @@ export default function WarehousePenerimaanPage() {
     }
   }
 
-  /** Download PO (owner 2026-11-10): isi template Moka "Import - Items Purchase Order" dari resi terpilih. Item digabung per Item (MOKA) (qty dijumlah, HPP rata-rata tertimbang); reject tidak ikut (tanpa HPP). */
-  async function downloadMokaPo(selected: WarehouseReceivableGroup[], supplierEmail: string, templateText: string) {
-    try {
-      const skuByKey = new Map<string, { sku: string | null; itemName: string }>();
-      for (const r of itemSellingPrices) {
-        const key = `${r.warna}|${r.lengan}|${r.size}`;
-        if (!skuByKey.has(key)) skuByKey.set(key, { sku: r.sku, itemName: r.itemName });
-      }
-      const acc = new Map<string, MokaPoItem & { nilai: number; qtyCost: number }>();
-      for (const g of selected) {
-        for (const it of g.items) {
-          if (it.kind === "REJECT") continue;
-          const warna = warnaWithUsia(it.warna, it.usia);
-          const skuWarna = skuWarnaFor(it.warna, it.usia);
-          const itemMoka = `${skuWarna} ${it.lengan === "PENDEK" ? "PDK" : "PJG"} ${it.size}`;
-          const master = skuByKey.get(`${warna}|${it.lengan}|${it.size}`) ?? skuByKey.get(`${skuWarna}|${it.lengan}|${it.size}`);
-          // Item RIB di Moka tidak memuat PDK/PJG ("BENHUR KID + RIB XS", "HITAM + RIB L"): cadangan pencocokan tanpa lengan.
-          const alt = skuWarna.includes("+ RIB") ? [`${skuWarna} ${it.size}`] : undefined;
-          const cur = acc.get(itemMoka) ?? { itemMoka, itemName: master?.itemName ?? null, alt, sku: master?.sku ?? null, qty: 0, hppPerItem: null, nilai: 0, qtyCost: 0 };
-          cur.qty += it.qty;
-          if (it.hppPerItem > 0) {
-            cur.nilai += it.qty * it.hppPerItem;
-            cur.qtyCost += it.qty;
-          }
-          acc.set(itemMoka, cur);
-        }
-      }
-      const items: MokaPoItem[] = Array.from(acc.values()).map((x) => ({ itemMoka: x.itemMoka, itemName: x.itemName, alt: x.alt, sku: x.sku, qty: x.qty, hppPerItem: x.qtyCost > 0 ? x.nilai / x.qtyCost : null }));
-      const res = buildMokaPoCsv(templateText, supplierEmail, items);
-      if (res.error) {
-        await alertDialog({ title: "Template tidak bisa dipakai", message: res.error, tone: "danger" });
-        return;
-      }
-      if (res.filledRows === 0) {
-        await alertDialog({ title: "Tidak ada item yang cocok", message: "Tidak satu pun item resi terpilih ditemukan di template Moka (dicocokkan lewat kolom Items Name), jadi file tidak dibuat.", tone: "danger" });
-        return;
-      }
-      downloadCsv(res.csv, `PO-Moka-${localDateString(new Date())}.csv`);
-      const list = (xs: MokaPoItem[]) => Array.from(new Set(xs.map((x) => x.itemMoka))).slice(0, 12).join(", ");
-      const warnings: string[] = [];
-      if (res.notFound.length > 0) warnings.push(`${res.notFound.length} item tidak ditemukan di template Moka dan TIDAK ikut file: ${list(res.notFound)}${res.notFound.length > 12 ? ", …" : ""}.`);
-      if (res.noCost.length > 0) warnings.push(`${res.noCost.length} item belum punya HPP, kolom Unit Cost dikosongkan: ${list(res.noCost)}${res.noCost.length > 12 ? ", …" : ""}.`);
-      if (warnings.length > 0) {
-        await alertDialog({ title: `File PO dibuat (${res.filledRows} item, ${res.filledQty.toLocaleString("id-ID")} pcs)`, message: warnings.join("\n\n") });
-      }
-    } catch (e) {
-      await alertDialog({ title: "Gagal membuat file PO", message: e instanceof Error ? e.message : "Terjadi kesalahan saat membuat file PO.", tone: "danger" });
-    }
-  }
+  /** Download PO dari kepala tabel (pilih resi): isi template Moka, logikanya di `runMokaPoDownload`. */
+  const downloadMokaPo = (selected: WarehouseReceivableGroup[], supplierEmail: string, templateText: string) => runMokaPoDownload(itemSellingPrices, selected, supplierEmail, templateText);
 
   const readyCount = groups.filter((g) => !g.gateReason).length;
   const waitingCount = groups.length - readyCount;
@@ -338,18 +320,27 @@ export default function WarehousePenerimaanPage() {
   // Tampilan tabel (owner 2026-11-09): No MRP (W39, W40, tanpa kategori), Jumlah Koli, Ekspedisi, No Resi (kolom pertama), Tanggal Kirim, Total Qty, Total HPP, dan Status
   // = apakah resi sudah divalidasi Procurement (Invoice Ekspedisi), BUKAN lagi status pembayaran invoice vendor. Syarat Bongkar (invoice vendor ada dan tidak direvisi, ongkir tervalidasi)
   // tetap berlaku dan tampil di panel rincian baris serta kolom opsional "Syarat Bongkar".
-  const ongkirLabelOf = (g: WarehouseReceivableGroup) => (g.ongkirValidasi === "VALIDATED" ? "Resi sudah divalidasi" : g.ongkirValidasi === "PENDING" ? "Menunggu validasi Procurement" : "Tanpa ongkir (internal)");
+  // Label dipendekkan (owner 2026-11-16: tabel terpotong di layar); keterangan lengkap ada di tooltip kolom Status.
+  const STATUS_RESI = ["Sudah divalidasi", "Menunggu validasi", "Tanpa ongkir"];
+  const ongkirLabelOf = (g: WarehouseReceivableGroup) => (g.ongkirValidasi === "VALIDATED" ? STATUS_RESI[0] : g.ongkirValidasi === "PENDING" ? STATUS_RESI[1] : STATUS_RESI[2]);
+  const ongkirTitleOf = (g: WarehouseReceivableGroup) =>
+    g.ongkirValidasi === "VALIDATED" ? "Resi sudah divalidasi Procurement (Invoice Ekspedisi)" : g.ongkirValidasi === "PENDING" ? "Menunggu Procurement memvalidasi invoice ekspedisi resi ini" : "Pengiriman internal, tanpa ongkir";
   const columns: ColumnDef<WarehouseReceivableGroup>[] = [
     { key: "mrp", label: "No MRP", default: true, render: (g) => <span className="font-mono font-semibold">{g.mrpIds.join(", ")}</span> },
-    { key: "vendor", label: "Vendor Produksi", default: true, render: (g) => VENDOR_PRODUKSI[g.vendorProduksi]?.name ?? g.vendorProduksi },
-    { key: "jumlahKoli", aggregate: aggSum((g) => g.koliIds.length, (n) => <span className="font-semibold">{n}</span>), label: "Jumlah Koli", default: true, align: "right", render: (g) => <span className="font-mono">{g.koliIds.length}</span> },
-    { key: "ekspedisi", label: "Ekspedisi", default: true, render: (g) => g.ekspedisi || "—" },
+    { key: "vendor", label: "Vendor", default: true, render: (g) => VENDOR_PRODUKSI[g.vendorProduksi]?.name ?? g.vendorProduksi },
+    { key: "jumlahKoli", aggregate: aggSum((g) => g.koliIds.length, (n) => <span className="font-semibold">{n}</span>), label: "Koli", default: true, align: "right", render: (g) => <span className="font-mono">{g.koliIds.length}</span> },
+    {
+      key: "ekspedisi",
+      label: "Ekspedisi",
+      default: true,
+      render: (g) => (g.ekspedisi ? <span title={g.ekspedisi} className="inline-block max-w-[170px] truncate align-bottom">{g.ekspedisi}</span> : "—"),
+    },
     { key: "tanggalKirim", label: "Tanggal Kirim", default: true, render: (g) => formatDate(g.deliveredAt) },
-    { key: "qty", aggregate: aggSum((g) => g.totalQty, (n) => <span className="font-semibold">{formatPcs(n)}</span>), label: "Total Qty", default: true, align: "right", render: (g) => <span className="font-mono">{formatPcs(g.totalQty)}</span> },
+    { key: "qty", aggregate: aggSum((g) => g.totalQty, (n) => <span className="font-semibold">{formatPcs(n)}</span>), label: "Qty", default: true, align: "right", render: (g) => <span className="font-mono">{formatPcs(g.totalQty)}</span> },
     {
       // HPP resi ini = Σ qty x HPP/item (mesin HPP yang sama dengan Laporan HPP Finance), tampil walau invoice belum dibayar.
       key: "totalHpp",
-      label: "Total HPP",
+      label: "HPP",
       default: true,
       align: "right",
       render: (g) => {
@@ -358,7 +349,7 @@ export default function WarehousePenerimaanPage() {
         return (
           <span className="font-mono">
             {formatRupiah(h.value)}
-            {(h.anyEstimasi || h.missing) && <span className="ml-1.5 font-sans text-[9.5px] font-semibold text-warning-fg">{h.missing ? "belum lengkap" : "estimasi"}</span>}
+            {(h.anyEstimasi || h.missing) && <span className="ml-1.5 font-sans text-[9.5px] font-semibold text-warning-fg">{h.missing ? "belum lengkap" : "est."}</span>}
           </span>
         );
       },
@@ -369,11 +360,11 @@ export default function WarehousePenerimaanPage() {
       default: true,
       render: (g) =>
         g.ongkirValidasi === "VALIDATED" ? (
-          <span className="font-sans text-[11px] font-semibold text-success-fg">✓ {ongkirLabelOf(g)}</span>
+          <span title={ongkirTitleOf(g)} className="font-sans text-[11px] font-semibold text-success-fg">✓ {ongkirLabelOf(g)}</span>
         ) : g.ongkirValidasi === "PENDING" ? (
-          <span className="font-sans text-[11px] font-semibold text-danger-fg">{ongkirLabelOf(g)}</span>
+          <span title={ongkirTitleOf(g)} className="font-sans text-[11px] font-semibold text-danger-fg">{ongkirLabelOf(g)}</span>
         ) : (
-          <span className="font-sans text-[11px] text-text-muted">{ongkirLabelOf(g)}</span>
+          <span title={ongkirTitleOf(g)} className="font-sans text-[11px] text-text-muted">{ongkirLabelOf(g)}</span>
         ),
     },
     { key: "noKoli", label: "No Koli", default: false, render: (g) => g.noKoli },
@@ -435,14 +426,15 @@ export default function WarehousePenerimaanPage() {
           placeholder: "Cari no resi, no koli, no MRP, no invoice…",
           getText: (g) => [g.noResi, g.resiGroupId, g.noKoli, g.mrpLabel, g.mrpId, g.invoiceIds.join(" ")].filter(Boolean).join(" "),
         }}
+        searchRight
+        fitExpanded
+        bordered
+        singleExpand
         filterDefs={[
-          { label: "Status", options: ["Resi sudah divalidasi", "Menunggu validasi Procurement", "Tanpa ongkir (internal)"].filter((o) => groups.some((g) => ongkirLabelOf(g) === o)), test: (g, v) => ongkirLabelOf(g) === v },
-          { label: "Syarat Bongkar", options: ["Siap dibongkar", "Menunggu Procurement memvalidasi ongkir", "Belum ada invoice vendor", "Invoice dalam revisi", "Lainnya"].filter((o) => groups.some((g) => statusLabelOf(g) === o)), test: (g, v) => statusLabelOf(g) === v },
-          { label: "Ekspedisi", options: uniqSorted(groups.map((g) => g.ekspedisi)), test: (g, v) => g.ekspedisi === v },
-          { label: "Vendor Produksi", options: uniqSorted(groups.map(vendorName)), test: (g, v) => vendorName(g) === v },
           { label: "No MRP", options: uniqSorted(groups.flatMap((g) => g.mrpIds)).reverse(), test: (g, v) => g.mrpIds.includes(v) },
-          { label: "Tanggal Kirim", options: tanggalOptions, test: (g, v) => formatDate(g.deliveredAt) === v },
-          { label: "Status WMS", options: ["Diterima WMS", "Belum dikonfirmasi WMS"], test: (g, v) => (v === "Diterima WMS") === !!g.wmsReceivedAt },
+          { label: "Vendor", options: uniqSorted(groups.map(vendorName)), test: (g, v) => vendorName(g) === v },
+          { label: "Status Resi", options: STATUS_RESI.filter((o) => groups.some((g) => ongkirLabelOf(g) === o)), test: (g, v) => ongkirLabelOf(g) === v },
+          { label: "Ekspedisi", options: uniqSorted(groups.map((g) => g.ekspedisi)), test: (g, v) => g.ekspedisi === v },
         ]}
         firstColumnLabel="No Resi"
         firstColumnRender={(g) => <span className="font-mono">{g.noResi ?? g.resiGroupId}</span>}
@@ -450,7 +442,7 @@ export default function WarehousePenerimaanPage() {
         emptyText="Belum ada koli yang siap/menunggu diterima."
       />
       {poOpen && <MokaPoDialog groups={groups} vendorName={vendorName} onDownload={downloadMokaPo} onClose={() => setPoOpen(false)} />}
-      {downloadOpen && <ResiDownloadDialog groups={groups} vendorName={vendorName} onDownload={downloadResiSheets} onClose={() => setDownloadOpen(false)} />}
+      {downloadOpen && <ResiDownloadDialog groups={groups} vendorName={vendorName} onDownload={downloadResiSheets} onClose={() => setDownloadOpen(false)} pickKoli />}
     </AppShell>
   );
 }

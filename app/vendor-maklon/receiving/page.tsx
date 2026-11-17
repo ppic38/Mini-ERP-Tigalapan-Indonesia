@@ -29,7 +29,8 @@ import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { RollCodeEditor } from "@/components/sysadmin/roll-code-editor";
 import { rollArrivalCorrections } from "@/components/sysadmin/vendor-corrections";
-import type { Lengan } from "@/lib/mrp/types";
+import { aduanRowsOfPo } from "@/lib/mrp/exportPoExcel";
+import type { Lengan, MaklonPO } from "@/lib/mrp/types";
 
 // Revisi 2026-09-29 (owner: "buat untuk vendor produksi bisa input code lot"): codeLot opsional,
 // cuma dipakai kalau roll ini BELUM punya code_lot dari Procurement (lihat gating input di render
@@ -127,14 +128,15 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   // vendor selesai tandai roll diterima, langsung bisa lanjut produksi tanpa pindah halaman.
   // Mulai produksi per warna (2026-10-22): PO yang sudah PRODUCTION dengan daftar warna (startedColors) juga tetap muncul di
   // sini selama masih ada warna yang bahannya sudah diterima tapi belum dimulai.
-  const readyMaklonPOs = maklonPOs.filter(
-    (p) =>
-      p.mrpId === selectedMrpId &&
-      p.vendorProduksi === vendorId &&
-      ((p.status === "FULL_WAITING_MATERIAL" || p.status === "PARTIAL_WAITING_MATERIAL") ||
-        (p.status === "PRODUCTION" && (p.startedColors?.length ?? 0) > 0 && receivedItemsFor(p.mrpId).some((it) => !(p.startedColors ?? []).includes(it.warna + "|" + it.lengan)))) &&
-      materialReceivedForMaklon(p.mrpId, p.vendorProduksi, invoices)
-  );
+  // Revisi 2026-11-17 (owner: vendor BAYU W43 punya PO awal + PO susulan -2, dan kedua kartu menampilkan daftar yang sama persis): item diterima, estimasi, dan
+  // roll tanpa code dihitung PER PO (hanya warna milik PO itu, lihat `aduanRowsOfPo`), bukan per MRP + vendor. PO yang warnanya belum ada yang diterima tidak tampil.
+  const readyMaklonPOs = maklonPOs.filter((p) => {
+    if (p.mrpId !== selectedMrpId || p.vendorProduksi !== vendorId) return false;
+    const own = receivedItemsFor(p.mrpId, p);
+    const waiting = p.status === "FULL_WAITING_MATERIAL" || p.status === "PARTIAL_WAITING_MATERIAL";
+    const partial = p.status === "PRODUCTION" && (p.startedColors?.length ?? 0) > 0 && own.some((it) => !(p.startedColors ?? []).includes(it.warna + "|" + it.lengan));
+    return (waiting || partial) && own.length > 0 && materialReceivedForMaklon(p.mrpId, p.vendorProduksi, invoices);
+  });
   const colorOptions = selectedInvoice?.colorEntries ?? [];
   const warnaColorEntries = colorOptions
     .filter((c) => c.warna === selectedWarna && c.rolls.length > 0)
@@ -373,13 +375,18 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   // Item revisi 2026-09-19: daftar "item diterima" untuk kartu Mulai Produksi -- dihitung dari roll
   // yang SUDAH ditandai diterima (semua invoice MRP ini ke vendor ini), dibandingkan rencana roll
   // dari aduan pola; estimasi pcs = qty aduan x (roll diterima / roll rencana).
-  function receivedItemsFor(mrpId: string) {
-    const aduan = mrpDetailFor(mrpId, mrpDetails)?.aduanRows.filter((a) => a.vendor === vendorId) ?? [];
+  function receivedItemsFor(mrpId: string, po?: MaklonPO) {
+    const detail = mrpDetailFor(mrpId, mrpDetails);
+    const allAduan = detail?.aduanRows.filter((a) => a.vendor === vendorId) ?? [];
+    // Dengan `po`: hanya warna·lengan milik PO itu (PO awal vs susulan). Tanpa PO yang memecah, hasilnya sama dengan semua aduan vendor.
+    const aduan = po ? aduanRowsOfPo(detail, po, maklonPOs) : allAduan;
+    const ownKeys = po && aduan.length < allAduan.length ? new Set(aduan.map((a) => a.warna + "|" + a.lengan)) : null;
     const map = new Map<string, { warna: string; lengan: string; arrived: number; invoiced: number }>();
     for (const inv of invoices) {
       if (inv.mrpId !== mrpId || inv.destinationVendor !== vendorId) continue;
       for (const c of inv.colorEntries) {
         const key = c.warna + "|" + c.lengan;
+        if (ownKeys && !ownKeys.has(key)) continue;
         const arrivals = inv.rollArrivals[key] ?? [];
         const g = map.get(key) ?? { warna: c.warna, lengan: c.lengan, arrived: 0, invoiced: 0 };
         g.invoiced += c.rolls.length;
@@ -941,9 +948,10 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
               roll yang sudah ditandai diterima (bertambah otomatis begitu material baru masuk). */}
           <div className="vp-rs-list mt-2.5 flex flex-col gap-2">
             {readyMaklonPOs.map((p) => {
-              const items = receivedItemsFor(p.mrpId);
+              const items = receivedItemsFor(p.mrpId, p);
               const estTotal = items.reduce((s, it) => s + it.estPcs, 0);
-              const noCode = rollsWithoutCode(p.mrpId);
+              const ownKeys = new Set(items.map((it) => it.warna + "|" + it.lengan));
+              const noCode = rollsWithoutCode(p.mrpId).filter((r) => ownKeys.has(r.warna + "|" + r.lengan));
               const perWarnaMode = p.status === "PRODUCTION" && (p.startedColors?.length ?? 0) > 0;
               const colorStarted = (it: { warna: string; lengan: string }) => perWarnaMode && (p.startedColors ?? []).includes(it.warna + "|" + it.lengan);
               return (

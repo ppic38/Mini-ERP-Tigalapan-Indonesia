@@ -177,6 +177,10 @@ export function DataTable<T>({
   expandIn,
   panelWidth,
   defaultGroupBy,
+  searchRight,
+  fitExpanded,
+  bordered,
+  firstColumnSortValue,
 }: {
   /** Opsional: kelompok bawaan saat tabel dibuka (label filter, urut per tingkat), mis. ["No. MRP", "Supplier"]. Favorit
    *  bawaan pengguna tetap didahulukan. Pengguna bisa melepasnya lewat keping Kelompok. */
@@ -192,6 +196,15 @@ export function DataTable<T>({
   /** Opsional: pasang pilihan filter dari luar tabel (mis. kartu angka yang diklik). Setiap kali `nonce` berubah,
    *  pilihan filter tabel diganti dengan `filters` (kunci = label filter di `filterDefs`). Tidak diisi = tidak ada efek. */
   filterPreset?: { nonce: number; filters: Record<string, string[]> };
+  /** Opsional: kolom pertama (firstColumnLabel) ikut bisa diurutkan lewat klik judulnya. Tidak diisi = tidak bisa diurutkan seperti biasa. */
+  firstColumnSortValue?: (row: T) => string | number | null | undefined;
+  /** Opsional: garis tabel penuh (garis tipis antar kolom dan antar baris) pada judul dan sel. Tidak diisi = hanya garis antar baris seperti biasa. */
+  bordered?: boolean;
+  /** Opsional: rincian baris yang dibuka (renderExpanded) dibatasi selebar area tabel yang terlihat dan menempel di kiri saat tabel digeser ke samping, jadi tombol/kolom di
+   *  kanan rincian tidak ikut terpotong ketika tabelnya sendiri lebih lebar dari layar. Tidak diisi = rincian selebar tabel seperti biasa. */
+  fitExpanded?: boolean;
+  /** Opsional: kotak cari ditaruh paling kanan di bar filter (filter dropdown di kiri, sesuai urutan `filterDefs`). Tidak diisi = kotak cari paling kiri seperti biasa. */
+  searchRight?: boolean;
   /** Opsional -- di layar HP/tablet tegak (< 1024px) tiap baris jadi KARTU bertumpuk (label kolom di depan nilainya) alih-alih
    *  tabel yang digeser ke samping. Hanya dipakai halaman portal vendor; yang lain tidak berubah sama sekali. */
   mobileCards?: boolean;
@@ -315,6 +328,10 @@ export function DataTable<T>({
   });
   // Kelompokkan bertingkat (owner 2026-11-16): urutan label = urutan tingkat, mis. ["No. MRP", "Vendor"].
   const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
+  // Gabungan dengan main 2026-11-17: modul internal = semua kolom bisa diurutkan (kecuali Aksi Sysadmin); portal vendor = hanya kolom
+  // yang diberi `sortValue` / `firstColumnSortValue` (perilaku tim IT), supaya tabel vendor tetap seperti sebelum redesign.
+  const colSortable = (c: ColumnDef<T>) => !c.sysadmin && (modern || !!c.sortValue);
+  const firstSortable = !!firstColumnLabel && (modern || !!firstColumnSortValue);
   const toggleSort = (key: string) =>
     setSort((p) => (!p || p.key !== key ? { key, dir: "asc" } : p.dir === "asc" ? { key, dir: "desc" } : null));
   const sortMark = (key: string) => (sort?.key === key ? <span className="ml-1 text-[9px]">{sort.dir === "asc" ? "▲" : "▼"}</span> : null);
@@ -332,6 +349,15 @@ export function DataTable<T>({
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const panelMode = modern && !!renderExpanded && expandIn !== "row";
   const [panelKey, setPanelKey] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [scrollW, setScrollW] = useState(0);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!fitExpanded || !el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setScrollW(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fitExpanded]);
   const prevCollapseSignal = useRef(collapseSignal);
   useEffect(() => {
     if (collapseSignal !== undefined && collapseSignal !== prevCollapseSignal.current) {
@@ -399,7 +425,7 @@ export function DataTable<T>({
   // Urutan kolom (owner 2026-11-16): klik judul kolom = A-Z, klik lagi = Z-A, klik ketiga = urutan bawaan. Berlaku di dalam kelompok juga.
   const sortCol = sort ? (sort.key === "__first" ? null : columns.find((c) => c.key === sort.key)) : null;
   const sortGet = sort
-    ? (r: T) => (sortCol ? (sortCol.sortValue ? sortCol.sortValue(r) : nodeText(sortCol.render(r))) : nodeText(firstColumnRender(r)))
+    ? (r: T) => (sortCol ? (sortCol.sortValue ? sortCol.sortValue(r) : nodeText(sortCol.render(r))) : firstColumnSortValue ? firstColumnSortValue(r) : nodeText(firstColumnRender(r)))
     : null;
   const filtered = sortGet
     ? filteredRaw
@@ -794,7 +820,7 @@ export function DataTable<T>({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={search.placeholder ?? "Cari…"}
-              className="w-[220px] max-w-full rounded-md max-md:w-full border border-border-subtle bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-medium text-[#31414F]"
+              className={(searchRight ? "order-last ml-auto max-md:order-none max-md:ml-0 " : "") + "w-[220px] max-w-full rounded-md max-md:w-full border border-border-subtle bg-white px-2.5 py-[6px] font-sans text-[11.5px] font-medium text-[#31414F]"}
             />
           )}
           {!modern &&
@@ -820,14 +846,14 @@ export function DataTable<T>({
         body
       ) : (
         <>
-      <div className={"overflow-x-auto rounded-b-lg" + (bodyMaxHeight ? " overflow-y-auto" : "")} style={bodyMaxHeight ? { maxHeight: bodyMaxHeight } : undefined}>
+      <div ref={scrollRef} className={"overflow-x-auto rounded-b-lg" + (bodyMaxHeight ? " overflow-y-auto" : "")} style={bodyMaxHeight ? { maxHeight: bodyMaxHeight } : undefined}>
         <table className="w-full border-collapse">
           <thead className={bodyMaxHeight ? "sticky top-0 z-10" : undefined}>
             <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
               <th
-                onClick={modern && firstColumnLabel ? () => toggleSort("__first") : undefined}
-                title={modern && firstColumnLabel ? "Klik untuk mengurutkan" : undefined}
-                className={"select-none px-5 py-[9px] " + (modern && firstColumnLabel ? "cursor-pointer hover:text-text-primary " : "") + (nowrap ? "whitespace-nowrap " : "") + (firstColumnAlign === "right" ? "text-right" : "text-left")}
+                onClick={firstSortable ? () => toggleSort("__first") : undefined}
+                title={firstSortable ? "Klik untuk mengurutkan" : undefined}
+                className={"select-none px-5 py-[9px] " + (bordered ? "border border-[#CBD5E1] " : "") + (firstSortable ? "cursor-pointer hover:text-text-primary " : "") + (nowrap ? "whitespace-nowrap " : "") + (firstColumnAlign === "right" ? "text-right" : "text-left")}
               >
                 {firstColumnLabel}
                 {sortMark("__first")}
@@ -835,9 +861,9 @@ export function DataTable<T>({
               {visibleColumns.map((c) => (
                 <th
                   key={c.key}
-                  onClick={c.sysadmin || !modern ? undefined : () => toggleSort(c.key)}
-                  title={c.sysadmin || !modern ? undefined : "Klik untuk mengurutkan"}
-                  className={"select-none " + (c.sysadmin || !modern ? "" : "cursor-pointer hover:text-text-primary ") + (nowrap ? "px-2.5 " : "px-3 ") + "py-[9px] " + (nowrap ? "whitespace-nowrap " : "") + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple bg-accent-purple-bg text-accent-purple" : "")}
+                  onClick={colSortable(c) ? () => toggleSort(c.key) : undefined}
+                  title={colSortable(c) ? "Klik untuk mengurutkan" : undefined}
+                  className={"select-none " + (bordered ? "border border-[#CBD5E1] " : "") + (colSortable(c) ? "cursor-pointer hover:text-text-primary " : "") + (nowrap ? "px-2.5 " : "px-3 ") + "py-[9px] " + (nowrap ? "whitespace-nowrap " : "") + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple bg-accent-purple-bg text-accent-purple" : "")}
                 >
                   {c.label}
                   {sortMark(c.key)}
@@ -848,7 +874,7 @@ export function DataTable<T>({
                   )}
                 </th>
               ))}
-              {(renderExpanded || onRowClick) && <th className="w-8 px-3 py-[9px]" />}
+              {(renderExpanded || onRowClick) && <th className={"w-8 px-3 py-[9px]" + (bordered ? " border border-[#CBD5E1]" : "")} />}
             </tr>
           </thead>
           <tbody>
@@ -900,9 +926,9 @@ export function DataTable<T>({
                     }
                     onClick={renderExpanded ? () => toggleExpanded(key) : onRowClick ? () => onRowClick(r) : undefined}
                   >
-                    <td className={"px-5 py-[11px] " + (nowrap ? "whitespace-nowrap " : "") + (firstColumnAlign === "right" ? "text-right" : "text-left")}>{firstColumnRender(r)}</td>
+                    <td className={"px-5 py-[11px] " + (bordered ? "border border-[#DDE3EA] " : "") + (nowrap ? "whitespace-nowrap " : "") + (firstColumnAlign === "right" ? "text-right" : "text-left")}>{firstColumnRender(r)}</td>
                     {visibleColumns.map((c) => (
-                      <td key={c.key} data-label={c.label} onClick={c.sysadmin ? (e) => e.stopPropagation() : undefined} className={(nowrap ? "px-2.5 " : "px-3 ") + "py-[11px] " + (nowrap ? "whitespace-nowrap " : "") + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple/40 bg-accent-purple-bg" : "")}>
+                      <td key={c.key} data-label={c.label} onClick={c.sysadmin ? (e) => e.stopPropagation() : undefined} className={(nowrap ? "px-2.5 " : "px-3 ") + "py-[11px] " + (bordered ? "border border-[#DDE3EA] " : "") + (nowrap ? "whitespace-nowrap " : "") + (c.align === "right" ? "text-right " : "text-left ") + (c.sysadmin ? "border-l-2 border-accent-purple/40 bg-accent-purple-bg" : "")}>
                         {c.render(r)}
                       </td>
                     ))}
@@ -912,7 +938,7 @@ export function DataTable<T>({
                       </td>
                     )}
                     {renderExpanded && (
-                      <td data-chevron className="px-3 py-[11px]">
+                      <td data-chevron className={"px-3 py-[11px]" + (bordered ? " border border-[#DDE3EA]" : "")}>
                         {isExpanded && !panelMode ? (
                           <ChevronDown className="h-3.5 w-3.5 flex-none text-text-muted" />
                         ) : (
@@ -924,7 +950,13 @@ export function DataTable<T>({
                   {renderExpanded && isExpanded && !panelMode && (
                     <tr className="border-b border-[#F1F4F7] last:border-b-0">
                       <td colSpan={visibleColumns.length + 2} className="bg-[#FAFBFC] px-5 py-4">
-                        {renderExpanded(r)}
+                        {fitExpanded && scrollW > 0 ? (
+                          <div className="sticky left-5" style={{ width: Math.max(scrollW - 40, 320) }}>
+                            {renderExpanded(r)}
+                          </div>
+                        ) : (
+                          renderExpanded(r)
+                        )}
                       </td>
                     </tr>
                   )}
