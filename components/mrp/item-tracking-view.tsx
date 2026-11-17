@@ -96,6 +96,8 @@ export function ItemTrackingView() {
   // Baris kelompok (owner 2026-11-16): angka dijumlah; teks dan status hanya tampil kalau sama di semua baris, kalau berbeda dikosongkan.
   const sumPcs = (get: (r: AduanTrackRow) => number) => aggSum<AduanTrackRow>(get, (n) => <span className="font-semibold">{formatPcs(n)}</span>);
   const sameText = (get: (r: AduanTrackRow) => string) => aggSame<AduanTrackRow>(get);
+  // Kolom bawaan (owner 2026-11-17, tangkapan layar "Tracking per roll"): Item, No. MRP, Vendor, Warna, Roll, Target, Cutting, Finish Good,
+  // Packing, Delivery, GR DC, Status. Aduan, Code Roll, dan kolom tanggal tetap ada di menu Kolom. Tanpa filter, kelompok, atau urutan bawaan.
   const columns: ColumnDef<AduanTrackRow>[] = [
     { key: "mrp", aggregate: sameText((r) => r.mrpId), label: "No. MRP", default: true, render: (r) => <span className="font-mono">{r.mrpId}</span> },
     { key: "vendor", aggregate: sameText((r) => vendorLabel(r.vendorProduksi)), label: "Vendor", default: true, render: (r) => vendorLabel(r.vendorProduksi) },
@@ -103,7 +105,7 @@ export function ItemTrackingView() {
     {
       key: "kode", aggregate: sameText((r) => r.kode),
       label: "Aduan",
-      default: true,
+      default: false,
       render: (r) =>
         r.jenis === "roll" || r.jenis === "rencana" ? (
           <span className="font-mono">{r.kode}</span>
@@ -116,7 +118,7 @@ export function ItemTrackingView() {
     {
       key: "codeRoll",
       label: "Code Roll",
-      default: true,
+      default: false,
       render: (r) =>
         r.codeRoll ? <span className="font-mono">{r.codeRoll}</span> : r.jenis === "rencana" ? <span className="text-text-muted">belum resting</span> : <span className="text-text-muted">-</span>,
     },
@@ -152,14 +154,14 @@ export function ItemTrackingView() {
     { key: "fgWip", aggregate: sumPcs((r) => r.fgWip), label: "FG belum dikemas", default: false, align: "right", render: (r) => pcs(r.fgWip) },
     { key: "perjalanan", aggregate: sumPcs((r) => r.perjalanan), label: "Di perjalanan", default: false, align: "right", render: (r) => pcs(r.perjalanan) },
     { key: "tibaDc", aggregate: sumPcs((r) => r.tibaDc), label: "Tiba DC (belum validasi)", default: false, align: "right", render: (r) => pcs(r.tibaDc) },
-    { key: "tglPo", label: "Tgl PO Material", default: true, render: (r) => <span className="whitespace-nowrap">{dateText(r.poMaterialAt)}</span> },
-    { key: "tglDelivery", label: "Tgl Delivery", default: true, info: { title: "Tgl Delivery", body: "Tanggal bahan dikirim ke vendor (Set Delivery invoice bahan). Baris roll memakai invoice yang memuat code roll itu." }, render: (r) => <span className="whitespace-nowrap">{dateText(r.deliveryAt)}</span> },
-    { key: "tglGr", label: "Tgl GR", default: true, info: { title: "Tgl GR", body: "Tanggal roll diterima vendor (Good Receive). Baris yang belum resting tidak punya tanggal ini." }, render: (r) => <span className="whitespace-nowrap">{dateText(r.grAt)}</span> },
+    { key: "tglPo", label: "Tgl PO Material", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.poMaterialAt)}</span> },
+    { key: "tglDelivery", label: "Tgl Delivery", default: false, info: { title: "Tgl Delivery", body: "Tanggal bahan dikirim ke vendor (Set Delivery invoice bahan). Baris roll memakai invoice yang memuat code roll itu." }, render: (r) => <span className="whitespace-nowrap">{dateText(r.deliveryAt)}</span> },
+    { key: "tglGr", label: "Tgl GR", default: false, info: { title: "Tgl GR", body: "Tanggal roll diterima vendor (Good Receive). Baris yang belum resting tidak punya tanggal ini." }, render: (r) => <span className="whitespace-nowrap">{dateText(r.grAt)}</span> },
     { key: "tglResting", label: "Tgl Resting", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.restingAt)}</span> },
     { key: "tglCutting", label: "Tgl Cutting", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.cuttingAt)}</span> },
-    { key: "tglFg", label: "Tgl Awal FG", default: true, render: (r) => <span className="whitespace-nowrap">{dateText(r.fgFirstAt)}</span> },
+    { key: "tglFg", label: "Tgl Awal FG", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.fgFirstAt)}</span> },
     { key: "tglKoli", label: "Tgl Awal Di Koli", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.koliFirstAt)}</span> },
-    { key: "tglKirim", label: "Tgl Kirim", default: true, render: (r) => <span className="whitespace-nowrap" title={r.shipDates.map(formatDate).join(", ") || undefined}>{dateText(r.shipLastAt)}</span> },
+    { key: "tglKirim", label: "Tgl Kirim", default: false, render: (r) => <span className="whitespace-nowrap" title={r.shipDates.map(formatDate).join(", ") || undefined}>{dateText(r.shipLastAt)}</span> },
     {
       key: "estTiba",
       label: "Est. Tiba DC",
