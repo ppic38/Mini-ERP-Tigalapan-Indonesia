@@ -1,6 +1,6 @@
 import type { Workbook } from "exceljs";
 import { targetSizesForBatch } from "./derive";
-import { PRODUKSI_HEADERS, REJECT_HEADERS, REWORK_HEADERS, SHEET_TAB_PRODUKSI, SHEET_TAB_REJECT, SHEET_TAB_REWORK } from "./vendorSheet";
+import { PRODUKSI_HEADERS, REJECT_HEADERS, REWORK_HEADERS, SHEET_TAB_PRODUKSI, SHEET_TAB_REJECT, SHEET_TAB_REWORK, SHEET_TZ_OFFSET_MIN } from "./vendorSheet";
 import type { AduanPolaRow, ProductionBatch, ProductionGroupMeta, ProductionResult } from "./types";
 
 // Template spreadsheet sinkron vendor (owner 2026-11-16, khusus BAYU): satu file per PO/MRP berisi tab "Produksi" (satu baris per roll x size), "Reject" (klasifikasi reject
@@ -14,6 +14,8 @@ const sizeRank = (s: string) => {
 };
 const lenganLabel = (l: string) => (l === "PENDEK" ? "Pendek" : "Panjang");
 const HEAD_BG = "FF2563EB";
+/** Jam dinding WIB (UTC+7) sebagai Date berkomponen-UTC, supaya Excel menampilkan jam WIB; pembacaan di ERP mengembalikannya ke WIB (lihat SHEET_TZ_OFFSET_MIN di vendorSheet.ts). */
+const wibWall = (iso: string) => new Date(Date.parse(iso) + SHEET_TZ_OFFSET_MIN * 60000);
 const INPUT_BG = "FFFFF7D6";
 
 export type VendorSheetTemplateInput = {
@@ -63,10 +65,11 @@ export async function buildVendorSheetTemplate(input: VendorSheetTemplateInput):
       const cut = b.sizeQty?.[size];
       const fg = b.fgSizeQty?.[size];
       const row = prod.getRow(r);
-      [b.mrpId, b.codeRoll, b.warna, lenganLabel(b.lengan), size, target[size] ?? "", b.cuttingAt ? b.cuttingAt.slice(0, 10) : "", cut && cut > 0 ? cut : "", fg && fg > 0 ? fg : ""].forEach((v, i) => {
+      [b.mrpId, b.codeRoll, b.warna, lenganLabel(b.lengan), size, target[size] ?? "", b.cuttingAt ? wibWall(b.cuttingAt) : "", cut && cut > 0 ? cut : "", fg && fg > 0 ? fg : ""].forEach((v, i) => {
         row.getCell(i + 1).value = v === "" ? null : (v as string | number);
       });
       shadeInputs(prod, r, [7, 8, 9]);
+      prod.getRow(r).getCell(7).numFmt = "yyyy-mm-dd hh:mm";
       r++;
     }
   }
@@ -123,12 +126,12 @@ export async function buildVendorSheetTemplate(input: VendorSheetTemplateInput):
     "",
     "Cara pakai:",
     "1. Unggah file ini ke Google Sheets (jangan ubah nama tab Produksi / Reject / Rework dan JANGAN ubah judul kolom di baris 1).",
-    "2. Sistem Anda mengisi kolom berwarna kuning: Tgl Cutting, Hasil Cutting, Finish Good (tab Produksi); Reject Material dan Reject Produksi (tab Reject); Qty Rework (tab Rework).",
+    "2. Sistem Anda mengisi kolom berwarna kuning: Waktu Cutting (tanggal + jam WIB, wajib untuk hasil cutting baru), Hasil Cutting, Finish Good (tab Produksi); Reject Material dan Reject Produksi (tab Reject); Qty Rework (tab Rework).",
     "3. Google Sheets: File > Bagikan > Publikasikan ke web > pilih \"Seluruh dokumen\" dan format \"Microsoft Excel (.xlsx)\" > Publikasikan. Salin tautannya.",
-    "4. Portal ERP > PO Produksi Saya > Sinkron Spreadsheet: tempel tautan, Simpan, lalu Sinkron sekarang. Selanjutnya ERP membaca spreadsheet otomatis.",
+    "4. Portal ERP > PO Produksi Saya > kolom Spreadsheet (baris MRP ini) > Tambah: tempel tautan dan Simpan. Satu spreadsheet = satu MRP. Selanjutnya ERP membaca spreadsheet otomatis; pakai tombol Sinkron kalau ada data yang belum sinkron.",
     "",
     "Aturan baca:",
-    "- Satu baris per roll x size (tab Produksi). Code Roll dan No MRP harus sama persis dengan di ERP; roll baru dibuat di ERP lewat Resting, bukan lewat spreadsheet.",
+    "- Satu baris per roll x size (tab Produksi). Code Roll dan No MRP harus sama persis dengan di ERP. Data sebuah roll baru diterima setelah rollnya di-Good Receive dan di-Resting di ERP (roll dibuat lewat Resting, bukan lewat spreadsheet); roll dari invoice yang belum tiba dilaporkan dan diterima belakangan.",
     "- Sel kosong = tidak diubah. Angka 0 berarti nol. Hasil Cutting yang sudah ada di ERP tidak dihapus oleh sel kosong/0.",
     "- Finish Good tidak boleh melebihi Hasil Cutting. Roll yang sudah ditutup, sudah masuk resi, atau punya alih size/hasil tambahan sisa kain tidak diubah dari spreadsheet (dilaporkan di portal).",
     "- Reject: isi Reject Material DAN Reject Produksi; jumlahnya harus sama dengan total reject warna·lengan itu di ERP (reject dihitung setelah Selesai Produksi di tab Finish Good).",

@@ -7,7 +7,7 @@ import { ChevronDown, ChevronRight, Download } from "lucide-react";
 import { exportMaklonPoRasioExcel, poPartsOfVendor } from "@/lib/mrp/exportPoExcel";
 import { exportVendorSheetTemplate } from "@/lib/mrp/exportVendorSheetTemplate";
 import { isSheetSyncVendor } from "@/lib/mrp/vendorSheet";
-import { SheetSyncCard } from "@/components/vendor-maklon/sheet-sync-card";
+import { SheetLinkCell, SheetLinkDialog, SheetSyncSummaryCard, useSheetLinks } from "@/components/vendor-maklon/sheet-sync-card";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill, type PillTone } from "@/components/ui/status-pill";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
@@ -458,6 +458,9 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
   const productionGroupMeta = useMrpStore((s) => s.productionGroupMeta);
   const productionResults = useMrpStore((s) => s.productionResults);
   const [sheetBusyId, setSheetBusyId] = useState<string | null>(null);
+  // Sinkron spreadsheet per MRP (khusus vendor yang memakainya): daftar tautan + MRP yang dialognya sedang dibuka.
+  const sheetLinks = useSheetLinks();
+  const [sheetDialogMrp, setSheetDialogMrp] = useState<string | null>(null);
   async function downloadSheetTemplate(p: MergedPO) {
     setSheetBusyId(p.id);
     try {
@@ -633,6 +636,12 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
     ...(isSheetSyncVendor(vendorId)
       ? [
           {
+            key: "spreadsheet",
+            label: "Spreadsheet",
+            default: true,
+            render: (p: MergedPO) => <SheetLinkCell link={sheetLinks.links.find((l) => l.mrpId === p.mrpId.toUpperCase())} onOpen={() => setSheetDialogMrp(p.mrpId)} />,
+          } as ColumnDef<MergedPO>,
+          {
             key: "templateSheet",
             label: "Template Sheet",
             default: true,
@@ -663,7 +672,15 @@ function PoProduksiContent({ vendorId }: { vendorId: string }) {
       entityOverride="Vendor Produksi"
     >
       <div className="vp-po-page">
-      {isSheetSyncVendor(vendorId) && <SheetSyncCard />}
+      {isSheetSyncVendor(vendorId) && <SheetSyncSummaryCard links={sheetLinks.links} loaded={sheetLinks.loaded} error={sheetLinks.error} reload={sheetLinks.reload} />}
+      {sheetDialogMrp && (
+        <SheetLinkDialog
+          mrpId={sheetDialogMrp}
+          link={sheetLinks.links.find((l) => l.mrpId === sheetDialogMrp.toUpperCase())}
+          onClose={() => setSheetDialogMrp(null)}
+          onChanged={sheetLinks.reload}
+        />
+      )}
       <DataTable
         title="PO produksi saya"
         mobileCards

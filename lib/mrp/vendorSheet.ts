@@ -15,7 +15,7 @@ export const SHEET_TAB_REJECT = "Reject";
 export const SHEET_TAB_REWORK = "Rework";
 
 /** Judul kolom template (baris 1 tiap tab). Pembacaan memakai judul ini (tanpa beda huruf besar/kecil, spasi, tanda baca), bukan posisi kolom. */
-export const PRODUKSI_HEADERS = ["No MRP", "Code Roll", "Warna", "Lengan", "Size", "Target", "Tgl Cutting", "Hasil Cutting", "Finish Good"];
+export const PRODUKSI_HEADERS = ["No MRP", "Code Roll", "Warna", "Lengan", "Size", "Target", "Waktu Cutting", "Hasil Cutting", "Finish Good"];
 export const REJECT_HEADERS = ["No MRP", "Warna", "Lengan", "Reject Material", "Reject Produksi"];
 export const REWORK_HEADERS = ["No MRP", "Warna", "Lengan Asal", "Size Asal", "Usia", "Lengan Tujuan", "Size Tujuan", "Qty Rework"];
 
@@ -38,7 +38,7 @@ export function normalizeSheetUrl(raw: string): { ok: true; id: string; fetchUrl
 // Pembacaan tab
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-export type SheetProdRow = { row: number; mrpId: string; codeRoll: string; size: string; tglCutting?: string; cut?: number; fg?: number };
+export type SheetProdRow = { row: number; mrpId: string; codeRoll: string; size: string; waktuCutting?: string; cut?: number; fg?: number };
 export type SheetRejectRow = { row: number; mrpId: string; warna: string; lengan: "PENDEK" | "PANJANG"; material?: number; proses?: number };
 export type SheetReworkRow = { row: number; mrpId: string; warna: string; fromLengan: "PENDEK" | "PANJANG"; fromSize: string; usia: "KIDS" | "DEWASA"; toLengan: "PENDEK" | "PANJANG"; toSize: string; qty: number };
 export type ParsedSheet = { produksi: SheetProdRow[]; reject: SheetRejectRow[]; rework: SheetReworkRow[]; issues: SheetIssue[]; tabsFound: string[] };
@@ -60,24 +60,42 @@ function intCell(v: Cell): { value?: number; error?: string } {
   return { error: `"${String(v).trim()}" harus bilangan bulat 0 atau lebih` };
 }
 
-const pad = (n: number) => String(n).padStart(2, "0");
-const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+/** Zona waktu spreadsheet vendor: WIB (UTC+7; BAYU di Bandung). Sel waktu tanpa zona dianggap jam dinding WIB; teks ber-offset ("...+08:00" / "Z") dipakai apa adanya. */
+export const SHEET_TZ_OFFSET_MIN = 7 * 60;
+const wallToIso = (y: number, mo: number, d: number, h: number, mi: number, sec = 0) => new Date(Date.UTC(y, mo - 1, d, h, mi, sec) - SHEET_TZ_OFFSET_MIN * 60000).toISOString();
+const NEED_TIME = "wajib tanggal DAN jam (mis. 2026-11-10 14:30)";
 
-/** Tanggal dari sel: Date, serial Excel, "yyyy-mm-dd", atau "dd/mm/yyyy" ("dd-mm-yyyy"). Kosong = undefined. */
-function dateCell(v: Cell): { value?: string; error?: string } {
+/** Waktu dari sel (tanggal + jam wajib): Date / serial Excel (jam dinding = komponen UTC, begitu ExcelJS membacanya), "yyyy-mm-dd hh:mm", atau "dd/mm/yyyy hh:mm" (opsional detik, offset). Kosong = undefined;
+ *  hanya tanggal = galat (jam wajib supaya durasi resting dan status tepat waktu akurat). Hasil: ISO instan UTC. */
+function dateTimeCell(v: Cell): { value?: string; error?: string } {
   if (v === null || v === undefined || (typeof v === "string" && v.trim() === "")) return {};
-  if (v instanceof Date) return Number.isNaN(v.getTime()) ? { error: "tanggal tidak valid" } : { value: ymd(new Date(v.getUTCFullYear(), v.getUTCMonth(), v.getUTCDate())) };
+  const fromWall = (d: Date) => {
+    if (Number.isNaN(d.getTime())) return { error: "waktu tidak valid" };
+    if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0) return { error: NEED_TIME };
+    return { value: wallToIso(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds()) };
+  };
+  if (v instanceof Date) return fromWall(v);
   if (typeof v === "number") {
-    if (v < 20000 || v > 80000) return { error: `"${v}" bukan tanggal` };
-    const d = new Date(Math.round((v - 25569) * 86400000));
-    return { value: ymd(new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())) };
+    if (v < 20000 || v > 80000) return { error: `"${v}" bukan waktu` };
+    return fromWall(new Date(Math.round((v - 25569) * 86400000)));
   }
   const s = String(v).trim();
-  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s);
-  if (m) return { value: `${m[1]}-${pad(Number(m[2]))}-${pad(Number(m[3]))}` };
-  m = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/.exec(s);
-  if (m) return { value: `${m[3]}-${pad(Number(m[2]))}-${pad(Number(m[1]))}` };
-  return { error: `"${s}" bukan tanggal (pakai yyyy-mm-dd atau dd/mm/yyyy)` };
+  const zone = (z: string | undefined) => (z ? (z.toUpperCase() === "Z" ? 0 : (z[0] === "-" ? -1 : 1) * (Number(z.slice(1, 3)) * 60 + Number(z.slice(-2)))) : null);
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?\s*(Z|[+-]\d{2}:?\d{2})?$/i.exec(s);
+  let dt: { y: number; mo: number; d: number; h: number; mi: number; sec: number; z: string | undefined } | null = null;
+  if (m) dt = { y: +m[1], mo: +m[2], d: +m[3], h: +m[4], mi: +m[5], sec: +(m[6] ?? 0), z: m[7] };
+  else {
+    m = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})[ T](\d{1,2})[:.](\d{2})(?::(\d{2}))?\s*(Z|[+-]\d{2}:?\d{2})?$/i.exec(s);
+    if (m) dt = { y: +m[3], mo: +m[2], d: +m[1], h: +m[4], mi: +m[5], sec: +(m[6] ?? 0), z: m[7] };
+  }
+  if (!dt) {
+    if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(s) || /^\d{1,2}[/-]\d{1,2}[/-]\d{4}$/.test(s)) return { error: NEED_TIME };
+    return { error: `"${s}" bukan waktu (pakai yyyy-mm-dd hh:mm atau dd/mm/yyyy hh:mm)` };
+  }
+  if (dt.mo < 1 || dt.mo > 12 || dt.d < 1 || dt.d > 31 || dt.h > 23 || dt.mi > 59 || dt.sec > 59) return { error: `"${s}" bukan waktu yang valid` };
+  const off = zone(dt.z);
+  if (off === null) return { value: wallToIso(dt.y, dt.mo, dt.d, dt.h, dt.mi, dt.sec) };
+  return { value: new Date(Date.UTC(dt.y, dt.mo - 1, dt.d, dt.h, dt.mi, dt.sec) - off * 60000).toISOString() };
 }
 
 function lenganCell(v: Cell): "PENDEK" | "PANJANG" | null {
@@ -100,7 +118,7 @@ const ALIASES: Record<string, Record<string, string[]>> = {
     mrpId: ["nomrp", "mrp", "nomormrp"],
     codeRoll: ["coderoll", "koderoll", "roll"],
     size: ["size", "ukuran"],
-    tglCutting: ["tglcutting", "tanggalcutting"],
+    waktuCutting: ["waktucutting", "tglcutting", "tanggalcutting"],
     cut: ["hasilcutting", "cutting", "qtycutting"],
     fg: ["finishgood", "fg", "qtyfg"],
   },
@@ -170,13 +188,13 @@ export function parseSheetTabs(tabs: Record<string, Cell[][]>): ParsedSheet {
         }
         const cut = idx.cut !== undefined ? intCell(cells[idx.cut]) : {};
         const fg = idx.fg !== undefined ? intCell(cells[idx.fg]) : {};
-        const tgl = idx.tglCutting !== undefined ? dateCell(cells[idx.tglCutting]) : {};
-        const err = [cut.error && `Hasil Cutting ${cut.error}`, fg.error && `Finish Good ${fg.error}`, tgl.error && `Tgl Cutting ${tgl.error}`].filter(Boolean).join("; ");
+        const tgl = idx.waktuCutting !== undefined ? dateTimeCell(cells[idx.waktuCutting]) : {};
+        const err = [cut.error && `Hasil Cutting ${cut.error}`, fg.error && `Finish Good ${fg.error}`, tgl.error && `Waktu Cutting ${tgl.error}`].filter(Boolean).join("; ");
         if (err) {
           out.issues.push({ tab: SHEET_TAB_PRODUKSI, row, message: err });
           continue;
         }
-        out.produksi.push({ row, mrpId, codeRoll, size, tglCutting: tgl.value, cut: cut.value, fg: fg.value });
+        out.produksi.push({ row, mrpId, codeRoll, size, waktuCutting: tgl.value, cut: cut.value, fg: fg.value });
       }
     }
   }
@@ -264,7 +282,29 @@ export type ErpState = {
   metas: ErpGroupMetaState[];
   /** Total rework yang SUDAH tercatat per kunci reworkKey(). */
   rework: Record<string, number>;
+  /** Roll yang sudah di-Good Receive (`mrpId|CODEROLL`, huruf besar): hanya dipakai untuk membedakan alasan roll belum ada di ERP (belum diterima vs sudah diterima tapi belum Resting). */
+  receivedRolls: string[];
 };
+
+/** Satu spreadsheet = satu MRP (owner 2026-11-16): baris untuk MRP lain dibuang dan dilaporkan; tab/baris lain tidak berubah. */
+export function filterSheetToMrp(sheet: ParsedSheet, mrpId: string): ParsedSheet {
+  const want = mrpId.toUpperCase();
+  const issues = [...sheet.issues];
+  const foreign = new Map<string, number>();
+  const keep = <T extends { mrpId: string }>(rows: T[]) =>
+    rows.filter((r) => {
+      if (r.mrpId === want) return true;
+      foreign.set(r.mrpId, (foreign.get(r.mrpId) ?? 0) + 1);
+      return false;
+    });
+  const produksi = keep(sheet.produksi);
+  const reject = keep(sheet.reject);
+  const rework = keep(sheet.rework);
+  if (foreign.size > 0) {
+    issues.push({ tab: "-", message: `Spreadsheet ini untuk MRP ${want}, tetapi memuat baris MRP ${Array.from(foreign.keys()).join(", ")} (${Array.from(foreign.values()).reduce((a, b) => a + b, 0)} baris). Baris itu diabaikan; pakai satu spreadsheet per MRP.` });
+  }
+  return { ...sheet, produksi, reject, rework, issues };
+}
 
 export const reworkKey = (r: { mrpId: string; warna: string; fromLengan: string; fromSize: string; usia: string; toLengan: string; toSize: string }) =>
   [r.mrpId, r.warna.toUpperCase(), r.fromLengan, r.fromSize, r.usia, r.toLengan, r.toSize].join("|");
@@ -285,14 +325,15 @@ export function sameQtyMap(a: Record<string, number>, b: Record<string, number>)
   return ka.length === Object.keys(pb).length && ka.every((k) => pa[k] === pb[k]);
 }
 
-/** Bandingkan sheet dengan ERP. `todayIso` = tanggal hari ini (yyyy-mm-dd) untuk roll yang belum punya tanggal cutting dan sheet-nya juga tidak mengisi. */
-export function planSheetSync(sheet: ParsedSheet, erp: ErpState, todayIso: string): SheetPlan {
+/** Bandingkan sheet dengan ERP dan hasilkan daftar perubahan (murni, tanpa database). */
+export function planSheetSync(sheet: ParsedSheet, erp: ErpState): SheetPlan {
   const ops: SheetOp[] = [];
   const issues: SheetIssue[] = [];
   let unchanged = 0;
 
   // ----- Produksi: per roll -----
   const batchByKey = new Map(erp.batches.map((b) => [`${b.mrpId}|${b.codeRoll.toUpperCase()}`, b]));
+  const receivedSet = new Set(erp.receivedRolls);
   const rolls = new Map<string, SheetProdRow[]>();
   for (const r of sheet.produksi) {
     const k = `${r.mrpId}|${r.codeRoll}`;
@@ -305,7 +346,15 @@ export function planSheetSync(sheet: ParsedSheet, erp: ErpState, todayIso: strin
     const label = `Roll ${codeRoll} (${mrpId})`;
     const batch = batchByKey.get(key);
     if (!batch) {
-      issues.push({ tab: SHEET_TAB_PRODUKSI, row: rows[0].row, message: `${label}: roll belum ada di ERP. Mulai Resting roll ini dulu di portal vendor (code roll harus sama persis).` });
+      // Gerbang per ROLL (bukan per invoice/MRP): pengiriman material parsial tidak jadi masalah, tiap roll baru diterima datanya setelah Good Receive.
+      const received = receivedSet.has(key);
+      issues.push({
+        tab: SHEET_TAB_PRODUKSI,
+        row: rows[0].row,
+        message: received
+          ? `${label}: roll sudah di-Good Receive tetapi belum di-Resting di ERP. Mulai Resting roll ini di portal vendor dulu.`
+          : `${label}: roll belum di-Good Receive di ERP (atau code roll tidak sama persis). Data roll ini baru diterima setelah Good Receive.`,
+      });
       continue;
     }
     const sizeSeen = new Set<string>();
@@ -326,10 +375,11 @@ export function planSheetSync(sheet: ParsedSheet, erp: ErpState, todayIso: strin
       if (r.cut !== undefined) sheetCut[r.size] = r.cut;
       if (r.fg !== undefined) sheetFg[r.size] = r.fg;
     }
-    const date = rows.find((r) => r.tglCutting)?.tglCutting;
+    const waktuCutting = rows.find((r) => r.waktuCutting)?.waktuCutting;
 
     let effectiveCut = batch.cut;
     let cuttingReady = !!batch.cuttingAt;
+    let cuttingHeld = false;
     if (hasCut) {
       if (sameQtyMap(sheetCut, batch.cut)) {
         unchanged++;
@@ -339,10 +389,17 @@ export function planSheetSync(sheet: ParsedSheet, erp: ErpState, todayIso: strin
       } else if (batch.hasShiftsOrExtras) {
         issues.push({ tab: SHEET_TAB_PRODUKSI, row: rows[0].row, message: `${label}: roll ini punya alih size / hasil tambahan sisa kain di ERP, jadi hasil cutting-nya tidak diubah lewat sheet. Ubah lewat portal vendor.` });
       } else {
-        const cuttingAt = batch.cuttingAt ?? `${date ?? todayIso}T12:00:00.000Z`;
-        cuttingOps.push({ kind: "CUTTING", label, batchId: batch.id, cuttingAt, sizeQty: positive(sheetCut) });
-        effectiveCut = positive(sheetCut);
-        cuttingReady = true;
+        // Waktu cutting wajib (tanggal + jam) untuk hasil cutting BARU: durasi resting dan status tepat waktu dihitung dari situ, jadi tidak diganti waktu saat sinkron.
+        // Roll yang sudah punya waktu cutting di ERP mempertahankan waktu itu (yang dikoreksi hanya qty).
+        const cuttingAt = batch.cuttingAt ?? waktuCutting;
+        if (!cuttingAt) {
+          cuttingHeld = true;
+          issues.push({ tab: SHEET_TAB_PRODUKSI, row: rows[0].row, message: `${label}: Waktu Cutting wajib diisi (tanggal + jam) untuk hasil cutting baru. Baris ditahan sampai waktunya ada.` });
+        } else {
+          cuttingOps.push({ kind: "CUTTING", label, batchId: batch.id, cuttingAt, sizeQty: positive(sheetCut) });
+          effectiveCut = positive(sheetCut);
+          cuttingReady = true;
+        }
       }
     }
     if (hasFg) {
@@ -351,7 +408,7 @@ export function planSheetSync(sheet: ParsedSheet, erp: ErpState, todayIso: strin
       } else if (batch.closed) {
         issues.push({ tab: SHEET_TAB_PRODUKSI, row: rows[0].row, message: `${label}: roll sudah ditutup di ERP, Finish Good tidak bisa diubah lewat sheet.` });
       } else if (!cuttingReady) {
-        issues.push({ tab: SHEET_TAB_PRODUKSI, row: rows[0].row, message: `${label}: Finish Good diisi tetapi hasil cutting roll ini belum ada. Isi Hasil Cutting dulu.` });
+        if (!cuttingHeld) issues.push({ tab: SHEET_TAB_PRODUKSI, row: rows[0].row, message: `${label}: Finish Good diisi tetapi hasil cutting roll ini belum ada. Isi Hasil Cutting dulu.` });
       } else {
         const over = Object.entries(sheetFg).filter(([size, q]) => q > (effectiveCut[size] ?? 0));
         if (over.length > 0) {
@@ -408,4 +465,5 @@ export function planSheetSync(sheet: ParsedSheet, erp: ErpState, todayIso: strin
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 export type SheetSyncSummary = { applied: number; appliedLabels: string[]; unchanged: number; pending: number; issues: SheetIssue[]; tabsFound: string[]; note?: string };
-export type VendorSheetStatus = { url: string; enabled: boolean; lastSyncAt: string | null; lastStatus: string | null; summary: SheetSyncSummary | null } | null;
+/** Tautan spreadsheet satu MRP milik vendor + hasil sinkron terakhirnya. */
+export type VendorMrpSheetLink = { mrpId: string; url: string; enabled: boolean; lastSyncAt: string | null; lastStatus: string | null; summary: SheetSyncSummary | null };
