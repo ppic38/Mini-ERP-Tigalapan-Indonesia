@@ -61,6 +61,7 @@ export const NAV: Record<RoleKey, RoleNav> = {
     role: "SCM",
     entity: "Tigalapan Indonesia",
     items: [
+      { label: "Dashboard", href: "/scm/dashboard" },
       { label: "Approval MRP", href: "/scm/approval-mrp" },
       { label: "Approval PO", href: "/scm/approval-po" },
       { label: "Monitoring", href: "/scm/monitoring" },
