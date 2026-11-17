@@ -1,5 +1,8 @@
 # Migrasi Project — Status & Riwayat
 
+## Menu Dashboard di modul Produksi (2026-11-17, tanpa migration) [redesign-dashboard]
+Owner: "dashboard tambahkan juga di modul produksi". Halaman baru `app/produksi/dashboard/page.tsx` memasang panel `OpsDashboard` yang sama dengan Dashboard PPIC, Procurement, Finance, SCM, dan GM (KPI Yield / HPP / SLA lewat, Progres PO hingga delivery, pembelian material, SLA lewat, KPI vendor). Menu "Dashboard" di urutan pertama menu Produksi (`lib/shell/nav.ts`); halaman awal setelah login Produksi tetap Monitoring Produksi (sama seperti SCM yang tetap ke Approval MRP). Akses lewat aturan prefix `/produksi` yang sudah ada di proxy.ts. Diuji di app lokal (1366 px): angka sama dengan Dashboard PPIC (Yield cutting 99,3%, HPP aktual 74,1%, 12 MRP / 3.053 roll), konsol tanpa error. tsc bersih.
+
 ## Portal Vendor Produksi kembali ke tampilan lama, desktop maupun HP (2026-11-17, tanpa migration) [redesign-vendor]
 Owner: "untuk produksi di skip saja semua perubahan UI-nya", diperjelas "seluruh perubahan yang ada di vendor". Membatalkan entri "Vendor Produksi tahap 1 (desktop saja)" di bawah.
 - Commit `d25a289` di-revert: portal vendor di desktop kembali memakai sidebar kiri (tanpa menu atas "Vendor Produksi"), dan tabel bersama di `/vendor-maklon/*` kembali ke filter pilihan tunggal tanpa kotak cari Odoo, kelompok, favorit, ingatan kolom, bagi halaman, panel samping (`modern` = bukan portal vendor, seperti sebelum redesign).
