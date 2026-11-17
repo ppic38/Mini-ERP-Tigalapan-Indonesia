@@ -5161,7 +5161,15 @@ async function maybeAdvanceMaklonToDelivery(mrpId: string, vendorProduksi: strin
   }
 }
 
-export async function reworkRejectSizeAction(input: { mrpId: string; vendorProduksi: string; warna: string; lengan: Lengan; fromSize: string; qty: number; toLengan: Lengan; toSize: string; usia: Usia }): Promise<void> {
+type ReworkRejectSizeInput = { mrpId: string; vendorProduksi: string; warna: string; lengan: Lengan; fromSize: string; qty: number; toLengan: Lengan; toSize: string; usia: Usia };
+
+/** Dibungkus ActionResult: di production Next menyembunyikan pesan galat yang dilempar langsung (vendor hanya melihat "Minified React error #441"),
+ *  sedangkan alasan penolakan di sini penting (grup sudah Selesai Produksi, melebihi sisa reject, reject sudah masuk pengiriman, dst.). */
+export async function reworkRejectSizeAction(input: ReworkRejectSizeInput): Promise<ActionResult<void>> {
+  return toActionResultKeepAuth(() => reworkRejectSizeImpl(input));
+}
+
+async function reworkRejectSizeImpl(input: ReworkRejectSizeInput): Promise<void> {
   assertSameVendor(await requireVendorSession(), input.vendorProduksi, "Data rework ini");
   // Rework fisik cuma bisa memotong lengan PANJANG jadi PENDEK (sisa potongan lengan), tidak bisa
   // sebaliknya (lengan PENDEK tidak bisa "dipanjangkan" lagi) — dulu tidak ada guard sama sekali,
@@ -8834,7 +8842,7 @@ async function runVendorSheetSync(vendorId: string, mrpId: string, maxOps: numbe
           } else if (op.kind === "REJECT_SPLIT") {
             await setGroupRejectSplitImpl(op.groupKey, op.material, op.proses);
           } else {
-            await reworkRejectSizeAction({ ...op.input, vendorProduksi: vendorId, lengan: op.input.lengan as Lengan, toLengan: op.input.toLengan as Lengan, usia: op.input.usia as Usia });
+            await reworkRejectSizeImpl({ ...op.input, vendorProduksi: vendorId, lengan: op.input.lengan as Lengan, toLengan: op.input.toLengan as Lengan, usia: op.input.usia as Usia });
           }
           appliedLabels.push(`${kindLabel}: ${op.label}`);
         } catch (e) {

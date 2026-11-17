@@ -2542,7 +2542,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
     backgroundRefresh();
   },
   reworkRejectSize: async (input) => {
-    await actions.reworkRejectSizeAction(input);
+    unwrapAction(await actions.reworkRejectSizeAction(input));
     backgroundRefresh();
   },
   // Guard "sudah delivered_at -> no-op" di updateDeliveryKoliAction ditiru di sini juga (mirip
