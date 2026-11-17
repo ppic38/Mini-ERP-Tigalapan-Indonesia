@@ -1,8 +1,9 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { KpiCard } from "@/components/ui/kpi-card";
-import { useMrpProgressRows, type MrpProgressRow } from "@/components/mrp/mrp-progress";
+import { useMrpProgressRows } from "@/components/mrp/mrp-progress";
+import { PoProgress } from "@/components/dashboard/po-progress";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatPcs, formatRupiah, hppRowsForInvoicePerRoll, invoiceAwaitingPayment } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -21,95 +22,6 @@ import { YIELD_ALERT_THRESHOLD_PCT } from "@/lib/mrp/derive";
 
 const vendorName = (id: string) => VENDOR_PRODUKSI[id]?.name ?? id;
 const pct = (p: number | null, digits = 1) => (p == null ? "—" : p.toLocaleString("id-ID", { maximumFractionDigits: digits }) + "%");
-
-/** Gate yang dilacak di peta gate (owner 2026-11-17: "buat tampilan yang berbeda"): urut alur, nilai sel = persen roll MRP yang SUDAH
- *  melewati gate itu (kumulatif, `rollsAtLeast`). Kemacetan terlihat sebagai tempat warna berubah pucat. */
-const GATES: { label: string; short: string; from: FlowStage }[] = [
-  { label: "PV Material", short: "PV", from: "PV Material" },
-  { label: "Paid", short: "Paid", from: "Paid" },
-  { label: "Delivery Material", short: "Kirim Mat.", from: "Delivery Material" },
-  { label: "Receiving Material", short: "Terima", from: "Receiving Material" },
-  { label: "Resting", short: "Resting", from: "Resting" },
-  { label: "Cutting", short: "Cutting", from: "Cutting" },
-  { label: "Finish Good", short: "FG", from: "Finish Good" },
-  { label: "Done FG", short: "Done FG", from: "Done FG" },
-  { label: "Packing", short: "Packing", from: "Packing" },
-  { label: "Delivery", short: "Delivery", from: "Delivery" },
-  { label: "GR DC", short: "GR DC", from: "GR DC" },
-];
-
-/** Skala sekuensial satu hue (biru, terang -> gelap), sesuai aturan dataviz: magnitudo = satu hue. 0% = tanpa warna. */
-const HEAT = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95"];
-function heatStyle(p: number): { background: string; color: string } {
-  if (p <= 0) return { background: "transparent", color: "var(--text-muted, #8A97A6)" };
-  const i = p >= 100 ? 5 : Math.min(4, Math.floor(p / 20));
-  return { background: HEAT[i], color: i >= 3 ? "#FFFFFF" : "#0F2747" };
-}
-
-function GateHeatmap({ rows }: { rows: MrpProgressRow[] }) {
-  const sumRolls = (r: MrpProgressRow) => Object.values(r.rollsByStage).reduce((s: number, n) => s + (n ?? 0), 0);
-  const totalAll = rows.reduce((s, r) => s + sumRolls(r), 0);
-  const cell = (n: number, total: number, title: string, bold = false) => {
-    const p = total > 0 ? Math.round((n / total) * 100) : 0;
-    const st = heatStyle(p);
-    return (
-      <td className="p-[2px]">
-        <div
-          title={title + `: ${formatPcs(n)} dari ${formatPcs(total)} roll (${p}%)`}
-          className={"flex h-8 min-w-[52px] items-center justify-center rounded-[4px] font-sans text-[11px] tabular-nums" + (bold ? " font-semibold" : "")}
-          style={{ ...st, boxShadow: p <= 0 ? "inset 0 0 0 1px #E6EBF0" : undefined }}
-        >
-          {total > 0 ? `${p}%` : "—"}
-        </div>
-      </td>
-    );
-  };
-  return (
-    <div className="overflow-x-auto">
-      <table className="border-separate border-spacing-0 font-sans text-[12px] text-text-primary">
-        <thead>
-          <tr>
-            <th className="sticky left-0 z-10 bg-surface-card py-1.5 pr-3 text-left text-[10.5px] font-medium uppercase tracking-wider text-text-muted">MRP</th>
-            <th className="px-1 py-1.5 text-right text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Roll</th>
-            {GATES.map((g) => (
-              <th key={g.from} title={g.label} className="px-[2px] py-1.5 text-center text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                {g.short}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const total = sumRolls(r);
-            return (
-              <tr key={r.mrp.id}>
-                <td className="sticky left-0 z-10 bg-surface-card py-[2px] pr-3">
-                  <div className="font-mono text-[12px] font-semibold">{r.mrp.id}</div>
-                  <div className="text-[10px] text-text-muted">{r.stage}</div>
-                </td>
-                <td className="px-1 text-right tabular-nums text-text-muted">{formatPcs(total)}</td>
-                {GATES.map((g) => (
-                  <Fragment key={g.from}>{cell(rollsAtLeast(r.rollsByStage, g.from), total, `${r.mrp.id} · ${g.label}`)}</Fragment>
-                ))}
-              </tr>
-            );
-          })}
-          {rows.length > 1 && (
-            <tr>
-              <td className="sticky left-0 z-10 bg-surface-card pt-2 pr-3 font-sans text-[11.5px] font-semibold">Semua</td>
-              <td className="px-1 pt-2 text-right font-semibold tabular-nums">{formatPcs(totalAll)}</td>
-              {GATES.map((g) => (
-                <Fragment key={g.from}>
-                  {cell(rows.reduce((s, r) => s + rollsAtLeast(r.rollsByStage, g.from), 0), totalAll, `Semua MRP aktif · ${g.label}`, true)}
-                </Fragment>
-              ))}
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 
 function Section({ title, sub, children, right }: { title: string; sub?: string; children: React.ReactNode; right?: React.ReactNode }) {
   return (
@@ -231,33 +143,22 @@ export function OpsDashboard() {
         <KpiCard label="SLA lewat" value={formatPcs(issues.length)} sub={kinds[0] ? `terbanyak: ${kinds[0][0]}` : "tidak ada"} accent="danger" />
       </div>
 
-      {/* Progres produksi per MRP */}
-      <Section
-        title="Progres gate MRP aktif"
-        sub={`${active.length} MRP · persen roll yang sudah melewati tiap gate`}
-        right={
-          active.length > 6 ? (
-            <button className="font-sans text-[11.5px] font-semibold text-action-primary" onClick={() => setShowAll((v) => !v)}>
-              {showAll ? "Tampilkan 6" : `Tampilkan semua (${active.length})`}
-            </button>
-          ) : undefined
-        }
-      >
-        <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 font-sans text-[10.5px] text-text-muted">
-          <span>Roll yang sudah melewati gate:</span>
-          {["1-19%", "20-39%", "40-59%", "60-79%", "80-99%", "100%"].map((t, i) => (
-            <span key={t} className="flex items-center gap-1">
-              <span className="h-2.5 w-4 rounded-[3px]" style={{ background: HEAT[i] }} />
-              {t}
-            </span>
-          ))}
-        </div>
-        {active.length === 0 ? <div className="font-sans text-xs text-text-muted">Tidak ada MRP aktif.</div> : <GateHeatmap rows={shownMrps} />}
-      </Section>
+      {/* Progres PO hingga delivery (owner 2026-11-17): matriks 11 gate dengan filter gaya Odoo. */}
+      <PoProgress rows={active} />
 
       <div className="grid gap-4 xl:grid-cols-2">
         {/* Pembelian material */}
-        <Section title="Pembelian material" sub="roll MRP aktif per gate pembelian">
+        <Section
+          title="Pembelian material"
+          sub="roll MRP aktif per gate pembelian"
+          right={
+            active.length > 6 ? (
+              <button className="font-sans text-[11.5px] font-semibold text-action-primary" onClick={() => setShowAll((v) => !v)}>
+                {showAll ? "Tampilkan 6" : `Semua (${active.length})`}
+              </button>
+            ) : undefined
+          }
+        >
           <div className="overflow-x-auto">
             <table className="w-full min-w-[460px] border-collapse font-sans text-[12px] text-[#31414F]">
               <thead>

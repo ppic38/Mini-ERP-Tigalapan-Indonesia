@@ -183,6 +183,7 @@ export function DataTable<T>({
   nowrap: nowrapProp,
   viewKey,
   pageSize,
+  body,
   filterPreset,
   onFilteredRows,
   expandIn,
@@ -264,6 +265,9 @@ export function DataTable<T>({
   /** Opsional: jumlah baris per halaman. Tidak diisi = dibagi 50 baris per halaman HANYA kalau baris lebih dari
    *  100 (tabel kecil tidak berubah). `false` = jangan pernah dibagi. */
   pageSize?: number | false;
+  /** Opsional (owner 2026-11-17): ganti tabel di bawah kotak cari dengan tampilan sendiri (mis. matriks gate). Kotak cari, filter, kelompok
+   *  dan favorit tetap jalan; pemakai membaca baris yang lolos filter lewat `onFilteredRows`. */
+  body?: ReactNode;
 }) {
   // Pilihan kolom diingat per tabel di browser (owner 2026-11-16: field harus fleksibel, dan sebelumnya pilihan
   // hilang tiap halaman dibuka). Yang disimpan SELISIH dari bawaan (kolom yang sengaja ditampilkan / disembunyikan),
@@ -824,6 +828,10 @@ export function DataTable<T>({
         </div>
       )}
 
+      {body !== undefined ? (
+        body
+      ) : (
+        <>
       <div className={"overflow-x-auto rounded-b-lg" + (bodyMaxHeight ? " overflow-y-auto" : "")} style={bodyMaxHeight ? { maxHeight: bodyMaxHeight } : undefined}>
         <table className="w-full border-collapse">
           <thead className={bodyMaxHeight ? "sticky top-0 z-10" : undefined}>
@@ -984,6 +992,8 @@ export function DataTable<T>({
             )}
           </div>
         </div>
+      )}
+        </>
       )}
       {panelMode && renderExpanded && (() => {
         const row = panelKey ? rows.find((x) => keyOf(x) === panelKey) : undefined;
