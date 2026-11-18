@@ -1266,24 +1266,25 @@ export function materialPoFullStatus(
 
 export function materialPoFullStatusBadge(status: MaterialPoFullStatus) {
   const map: Record<MaterialPoFullStatus, { label: string; tone: "neutral" | "info" | "warning" | "success" | "danger" | "rework" | "active" | "locked" | "done" }> = {
-    WAITING_APPROVAL: { label: "WAITING APPROVAL", tone: "warning" },
-    WAITING_INVOICE: { label: "WAITING INVOICE", tone: "neutral" },
-    WAITING_INVOICE_PARTIAL: { label: "WAITING INVOICE PARTIAL", tone: "rework" },
-    INVOICE: { label: "INVOICE", tone: "info" },
-    PAID: { label: "PAID", tone: "success" },
-    CANCEL: { label: "CANCEL", tone: "danger" },
+    // Label = status staging standar (lib/mrp/flowStatus.ts FLOW_STAGES, owner 2026-11-16). Kunci internal tidak berubah.
+    WAITING_APPROVAL: { label: "Approval PO", tone: "warning" },
+    WAITING_INVOICE: { label: "Approval PO", tone: "neutral" },
+    WAITING_INVOICE_PARTIAL: { label: "PV Material", tone: "rework" },
+    INVOICE: { label: "PV Material", tone: "info" },
+    PAID: { label: "Paid", tone: "success" },
+    CANCEL: { label: "Dibatalkan", tone: "danger" },
     // Revisi 2026-09-28 (owner: "bedakan warna status delivery dan paid") -- tone "active" (teal)
     // dan "success" (hijau) di TONE_CLASSES (components/ui/status-pill.tsx) sama-sama pastel &
     // kelewat mirip di badge kecil. DELIVERY dipindah ke "info" (biru) supaya kontras jelas
     // terhadap PAID (hijau) sekilas pandang, tanpa perlu ubah tone lain yang juga pakai "active"
     // (DELIVERED_FROM_VENDOR di bawah -- disengaja dibiarkan, itu tahap SETELAH RECEIVING/PRODUCTION,
     // tidak pernah muncul berdampingan langsung dengan PAID di 1 tabel yang sama seperti DELIVERY).
-    DELIVERY: { label: "DELIVERY", tone: "info" },
-    RECEIVING: { label: "RECEIVING", tone: "rework" },
-    PRODUCTION: { label: "PRODUCTION", tone: "locked" },
-    FINISH_GOOD: { label: "FINISH GOOD", tone: "success" },
-    DELIVERED_FROM_VENDOR: { label: "DELIVERED DARI VENDOR", tone: "active" },
-    SELESAI: { label: "SELESAI — LUNAS", tone: "done" },
+    DELIVERY: { label: "Delivery Material", tone: "info" },
+    RECEIVING: { label: "Receiving Material", tone: "rework" },
+    PRODUCTION: { label: "Cutting", tone: "locked" },
+    FINISH_GOOD: { label: "Done FG", tone: "success" },
+    DELIVERED_FROM_VENDOR: { label: "Delivery", tone: "active" },
+    SELESAI: { label: "Delivery", tone: "done" },
   };
   return map[status];
 }
@@ -1418,6 +1419,32 @@ export function ppicApprovalBadge(status: PpicApprovalStatus): { label: string; 
     REJECTED: { label: "DITOLAK SCM", tone: "danger" },
   };
   return map[status];
+}
+
+/** Tahapan MRP (owner 2026-11-16: "status 1 saja, by staging progress seperti Odoo"): satu status per MRP yang menggabungkan
+ *  Status SCM, Status PO, Status Raw Material, dan Status Produksi menjadi posisi di alur. Diturunkan dari label yang sama
+ *  dengan kolom-kolom status itu (mrpStatusBadges + ppicApprovalBadge), tidak ada rumus baru:
+ *   Approval SCM  : MRP belum disetujui SCM (draft / menunggu)
+ *   PO            : disetujui SCM, PO belum disetujui semua
+ *   Material      : PO disetujui, produksi belum mulai / menunggu material
+ *   Produksi      : produksi berjalan (sebagian atau penuh)
+ *   Pengiriman    : status produksi DELIVERY
+ *   Tagihan       : sudah ditagih vendor (INVOICE / PAID sebagian)
+ *   Selesai       : FULLY PAID
+ *  MRP yang ditolak SCM berstatus "Ditolak SCM" (di luar alur). */
+export const MRP_STAGES = ["Approval SCM", "PO", "Material", "Produksi", "Pengiriman", "Tagihan", "Selesai"] as const;
+export type MrpStage = (typeof MRP_STAGES)[number] | "Ditolak SCM";
+
+export function mrpStage(ppicApproval: PpicApprovalStatus | undefined, badges: { statusPO: string; statusRawMaterial: string; statusProduksi: string }): MrpStage {
+  if (ppicApproval === "REJECTED") return "Ditolak SCM";
+  const prod = badges.statusProduksi;
+  if (prod === "FULLY PAID") return "Selesai";
+  if (prod === "INVOICE" || prod === "PAID") return "Tagihan";
+  if (prod === "DELIVERY") return "Pengiriman";
+  if (prod === "PRODUCTION" || prod === "PARTIAL PRODUCTION") return "Produksi";
+  if (ppicApproval === "DRAFT" || ppicApproval === "WAITING_PPIC_APPROVAL") return "Approval SCM";
+  if (badges.statusPO !== "PO APPROVED") return "PO";
+  return "Material";
 }
 
 export function maklonPoBadge(po: Pick<MaklonPO, "status" | "qty">) {

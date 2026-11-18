@@ -1,105 +1,97 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { AppShell } from "@/components/shell/app-shell";
-import { StatusPill } from "@/components/ui/status-pill";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { KpiCard } from "@/components/ui/kpi-card";
+import { Tabs } from "@/components/ui/tabs";
+import { DataTable } from "@/components/mrp/data-table";
 import { MrpWarnaBreakdownTable } from "@/components/mrp/mrp-warna-breakdown-table";
+import { mrpProgressColumns, mrpProgressFilters, useMrpProgressRows, type MrpProgressRow } from "@/components/mrp/mrp-progress";
+import { MrpHppTable, OpsIssuesTable, RollYieldTable } from "@/components/mrp/ops-monitor";
 import { useMrpStore } from "@/lib/mrp/store";
-import { effectiveMrpQty, formatPcs, mrpStatusBadges, mrpStatusBadgeTone, mrpWarnaBreakdown, ppicApprovalBadge, vendorsForMrp } from "@/lib/mrp/derive";
-import type { Mrp } from "@/lib/mrp/types";
-import type { MrpDetail } from "@/lib/mrp/store";
+import { mrpWarnaBreakdown } from "@/lib/mrp/derive";
+import type { FlowSideStatus, FlowStage } from "@/lib/mrp/flowStatus";
 
-type Row = {
-  mrp: Mrp;
-  detail?: MrpDetail;
-  vendors: string[];
-  badges: ReturnType<typeof mrpStatusBadges>;
-};
+type St = FlowStage | FlowSideStatus;
+type Tab = "status" | "kendala" | "yield" | "hpp";
 
+/** Monitoring Progress SCM (owner 2026-11-16): tujuan memantau status tiap MRP dan melihat kendala operasional.
+ *   - Status MRP : status staging standar per MRP (sama dengan tabel MRP PPIC)
+ *   - Kendala    : semua yang melewati SLA antar gate (PV belum dibuat / dibayar, delivery belum diterima, roll belum resting / cutting /
+ *                  Done FG, FG belum dikirim, kiriman belum GR DC)
+ *   - Yield      : per roll, kelompokkan per MRP / vendor
+ *   - HPP        : estimasi HPP (sejak Approval PO) dan HPP aktual per MRP */
 export default function ScmMonitoringPage() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-
-  const mrpDetails = useMrpStore((s) => s.mrpDetails);
-  const staticMrps = useMrpStore((s) => s.staticMrps);
-  const materialPOs = useMrpStore((s) => s.materialPOs);
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
-  const invoices = useMrpStore((s) => s.invoices);
-  const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
-
-  const rows: Row[] = useMemo(() => {
-    const all: { mrp: Mrp; detail?: MrpDetail }[] = [...mrpDetails.map((d) => ({ mrp: d.mrp, detail: d })), ...staticMrps.map((m) => ({ mrp: m }))];
-    return all.map(({ mrp, detail }) => ({
-      mrp,
-      detail,
-      vendors: vendorsForMrp(detail),
-      badges: mrpStatusBadges(mrp.id, detail, materialPOs, maklonPOs, invoices, vendorInvoices),
-    }));
-  }, [mrpDetails, staticMrps, materialPOs, maklonPOs, invoices, vendorInvoices]);
+  const rows = useMrpProgressRows();
+  const [tab, setTab] = useState<Tab>("status");
+  const [shownIds, setShownIds] = useState<Set<string> | null>(null);
+  const [preset, setPreset] = useState<{ nonce: number; filters: Record<string, string[]>; card: string }>({ nonce: 0, filters: {}, card: "" });
 
   if (!mounted) return null;
 
-  const columns: ColumnDef<Row>[] = [
-    { key: "kategori", label: "Kategori / Warna", default: true, render: (r) => `${r.mrp.kategori} · ${r.mrp.warna}` },
-    { key: "qty", label: "Qty", default: true, align: "right", render: (r) => formatPcs(effectiveMrpQty(r.mrp.id, r.mrp.qty, maklonPOs)) + " pcs" },
-    { key: "vendor", label: "Vendor", default: true, render: (r) => (r.vendors.length ? r.vendors.join(", ") : "—") },
-    {
-      key: "statusScm",
-      label: "Status SCM",
-      default: true,
-      render: (r) => (r.detail ? <StatusPill tone={ppicApprovalBadge(r.detail.ppicApproval).tone}>{ppicApprovalBadge(r.detail.ppicApproval).label}</StatusPill> : "—"),
-    },
-    {
-      key: "statusPO",
-      label: "Status PO",
-      default: true,
-      render: (r) => <StatusPill tone={mrpStatusBadgeTone(r.badges.statusPO)}>{r.badges.statusPO}</StatusPill>,
-    },
-    {
-      key: "statusRM",
-      label: "Status Raw Material",
-      default: true,
-      render: (r) => <StatusPill tone={mrpStatusBadgeTone(r.badges.statusRawMaterial)}>{r.badges.statusRawMaterial}</StatusPill>,
-    },
-    {
-      key: "statusProduksi",
-      label: "Status Produksi",
-      default: true,
-      render: (r) => <StatusPill tone={mrpStatusBadgeTone(r.badges.statusProduksi)}>{r.badges.statusProduksi}</StatusPill>,
-    },
+  const shown = shownIds ? rows.filter((r) => shownIds.has(r.mrp.id)) : rows;
+  const cards: { key: string; label: string; sub: string; accent: "orange" | "purple" | "blue" | "teal"; stages: St[] }[] = [
+    { key: "approval", label: "Approval", sub: "Approval MRP dan Approval PO", accent: "orange", stages: ["Approval MRP", "Ditolak", "Approval PO"] },
+    { key: "material", label: "Material", sub: "PV Material s/d Receiving Material", accent: "purple", stages: ["PV Material", "Paid", "Delivery Material", "Receiving Material"] },
+    { key: "produksi", label: "Produksi", sub: "Resting s/d Packing", accent: "blue", stages: ["Resting", "Cutting", "Finish Good", "Done FG", "Packing"] },
+    { key: "kirim", label: "Delivery & GR DC", sub: "dikirim vendor atau diterima gudang", accent: "teal", stages: ["Delivery", "GR DC"] },
   ];
 
   return (
-    <AppShell
-      role="scm"
-      activeHref="/scm/monitoring"
-      breadcrumb={["Dashboard", "Monitoring"]}
-      title="Monitoring lintas modul"
-      subtitle={`${rows.length} MRP — status approval, PO, raw material, dan produksi dalam satu tampilan`}
-    >
-      <DataTable
-        title="Semua MRP"
-        columns={columns}
-        rows={rows}
-        keyOf={(r) => r.mrp.id}
-        firstColumnLabel="No. MRP"
-        firstColumnRender={(r) => <span className="font-mono">{r.mrp.id}</span>}
-        singleExpand
-        renderExpanded={(r) => <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(r.detail)} />}
-        filterDefs={[
-          { label: "Vendor", options: Array.from(new Set(rows.flatMap((r) => r.vendors))).sort(), test: (r, v) => r.vendors.includes(v) },
-          {
-            label: "Status SCM",
-            options: Array.from(new Set(rows.filter((r) => r.detail).map((r) => ppicApprovalBadge(r.detail!.ppicApproval).label))),
-            test: (r, v) => !!r.detail && ppicApprovalBadge(r.detail.ppicApproval).label === v,
-          },
-          { label: "Status PO", options: Array.from(new Set(rows.map((r) => r.badges.statusPO))), test: (r, v) => r.badges.statusPO === v },
-          { label: "Status Raw Material", options: Array.from(new Set(rows.map((r) => r.badges.statusRawMaterial))), test: (r, v) => r.badges.statusRawMaterial === v },
-          { label: "Status Produksi", options: Array.from(new Set(rows.map((r) => r.badges.statusProduksi))), test: (r, v) => r.badges.statusProduksi === v },
+    <AppShell role="scm" activeHref="/scm/monitoring" breadcrumb={["Dashboard", "Monitoring"]} title="Monitoring Progress">
+      <Tabs
+        items={[
+          { key: "status", label: "Status MRP" },
+          { key: "kendala", label: "Kendala SLA" },
+          { key: "yield", label: "Yield" },
+          { key: "hpp", label: "HPP" },
         ]}
-        emptyText="Belum ada MRP yang tercatat."
+        active={tab}
+        onChange={(k) => setTab(k as Tab)}
       />
+      {tab === "status" && (
+        <>
+          <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+            {cards.map((c) => (
+              <KpiCard
+                key={c.key}
+                label={c.label}
+                value={shown.filter((r) => c.stages.includes(r.stage)).length}
+                sub={c.sub}
+                accent={c.accent}
+                active={preset.card === c.key}
+                onClick={() =>
+                  setPreset((p) =>
+                    p.card === c.key
+                      ? { nonce: p.nonce + 1, filters: {} as Record<string, string[]>, card: "" }
+                      : { nonce: p.nonce + 1, filters: { Status: c.stages.filter((st) => rows.some((r) => r.stage === st)) as string[] }, card: c.key }
+                  )
+                }
+              />
+            ))}
+          </div>
+          <DataTable<MrpProgressRow>
+            title="Status MRP"
+            columns={mrpProgressColumns<MrpProgressRow>(maklonPOs)}
+            rows={rows}
+            keyOf={(r) => r.mrp.id}
+            firstColumnLabel="No. MRP"
+            firstColumnRender={(r) => <span className="font-mono font-medium">{r.mrp.id}</span>}
+            filterDefs={mrpProgressFilters(rows)}
+            filterPreset={preset}
+            search={{ placeholder: "Cari MRP, kategori, vendor…", getText: (r) => `${r.mrp.id} ${r.mrp.kategori} ${r.vendors.join(" ")} ${r.stage}` }}
+            onFilteredRows={(list) => setShownIds(new Set(list.map((r) => r.mrp.id)))}
+            renderExpanded={(r) => <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(r.detail)} />}
+            emptyText="Belum ada MRP yang tercatat."
+          />
+        </>
+      )}
+      {tab === "kendala" && <OpsIssuesTable areas={["Material", "Produksi", "Pengiriman"]} />}
+      {tab === "yield" && <RollYieldTable />}
+      {tab === "hpp" && <MrpHppTable rows={rows} />}
     </AppShell>
   );
 }

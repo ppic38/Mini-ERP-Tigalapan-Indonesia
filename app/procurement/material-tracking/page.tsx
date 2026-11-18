@@ -1,16 +1,19 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
-import { FilterBar } from "@/components/mrp/filter-bar";
+import { DataTable, aggSame, aggSum, type ColumnDef, type FilterDef } from "@/components/mrp/data-table";
+import { KpiCard } from "@/components/ui/kpi-card";
+import { Tabs } from "@/components/ui/tabs";
+import { MATERIAL_ROLL_STAGES, buildMaterialRolls, type MaterialRollRow } from "@/lib/mrp/materialRolls";
+import { batchShippingMap, flowTone, invoiceFlowStage, returnedRollKeys, rollsByStageText, type FlowStage } from "@/lib/mrp/flowStatus";
 import { TransferMaterialModal, type TransferCandidate } from "@/components/mrp/transfer-material-modal";
 import { SetDeliveryModal } from "@/components/mrp/set-delivery-modal";
 import { WithdrawVendorModal } from "@/components/mrp/withdraw-vendor-modal";
-import { SysadminTd, SysadminTh } from "@/components/sysadmin/correction-dialog";
-import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { invoiceDeliveryCorrections } from "@/components/sysadmin/procurement-corrections";
 import { RollCodeEditor } from "@/components/sysadmin/roll-code-editor";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -20,12 +23,11 @@ import {
   formatRupiah,
   maklonPoBadgeWithApproval,
   materialPoFullStatus,
-  materialPoFullStatusBadge,
   movableRollCountForInvoiceColor,
   mrpDetailFor,
+  poDisplayNo,
   rollArrivalProgress,
   rollArrivalStatus,
-  rollArrivalStatusBadge,
   type MaterialPoFullStatus,
 } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -55,17 +57,19 @@ type TrackingRow = {
   tglReceiving?: string;
   tglProduksi?: string;
   status: MaterialPoFullStatus;
+  /** Status staging standar kiriman ini (lib/mrp/flowStatus.ts): tahap paling awal roll-rollnya. */
+  flow: FlowStage;
+  flowRolls: Partial<Record<FlowStage, number>>;
   invoice?: RawMaterialInvoice;
 };
 
 /** Status kiriman di halaman ini (revisi 2026-10-13, owner): GOOD RECEIPT (hijau) kalau SEMUA roll kiriman itu sudah diterima vendor;
  *  selama belum lengkap -- sudah dikirim tapi belum diterima atau baru diterima sebagian -- tampil DELIVERY (ungu). Tahap lain
  *  (PAID, PRODUCTION, dst.) memakai lencana bawaan. Hanya tampilan; nilai status di data tidak berubah. */
-function trackingStatusBadge(r: { status: MaterialPoFullStatus; invoice?: RawMaterialInvoice }) {
-  if ((r.status === "DELIVERY" || r.status === "RECEIVING") && r.invoice) {
-    return rollArrivalStatus(r.invoice) === "LENGKAP" ? { label: "GOOD RECEIPT", tone: "success" as const } : { label: "DELIVERY", tone: "rework" as const };
-  }
-  return materialPoFullStatusBadge(r.status);
+// Revisi 2026-11-16 (owner: "status hanya sampai good receipt, belum berubah"): status kiriman kini status staging standar dari roll-rollnya
+// (Paid ... Receiving Material, Resting, Cutting, Finish Good, Done FG, Packing, Delivery, GR DC), bukan lagi field status invoice yang berhenti di RECEIVING.
+function trackingStatusBadge(r: { flow: FlowStage; flowRolls?: Partial<Record<FlowStage, number>> }) {
+  return { label: r.flow, tone: flowTone(r.flow), title: r.flowRolls ? rollsByStageText(r.flowRolls) : undefined };
 }
 
 /** Tanggal satu kiriman (satu invoice): kapan dikirim (Set Delivery), kapan roll pertama diterima vendor, dan kapan roll TERAKHIR
@@ -97,7 +101,6 @@ function colorArrivalText(inv: RawMaterialInvoice, warna: string, lengan: string
 }
 
 export default function MaterialTrackingPage() {
-  const sysadminMode = useSysadminMode();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -108,6 +111,8 @@ export default function MaterialTrackingPage() {
   const productionBatches = useMrpStore((s) => s.productionBatches);
   const productionResults = useMrpStore((s) => s.productionResults);
   const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
+  const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
+  const materialClaimHistory = useMrpStore((s) => s.materialClaimHistory);
   const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
   const setInvoicesDelivery = useMrpStore((s) => s.setInvoicesDelivery);
   const transferMaterial = useMrpStore((s) => s.transferMaterial);
@@ -123,7 +128,9 @@ export default function MaterialTrackingPage() {
   // vertikal di 1 halaman -- owner khawatir makin lama makin banyak baris di keduanya jadi
   // menumpuk & membingungkan. Dipisah jadi 2 tab, murni pembungkus navigasi (isi/logic tiap
   // section tidak berubah).
-  const [tab, setTab] = useState<"material" | "produksi-aktif">("material");
+  const [tab, setTab] = useState<"material" | "roll" | "produksi-aktif">("material");
+  const [shownRollKeys, setShownRollKeys] = useState<Set<string> | null>(null);
+  const [rollPreset, setRollPreset] = useState<{ nonce: number; filters: Record<string, string[]>; card: string }>({ nonce: 0, filters: {}, card: "" });
   // Revisi 2026-09-17 (owner: "Material Tracking: card-select, lalu breakdown warna/roll", lalu
   // "pakai konsep row-tree seperti PO Material") -- "Material per line" dikelompokkan Supplier ->
   // Vendor Produksi (baris memanjang dalam SATU container, bukan kartu grid), klik baris invoice
@@ -133,25 +140,8 @@ export default function MaterialTrackingPage() {
   // dilewati (FilterBar sudah punya filter No. MRP sendiri), tapi owner tetap mau tree 3 tingkat
   // PERSIS PO Material: No MRP -> Supplier -> Vendor Produksi (leaf). FilterBar No. MRP
   // dipertahankan (tetap berguna untuk lompat langsung ke 1 MRP tanpa scroll cari di tree).
-  const [expandedTrackingMrp, setExpandedTrackingMrp] = useState<string | null>(null);
-  const [expandedTrackingSupplier, setExpandedTrackingSupplier] = useState<string | null>(null);
-  const [expandedTrackingVendor, setExpandedTrackingVendor] = useState<string | null>(null);
-  const [expandedTrackingId, setExpandedTrackingId] = useState<string | null>(null);
-  const [mrpFilterTracking, setMrpFilterTracking] = useState("");
-  const [poFilterTracking, setPoFilterTracking] = useState("");
-  const [entitasFilterTracking, setEntitasFilterTracking] = useState("");
-  const [statusFilterTracking, setStatusFilterTracking] = useState("");
-  const [rollFilterTracking, setRollFilterTracking] = useState("");
-  // Item revisi 2026-09-17 (owner: "buat konsep dan tampilannya seperti di Purchase Order,
-  // filternya sesuaikan dengan data dari main grouping -- begitu juga PO Produksi aktif") --
-  // dulu DataTable flat (1 baris per PO, filter/toggle kolom bawaan DataTable). Sekarang tabel
-  // pohon No MRP -> Vendor Produksi (leaf = 1 PO), gaya visual sama dengan PO Material/PO
-  // Produksi di app/procurement/po-approval/page.tsx -- filter dropdown eksplisit (No MRP,
-  // Status) menggantikan filterDefs DataTable, mengikuti level grouping yang ditampilkan.
-  const [expandedActiveMrp, setExpandedActiveMrp] = useState<string | null>(null);
-  const [expandedActiveVendor, setExpandedActiveVendor] = useState<string | null>(null);
-  const [activeMrpFilter, setActiveMrpFilter] = useState("");
-  const [activeStatusFilter, setActiveStatusFilter] = useState("");
+  const [shownIds, setShownIds] = useState<Set<string> | null>(null);
+  const [preset, setPreset] = useState<{ nonce: number; filters: Record<string, string[]>; card: string }>({ nonce: 0, filters: {}, card: "" });
 
   if (!mounted) return null;
 
@@ -195,6 +185,9 @@ export default function MaterialTrackingPage() {
     WAITING_PRODUCTION: "RECEIVING",
     PRODUCTION_DONE: "RECEIVING",
   };
+  const flowBatchByCode = new Map(productionBatches.filter((b) => b.codeRoll).map((b) => [b.codeRoll as string, b]));
+  const flowShipping = batchShippingMap(deliveryKolis, warehouseReceipts);
+  const flowReturned = returnedRollKeys(materialClaimHistory);
   const invoiceRows: TrackingRow[] = invoices.map((i) => {
     const po = materialPOs.find((p) => p.id === i.poId);
     const batchStartedProduction = i.status === "WAITING_PRODUCTION" || i.status === "PRODUCTION_DONE";
@@ -220,6 +213,10 @@ export default function MaterialTrackingPage() {
         batchStartedProduction && po
           ? materialPoFullStatus(po, invoices, productionBatches, productionResults, mrpDetails, deliveryKolis, vendorInvoices, maklonPOs)
           : invoiceOwnStatus[i.status],
+      ...(() => {
+        const f = invoiceFlowStage(i, flowBatchByCode, flowShipping, flowReturned);
+        return { flow: f.stage, flowRolls: f.rollsByStage };
+      })(),
       invoice: i,
     };
   });
@@ -245,138 +242,206 @@ export default function MaterialTrackingPage() {
   const transferEligibleInvoices = transferEligibleRows.map((r) => r.invoice!);
   const transferBlockedCount = selectedInvoiceOnly.length - transferEligibleInvoices.length;
 
-  const filteredRows = rows.filter(
-    (r) =>
-      (!mrpFilterTracking || r.mrpId === mrpFilterTracking) &&
-      (!poFilterTracking || r.poId === poFilterTracking) &&
-      (!entitasFilterTracking || r.entitas === entitasFilterTracking) &&
-      (!statusFilterTracking || trackingStatusBadge(r).label === statusFilterTracking) &&
-      (!rollFilterTracking ||
-        (r.invoice &&
-          ((rollFilterTracking === "Belum" && rollArrivalStatus(r.invoice) === "BELUM") ||
-            (rollFilterTracking === "Parsial" && rollArrivalStatus(r.invoice) === "PARSIAL") ||
-            (rollFilterTracking === "Lengkap" && rollArrivalStatus(r.invoice) === "LENGKAP"))))
-  );
+  // Pola PPIC (owner 2026-11-16): pohon No MRP -> Supplier -> Vendor -> PO diganti tabel bersama (kelompok bawaan No. MRP >
+  // Supplier), rincian invoice di panel samping, kartu mengikuti filter. Centang baris tetap dipakai untuk Set Delivery dan
+  // Pindahkan ke vendor lain.
+  const vendorName = (id: string) => VENDOR_PRODUKSI[id]?.name ?? id;
+  const uniqSorted = (xs: string[]) => Array.from(new Set(xs.filter(Boolean))).sort((a, b) => a.localeCompare(b, "id-ID", { numeric: true }));
+  const bold = (x: React.ReactNode) => <span className="font-semibold">{x}</span>;
+  const deliveryLabel = (r: TrackingRow) => (r.invoice && r.invoice.status === "PAID" && !r.invoice.deliveredAt ? "Belum delivery" : "Sudah delivery");
+  const arrivalLabel = (r: TrackingRow) => {
+    if (!r.invoice) return "—";
+    const st = rollArrivalStatus(r.invoice);
+    return st === "BELUM" ? "Belum" : st === "PARSIAL" ? "Parsial" : "Lengkap";
+  };
+  const sortedRows = [...rows].sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID", { numeric: true }));
+  const shownRows = shownIds ? sortedRows.filter((r) => shownIds.has(r.id)) : sortedRows;
 
-  // Item revisi 2026-09-17 (owner: "saya juga ingin ada status di MRP sampai ke vendor produksi
-  // mengenai apa2 yang belum diset delivery, merah/kuning kalau masih ada yang belum, hijau kalau
-  // sudah semuanya") -- badge ringkasan per grup (MRP/Supplier/Vendor), dihitung dari baris yang
-  // relevan (`r.invoice` ada) dan MASIH BELUM di-set delivery (status PAID tapi deliveredAt kosong
-  // -- gate yang sama dengan tombol "Set Delivery" di action bar). Merah = SEMUA baris di grup itu
-  // belum delivery, kuning = SEBAGIAN, hijau = semua sudah (atau tidak ada yang perlu delivery
-  // sama sekali, mis. grup isinya cuma baris yang sudah lewat tahap delivery).
-  function deliveryStatusBadge(rs: TrackingRow[]) {
-    const relevant = rs.filter((r) => !!r.invoice);
-    const pending = relevant.filter((r) => r.invoice!.status === "PAID" && !r.invoice!.deliveredAt).length;
-    if (pending === relevant.length && pending > 0) return { tone: "danger" as const, label: `${pending} belum delivery` };
-    if (pending > 0) return { tone: "warning" as const, label: `${pending} belum delivery` };
-    // Semua sudah di-Set Delivery: ringkas perjalanan fisiknya -- Good Receipt (hijau) kalau semua kiriman sudah lengkap diterima
-    // vendor, selain itu Delivery (ungu) beserta berapa kiriman yang sudah lengkap.
-    if (relevant.length === 0) return { tone: "success" as const, label: "Semua delivery" };
-    const received = relevant.filter((r) => rollArrivalStatus(r.invoice!) === "LENGKAP").length;
-    if (received === relevant.length) return { tone: "success" as const, label: "Good Receipt" };
-    return { tone: "rework" as const, label: `Delivery (${received}/${relevant.length} diterima)` };
+  const trackingFilters: FilterDef<TrackingRow>[] = [
+    { label: "No. MRP", options: uniqSorted(rows.map((r) => r.mrpId)).reverse(), test: (r, v) => r.mrpId === v },
+    { label: "Supplier", options: uniqSorted(rows.map((r) => r.supplier)), test: (r, v) => r.supplier === v },
+    { label: "Vendor", options: uniqSorted(rows.map((r) => vendorName(r.vendorProduksi))), test: (r, v) => vendorName(r.vendorProduksi) === v },
+    { label: "No. PO", options: uniqSorted(rows.map((r) => r.poId)), test: (r, v) => r.poId === v },
+    { label: "Entitas", options: uniqSorted(rows.map((r) => r.entitas)), test: (r, v) => r.entitas === v },
+    { label: "Status", options: uniqSorted(rows.map((r) => trackingStatusBadge(r).label)), test: (r, v) => trackingStatusBadge(r).label === v },
+    { label: "Delivery", options: ["Belum delivery", "Sudah delivery"], test: (r, v) => deliveryLabel(r) === v },
+    { label: "Roll diterima", options: ["Belum", "Parsial", "Lengkap"], test: (r, v) => arrivalLabel(r) === v },
+  ];
+  const trackingColumns: ColumnDef<TrackingRow>[] = [
+    { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (r) => (r.invoice ? <SysadminActionsBar compact actions={invoiceDeliveryCorrections(r.invoice)} /> : null) },
+    { key: "mrp", label: "No. MRP", default: true, aggregate: aggSame((r) => r.mrpId), render: (r) => <span className="font-mono">{r.mrpId}</span> },
+    { key: "supplier", label: "Supplier", default: true, aggregate: aggSame((r) => r.supplier), render: (r) => r.supplier },
+    { key: "vendor", label: "Vendor", default: true, aggregate: aggSame((r) => vendorName(r.vendorProduksi)), render: (r) => vendorName(r.vendorProduksi) },
+    { key: "invoice", label: "No Invoice", default: false, render: (r) => <span className="font-mono">{r.invoice?.noInvoiceVendor || "—"}</span> },
+    { key: "roll", label: "Roll", default: true, align: "right", aggregate: aggSum((r) => r.roll, (n) => bold(n.toLocaleString("id-ID", { maximumFractionDigits: 2 }))), render: (r) => <span className="font-mono">{r.roll}</span> },
+    {
+      key: "diterima",
+      label: "Diterima",
+      default: true,
+      align: "right",
+      aggregate: (list) => {
+        const p = list.reduce((acc, r) => {
+          const x = r.invoice ? rollArrivalProgress(r.invoice) : { arrived: 0, total: 0 };
+          return { arrived: acc.arrived + x.arrived, total: acc.total + x.total };
+        }, { arrived: 0, total: 0 });
+        return bold(`${p.arrived}/${p.total}`);
+      },
+      render: (r) => {
+        const progress = r.invoice ? rollArrivalProgress(r.invoice) : null;
+        return progress && progress.total > 0 ? <span className="font-mono">{progress.arrived}/{progress.total}</span> : <span className="text-text-muted">—</span>;
+      },
+    },
+    { key: "nilai", label: "Nilai", default: true, align: "right", aggregate: aggSum((r) => r.nilai ?? 0, (n) => bold(formatRupiah(n))), render: (r) => <span className="font-mono">{r.nilai != null ? formatRupiah(r.nilai) : "—"}</span> },
+    {
+      key: "status",
+      label: "Status",
+      default: true,
+      aggregate: aggSame((r) => trackingStatusBadge(r).label, (v) => <StatusPill tone={rows.map(trackingStatusBadge).find((b) => b.label === v)?.tone ?? "neutral"}>{v}</StatusPill>),
+      render: (r) => {
+        const b = trackingStatusBadge(r);
+        // Rincian roll per tahap (owner 2026-11-16): status = tahap paling AWAL, jadi tampilkan juga berapa roll yang sudah lebih maju.
+        const total = Object.values(r.flowRolls).reduce((s, n) => s + (n ?? 0), 0);
+        const ahead = total - (r.flowRolls[r.flow] ?? 0);
+        return (
+          <span className="flex items-center gap-1.5" title={b.title}>
+            <StatusPill tone={b.tone}>{b.label}</StatusPill>
+            {ahead > 0 && <span className="font-sans text-[10.5px] text-text-muted">+{ahead} roll lebih maju</span>}
+          </span>
+        );
+      },
+    },
+    { key: "tglInvoice", label: "Tgl Invoice", default: false, render: (r) => formatDate(r.tglInvoice) },
+    { key: "tglBayar", label: "Tgl Bayar", default: false, render: (r) => formatDate(r.tglPayment) },
+    { key: "tglDelivery", label: "Tgl Delivery", default: true, render: (r) => formatDate(r.tglDelivery) },
+    { key: "tglTerima", label: "Tgl Terima", default: false, render: (r) => formatDate(r.tglReceiving) },
+    { key: "entitas", label: "Entitas", default: false, aggregate: aggSame((r) => r.entitas), render: (r) => r.entitas || "—" },
+  ];
+
+  function trackingDetail(r: TrackingRow) {
+    if (!r.invoice) return null;
+    const inv = r.invoice;
+    const d = shipmentDates(inv);
+    const box = (label: string, value: string, hint?: string) => (
+      <div className="rounded-md border border-[#E4E8EE] bg-[#FAFBFC] px-3 py-2">
+        <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">{label}</div>
+        <div className="mt-0.5 font-mono text-[12px] font-semibold text-text-primary">{value}</div>
+        {hint && <div className="font-sans text-[10.5px] text-text-muted">{hint}</div>}
+      </div>
+    );
+    return (
+      <div>
+        <div className="mb-2 grid grid-cols-4 gap-2 max-md:grid-cols-1">
+          {box("No. invoice supplier", inv.noInvoiceVendor || "—", inv.supplier)}
+          {box("Tgl dikirim", d.sent ? formatDate(d.sent) : "Belum di-set delivery")}
+          {box("Mulai diterima vendor", d.firstReceived ? formatDate(d.firstReceived) : "Belum ada roll diterima", d.total > 0 ? `${d.arrived}/${d.total} roll sudah diterima` : undefined)}
+          {box("Lengkap diterima", d.lastReceived ? formatDate(d.lastReceived) : "Belum lengkap", d.lastReceived ? undefined : d.total > 0 ? `Sisa ${d.total - d.arrived} roll` : undefined)}
+        </div>
+        <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
+          <div className="grid grid-cols-4 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+            <span>Warna / Lengan</span>
+            <span className="text-right">Roll</span>
+            <span className="text-right">Diterima vendor</span>
+            <span className="text-right">Harga/Roll</span>
+          </div>
+          {inv.colorEntries.map((c, i) => (
+            <div key={i} className="grid grid-cols-4 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+              <span>
+                {c.warna} · {c.lengan}
+              </span>
+              <span className="text-right font-mono">{c.rolls.length}</span>
+              <span className="text-right font-mono text-[11px]">{colorArrivalText(inv, c.warna, c.lengan, c.rolls.length)}</span>
+              <span className="text-right font-mono">{formatRupiah(c.hargaPerRoll)}</span>
+            </div>
+          ))}
+        </div>
+        <RollCodeEditor invoice={inv} />
+      </div>
+    );
   }
 
-  // Pohon 3 tingkat (lihat catatan di deklarasi expandedTrackingMrp): No MRP -> Supplier -> Vendor
-  // Produksi, leaf = baris invoice individual. Sama konsep dengan PO Material di
-  // /procurement/po-approval.
-  const trackingMrpSummaries = (() => {
-    const map = new Map<string, TrackingRow[]>();
-    for (const r of filteredRows) {
-      if (!map.has(r.mrpId)) map.set(r.mrpId, []);
-      map.get(r.mrpId)!.push(r);
-    }
-    return Array.from(map.entries())
-      .map(([mrpId, rs]) => ({
-        mrpId,
-        rows: rs,
-        supplierCount: new Set(rs.map((r) => r.supplier)).size,
-        totalRoll: rs.reduce((sum, r) => sum + r.roll, 0),
-        totalNilai: rs.reduce((sum, r) => sum + (r.nilai ?? 0), 0),
-      }))
-      .sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID"));
-  })();
-
-  function trackingSupplierSummariesForMrp(rs: TrackingRow[]) {
-    const map = new Map<string, TrackingRow[]>();
-    for (const r of rs) {
-      if (!map.has(r.supplier)) map.set(r.supplier, []);
-      map.get(r.supplier)!.push(r);
-    }
-    return Array.from(map.entries())
-      .map(([supplier, srs]) => ({
-        supplier,
-        rows: srs,
-        vendorCount: new Set(srs.map((r) => r.vendorProduksi)).size,
-        totalRoll: srs.reduce((sum, r) => sum + r.roll, 0),
-        totalNilai: srs.reduce((sum, r) => sum + (r.nilai ?? 0), 0),
-      }))
-      .sort((a, b) => a.supplier.localeCompare(b.supplier, "id-ID"));
-  }
-
-  function trackingVendorSummariesForSupplier(rs: TrackingRow[]) {
-    const map = new Map<string, TrackingRow[]>();
-    for (const r of rs) {
-      if (!map.has(r.vendorProduksi)) map.set(r.vendorProduksi, []);
-      map.get(r.vendorProduksi)!.push(r);
-    }
-    return Array.from(map.entries())
-      .map(([vendor, vrs]) => ({
-        vendor,
-        vendorName: VENDOR_PRODUKSI[vendor]?.name ?? vendor,
-        rows: vrs,
-        totalRoll: vrs.reduce((sum, r) => sum + r.roll, 0),
-        totalNilai: vrs.reduce((sum, r) => sum + (r.nilai ?? 0), 0),
-      }))
-      .sort((a, b) => a.vendorName.localeCompare(b.vendorName, "id-ID"));
-  }
-
-  // "PO Produksi aktif" -- kasus jarang tapi nyata: vendor tiba-tiba minta berhenti mid-produksi.
-  // Cuma PO yang masih dalam tahap produksi aktif yang eligible (sama gate dengan
-  // withdrawVendorProductionAction) -- PO yang sudah masuk Delivery/Invoice/Payment tidak ada lagi
-  // yang bisa dipindahkan (Finish Good sudah selesai/dikirim, bukan WIP lagi).
   const activePOs = maklonPOs.filter((p) => p.approved && !p.closedAt && p.qty > 0 && MAKLON_PO_ACTIVE_STATUSES.includes(p.status));
+  const activeStatus = (p: MaklonPO) => maklonPoBadgeWithApproval(p, vendorInvoices);
+  const activeFilters: FilterDef<MaklonPO>[] = [
+    { label: "No. MRP", options: uniqSorted(activePOs.map((p) => p.mrpId)).reverse(), test: (p, v) => p.mrpId === v },
+    { label: "Vendor", options: uniqSorted(activePOs.map((p) => vendorName(p.vendorProduksi))), test: (p, v) => vendorName(p.vendorProduksi) === v },
+    { label: "Status", options: uniqSorted(activePOs.map((p) => activeStatus(p).label)), test: (p, v) => activeStatus(p).label === v },
+  ];
+  const activeColumns: ColumnDef<MaklonPO>[] = [
+    { key: "mrp", label: "No. MRP", default: true, aggregate: aggSame((p) => p.mrpId), render: (p) => <span className="font-mono">{p.mrpId}</span> },
+    { key: "vendor", label: "Vendor", default: true, aggregate: aggSame((p) => vendorName(p.vendorProduksi)), render: (p) => vendorName(p.vendorProduksi) },
+    { key: "qty", label: "Qty", default: true, align: "right", aggregate: aggSum((p) => p.qty, (n) => bold(formatPcs(n))), render: (p) => <span className="font-mono">{formatPcs(p.qty)}</span> },
+    { key: "nilai", label: "Nilai", default: true, align: "right", aggregate: aggSum((p) => p.amount, (n) => bold(formatRupiah(n))), render: (p) => <span className="font-mono">{formatRupiah(p.amount)}</span> },
+    { key: "status", label: "Status", default: true, render: (p) => <StatusPill tone={activeStatus(p).tone}>{activeStatus(p).label}</StatusPill> },
+    {
+      key: "aksi",
+      label: "Aksi",
+      default: true,
+      render: (p) => (
+        <span onClick={(e) => e.stopPropagation()}>
+          <Button onClick={() => setWithdrawTarget(p)} variant="danger" size="xs">
+            Vendor Berhenti Produksi →
+          </Button>
+        </span>
+      ),
+    },
+  ];
 
-  const filteredActivePOs = activePOs.filter(
-    (p) =>
-      (!activeMrpFilter || p.mrpId === activeMrpFilter) &&
-      (!activeStatusFilter || maklonPoBadgeWithApproval(p, vendorInvoices).label === activeStatusFilter)
+  // ---- Tab Per Roll (owner 2026-11-16): satu baris per roll kain, status sampai roll dipakai produksi ----
+  const allRolls = buildMaterialRolls(
+    rows.filter((r) => r.invoice).map((r) => r.invoice!),
+    productionBatches,
+    deliveryKolis,
+    warehouseReceipts
   );
+  const shownRolls = shownRollKeys ? allRolls.filter((r) => shownRollKeys.has(r.key)) : allRolls;
+  const kgFmt = (n: number) => n.toLocaleString("id-ID", { maximumFractionDigits: 1 });
+  const rollFilters: FilterDef<MaterialRollRow>[] = [
+    { label: "Status", options: [...MATERIAL_ROLL_STAGES].filter((st) => allRolls.some((r) => r.status === st)), test: (r, v) => r.status === v },
+    { label: "No. MRP", options: uniqSorted(allRolls.map((r) => r.mrpId)).reverse(), test: (r, v) => r.mrpId === v },
+    { label: "Supplier", options: uniqSorted(allRolls.map((r) => r.supplier)), test: (r, v) => r.supplier === v },
+    { label: "Vendor", options: uniqSorted(allRolls.map((r) => vendorName(r.vendorProduksi))), test: (r, v) => vendorName(r.vendorProduksi) === v },
+    { label: "Warna", options: uniqSorted(allRolls.map((r) => r.warna)), test: (r, v) => r.warna === v },
+    { label: "Lengan", options: ["PENDEK", "PANJANG"], test: (r, v) => r.lengan === v },
+    { label: "Invoice", options: uniqSorted(allRolls.map((r) => r.noInvoice)), test: (r, v) => r.noInvoice === v },
+  ];
+  const rollColumns: ColumnDef<MaterialRollRow>[] = [
+    { key: "mrp", label: "No. MRP", default: true, aggregate: aggSame((r) => r.mrpId), render: (r) => <span className="font-mono">{r.mrpId}</span> },
+    { key: "supplier", label: "Supplier", default: true, aggregate: aggSame((r) => r.supplier), render: (r) => r.supplier },
+    { key: "vendor", label: "Vendor", default: true, aggregate: aggSame((r) => vendorName(r.vendorProduksi)), render: (r) => vendorName(r.vendorProduksi) },
+    { key: "warna", label: "Warna", default: true, aggregate: aggSame((r) => r.warna), render: (r) => r.warna },
+    { key: "lengan", label: "Lengan", default: true, aggregate: aggSame((r) => r.lengan), render: (r) => (r.lengan === "PENDEK" ? "PDK" : "PJG") },
+    { key: "invoice", label: "Invoice", default: false, aggregate: aggSame((r) => r.noInvoice), render: (r) => <span className="font-mono">{r.noInvoice || "—"}</span> },
+    { key: "po", label: "No PO", default: false, render: (r) => <span className="font-mono" title={r.poId}>{poDisplayNo(r.poId, r.entitas)}</span> },
+    { key: "lot", label: "Code Lot", default: false, render: (r) => <span className="font-mono">{r.codeLot || "—"}</span> },
+    { key: "kotor", label: "Berat kotor (kg)", default: true, align: "right", aggregate: aggSum((r) => r.beratKotor, (n) => bold(kgFmt(n))), render: (r) => <span className="font-mono">{kgFmt(r.beratKotor)}</span> },
+    { key: "bersih", label: "Berat bersih (kg)", default: true, align: "right", aggregate: aggSum((r) => r.beratBersih ?? 0, (n) => bold(kgFmt(n))), render: (r) => <span className="font-mono">{r.beratBersih != null ? kgFmt(r.beratBersih) : <span className="text-text-muted">—</span>}</span> },
+    {
+      key: "status",
+      label: "Status",
+      default: true,
+      aggregate: aggSame((r) => r.status, (v) => <StatusPill tone={flowTone(v)}>{v}</StatusPill>),
+      render: (r) => (
+        <span title={r.tahapProduksi ? `Tahap produksi: ${r.tahapProduksi}` : undefined}>
+          <StatusPill tone={flowTone(r.status)}>{r.status}</StatusPill>
+        </span>
+      ),
+    },
+    { key: "tahap", label: "Tahap produksi", default: false, aggregate: aggSame((r) => r.tahapProduksi ?? ""), render: (r) => r.tahapProduksi ?? <span className="text-text-muted">—</span> },
+    { key: "tglBayar", label: "Tgl Bayar", default: false, render: (r) => formatDate(r.paidAt) },
+    { key: "tglDelivery", label: "Tgl Delivery", default: true, render: (r) => formatDate(r.deliveryAt) },
+    { key: "tglGr", label: "Tgl GR", default: true, render: (r) => formatDate(r.grAt) },
+    { key: "tglResting", label: "Tgl Resting", default: true, render: (r) => formatDate(r.restingAt) },
+    { key: "tglCutting", label: "Tgl Cutting", default: false, render: (r) => formatDate(r.cuttingAt) },
+  ];
 
-  const activeMrpSummaries = (() => {
-    const map = new Map<string, MaklonPO[]>();
-    for (const p of filteredActivePOs) {
-      if (!map.has(p.mrpId)) map.set(p.mrpId, []);
-      map.get(p.mrpId)!.push(p);
-    }
-    return Array.from(map.entries())
-      .map(([mrpId, pos]) => ({
-        mrpId,
-        pos,
-        vendorCount: new Set(pos.map((p) => p.vendorProduksi)).size,
-        totalQty: pos.reduce((sum, p) => sum + p.qty, 0),
-        totalNilai: pos.reduce((sum, p) => sum + p.amount, 0),
-      }))
-      .sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID"));
-  })();
-
-  function activeVendorSummariesForMrp(pos: MaklonPO[]) {
-    const map = new Map<string, MaklonPO[]>();
-    for (const p of pos) {
-      if (!map.has(p.vendorProduksi)) map.set(p.vendorProduksi, []);
-      map.get(p.vendorProduksi)!.push(p);
-    }
-    return Array.from(map.entries())
-      .map(([vendor, ps]) => ({
-        vendor,
-        vendorName: VENDOR_PRODUKSI[vendor]?.name ?? vendor,
-        pos: ps,
-        totalQty: ps.reduce((sum, p) => sum + p.qty, 0),
-        totalNilai: ps.reduce((sum, p) => sum + p.amount, 0),
-      }))
-      .sort((a, b) => a.vendorName.localeCompare(b.vendorName, "id-ID"));
-  }
+  const belumDelivery = shownRows.filter((r) => deliveryLabel(r) === "Belum delivery");
+  const arrivedTotals = shownRows.reduce(
+    (acc, r) => {
+      const x = r.invoice ? rollArrivalProgress(r.invoice) : { arrived: 0, total: 0 };
+      return { arrived: acc.arrived + x.arrived, total: acc.total + x.total };
+    },
+    { arrived: 0, total: 0 }
+  );
 
   return (
     <AppShell
@@ -386,160 +451,34 @@ export default function MaterialTrackingPage() {
       title="Material tracking"
       subtitle={`${rows.length} baris material — invoice yang sudah dibayar Finance ke atas`}
     >
-      <div className="flex gap-2 rounded-lg border border-border-subtle bg-surface-card p-1.5">
-        {(
-          [
-            // Item revisi 2026-09-07: badge tab dulu cuma jumlah baris total (rows.length) --
-            // owner minta badge cuma nyala kalau MASIH ADA yang perlu di-set delivery (hilang
-            // begitu semua baris yang tampil sudah di-set delivery), bukan sekadar "ada baris".
-            // Sama definisi dengan countMaterialInvoicesReadyForDelivery (badge sidebar).
-            { key: "material" as const, label: "Material", badge: rows.filter((r) => r.invoice?.status === "PAID" && !r.invoice.deliveredAt).length },
-            // "PO Produksi aktif" SENGAJA tidak pakai badge sama sekali -- ini bukan antrean kerja
-            // yang perlu ditindak (beda dari "Material" di atas), murni daftar monitoring PO yang
-            // sedang berjalan, jadi badge angka di sini cuma bikin bingung.
-            { key: "produksi-aktif" as const, label: "PO Produksi aktif", badge: 0 },
-          ]
-        ).map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={
-              "flex items-center gap-1.5 rounded-md px-3.5 py-[7px] font-sans text-[12.5px] font-semibold " +
-              (tab === t.key ? "bg-action-primary text-white" : "text-text-muted hover:bg-[#F7F9FB]")
+      <Tabs
+        items={[
+          { key: "material", label: "Material", badge: rows.filter((r) => r.invoice?.status === "PAID" && !r.invoice.deliveredAt).length },
+          { key: "roll", label: "Per Roll" },
+          { key: "produksi-aktif", label: "PO Produksi aktif" },
+        ]}
+        active={tab}
+        onChange={(k) => setTab(k as "material" | "roll" | "produksi-aktif")}
+      />
+
+      {tab === "material" && (
+        <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+          <KpiCard
+            label="Belum delivery"
+            value={belumDelivery.length}
+            sub="sudah dibayar, klik untuk menyaring"
+            accent="orange"
+            active={preset.card === "delivery"}
+            onClick={() =>
+              setPreset((p) =>
+                p.card === "delivery" ? { nonce: p.nonce + 1, filters: {} as Record<string, string[]>, card: "" } : { nonce: p.nonce + 1, filters: { Delivery: ["Belum delivery"] }, card: "delivery" }
+              )
             }
-          >
-            {t.label}
-            {t.badge > 0 && (
-              <span className="flex-shrink-0 rounded-full bg-danger px-[5px] py-px font-mono text-[9px] font-semibold text-white">{t.badge}</span>
-            )}
-          </button>
-        ))}
-      </div>
-
-      {tab === "produksi-aktif" && (
-        <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-          <div className="border-b border-border-subtle px-5 py-3">
-            <div className="font-sans text-[13px] font-semibold text-text-primary">PO Produksi aktif</div>
-            <div className="mt-0.5 font-sans text-[11px] text-text-muted">
-              Vendor tiba-tiba berhenti mid-produksi? Pindahkan sisa pekerjaannya (bahan mentah + WIP belum Finish Good) ke vendor lain sekaligus.
-            </div>
-          </div>
-          <FilterBar
-            filters={[
-              { label: "No. MRP", value: activeMrpFilter, options: Array.from(new Set(activePOs.map((p) => p.mrpId))), onChange: setActiveMrpFilter },
-              {
-                label: "Status",
-                value: activeStatusFilter,
-                options: Array.from(new Set(activePOs.map((p) => maklonPoBadgeWithApproval(p, vendorInvoices).label))),
-                onChange: setActiveStatusFilter,
-              },
-            ]}
           />
-          {activeMrpSummaries.length === 0 && (
-            <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Tidak ada PO Produksi aktif.</div>
-          )}
-          {activeMrpSummaries.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
-                    <th className="px-5 py-[9px] text-left">No MRP / Vendor Produksi / No PO</th>
-                    <th className="px-3 py-[9px] text-right">Qty</th>
-                    <th className="px-3 py-[9px] text-right">Nilai</th>
-                    <th className="px-3 py-[9px] text-left">Status</th>
-                    <th className="px-3 py-[9px] text-left">Aksi</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {activeMrpSummaries.map((m) => {
-                    const mrpActive = expandedActiveMrp === m.mrpId;
-                    return (
-                      <Fragment key={m.mrpId}>
-                        <tr
-                          onClick={() => {
-                            const next = mrpActive ? null : m.mrpId;
-                            setExpandedActiveMrp(next);
-                            setExpandedActiveVendor(null);
-                          }}
-                          className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] hover:bg-[#FAFBFC] " + (mrpActive ? "bg-info-bg" : "")}
-                        >
-                          <td className="px-5 py-[11px]">
-                            <span className="mr-1.5 text-text-muted">{mrpActive ? "▾" : "▸"}</span>
-                            <span className="font-mono font-semibold text-text-primary">{m.mrpId}</span>
-                            <span className="ml-1.5 font-sans text-[10.5px] text-text-muted">{m.vendorCount} vendor</span>
-                          </td>
-                          <td className="px-3 py-[11px] text-right font-mono tabular-nums">{formatPcs(m.totalQty)} pcs</td>
-                          <td className="px-3 py-[11px] text-right font-mono tabular-nums font-medium">{formatRupiah(m.totalNilai)}</td>
-                          <td className="px-3 py-[11px]">
-                            <StatusPill tone="neutral">{m.pos.length} PO</StatusPill>
-                          </td>
-                          <td className="px-3 py-[11px]" />
-                        </tr>
-                        {mrpActive &&
-                          activeVendorSummariesForMrp(m.pos).map((v) => {
-                            const vendorKey = `${m.mrpId}::${v.vendor}`;
-                            const vendorActive = expandedActiveVendor === vendorKey;
-                            return (
-                              <Fragment key={vendorKey}>
-                                <tr
-                                  onClick={() => setExpandedActiveVendor(vendorActive ? null : vendorKey)}
-                                  className={"cursor-pointer border-b border-[#F1F4F7] bg-[#FBFCFD] font-sans text-[11.5px] text-[#31414F] hover:bg-[#F2F5F8] " + (vendorActive ? "bg-info-bg" : "")}
-                                >
-                                  <td className="py-[10px] pl-10 pr-3">
-                                    <span className="mr-1.5 text-text-muted">{vendorActive ? "▾" : "▸"}</span>
-                                    <span className="font-medium text-text-primary">{v.vendorName}</span>
-                                  </td>
-                                  <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatPcs(v.totalQty)} pcs</td>
-                                  <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(v.totalNilai)}</td>
-                                  <td className="px-3 py-[10px]">
-                                    <StatusPill tone="neutral">{v.pos.length} PO</StatusPill>
-                                  </td>
-                                  <td className="px-3 py-[10px]" />
-                                </tr>
-                                {vendorActive &&
-                                  v.pos.map((p) => {
-                                    const badge = maklonPoBadgeWithApproval(p, vendorInvoices);
-                                    return (
-                                      <tr key={p.id} className="border-b border-[#F1F4F7] font-sans text-[11.5px] text-[#31414F]">
-                                        <td className="py-[10px] pl-16 pr-3 font-mono font-medium text-text-primary">{p.id}</td>
-                                        <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatPcs(p.qty)} pcs</td>
-                                        <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(p.amount)}</td>
-                                        <td className="px-3 py-[10px]">
-                                          <StatusPill tone={badge.tone}>{badge.label}</StatusPill>
-                                        </td>
-                                        <td className="px-3 py-[10px]">
-                                          <Button onClick={() => setWithdrawTarget(p)} variant="danger" size="xs">
-                                            Vendor Berhenti Produksi →
-                                          </Button>
-                                        </td>
-                                      </tr>
-                                    );
-                                  })}
-                              </Fragment>
-                            );
-                          })}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <KpiCard label="Roll diterima vendor" value={`${arrivedTotals.arrived}/${arrivedTotals.total}`} sub="baris yang tampil" accent="purple" />
+          <KpiCard label="Total roll" value={shownRows.reduce((s, r) => s + r.roll, 0).toLocaleString("id-ID", { maximumFractionDigits: 2 })} sub="baris yang tampil" accent="blue" />
+          <KpiCard label="Total nilai" value={formatRupiah(shownRows.reduce((s, r) => s + (r.nilai ?? 0), 0))} valueClassName="text-[20px]" sub="baris yang tampil" accent="teal" />
         </div>
-      )}
-
-      {withdrawTarget && (
-        <WithdrawVendorModal
-          mrpId={withdrawTarget.mrpId}
-          fromVendorName={VENDOR_PRODUKSI[withdrawTarget.vendorProduksi]?.name ?? withdrawTarget.vendorProduksi}
-          qty={withdrawTarget.qty}
-          amount={withdrawTarget.amount}
-          otherVendors={Object.entries(VENDOR_PRODUKSI)
-            .filter(([id]) => id !== withdrawTarget.vendorProduksi)
-            .map(([id, v]) => ({ id, name: v.name }))}
-          onConfirm={(toVendor) => withdrawVendorProduction(withdrawTarget.mrpId, withdrawTarget.vendorProduksi, toVendor)}
-          onClose={() => setWithdrawTarget(null)}
-        />
       )}
 
       {tab === "material" && selected.size > 0 && (
@@ -556,6 +495,9 @@ export default function MaterialTrackingPage() {
                 Pindahkan {transferEligibleInvoices.length} ke vendor lain
               </button>
             )}
+            <button onClick={() => setSelected(new Set())} className="rounded-md px-2.5 py-[5px] font-sans text-[11.5px] font-semibold text-action-primary hover:bg-white">
+              Batal pilih
+            </button>
           </div>
           {transferBlockedCount > 0 && (
             <span className="font-sans text-[11px] text-danger-fg">
@@ -566,246 +508,110 @@ export default function MaterialTrackingPage() {
       )}
 
       {tab === "material" && (
-      <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-        <div className="border-b border-border-subtle px-5 py-3 font-sans text-[13px] font-semibold text-text-primary">
-          Material per line ({filteredRows.length})
-        </div>
-        <FilterBar
-          filters={[
-            { label: "No. MRP", value: mrpFilterTracking, options: Array.from(new Set(rows.map((r) => r.mrpId))), onChange: setMrpFilterTracking },
-            { label: "No. PO", value: poFilterTracking, options: Array.from(new Set(rows.map((r) => r.poId))), onChange: setPoFilterTracking },
-            { label: "Entitas", value: entitasFilterTracking, options: Array.from(new Set(rows.map((r) => r.entitas))), onChange: setEntitasFilterTracking },
-            {
-              label: "Status",
-              value: statusFilterTracking,
-              options: Array.from(new Set(rows.map((r) => trackingStatusBadge(r).label))),
-              onChange: setStatusFilterTracking,
-            },
-            { label: "Roll diterima", value: rollFilterTracking, options: ["Belum", "Parsial", "Lengkap"], onChange: setRollFilterTracking },
-          ]}
+        <DataTable<TrackingRow>
+          title="Material per invoice"
+          columns={trackingColumns}
+          rows={sortedRows}
+          keyOf={(r) => r.id}
+          firstColumnLabel="No PO"
+          firstColumnRender={(r) => (
+            <span className="flex items-center gap-2">
+              <span onClick={(e) => e.stopPropagation()}>
+                <Checkbox checked={selected.has(r.id)} onChange={() => toggle(r.id)} />
+              </span>
+              <span className="font-mono font-medium" title={r.poId}>{poDisplayNo(r.poId, r.entitas)}</span>
+            </span>
+          )}
+          filterDefs={trackingFilters}
+          filterPreset={preset}
+          defaultGroupBy={["No. MRP", "Supplier"]}
+          search={{ placeholder: "Cari no PO, invoice, MRP, supplier, vendor…", getText: (r) => `${r.poId} ${r.invoice?.noInvoiceVendor ?? ""} ${r.mrpId} ${r.supplier} ${vendorName(r.vendorProduksi)} ${r.warna} ${trackingStatusBadge(r).label}` }}
+          renderExpanded={(r) => trackingDetail(r)}
+          onFilteredRows={(list) => setShownIds(new Set(list.map((r) => r.id)))}
+          emptyText="Belum ada invoice material yang sudah dibayar Finance."
+          nowrap
         />
-        {filteredRows.length === 0 && (
-          <div className="px-5 py-6 text-center font-sans text-xs text-text-muted">Belum ada invoice material yang sudah dibayar Finance.</div>
-        )}
-        {filteredRows.length > 0 && (
-        <div className="overflow-x-auto">
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
-              <th className="px-5 py-[9px] text-left">No MRP / Supplier / Vendor Produksi / No PO</th>
-              <th className="px-3 py-[9px] text-right">Vendor</th>
-              <th className="px-3 py-[9px] text-right">Roll</th>
-              <th className="px-3 py-[9px] text-left">Progress</th>
-              <th className="px-3 py-[9px] text-right">Nilai</th>
-              <th className="px-3 py-[9px] text-left">Status</th>
-              <SysadminTh />
-            </tr>
-          </thead>
-          <tbody>
-          {trackingMrpSummaries.map((m) => {
-            const mrpActive = expandedTrackingMrp === m.mrpId;
+      )}
+
+      {tab === "roll" && (
+        <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+          {(
+            [
+              { key: "bayar", label: "PV Material dan Paid", sub: "belum Delivery Material", stages: ["PV Material", "Paid"], accent: "orange" },
+              { key: "kirim", label: "Delivery Material", sub: "belum Receiving Material", stages: ["Delivery Material"], accent: "blue" },
+              { key: "terima", label: "Receiving Material", sub: "belum Resting", stages: ["Receiving Material"], accent: "purple" },
+              { key: "prod", label: "Produksi s/d GR DC", sub: "Resting sampai GR DC", stages: ["Resting", "Cutting", "Finish Good", "Done FG", "Packing", "Delivery", "GR DC"], accent: "teal" },
+            ] as const
+          ).map((c) => {
+            const list = shownRolls.filter((r) => (c.stages as readonly string[]).includes(r.status));
             return (
-              <Fragment key={m.mrpId}>
-                <tr
-                  onClick={() => {
-                    const next = mrpActive ? null : m.mrpId;
-                    setExpandedTrackingMrp(next);
-                    setExpandedTrackingSupplier(null);
-                    setExpandedTrackingVendor(null);
-                    setExpandedTrackingId(null);
-                    // Item revisi 2026-09-17 (bug report owner: "keluar ke level luar tapi action
-                    // Set Delivery/Pindahkan masih stuck") -- checkbox yang sudah dipilih di dalam
-                    // grup ini SENGAJA tidak terikat ke expandedTracking* mana pun, jadi navigasi
-                    // pindah MRP/Supplier/Vendor TIDAK PERNAH otomatis membersihkannya kalau tidak
-                    // di-reset manual di sini -- sama pola dengan fix wizard PV di
-                    // paying-voucher-material-panel.tsx.
-                    setSelected(new Set());
-                  }}
-                  className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] hover:bg-[#FAFBFC] " + (mrpActive ? "bg-info-bg" : "")}
-                >
-                  <td className="px-5 py-[11px]">
-                    <span className="mr-1.5 text-text-muted">{mrpActive ? "▾" : "▸"}</span>
-                    <span className="font-mono font-semibold text-text-primary">{m.mrpId}</span>
-                    <span className="ml-1.5 font-sans text-[10.5px] text-text-muted">{m.supplierCount} supplier</span>
-                  </td>
-                  <td className="px-3 py-[11px]" />
-                  <td className="px-3 py-[11px] text-right font-mono tabular-nums">{m.totalRoll}</td>
-                  <td className="px-3 py-[11px]" />
-                  <td className="px-3 py-[11px] text-right font-mono tabular-nums font-medium">{formatRupiah(m.totalNilai)}</td>
-                  <td className="px-3 py-[11px]">
-                    <div className="flex flex-col items-start gap-1">
-                      <StatusPill tone={deliveryStatusBadge(m.rows).tone}>{deliveryStatusBadge(m.rows).label}</StatusPill>
-                    </div>
-                  </td>
-                  <SysadminTd className="py-[11px]" />
-                </tr>
-                {mrpActive &&
-                  trackingSupplierSummariesForMrp(m.rows).map((s) => {
-                    const supplierKey = `${m.mrpId}::${s.supplier}`;
-                    const supplierActive = expandedTrackingSupplier === supplierKey;
-                    return (
-                      <Fragment key={supplierKey}>
-                        <tr
-                          onClick={() => {
-                            const next = supplierActive ? null : supplierKey;
-                            setExpandedTrackingSupplier(next);
-                            setExpandedTrackingVendor(null);
-                            setExpandedTrackingId(null);
-                            setSelected(new Set());
-                          }}
-                          className={"cursor-pointer border-b border-[#F1F4F7] bg-[#FBFCFD] font-sans text-[11.5px] text-[#31414F] hover:bg-[#F2F5F8] " + (supplierActive ? "bg-info-bg" : "")}
-                        >
-                          <td className="py-[10px] pl-10 pr-3">
-                            <span className="mr-1.5 text-text-muted">{supplierActive ? "▾" : "▸"}</span>
-                            <span className="font-semibold text-text-primary">{s.supplier}</span>
-                          </td>
-                          <td className="px-3 py-[10px] text-right font-mono tabular-nums text-text-muted">{s.vendorCount}</td>
-                          <td className="px-3 py-[10px] text-right font-mono tabular-nums">{s.totalRoll}</td>
-                          <td className="px-3 py-[10px]" />
-                          <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(s.totalNilai)}</td>
-                          <td className="px-3 py-[10px]">
-                            <div className="flex flex-col items-start gap-1">
-                              <StatusPill tone={deliveryStatusBadge(s.rows).tone}>{deliveryStatusBadge(s.rows).label}</StatusPill>
-                            </div>
-                          </td>
-                          <SysadminTd />
-                        </tr>
-                        {supplierActive &&
-                  trackingVendorSummariesForSupplier(s.rows).map((v) => {
-                    const vendorActive = supplierActive && expandedTrackingVendor === v.vendor;
-                    return (
-                      <Fragment key={v.vendor}>
-                        <tr
-                          onClick={() => {
-                            const next = vendorActive ? null : v.vendor;
-                            setExpandedTrackingVendor(next);
-                            setExpandedTrackingId(null);
-                            setSelected(new Set());
-                          }}
-                          className={"cursor-pointer border-b border-[#F1F4F7] bg-white font-sans text-[11.5px] text-[#31414F] hover:bg-[#F7F9FB] " + (vendorActive ? "bg-info-bg" : "")}
-                        >
-                          <td className="py-[10px] pl-16 pr-3">
-                            <span className="mr-1.5 text-text-muted">{vendorActive ? "▾" : "▸"}</span>
-                            <span className="font-medium text-text-primary">{v.vendorName}</span>
-                          </td>
-                          <td className="px-3 py-[10px]" />
-                          <td className="px-3 py-[10px] text-right font-mono tabular-nums">{v.totalRoll}</td>
-                          <td className="px-3 py-[10px]" />
-                          <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(v.totalNilai)}</td>
-                          <td className="px-3 py-[10px]">
-                            <div className="flex flex-col items-start gap-1">
-                              <StatusPill tone={deliveryStatusBadge(v.rows).tone}>{deliveryStatusBadge(v.rows).label}</StatusPill>
-                            </div>
-                          </td>
-                          <SysadminTd />
-                        </tr>
-                        {vendorActive &&
-                          v.rows.map((r) => {
-                            const expanded = expandedTrackingId === r.id;
-                            const progress = r.invoice ? rollArrivalProgress(r.invoice) : null;
-                            const arrivalBadge = r.invoice ? rollArrivalStatusBadge(rollArrivalStatus(r.invoice)) : null;
-                            const statusBadge = trackingStatusBadge(r);
-                            return (
-                              <Fragment key={r.id}>
-                                <tr
-                                  onClick={() => setExpandedTrackingId(expanded ? null : r.id)}
-                                  className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-[11.5px] text-[#31414F] hover:bg-[#FAFBFC] " + (expanded ? "bg-info-bg" : "")}
-                                >
-                                  <td className="py-[10px] pl-[88px] pr-3">
-                                    <span className="flex items-center gap-2">
-                                      <span onClick={(e) => e.stopPropagation()}>
-                                        <Checkbox checked={selected.has(r.id)} onChange={() => toggle(r.id)} />
-                                      </span>
-                                      <span className="mr-1.5 text-text-muted">{expanded ? "▾" : "▸"}</span>
-                                      <span className="flex flex-col">
-                                        <span className="font-medium text-text-primary">{r.poId}</span>
-                                        <span className="font-mono text-[10.5px] text-text-muted">
-                                          {r.mrpId}
-                                          {r.invoice?.noInvoiceVendor ? " · Inv. " + r.invoice.noInvoiceVendor : ""}
-                                        </span>
-                                      </span>
-                                    </span>
-                                  </td>
-                                  <td className="px-3 py-[10px]" />
-                                  <td className="px-3 py-[10px] text-right font-mono tabular-nums">{r.roll}</td>
-                                  <td className="px-3 py-[10px]">
-                                    {progress && progress.total > 0 && arrivalBadge ? (
-                                      <span className="flex items-center gap-1">
-                                        <span className="font-mono tabular-nums">
-                                          {progress.arrived}/{progress.total}
-                                        </span>
-                                        <StatusPill tone={arrivalBadge.tone}>{arrivalBadge.label}</StatusPill>
-                                      </span>
-                                    ) : (
-                                      <span className="text-text-muted">—</span>
-                                    )}
-                                  </td>
-                                  <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{r.nilai != null ? formatRupiah(r.nilai) : "—"}</td>
-                                  <td className="px-3 py-[10px]">
-                                    <StatusPill tone={statusBadge.tone}>{statusBadge.label}</StatusPill>
-                                  </td>
-                                  <SysadminTd actions={r.invoice ? invoiceDeliveryCorrections(r.invoice) : undefined} />
-                                </tr>
-                                {expanded && r.invoice && (
-                                  <tr>
-                                    <td colSpan={6 + (sysadminMode ? 1 : 0)} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-[88px]">
-                                      {(() => {
-                                        const d = shipmentDates(r.invoice);
-                                        const box = (label: string, value: string, hint?: string) => (
-                                          <div className="rounded-md border border-[#E4E8EE] bg-[#FAFBFC] px-3 py-2">
-                                            <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">{label}</div>
-                                            <div className="mt-0.5 font-mono text-[12px] font-semibold text-text-primary">{value}</div>
-                                            {hint && <div className="font-sans text-[10.5px] text-text-muted">{hint}</div>}
-                                          </div>
-                                        );
-                                        return (
-                                          <div className="mb-2 grid grid-cols-4 gap-2 max-md:grid-cols-1">
-                                            {box("No. invoice supplier", r.invoice!.noInvoiceVendor || "—", r.invoice!.supplier)}
-                                            {box("Tgl dikirim", d.sent ? formatDate(d.sent) : "Belum di-set delivery")}
-                                            {box("Mulai diterima vendor", d.firstReceived ? formatDate(d.firstReceived) : "Belum ada roll diterima", d.total > 0 ? `${d.arrived}/${d.total} roll sudah diterima` : undefined)}
-                                            {box("Lengkap diterima", d.lastReceived ? formatDate(d.lastReceived) : "Belum lengkap", d.lastReceived ? undefined : d.total > 0 ? `Sisa ${d.total - d.arrived} roll` : undefined)}
-                                          </div>
-                                        );
-                                      })()}
-                                      <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
-                                        <div className="grid grid-cols-4 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
-                                          <span>Warna / Lengan</span>
-                                          <span className="text-right">Roll</span>
-                                          <span className="text-right">Diterima vendor</span>
-                                          <span className="text-right">Harga/Roll</span>
-                                        </div>
-                                        {r.invoice.colorEntries.map((c, i) => (
-                                          <div key={i} className="grid grid-cols-4 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
-                                            <span>
-                                              {c.warna} · {c.lengan}
-                                            </span>
-                                            <span className="text-right font-mono">{c.rolls.length}</span>
-                                            <span className="text-right font-mono text-[11px]">{colorArrivalText(r.invoice!, c.warna, c.lengan, c.rolls.length)}</span>
-                                            <span className="text-right font-mono">{formatRupiah(c.hargaPerRoll)}</span>
-                                          </div>
-                                        ))}
-                                      </div>
-                                      <RollCodeEditor invoice={r.invoice} />
-                                    </td>
-                                  </tr>
-                                )}
-                              </Fragment>
-                            );
-                          })}
-                      </Fragment>
-                    );
-                  })}
-                      </Fragment>
-                    );
-                  })}
-              </Fragment>
+              <KpiCard
+                key={c.key}
+                label={c.label}
+                value={list.length}
+                sub={`${c.sub} · ${kgFmt(list.reduce((s, r) => s + r.beratKotor, 0))} kg`}
+                accent={c.accent}
+                active={rollPreset.card === c.key}
+                onClick={() =>
+                  setRollPreset((p) =>
+                    p.card === c.key
+                      ? { nonce: p.nonce + 1, filters: {} as Record<string, string[]>, card: "" }
+                      : { nonce: p.nonce + 1, filters: { Status: c.stages.filter((st) => allRolls.some((r) => r.status === st)) as string[] }, card: c.key }
+                  )
+                }
+              />
             );
           })}
-          </tbody>
-        </table>
         </div>
-        )}
-      </div>
+      )}
+
+      {tab === "roll" && (
+        <DataTable<MaterialRollRow>
+          title="Material per roll"
+          subtitle="Satu baris per roll kain, dari dibayar sampai dipakai produksi"
+          columns={rollColumns}
+          rows={allRolls}
+          keyOf={(r) => r.key}
+          firstColumnLabel="Code Roll"
+          firstColumnRender={(r) => (r.codeRoll ? <span className="font-mono font-medium">{r.codeRoll}</span> : <span className="font-mono text-text-muted">roll {r.no}</span>)}
+          filterDefs={rollFilters}
+          filterPreset={rollPreset}
+          defaultGroupBy={["No. MRP", "Supplier"]}
+          search={{ placeholder: "Cari code roll, invoice, MRP, supplier, vendor, warna…", getText: (r) => `${r.codeRoll} ${r.codeLot} ${r.noInvoice} ${r.poId} ${r.mrpId} ${r.supplier} ${vendorName(r.vendorProduksi)} ${r.warna} ${r.status}` }}
+          onFilteredRows={(list) => setShownRollKeys(new Set(list.map((r) => r.key)))}
+          emptyText="Belum ada roll untuk filter ini."
+        />
+      )}
+
+      {tab === "produksi-aktif" && (
+        <DataTable<MaklonPO>
+          title="PO Produksi aktif"
+          subtitle="Vendor tiba-tiba berhenti mid-produksi? Pindahkan sisa pekerjaannya (bahan mentah + WIP belum Finish Good) ke vendor lain sekaligus."
+          columns={activeColumns}
+          rows={activePOs}
+          keyOf={(p) => p.id}
+          firstColumnLabel="No PO"
+          firstColumnRender={(p) => <span className="font-mono font-medium">{p.id}</span>}
+          filterDefs={activeFilters}
+          defaultGroupBy={["No. MRP"]}
+          search={{ placeholder: "Cari no PO, MRP, vendor…", getText: (p) => `${p.id} ${p.mrpId} ${vendorName(p.vendorProduksi)}` }}
+          emptyText="Tidak ada PO Produksi aktif."
+          nowrap
+        />
+      )}
+
+      {withdrawTarget && (
+        <WithdrawVendorModal
+          mrpId={withdrawTarget.mrpId}
+          fromVendorName={VENDOR_PRODUKSI[withdrawTarget.vendorProduksi]?.name ?? withdrawTarget.vendorProduksi}
+          qty={withdrawTarget.qty}
+          amount={withdrawTarget.amount}
+          otherVendors={Object.entries(VENDOR_PRODUKSI)
+            .filter(([id]) => id !== withdrawTarget.vendorProduksi)
+            .map(([id, v]) => ({ id, name: v.name }))}
+          onConfirm={(toVendor) => withdrawVendorProduction(withdrawTarget.mrpId, withdrawTarget.vendorProduksi, toVendor)}
+          onClose={() => setWithdrawTarget(null)}
+        />
       )}
 
       {deliveryOpen && (

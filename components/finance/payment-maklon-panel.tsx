@@ -1,9 +1,10 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
+import { KpiCard } from "@/components/ui/kpi-card";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Checkbox } from "@/components/ui/checkbox";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { KoliEkspedisiCard, viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
 import { useMrpStore } from "@/lib/mrp/store";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
@@ -388,6 +389,7 @@ export function PaymentMaklonPanel() {
   const [expandedVendorHistory, setExpandedVendorHistory] = useState<string | null>(null);
   // Sub tab Riwayat Pembayaran: "invoice" = daftar invoice per vendor (semula), "kategori" = pembayaran per kategori produk (owner 2026-11-14).
   const [historyTab, setHistoryTab] = useState<"invoice" | "kategori">("invoice");
+  const [shownReadyIds, setShownReadyIds] = useState<Set<string> | null>(null);
 
   if (!mounted) return null;
 
@@ -424,6 +426,10 @@ export function PaymentMaklonPanel() {
       total: Array.from(vendorMap.values()).reduce((s, l) => s + l.reduce((s2, i) => s2 + vendorInvoiceFinalAmount(i), 0), 0),
     }))
     .sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID"));
+  type HistoryRow = VendorInvoice & { histMrp: string; rowKey: string };
+  const historyRows: HistoryRow[] = paidInvoices
+    .flatMap((inv) => Array.from(new Set(inv.lines.map((l) => l.mrpId))).map((mrpId) => ({ ...inv, histMrp: mrpId, rowKey: `${inv.id}|${mrpId}` })))
+    .sort((a, b) => (a.paidAt ?? "") < (b.paidAt ?? "") ? 1 : -1);
   function historyVendorSummariesForMrp(mrpId: string) {
     return Array.from(historyHierarchy.get(mrpId)?.entries() ?? [])
       .map(([vendor, list]) => ({
@@ -606,8 +612,8 @@ export function PaymentMaklonPanel() {
     { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (inv) => <SysadminActionsBar compact actions={vendorInvoicePaymentCorrections(inv)} /> },
     { key: "vendor", label: "Vendor", default: true, render: (inv) => VENDOR_PRODUKSI[inv.vendorProduksi]?.name ?? inv.vendorProduksi },
     { key: "mrp", label: "MRP", default: true, render: (inv) => Array.from(new Set(inv.lines.map((l) => l.mrpId))).join(", ") },
-    { key: "totalQty", label: "Total qty", default: true, align: "right", render: (inv) => formatPcs(inv.lines.reduce((s, l) => s + l.qty, 0)) },
-    { key: "totalPaid", label: "Total dibayar", default: true, align: "right", render: (inv) => formatRupiah(vendorInvoiceTotalPaid(inv)) },
+    { key: "totalQty", aggregate: aggSum((inv) => inv.lines.reduce((s, l) => s + l.qty, 0), (n) => <span className="font-semibold">{formatPcs(n)}</span>), label: "Total qty", default: true, align: "right", render: (inv) => formatPcs(inv.lines.reduce((s, l) => s + l.qty, 0)) },
+    { key: "totalPaid", aggregate: aggSum((inv) => vendorInvoiceTotalPaid(inv), (n) => <span className="font-semibold">{formatRupiah(n)}</span>), label: "Total dibayar", default: true, align: "right", render: (inv) => formatRupiah(vendorInvoiceTotalPaid(inv)) },
     { key: "tglLunas", label: "Tanggal Lunas", default: true, render: (inv) => formatDate(inv.paidAt) },
     { key: "pic", label: "PIC Pembayaran", default: true, render: (inv) => <span className="font-sans text-[11px]">{inv.paidBy ?? "-"}</span> },
     {
@@ -701,8 +707,19 @@ export function PaymentMaklonPanel() {
     );
   }
 
+  const shownReady = shownReadyIds ? readyRows.filter((i) => shownReadyIds.has(i.id)) : readyRows;
+  const invTotal = (list: VendorInvoice[]) => list.reduce((t, i) => t + vendorInvoiceTotalPaid(i), 0);
+
   return (
     <>
+      {/* Kartu angka (pola PPIC): mengikuti filter tabel siap bayar. */}
+      <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+        <KpiCard label="Siap dibayar" value={shownReady.length} sub={`${effectiveMrpId || "semua MRP"} · ${formatRupiah(invTotal(shownReady))}`} accent="orange" />
+        <KpiCard label="Dipilih untuk bayar" value={selected.size} sub={formatRupiah(invTotal(readyInvoices.filter((i) => selected.has(i.id))))} accent="blue" />
+        <KpiCard label="Transaksi belum dibuat" value={shownReady.filter((i) => !i.txnCreatedAt).length} sub="dari invoice yang tampil" accent="purple" />
+        <KpiCard label="MRP menunggu bayar" value={readyMrpIds.length} sub={`${readyInvoices.length} invoice di semua MRP`} accent="teal" />
+      </div>
+
       <div className="flex items-center gap-3 rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
         <div>
           <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">No MRP (siap dibayar)</div>
@@ -827,6 +844,7 @@ export function PaymentMaklonPanel() {
           )}
           renderExpanded={renderInvoiceLinesDetail}
           emptyText="Belum ada invoice vendor yang disetujui Procurement untuk MRP ini."
+          onFilteredRows={(list) => setShownReadyIds(new Set(list.map((i) => i.id)))}
         />
       )}
 
@@ -859,7 +877,26 @@ export function PaymentMaklonPanel() {
         {historyMrpSummaries.length === 0 && (
           <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada invoice vendor yang telah dibayar.</div>
         )}
-        {historyMrpSummaries.length > 0 && (
+        {/* Per Invoice (pola PPIC): satu tabel bersama, satu baris per invoice x MRP, kelompok bawaan No. MRP > Vendor. */}
+        {historyTab === "invoice" && historyMrpSummaries.length > 0 && (
+          <DataTable<HistoryRow>
+            title="Invoice vendor telah dibayar"
+            columns={paidColumns}
+            rows={historyRows}
+            keyOf={(r) => r.rowKey}
+            firstColumnLabel="No Invoice"
+            firstColumnRender={(inv) => <span className="font-mono font-medium">{inv.id}</span>}
+            defaultGroupBy={["No. MRP", "Vendor"]}
+            filterDefs={[
+              { label: "No. MRP", options: historyMrpSummaries.map((m) => m.mrpId), test: (r, v) => r.histMrp === v },
+              { label: "Vendor", options: Array.from(new Set(historyRows.map((r) => VENDOR_PRODUKSI[r.vendorProduksi]?.name ?? r.vendorProduksi))).sort(), test: (r, v) => (VENDOR_PRODUKSI[r.vendorProduksi]?.name ?? r.vendorProduksi) === v },
+            ]}
+            search={{ placeholder: "Cari no invoice, vendor, MRP…", getText: (r) => r.id + " " + (VENDOR_PRODUKSI[r.vendorProduksi]?.name ?? r.vendorProduksi) + " " + r.histMrp }}
+            renderExpanded={renderInvoiceLinesDetail}
+            emptyText="Belum ada invoice vendor yang telah dibayar."
+          />
+        )}
+        {historyTab === "kategori" && historyMrpSummaries.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead>

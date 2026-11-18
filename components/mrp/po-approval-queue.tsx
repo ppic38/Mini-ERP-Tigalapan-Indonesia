@@ -1,16 +1,16 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { confirmDialog } from "@/components/ui/confirm-dialog";
 import { Button } from "@/components/ui/button";
-import { StatusPill } from "@/components/ui/status-pill";
 import { Tabs } from "@/components/ui/tabs";
+import { KpiCard } from "@/components/ui/kpi-card";
+import { DataTable, aggSame, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { countPoInProgress } from "@/lib/shell/badges";
 import { SysadminPanel } from "@/components/sysadmin/correction-dialog";
 import { maklonPoCorrections, materialPoCorrections } from "@/components/sysadmin/procurement-corrections";
 import { useMrpStore } from "@/lib/mrp/store";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
-import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { compareNewestFirst, formatPcs, formatRupiah, formatDate, materialPoColorPcs, materialPoPcs, mrpDetailFor } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI, ROLL_KG_ESTIMATE } from "@/lib/mrp/seed";
 import {
@@ -333,7 +333,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
   // Baris yang SEDANG diproses (per baris, bukan satu id global): tombol baris lain tetap normal; `bulk` = kemajuan "Setujui MRP ini / semua".
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [bulk, setBulk] = useState<{ done: number; total: number } | null>(null);
-  const [search, setSearch] = useState("");
+  const search = "";
   const [error, setError] = useState<string | null>(null);
   const markBusy = (ids: string[], on: boolean) =>
     setBusyIds((prev) => {
@@ -346,8 +346,6 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
     });
   const [rejecting, setRejecting] = useState<Item | null>(null);
   const [rejectNote, setRejectNote] = useState("");
-  // Section "Sudah selesai" default TERTUTUP -- bisa berisi banyak PO seiring waktu.
-  const [doneOpen, setDoneOpen] = useState(false);
 
   const items = useMemo<Item[]>(() => {
     const out: Item[] = [];
@@ -379,7 +377,6 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
   }, [materialPOs, maklonPOs]);
 
   // Portal SCM dibedakan per username (scm02 = Asisten Manager L2, scm01 = SCM Manager L3); akun utama SCM tidak bisa menyetujui.
-  const sysadminMode = useSysadminMode();
   const scmUsername = useInternalAuthStore((s) => s.actors.scm?.username);
   const scmPosition = scmPositionOf(scmUsername);
   const isMine = (i: Item) =>
@@ -443,165 +440,129 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
     setBulk(null);
   }
 
-  // Daftar dibungkus per MRP (bisa dibuka/ditutup); tombol "Setujui MRP ini" menyetujui semua PO MRP itu, tombol tiap baris = per vendor/PO.
-  const [openMrps, setOpenMrps] = useState<Set<string>>(new Set());
-  function toggleMrp(key: string) {
-    setOpenMrps((prev) => {
-      // Satu MRP terbuka per tabel (section): membuka yang baru menutup yang lain di tabel yang sama.
-      const section = key.slice(0, key.indexOf(":") + 1);
-      const next = new Set(Array.from(prev).filter((k) => !k.startsWith(section)));
-      if (!prev.has(key)) next.add(key);
-      return next;
-    });
-  }
-  // Tabel antrean (gaya sama tabel "Semua PO Vendor Produksi" Finance): baris MRP (ringkasan) -> baris vendor/supplier (aksi per PO).
+  // Redesign 2026-11-16 (pola PPIC, owner: "SCM hanya approval dan monitoring, tampilan sama dengan modul lain"): empat bagian terpisah
+  // (menunggu Anda, ditolak, langkah lain, selesai) jadi SATU tabel bersama per tab. Posisi tiap baris jadi filter "Posisi"; kartu di atas diklik
+  // = filter Posisi; bawaan = "Menunggu Anda". Aksi (Lihat detail, Setujui, Tolak, Ajukan ulang) tetap per baris, logika tidak berubah.
   const qtyOfItem = (it: Item): number => (it.type === "MAKLON" ? (it.po as MaklonPO).qty : (it.members ?? [it]).reduce((s, m) => s + (m.po as MaterialPO).rollCount, 0));
-  const qtyLabel = (n: number) => (tab === "MAKLON" ? `${formatPcs(n)} pcs` : `${formatPcs(n)} roll`);
-  // Tab PO Material: kolom tambahan "Qty Produksi (pcs)" = estimasi pcs dari roll PO (aduan pola, lihat materialPoPcs); PO Produksi sudah dalam pcs.
   const showPcs = tab === "MATERIAL";
-  const colCount = showPcs ? 6 : 5;
   const pcsOfItem = (it: Item): number =>
     it.type === "MAKLON" ? (it.po as MaklonPO).qty : (it.members ?? [it]).reduce((s, m) => s + materialPoPcs(m.po as MaterialPO, mrpDetailFor(m.mrpId, mrpDetails)?.aduanRows ?? []), 0);
+  const POS_MINE = "Menunggu Anda";
+  const POS_REJECTED = "Ditolak";
+  const POS_OTHER = "Di langkah lain";
+  const POS_DONE = "Selesai";
+  const positionOf = (i: Item): string => (isMine(i) ? POS_MINE : i.state.rejected && !i.po.approved ? POS_REJECTED : i.state.approved ? POS_DONE : POS_OTHER);
+  const createdOf = (id: string) => mrpDetails.find((d) => d.mrp.id === id)?.dates?.created;
+  const tableItems = tabItems
+    .filter((i) => !i.state.legacy)
+    .sort((a, b) => compareNewestFirst(createdOf(a.mrpId), a.mrpId, createdOf(b.mrpId), b.mrpId));
+  const [preset, setPreset] = useState<{ nonce: number; filters: Record<string, string[]>; card: string }>({ nonce: 0, filters: {}, card: "" });
+  // Bawaan: kalau ada PO yang menunggu akun ini, tabel langsung menyaring "Menunggu Anda" (sekali saat data pertama tersedia).
+  const autoPreset = useRef(false);
+  const mineCount = mine.length;
+  useEffect(() => {
+    if (autoPreset.current || mineCount === 0) return;
+    autoPreset.current = true;
+    const t = setTimeout(() => setPreset((p) => ({ nonce: p.nonce + 1, filters: { Posisi: [POS_MINE] }, card: "mine" })), 0);
+    return () => clearTimeout(t);
+  }, [mineCount]);
+  const [shownKeys, setShownKeys] = useState<Set<string> | null>(null);
+  const shownMine = mine.filter((i) => !shownKeys || shownKeys.has(i.id));
+  const cardClick = (card: string, pos: string) =>
+    setPreset((p) => (p.card === card ? { nonce: p.nonce + 1, filters: {} as Record<string, string[]>, card: "" } : { nonce: p.nonce + 1, filters: { Posisi: [pos] }, card }));
 
-  function renderGroups(section: string, list: Item[], rowActions?: (it: Item) => React.ReactNode, groupApprove = false) {
-    if (list.length === 0) return null;
-    const byMrp = new Map<string, Item[]>();
-    for (const it of list) byMrp.set(it.mrpId, [...(byMrp.get(it.mrpId) ?? []), it]);
-    // MRP terbaru (tanggal MRP dibuat) paling atas; sama -> No. MRP menurun.
-    const createdOf = (id: string) => mrpDetails.find((d) => d.mrp.id === id)?.dates?.created;
-    const ordered = Array.from(byMrp.entries()).sort((a, b) => compareNewestFirst(createdOf(a[0]), a[0], createdOf(b[0]), b[0]));
-    const unit = tab === "MATERIAL" ? "supplier" : "vendor";
-    return (
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
-              <th className="px-5 py-[9px] text-left">No MRP / {tab === "MATERIAL" ? "Supplier" : "Vendor Produksi"} / No PO</th>
-              <th className="px-3 py-[9px] text-right">{showPcs ? "Qty (roll)" : "Qty"}</th>
-              {showPcs && (
-                <th className="px-3 py-[9px] text-right" title="Estimasi pcs dari roll PO ini: jumlah roll x pcs per roll di aduan pola vendor produksi yang sama (target rencana MRP).">
-                  Qty Produksi (pcs)
-                </th>
-              )}
-              <th className="px-3 py-[9px] text-right">Nilai</th>
-              <th className="px-3 py-[9px] text-left">Status Approval</th>
-              <th className="px-3 py-[9px] text-right">Aksi</th>
-            </tr>
-          </thead>
-          <tbody>
-            {ordered.map(([mrpId, its]) => {
-              const key = `${section}:${mrpId}`;
-              const open = openMrps.has(key) || needle !== "";
-              const groupBusy = its.some((i) => busyIds.has(i.id));
-              const overdue = its.filter((i) => i.state.overdue && !i.state.approved).length;
-              const poCount = its.reduce((s, i) => s + (i.members?.length ?? 1), 0);
-              return (
-                <Fragment key={key}>
-                  <tr onClick={() => toggleMrp(key)} className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] hover:bg-[#FAFBFC] " + (open ? "bg-info-bg" : "")}>
-                    <td className="px-5 py-[11px]">
-                      <span className="mr-1.5 text-text-muted">{open ? "▾" : "▸"}</span>
-                      <span className="font-mono font-semibold text-text-primary">{mrpId}</span>
-                      <span className="ml-1.5 text-[10.5px] text-text-muted">{its.length} {unit}</span>
-                      {overdue > 0 && <span className="ml-2 rounded-full bg-danger-bg px-2 py-0.5 text-[10px] font-semibold text-danger-fg">⚠ {overdue} lewat SLA</span>}
-                    </td>
-                    <td className="px-3 py-[11px] text-right font-mono tabular-nums">{qtyLabel(its.reduce((s, i) => s + qtyOfItem(i), 0))}</td>
-                    {showPcs && <td className="px-3 py-[11px] text-right font-mono tabular-nums">{formatPcs(its.reduce((s, i) => s + pcsOfItem(i), 0))} pcs</td>}
-                    <td className="px-3 py-[11px] text-right font-mono font-medium tabular-nums">{formatRupiah(its.reduce((s, i) => s + i.amount, 0))}</td>
-                    <td className="px-3 py-[11px]">
-                      <StatusPill tone="neutral">{poCount} PO</StatusPill>
-                    </td>
-                    <td className="px-3 py-[11px] text-right">
-                      {groupApprove && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void approveItems(its, mrpId);
-                          }}
-                          disabled={groupBusy}
-                          className={OUTLINE_BTN}
-                        >
-                          {groupBusy ? <Spinner label="Memproses…" /> : "Setujui Semua"}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                  {open && its.map((it) => renderRow(it, rowActions?.(it) ?? null))}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    );
-  }
-
-
-
-  function renderRow(item: Item, actions: React.ReactNode) {
-    const st = item.state;
-    const busy = busyIds.has(item.id);
-    return (
-      <Fragment key={item.id}>
-        <tr className={"border-b border-[#F1F4F7] bg-[#FBFCFD] font-sans text-[11.5px] text-[#31414F] transition-opacity " + (busy ? "opacity-60" : "")}>
-          <td className="py-[10px] pl-12 pr-3">
-            <div className="font-semibold text-text-primary">{item.type === "MATERIAL" ? item.supplier ?? item.vendor : item.vendor}</div>
-            <div className="max-w-[420px] truncate font-mono text-[10.5px] text-text-muted" title={itemSubtitle(item)}>
-              {itemSubtitle(item)}
+  const columns: ColumnDef<Item>[] = [
+    {
+      key: "sysadmin",
+      label: "Aksi Sysadmin",
+      default: true,
+      sysadmin: true,
+      render: (it) => (it.type === "MATERIAL" ? (it.members ?? [it]).map((m) => <SysadminPanel key={m.id} actions={materialPoCorrections(m.po as MaterialPO)} />) : <SysadminPanel actions={maklonPoCorrections(it.po as MaklonPO)} />),
+    },
+    { key: "mrp", label: "No. MRP", default: false, aggregate: aggSame((i) => i.mrpId), render: (i) => <span className="font-mono">{i.mrpId}</span> },
+    { key: "po", label: "No PO / Vendor", default: true, render: (i) => <span className="block max-w-[360px] truncate font-mono text-[11px] text-text-muted" title={itemSubtitle(i)}>{itemSubtitle(i)}</span> },
+    {
+      key: "qty",
+      label: showPcs ? "Roll" : "Qty (pcs)",
+      default: true,
+      align: "right",
+      aggregate: aggSum((i) => qtyOfItem(i), (n) => <span className="font-semibold">{formatPcs(n)}</span>),
+      render: (i) => <span className="font-mono">{formatPcs(qtyOfItem(i))}</span>,
+    },
+    ...(showPcs
+      ? [
+          {
+            key: "pcs",
+            label: "Qty Produksi (pcs)",
+            default: true,
+            align: "right" as const,
+            info: { title: "Qty Produksi", body: <p>Estimasi pcs dari roll PO ini: jumlah roll x pcs per roll di aduan pola vendor produksi yang sama (target rencana MRP).</p> },
+            aggregate: aggSum<Item>((i) => pcsOfItem(i), (n) => <span className="font-semibold">{formatPcs(n)}</span>),
+            render: (i: Item) => <span className="font-mono">{formatPcs(pcsOfItem(i))}</span>,
+          },
+        ]
+      : []),
+    { key: "nilai", label: "Nilai", default: true, align: "right", aggregate: aggSum((i) => i.amount, (n) => <span className="font-semibold">{formatRupiah(n)}</span>), render: (i) => <span className="font-mono font-medium">{formatRupiah(i.amount)}</span> },
+    {
+      key: "status",
+      label: "Status Approval",
+      default: true,
+      render: (it) => (
+        <div>
+          <ApprovalProgress po={it.po} state={it.state} />
+          {it.state.slaDueAt && !it.state.approved && (
+            <div className={"mt-1 text-[10px] " + (it.state.overdue ? "font-semibold text-danger-fg" : "text-text-muted")}>
+              {it.state.overdue ? "⚠ Lewat SLA · " : "Batas SLA · "}
+              {fmtTime(it.state.slaDueAt)}
             </div>
-          </td>
-          <td className="px-3 py-[10px] text-right font-mono tabular-nums">{qtyLabel(qtyOfItem(item))}</td>
-          {showPcs && <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatPcs(pcsOfItem(item))} pcs</td>}
-          <td className="px-3 py-[10px] text-right font-mono font-medium tabular-nums">{formatRupiah(item.amount)}</td>
-          <td className="px-3 py-[10px]">
-            <ApprovalProgress po={item.po} state={st} />
-            {st.slaDueAt && !st.approved && (
-              <div className={"mt-1 text-[10px] " + (st.overdue ? "font-semibold text-danger-fg" : "text-text-muted")}>
-                {st.overdue ? "⚠ Lewat SLA · " : "Batas SLA · "}
-                {fmtTime(st.slaDueAt)}
-              </div>
+          )}
+          {it.state.rejected && it.state.rejectNote && (
+            <div className="mt-1 max-w-[320px] whitespace-normal rounded-md border border-[#EFC9C4] bg-danger-bg px-2 py-1 text-[10.5px] text-danger-fg">
+              Ditolak {it.state.rejectedBy ? APPROVAL_ROLE_LABEL[it.state.rejectedBy] : ""}: {it.state.rejectNote}
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "aksi",
+      label: "Aksi",
+      default: true,
+      render: (it) => {
+        const busy = busyIds.has(it.id);
+        const pos = positionOf(it);
+        return (
+          <div className="flex items-center justify-end gap-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => setDetailItem(it)} className={DETAIL_BTN}>
+              Lihat detail
+            </button>
+            {pos === POS_MINE && (
+              <>
+                <button
+                  onClick={() => {
+                    setRejecting(it);
+                    setRejectNote("");
+                  }}
+                  disabled={busy}
+                  className={REJECT_BTN}
+                >
+                  Tolak
+                </button>
+                <button onClick={() => run(it, async () => await approvePoStep(it.type, it.id, role))} disabled={busy} className={OUTLINE_BTN}>
+                  {busy ? <Spinner label="Memproses…" /> : "Setujui"}
+                </button>
+              </>
             )}
-          </td>
-          <td className="px-3 py-[10px]">
-            <div className="flex items-center justify-end gap-2 whitespace-nowrap">
-              <button onClick={() => setDetailItem(item)} className={DETAIL_BTN}>
-                Lihat detail
+            {pos === POS_REJECTED && role === "procurement" && (
+              <button onClick={() => run(it, async () => await resubmitPo(it.type, it.id))} disabled={busy} className={OUTLINE_BTN}>
+                {busy ? <Spinner label="Memproses…" /> : "Ajukan ulang"}
               </button>
-              {actions}
-            </div>
-          </td>
-        </tr>
-        {st.rejected && st.rejectNote && (
-          <tr className="border-b border-[#F1F4F7] bg-[#FBFCFD]">
-            <td colSpan={colCount} className="pb-2 pl-12 pr-4">
-              <div className="rounded-md border border-[#EFC9C4] bg-danger-bg px-3 py-1.5 font-sans text-[11px] text-danger-fg">
-                Ditolak {st.rejectedBy ? APPROVAL_ROLE_LABEL[st.rejectedBy] : ""}: {st.rejectNote}
-              </div>
-            </td>
-          </tr>
-        )}
-        {/* Koreksi Sysadmin (owner 2026-09-30): antrean ini dipakai bersama Procurement/SCM/GM, jadi 1 tempat ini menutup ketiganya.
-           Baris hanya dirender di Mode Sysadmin supaya tidak ada baris kosong. */}
-        {sysadminMode && (
-          <tr className="border-b border-[#F1F4F7] bg-[#FBFCFD]">
-            <td colSpan={colCount} className="pb-2 pl-12 pr-4">
-              {item.type === "MATERIAL" ? (item.members ?? [item]).map((m) => <SysadminPanel key={m.id} actions={materialPoCorrections(m.po as MaterialPO)} />) : <SysadminPanel actions={maklonPoCorrections(item.po as MaklonPO)} />}
-            </td>
-          </tr>
-        )}
-      </Fragment>
-    );
-  }
-
-  const renderSection = (title: string, count: number, hint: React.ReactNode, children: React.ReactNode) => (
-    <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-      <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
-        <span className="font-sans text-[13px] font-semibold text-text-primary">{title}</span>
-        <span className="rounded-full bg-[#EEF1F4] px-2 py-0.5 font-mono text-[10px] font-semibold text-text-muted">{count}</span>
-        {hint && <span className="ml-auto font-sans text-[11px] text-text-muted">{hint}</span>}
-      </div>
-      {children}
-    </div>
-  );
+            )}
+          </div>
+        );
+      },
+    },
+  ];
 
   const noun = tab === "MATERIAL" ? "PO Material" : "PO Produksi";
 
@@ -642,126 +603,42 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
       )}
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {[
-          { label: "Menunggu Anda", value: mine.length, sub: formatRupiah(totalMine), tone: mine.length > 0 ? "text-warning-fg" : "text-text-primary" },
-          { label: "Lewat SLA", value: overdueMine, sub: "dari yang menunggu Anda", tone: overdueMine > 0 ? "text-danger-fg" : "text-text-primary" },
-          { label: "Di langkah lain", value: others.length, sub: "menunggu approver lain", tone: "text-text-primary" },
-          { label: "Selesai", value: done.length, sub: "semua level", tone: "text-success-fg" },
-        ].map((c) => (
-          <div key={c.label} className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3">
-            <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">{c.label}</div>
-            <div className={"mt-1 font-mono text-[22px] font-semibold " + c.tone}>{c.value}</div>
-            <div className="font-sans text-[11px] text-text-muted">{c.sub}</div>
-          </div>
-        ))}
-      </div>
-
-      <input
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder="Cari No. MRP, vendor, supplier, atau No. PO…"
-        className="w-full rounded-md border border-[#DDE4EB] bg-white px-3 py-2 font-sans text-xs text-text-primary"
-      />
-
-      {renderSection(
-        `Menunggu persetujuan ${roleLabel}`,
-        mine.length,
-        mine.length > 1 ? (
-          <button
-            onClick={() => approveItems(mine)}
-            disabled={bulk != null}
-            className={OUTLINE_BTN}
-          >
-            {bulk ? <Spinner label="Memproses…" /> : `Setujui Semua (${mine.length})`}
-          </button>
-        ) : undefined,
-        mine.length === 0 ? (
-          <div className="px-4 py-6 text-center font-sans text-xs text-text-muted">Tidak ada {noun} yang menunggu persetujuan Anda.</div>
+        <KpiCard label="Menunggu Anda" value={mine.length} sub={`${formatRupiah(totalMine)}${overdueMine > 0 ? ` · ${overdueMine} lewat SLA` : ""}`} accent="orange" active={preset.card === "mine"} onClick={() => cardClick("mine", POS_MINE)} />
+        {role === "procurement" ? (
+          <KpiCard label="Ditolak" value={rejected.length} sub="perlu diperbaiki dan diajukan ulang" accent="purple" active={preset.card === "rejected"} onClick={() => cardClick("rejected", POS_REJECTED)} />
         ) : (
-          <>
-            {renderGroups(
-              "mine",
-              mine,
-              (it) => (
-                <>
-                  <button
-                    onClick={() => {
-                      setRejecting(it);
-                      setRejectNote("");
-                    }}
-                    disabled={busyIds.has(it.id)}
-                    className={REJECT_BTN}
-                  >
-                    Tolak
-                  </button>
-                  <button
-                    onClick={() =>
-                      run(it, async () => {
-                        await approvePoStep(it.type, it.id, role);
-                      })
-                    }
-                    disabled={busyIds.has(it.id)}
-                    className={OUTLINE_BTN}
-                  >
-                    {busyIds.has(it.id) ? <Spinner label="Memproses…" /> : "Setujui"}
-                  </button>
-                </>
-              ),
-              true
-            )}
-          </>
-        )
-      )}
-
-      {role === "procurement" &&
-        renderSection(
-          "Ditolak — perlu diperbaiki & diajukan ulang",
-          rejected.length,
-          undefined,
-          rejected.length === 0 ? (
-            <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Tidak ada {noun} yang ditolak.</div>
-          ) : (
-            renderGroups("rejected", rejected, (it) => (
-              <button
-                onClick={() =>
-                  run(it, async () => {
-                    await resubmitPo(it.type, it.id);
-                  })
-                }
-                disabled={busyIds.has(it.id)}
-                className={OUTLINE_BTN}
-              >
-                {busyIds.has(it.id) ? <Spinner label="Memproses…" /> : "Ajukan ulang"}
-              </button>
-            ))
-          )
+          <KpiCard label="Lewat SLA" value={overdueMine} sub="dari yang menunggu Anda" accent="purple" />
         )}
-
-      {renderSection(
-        "Sedang berjalan di langkah lain",
-        others.length,
-        "hanya informasi",
-        others.length === 0 ? <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Tidak ada.</div> : renderGroups("others", others)
-      )}
-
-      {/* PO yang sudah TUNTAS semua level tetap kelihatan di sini, lengkap dengan siapa yang menyetujui -- bukan cuma
-         menghilang begitu approved=true. Default tertutup supaya halaman tidak penuh begitu datanya banyak. */}
-      <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-        <button onClick={() => setDoneOpen((v) => !v)} className="flex w-full items-center gap-2 px-4 py-3 text-left">
-          <span className="font-sans text-[13px] font-semibold text-text-primary">Sudah selesai (semua level)</span>
-          <span className="rounded-full bg-[#EEF1F4] px-2 py-0.5 font-mono text-[10px] font-semibold text-text-muted">{done.length}</span>
-          <span className="ml-auto text-text-muted">{doneOpen ? "▾" : "▸"}</span>
-        </button>
-        {doneOpen && (
-          <div className="border-t border-border-subtle">
-            {done.length === 0 ? (
-              <div className="px-4 py-5 text-center font-sans text-xs text-text-muted">Belum ada {noun} yang selesai lewat matriks approval ini.</div>
-            ) : (
-              renderGroups("done", done)
-            )}
-          </div>
-        )}
+        <KpiCard label="Di langkah lain" value={others.length} sub="menunggu approver lain" accent="blue" active={preset.card === "other"} onClick={() => cardClick("other", POS_OTHER)} />
+        <KpiCard label="Selesai" value={done.length} sub="semua level" accent="teal" active={preset.card === "done"} onClick={() => cardClick("done", POS_DONE)} />
       </div>
+
+      <DataTable<Item>
+        title={`${noun} — persetujuan ${roleLabel}`}
+        headerActions={
+          shownMine.length > 1 ? (
+            <button onClick={() => approveItems(shownMine)} disabled={bulk != null} className={OUTLINE_BTN + " !w-auto px-3"}>
+              {bulk ? <Spinner label="Memproses…" /> : `Setujui yang tampil (${shownMine.length})`}
+            </button>
+          ) : undefined
+        }
+        columns={columns}
+        rows={tableItems}
+        keyOf={(i) => i.id}
+        firstColumnLabel={tab === "MATERIAL" ? "Supplier" : "Vendor Produksi"}
+        firstColumnRender={(i) => <span className="font-semibold">{i.type === "MATERIAL" ? i.supplier ?? i.vendor : i.vendor}</span>}
+        filterDefs={[
+          { label: "Posisi", options: [POS_MINE, POS_REJECTED, POS_OTHER, POS_DONE].filter((p) => tableItems.some((i) => positionOf(i) === p)), test: (i, v) => positionOf(i) === v },
+          { label: "No. MRP", options: Array.from(new Set(tableItems.map((i) => i.mrpId))), test: (i, v) => i.mrpId === v },
+          { label: tab === "MATERIAL" ? "Supplier" : "Vendor", options: Array.from(new Set(tableItems.map((i) => (i.type === "MATERIAL" ? i.supplier ?? "" : i.vendor)))).filter(Boolean).sort(), test: (i, v) => (i.type === "MATERIAL" ? i.supplier ?? "" : i.vendor) === v },
+          { label: "Status approval", options: Array.from(new Set(tableItems.map((i) => poApprovalSummary(i.state)))), test: (i, v) => poApprovalSummary(i.state) === v },
+        ]}
+        filterPreset={preset}
+        defaultGroupBy={["No. MRP"]}
+        search={{ placeholder: "Cari No. MRP, vendor, supplier, atau No. PO…", getText: (i) => [i.mrpId, i.vendor, i.supplier ?? "", i.id, ...(i.members ?? []).flatMap((m) => [m.vendor, m.id])].join(" ") }}
+        onFilteredRows={(list) => setShownKeys(new Set(list.map((i) => i.id)))}
+        emptyText={`Tidak ada ${noun} untuk filter ini.`}
+      />
 
       {detailItem && <DetailModal item={detailItem} onClose={() => setDetailItem(null)} />}
 

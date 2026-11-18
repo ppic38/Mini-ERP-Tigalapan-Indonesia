@@ -1,6 +1,8 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { useState } from "react";
+import { DataTable, aggSame, aggSum, type ColumnDef, type FilterDef } from "@/components/mrp/data-table";
+import { KpiCard } from "@/components/ui/kpi-card";
 import { alertDialog } from "@/components/ui/confirm-dialog";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Button } from "@/components/ui/button";
@@ -8,6 +10,7 @@ import { NumberInput } from "@/components/mrp/number-input";
 import { viewEkspedisiPhoto } from "@/components/mrp/koli-ekspedisi-card";
 import { InvoiceKoliTabs } from "@/components/mrp/invoice-koli-tabs";
 import { useMrpStore } from "@/lib/mrp/store";
+import { pvStatusVendor, pvTone } from "@/lib/mrp/flowStatus";
 import { exportVendorInvoiceExcel } from "@/lib/mrp/exportVendorInvoiceExcel";
 import {
   formatPcs,
@@ -20,12 +23,10 @@ import {
   vendorCumulativeQtyByTipe,
   productionYieldBySize,
   vendorInvoiceAdjustmentTotal,
-  vendorInvoiceBadge,
   vendorInvoiceFinalAmount,
 } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
-import { SysadminActionsBar, SysadminTd, SysadminTh } from "@/components/sysadmin/correction-dialog";
-import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { invoiceAdjustmentCorrections, vendorInvoiceStatusCorrections, vendorInvoiceVoidCorrections } from "@/components/sysadmin/vendor-corrections";
 import type { VendorInvoice, VendorInvoiceAdjustmentKind } from "@/lib/mrp/types";
 
@@ -40,7 +41,6 @@ import type { VendorInvoice, VendorInvoiceAdjustmentKind } from "@/lib/mrp/types
  *  dead code. */
 
 export function InvoiceVendorReviewPanel() {
-  const sysadminMode = useSysadminMode();
   const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
@@ -55,7 +55,8 @@ export function InvoiceVendorReviewPanel() {
   const addVendorInvoiceAdjustment = useMrpStore((s) => s.addVendorInvoiceAdjustment);
   const setVendorInvoiceStatus = useMrpStore((s) => s.setVendorInvoiceStatus);
 
-  const [expandedInvoiceId, setExpandedInvoiceId] = useState("");
+  const [shownIds, setShownIds] = useState<Set<string> | null>(null);
+  const [preset, setPreset] = useState<{ nonce: number; filters: Record<string, string[]>; card: string }>({ nonce: 0, filters: {}, card: "" });
   const [adjKind, setAdjKind] = useState<VendorInvoiceAdjustmentKind>("TIDAK_ADA");
   const [adjLabel, setAdjLabel] = useState("");
   const [adjAmount, setAdjAmount] = useState(0);
@@ -69,48 +70,7 @@ export function InvoiceVendorReviewPanel() {
   // (inv.lines multi-MRP) -- dalam kasus itu invoice yang sama muncul di >1 kartu MRP, SENGAJA
   // (supaya tetap kelihatan dari MRP mana pun yang dibuka), bukan bug duplikasi data -- pola sama
   // dengan payment-maklon-panel.tsx.
-  const [expandedMrpTree, setExpandedMrpTree] = useState<string | null>(null);
-  const [expandedVendorTree, setExpandedVendorTree] = useState<string | null>(null);
-
-  const pending = vendorInvoices.filter((i) => i.status === "SUBMITTED");
   const sorted = [...vendorInvoices].sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : -1));
-
-  const vendorTreeHierarchy = (() => {
-    const map = new Map<string, Map<string, VendorInvoice[]>>();
-    for (const inv of sorted) {
-      const mrpIds = Array.from(new Set(inv.lines.map((l) => l.mrpId)));
-      for (const mrpId of mrpIds) {
-        if (!map.has(mrpId)) map.set(mrpId, new Map());
-        const vendorMap = map.get(mrpId)!;
-        if (!vendorMap.has(inv.vendorProduksi)) vendorMap.set(inv.vendorProduksi, []);
-        vendorMap.get(inv.vendorProduksi)!.push(inv);
-      }
-    }
-    return map;
-  })();
-
-  const vendorMrpSummaries = Array.from(vendorTreeHierarchy.entries())
-    .map(([mrpId, vendorMap]) => {
-      let invoiceCount = 0;
-      let totalTagihan = 0;
-      for (const list of vendorMap.values()) {
-        invoiceCount += list.length;
-        totalTagihan += list.reduce((s, i) => s + vendorInvoiceFinalAmount(i), 0);
-      }
-      return { mrpId, vendorCount: vendorMap.size, invoiceCount, totalTagihan };
-    })
-    .sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID"));
-
-  function vendorSummariesForMrp(mrpId: string) {
-    return Array.from(vendorTreeHierarchy.get(mrpId)?.entries() ?? [])
-      .map(([vendor, invs]) => ({
-        vendor,
-        vendorName: VENDOR_PRODUKSI[vendor]?.name ?? vendor,
-        invs,
-        totalTagihan: invs.reduce((s, i) => s + vendorInvoiceFinalAmount(i), 0),
-      }))
-      .sort((a, b) => a.vendorName.localeCompare(b.vendorName, "id-ID"));
-  }
 
   function resetAdjForm() {
     setAdjLabel("");
@@ -140,157 +100,45 @@ export function InvoiceVendorReviewPanel() {
     }
   }
 
-  return (
-    <>
-      {pending.length > 0 && (
-        <div className="rounded-lg border border-[#F0DFC2] bg-warning-bg px-5 py-2.5 font-sans text-[11.5px] font-medium text-warning-fg">
-          {pending.length} invoice vendor menunggu review — klik baris untuk buka detail &amp; Setujui.
-        </div>
-      )}
+  // Pola PPIC (owner 2026-11-16): pohon No MRP -> Vendor -> Invoice diganti tabel bersama (kelompok bawaan No. MRP > Vendor),
+  // rincian invoice (denda/reward, Setujui invoice, lampiran ekspedisi, isi koli, detail per MRP) di panel samping, kartu mengikuti filter.
+  const vendorName = (id: string) => VENDOR_PRODUKSI[id]?.name ?? id;
+  const mrpsOf = (inv: VendorInvoice) => Array.from(new Set(inv.lines.map((l) => l.mrpId)));
+  // Status Paying Voucher standar (lib/mrp/flowStatus.ts): Submitted (diajukan vendor), Approve (disetujui Procurement), Paid.
+  const statusOf = (inv: VendorInvoice) => ({ label: pvStatusVendor(inv), tone: pvTone(pvStatusVendor(inv)) });
+  const uniqSorted = (xs: string[]) => Array.from(new Set(xs.filter(Boolean))).sort((a, b) => a.localeCompare(b, "id-ID", { numeric: true }));
+  const shown = shownIds ? sorted.filter((i) => shownIds.has(i.id)) : sorted;
+  const bold = (x: React.ReactNode) => <span className="font-semibold">{x}</span>;
+  const filterDefs: FilterDef<VendorInvoice>[] = [
+    { label: "No. MRP", options: uniqSorted(sorted.flatMap(mrpsOf)).reverse(), test: (i, v) => mrpsOf(i).includes(v) },
+    { label: "Vendor", options: uniqSorted(sorted.map((i) => vendorName(i.vendorProduksi))), test: (i, v) => vendorName(i.vendorProduksi) === v },
+    { label: "Status", options: uniqSorted(sorted.map((i) => statusOf(i).label)), test: (i, v) => statusOf(i).label === v },
+  ];
+  const columns: ColumnDef<VendorInvoice>[] = [
+    { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (inv) => <SysadminActionsBar compact actions={[...vendorInvoiceStatusCorrections(inv), ...vendorInvoiceVoidCorrections(inv)]} /> },
+    { key: "mrp", label: "No. MRP", default: true, aggregate: aggSame((i) => mrpsOf(i).join(", ")), render: (i) => <span className="font-mono">{mrpsOf(i).join(", ")}</span> },
+    { key: "vendor", label: "Vendor", default: true, aggregate: aggSame((i) => vendorName(i.vendorProduksi)), render: (i) => vendorName(i.vendorProduksi) },
+    { key: "qty", label: "Qty", default: false, align: "right", aggregate: aggSum((i) => i.lines.reduce((s, l) => s + l.qty, 0), (n) => bold(formatPcs(n))), render: (i) => <span className="font-mono">{formatPcs(i.lines.reduce((s, l) => s + l.qty, 0))}</span> },
+    { key: "total", label: "Total Tagihan", default: true, align: "right", aggregate: aggSum((i) => vendorInvoiceFinalAmount(i), (n) => bold(formatRupiah(n))), render: (i) => <span className="font-mono">{formatRupiah(vendorInvoiceFinalAmount(i))}</span> },
+    {
+      key: "status",
+      label: "Status",
+      default: true,
+      aggregate: aggSame((i) => statusOf(i).label, (v) => <StatusPill tone={sorted.map(statusOf).find((b) => b.label === v)?.tone ?? "neutral"}>{v}</StatusPill>),
+      render: (i) => <StatusPill tone={statusOf(i).tone}>{statusOf(i).label}</StatusPill>,
+    },
+    { key: "tgl", label: "Tgl Ajukan", default: true, render: (i) => <span className="font-mono text-[11px] text-text-muted">{i.submittedAt}</span> },
+  ];
+  const waiting = shown.filter((i) => i.status === "SUBMITTED");
 
-      <div className="overflow-hidden border border-border-subtle bg-surface-card">
-        <div className="flex items-center justify-between gap-3 border-b border-border-subtle px-4 py-3">
-          <span className="font-sans text-[13px] font-semibold text-text-primary">Semua invoice vendor</span>
-          <span className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="xs"
-            disabled={vendorInvoices.length === 0}
-            title="Unduh laporan Excel semua invoice vendor: header berwarna, ada filter, lengkap dengan kategori item."
-            onClick={() => exportVendorInvoiceExcel(vendorInvoices, mrpDetails, "Laporan-Invoice-Vendor-" + new Date().toISOString().slice(0, 10) + ".xlsx")}
-          >
-            Download laporan (Excel)
-          </Button>
-          {/* Tombol "Terapkan harga master terbaru" dihapus (owner 2026-11-14): harga maklon invoice dikunci saat vendor mengajukan, tidak lagi mengikuti Master Data. */}
-          </span>
-        </div>
-        {vendorMrpSummaries.length === 0 && <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada invoice vendor.</div>}
-        {vendorMrpSummaries.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
-              <thead>
-                <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
-                  <th className="px-5 py-[9px] text-left">No MRP / Vendor Produksi / No Invoice</th>
-                  <th className="px-3 py-[9px] text-right">Total Tagihan</th>
-                  <th className="px-3 py-[9px] text-left">Status</th>
-                  <th className="px-3 py-[9px] text-left">Tanggal</th>
-                  <SysadminTh />
-                </tr>
-              </thead>
-              <tbody>
-                {vendorMrpSummaries.map((m) => {
-                  const mrpActive = expandedMrpTree === m.mrpId;
-                  return (
-                    <Fragment key={m.mrpId}>
-                      <tr
-                        onClick={() => {
-                          const next = mrpActive ? null : m.mrpId;
-                          setExpandedMrpTree(next);
-                          setExpandedVendorTree(null);
-                          setExpandedInvoiceId("");
-                        }}
-                        className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] hover:bg-[#FAFBFC] " + (mrpActive ? "bg-info-bg" : "")}
-                      >
-                        <td className="px-5 py-[11px]">
-                          <span className="mr-1.5 text-text-muted">{mrpActive ? "▾" : "▸"}</span>
-                          <span className="font-mono font-semibold text-text-primary">{m.mrpId}</span>
-                          <span className="ml-1.5 font-sans text-[10.5px] text-text-muted">{m.vendorCount} vendor</span>
-                        </td>
-                        <td className="px-3 py-[11px] text-right font-mono tabular-nums font-medium">{formatRupiah(m.totalTagihan)}</td>
-                        <td className="px-3 py-[11px]">
-                          <StatusPill tone="neutral">{m.invoiceCount} invoice</StatusPill>
-                        </td>
-                        <td className="px-3 py-[11px]" />
-                        <SysadminTd className="py-[11px]" />
-                      </tr>
-                      {mrpActive &&
-                        vendorSummariesForMrp(m.mrpId).map((v) => {
-                          const vendorKey = `${m.mrpId}::${v.vendor}`;
-                          const vendorActive = expandedVendorTree === vendorKey;
-                          return (
-                            <Fragment key={vendorKey}>
-                              <tr
-                                onClick={() => {
-                                  const next = vendorActive ? null : vendorKey;
-                                  setExpandedVendorTree(next);
-                                  setExpandedInvoiceId("");
-                                }}
-                                className={"cursor-pointer border-b border-[#F1F4F7] bg-[#FBFCFD] font-sans text-[11.5px] text-[#31414F] hover:bg-[#F2F5F8] " + (vendorActive ? "bg-info-bg" : "")}
-                              >
-                                <td className="py-[10px] pl-10 pr-3">
-                                  <span className="mr-1.5 text-text-muted">{vendorActive ? "▾" : "▸"}</span>
-                                  <span className="font-medium text-text-primary">{v.vendorName}</span>
-                                </td>
-                                <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(v.totalTagihan)}</td>
-                                <td className="px-3 py-[10px]">
-                                  <StatusPill tone="neutral">{v.invs.length} invoice</StatusPill>
-                                </td>
-                                <td className="px-3 py-[10px]" />
-                                <SysadminTd />
-                              </tr>
-                              {vendorActive &&
-                                v.invs.map((inv) => {
-                                  const invExpanded = expandedInvoiceId === inv.id;
-                                  const finalAmount = vendorInvoiceFinalAmount(inv);
-                                  const denda = vendorInvoiceAdjustmentTotal(inv, "DENDA");
-                                  const reward = vendorInvoiceAdjustmentTotal(inv, "REWARD");
-                                  // Item 2026-09-10 (feedback: info lampiran ekspedisi sebelum "Setujui
-                                  // invoice") -- cuma dihitung begitu baris ini di-expand (bukan tiap
-                                  // render semua invoice) supaya tidak ikut menjalankan
-                                  // hppRowsForInvoicePerRoll (lumayan berat, alokasi FIFO) utk baris
-                                  // yang collapsed.
-                                  const koliBreakdown = invExpanded
-                                    ? invoiceKoliBreakdown(inv, vendorInvoices, mrpDetails, staticMrps, productionBatches, productionResults, productionGroupMeta, rawInvoices, deliveryKolis, ekspedisiRates, itemSellingPrices)
-                                    : undefined;
-                                  return (
-                                    <Fragment key={inv.id}>
-                                      <tr
-                                        onClick={() => setExpandedInvoiceId(invExpanded ? "" : inv.id)}
-                                        title={inv.status === "SUBMITTED" ? "Klik untuk buka detail & Setujui invoice" : "Klik untuk buka detail"}
-                                        className={
-                                          "cursor-pointer border-b border-[#F1F4F7] font-sans text-[11.5px] text-[#31414F] hover:bg-[#FAFBFC] " +
-                                          (invExpanded ? "bg-info-bg" : inv.status === "SUBMITTED" ? "bg-warning-bg/40" : "")
-                                        }
-                                      >
-                                        <td className="py-[10px] pl-16 pr-3">
-                                          <div className="flex items-center">
-                                            <span className="mr-1.5 text-text-muted">{invExpanded ? "▾" : "▸"}</span>
-                                            <span className="font-mono font-medium text-text-primary">{inv.id}</span>
-                                          </div>
-                                          {/* Item revisi 2026-09-17 (owner: "jangan satu kolom begitu
-                                             dimuat semua" -- dulu inv.lines.map(mrpId).join(", ") tanpa
-                                             dedupe, jadi MRP yang sama muncul berkali-kali (1x per
-                                             baris warna/lengan) sekaligus numpuk di baris yang sama
-                                             dengan No Invoice): sekarang di-dedupe, dipindah ke baris
-                                             sendiri (bukan numpuk sebaris), dan MRP yang sedang dibuka
-                                             di pohon ini (m.mrpId) tidak diulang -- cuma MRP LAIN yang
-                                             invoice ini juga sentuh yang ditampilkan (kalau ada). */}
-                                          {Array.from(new Set(inv.lines.map((l) => l.mrpId)))
-                                            .filter((id) => id !== m.mrpId).length > 0 && (
-                                            <div className="mt-0.5 font-mono text-[10.5px] text-text-muted">
-                                              Juga di:{" "}
-                                              {Array.from(new Set(inv.lines.map((l) => l.mrpId)))
-                                                .filter((id) => id !== m.mrpId)
-                                                .join(", ")}
-                                            </div>
-                                          )}
-                                        </td>
-                                        <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">
-                                          {/* Item revisi 2026-09-17 (owner: "saya tidak ingin ada
-                                             tampilan net Rp... - denda Rp... di sini, berantakan" --
-                                             detail net/denda dipindah SELURUHNYA ke highlight
-                                             Denda/Reward di panel expand, kolom ini cuma nilai akhir). */}
-                                          {formatRupiah(finalAmount)}
-                                        </td>
-                                        <td className="px-3 py-[10px]">
-                                          <StatusPill tone={vendorInvoiceBadge(inv.status).tone}>{vendorInvoiceBadge(inv.status).label}</StatusPill>
-                                        </td>
-                                        <td className="px-3 py-[10px] font-mono text-[11px] text-text-muted">{inv.submittedAt}</td>
-                                        <SysadminTd actions={[...vendorInvoiceStatusCorrections(inv), ...vendorInvoiceVoidCorrections(inv)]} />
-                                      </tr>
-                                      {invExpanded && (
-                                        <tr>
-                                          <td colSpan={4 + (sysadminMode ? 1 : 0)} className="border-b border-[#F1F4F7] bg-[#FAFBFC] px-6 py-3">
+  function invoiceDetail(inv: VendorInvoice) {
+    const finalAmount = vendorInvoiceFinalAmount(inv);
+    const denda = vendorInvoiceAdjustmentTotal(inv, "DENDA");
+    const reward = vendorInvoiceAdjustmentTotal(inv, "REWARD");
+    // Hanya dihitung untuk invoice yang dibuka (alokasi FIFO per roll cukup berat).
+    const koliBreakdown = invoiceKoliBreakdown(inv, vendorInvoices, mrpDetails, staticMrps, productionBatches, productionResults, productionGroupMeta, rawInvoices, deliveryKolis, ekspedisiRates, itemSellingPrices);
+    return (
+      <div>
                   <div className="rounded-md border border-[#E4E9EE] bg-white p-3">
                     <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">Denda / reward sesuai kontrak</div>
                     {(inv.adjustments?.length ?? 0) > 0 && (
@@ -471,23 +319,60 @@ export function InvoiceVendorReviewPanel() {
                       </div>
                     );
                   })}
-                                          </td>
-                                        </tr>
-                                      )}
-                                    </Fragment>
-                                  );
-                                })}
-                            </Fragment>
-                          );
-                        })}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
       </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+        <KpiCard
+          label="Menunggu review"
+          value={waiting.length}
+          sub="klik untuk menyaring"
+          accent="orange"
+          active={preset.card === "review"}
+          onClick={() =>
+            setPreset((p) =>
+              p.card === "review"
+                ? { nonce: p.nonce + 1, filters: {} as Record<string, string[]>, card: "" }
+                : { nonce: p.nonce + 1, filters: { Status: ["Submitted"] }, card: "review" }
+            )
+          }
+        />
+        <KpiCard label="Nilai menunggu review" value={formatRupiah(waiting.reduce((s, i) => s + vendorInvoiceFinalAmount(i), 0))} valueClassName="text-[20px]" sub="invoice yang tampil" accent="purple" />
+        <KpiCard label="Jumlah invoice" value={shown.length} sub="invoice yang tampil" accent="blue" />
+        <KpiCard label="Total tagihan" value={formatRupiah(shown.reduce((s, i) => s + vendorInvoiceFinalAmount(i), 0))} valueClassName="text-[20px]" sub="invoice yang tampil" accent="teal" />
+      </div>
+
+      <DataTable<VendorInvoice>
+        title="Semua invoice vendor"
+        headerActions={
+          <Button
+            variant="ghost"
+            size="xs"
+            disabled={vendorInvoices.length === 0}
+            title="Unduh laporan Excel semua invoice vendor: header berwarna, ada filter, lengkap dengan kategori item."
+            onClick={() => exportVendorInvoiceExcel(vendorInvoices, mrpDetails, "Laporan-Invoice-Vendor-" + new Date().toISOString().slice(0, 10) + ".xlsx")}
+          >
+            Download laporan (Excel)
+          </Button>
+        }
+        columns={columns}
+        rows={sorted}
+        keyOf={(i) => i.id}
+        firstColumnLabel="No Invoice"
+        firstColumnRender={(i) => <span className="font-mono font-medium">{i.id}</span>}
+        filterDefs={filterDefs}
+        filterPreset={preset}
+        defaultGroupBy={["No. MRP", "Vendor"]}
+        search={{ placeholder: "Cari no invoice, MRP, vendor…", getText: (i) => `${i.id} ${mrpsOf(i).join(" ")} ${vendorName(i.vendorProduksi)} ${statusOf(i).label}` }}
+        rowClassName={(i) => (i.status === "SUBMITTED" ? "bg-warning-bg/40" : undefined)}
+        renderExpanded={(inv) => invoiceDetail(inv)}
+        onFilteredRows={(list) => setShownIds(new Set(list.map((i) => i.id)))}
+        emptyText="Belum ada invoice vendor."
+        nowrap
+      />
     </>
   );
 }

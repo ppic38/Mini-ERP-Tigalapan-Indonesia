@@ -128,6 +128,8 @@ export type MaterialPO = {
   approvalLevel?: number;
   approvalLog?: PoApprovalEntry[];
   approvalSubmittedAt?: string;
+  /** Tanggal PO Material dibuat (kolom created_at). Dipakai Tracking Item. */
+  createdAt?: string;
 };
 
 export type MaklonPoStatus =

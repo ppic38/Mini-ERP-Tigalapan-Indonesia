@@ -39,7 +39,14 @@ function onlyVendorPart(w: MrpWarnaBreakdown, vendor: string): MrpWarnaBreakdown
  *  pemesanan" ikut ke-scroll) — 2 penambahan MURNI tampilan, tidak mengubah data/perhitungan:
  *  (a) baris tanpa pesanan diberi LATAR warning (oren pastel) supaya lebih kentara dari sekadar
  *  teks abu-abu, (b) filter dropdown per warna supaya bisa fokus ke 1 warna tanpa scroll manual. */
-export function MrpWarnaBreakdownTable({ breakdown: allBreakdown }: { breakdown: MrpWarnaBreakdown[] }) {
+export function MrpWarnaBreakdownTable({
+  breakdown: allBreakdown,
+  vendorQty = true,
+}: {
+  breakdown: MrpWarnaBreakdown[];
+  /** false = kolom Vendor produksi hanya menampilkan nama vendor, tanpa pcs dan roll (dipakai halaman MRP PPIC). Bawaan true. */
+  vendorQty?: boolean;
+}) {
   const [filterWarna, setFilterWarna] = useState("");
   const [filterVendor, setFilterVendor] = useState("");
   const [query, setQuery] = useState("");
@@ -193,17 +200,24 @@ export function MrpWarnaBreakdownTable({ breakdown: allBreakdown }: { breakdown:
                   {w.vendors.length === 0 ? (
                     <span className="text-text-muted">—</span>
                   ) : (
+                    // Tanpa pcs/roll (vendorQty false): nama vendor sebaris dan boleh turun baris, supaya sel tidak memanjang ke bawah.
+                    !vendorQty ? (
+                      <span className="leading-snug">{w.vendors.map((v) => v.vendor).join(", ")}</span>
+                    ) : (
                     <div className="flex flex-col gap-0.5">
                       {w.vendors.map((v) => (
                         <div key={v.vendor} className="flex items-baseline gap-1.5 whitespace-nowrap">
                           <span className="font-medium">{v.vendor}</span>
-                          <span className="font-mono text-[10.5px] text-text-muted">
+                          {vendorQty && (
+<span className="font-mono text-[10.5px] text-text-muted">
                             {formatPcs(v.qty)} pcs · {v.roll.toLocaleString("id-ID")} roll
                           </span>
+)}
                         </div>
                       ))}
                       {w.vendors.length > 1 && <span className="mt-0.5 font-sans text-[10px] font-semibold text-info-fg">{w.vendors.length} vendor</span>}
                     </div>
+                    )
                   )}
                 </td>
               </tr>

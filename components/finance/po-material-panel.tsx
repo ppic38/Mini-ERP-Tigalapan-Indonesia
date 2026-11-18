@@ -1,6 +1,7 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import Link from "next/link";
 import { StatusPill } from "@/components/ui/status-pill";
 import { poApprovalState, poApprovalSummary } from "@/lib/mrp/poApproval";
@@ -16,11 +17,12 @@ import {
   materialPoFullStatus,
   materialPoFullStatusBadge,
   mrpDetailFor,
+  poDisplayNo,
   isSyntheticSupplier,
 } from "@/lib/mrp/derive";
 import { countPendingMaterialPoForMrp, pendingMarker } from "@/lib/shell/badges";
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "@/lib/mrp/seed";
-import { SysadminTd, SysadminTh } from "@/components/sysadmin/correction-dialog";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { materialPoCorrections } from "@/components/sysadmin/procurement-corrections";
 import type { ColorBreakdown, MaterialPO } from "@/lib/mrp/types";
@@ -148,9 +150,6 @@ export function PoMaterialPanel() {
   // Vendor Produksi, kolom Supplier/Vendor dipisah") -- dulu DataTable flat 1 baris per PO dengan
   // kolom gabungan "Supplier / vendor". Sekarang tabel pohon 3 tingkat, gaya visual sama dengan
   // tree Purchase Order (app/procurement/po-approval/page.tsx).
-  const [expandedMrpApproved, setExpandedMrpApproved] = useState<string | null>(null);
-  const [expandedSupplierApproved, setExpandedSupplierApproved] = useState<string | null>(null);
-  const [expandedPoApproved, setExpandedPoApproved] = useState<string | null>(null);
 
   // Entitas sekarang disimpan PER WARNA (po.colorBreakdown[].entitas) — bukan cuma per PO — jadi
   // "sudah pilih entitas" dicek langsung dari data itu (bukan state lokal terpisah yang gampang
@@ -256,40 +255,85 @@ export function PoMaterialPanel() {
     return materialPoFullStatusBadge(materialPoFullStatus(p, invoices, productionBatches, productionResults, mrpDetails, deliveryKolis, vendorInvoices, maklonPOs));
   }
 
-  // Pohon 3 tingkat untuk "PO Material disetujui": No MRP -> Supplier -> Vendor Produksi (leaf = 1 PO).
-  const approvedMrpSummaries = (() => {
-    const map = new Map<string, MaterialPO[]>();
-    for (const p of approved) {
-      if (!map.has(p.mrpId)) map.set(p.mrpId, []);
-      map.get(p.mrpId)!.push(p);
-    }
-    return Array.from(map.entries())
-      .map(([mrpId, pos]) => ({
-        mrpId,
-        pos,
-        supplierCount: new Set(pos.map((p) => p.supplier)).size,
-        totalRoll: pos.reduce((sum, p) => sum + p.rollCount, 0),
-        totalNilai: pos.reduce((sum, p) => sum + p.amount, 0),
-      }))
-      .sort((a, b) => compareNewestFirst(mrpDetails.find((d) => d.mrp.id === a.mrpId)?.dates?.created, a.mrpId, mrpDetails.find((d) => d.mrp.id === b.mrpId)?.dates?.created, b.mrpId));
-  })();
-
-  function approvedSupplierSummariesForMrp(pos: MaterialPO[]) {
-    const map = new Map<string, MaterialPO[]>();
-    for (const p of pos) {
-      if (!map.has(p.supplier)) map.set(p.supplier, []);
-      map.get(p.supplier)!.push(p);
-    }
-    return Array.from(map.entries())
-      .map(([supplier, ps]) => ({
-        supplier,
-        pos: ps,
-        vendorCount: new Set(ps.map((p) => p.vendorProduksi)).size,
-        totalRoll: ps.reduce((sum, p) => sum + p.rollCount, 0),
-        totalNilai: ps.reduce((sum, p) => sum + p.amount, 0),
-      }))
-      .sort((a, b) => a.supplier.localeCompare(b.supplier, "id-ID"));
-  }
+  // Riwayat PO Material (pola PPIC): satu tabel bersama, kelompok bawaan No MRP > Supplier, rincian warna di panel samping.
+  const vendorLabel = (p: MaterialPO) => VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi;
+  const statusOf = (p: MaterialPO) => (p.approved ? approvedStatusBadge(p) : { tone: "warning" as const, label: poApprovalSummary(poApprovalState(p)) });
+  const mrpOrder = new Map(
+    approved
+      .map((p) => p.mrpId)
+      .filter((v, i, arr) => arr.indexOf(v) === i)
+      .sort((a, b) => compareNewestFirst(mrpDetails.find((d) => d.mrp.id === a)?.dates?.created, a, mrpDetails.find((d) => d.mrp.id === b)?.dates?.created, b))
+      .map((id, i) => [id, i] as const)
+  );
+  const historyRows = [...approved].sort((a, b) => (mrpOrder.get(a.mrpId) ?? 0) - (mrpOrder.get(b.mrpId) ?? 0));
+  const historyColumns: ColumnDef<MaterialPO>[] = [
+    { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (p) => <SysadminActionsBar compact actions={materialPoCorrections(p)} /> },
+    { key: "mrp", label: "No. MRP", default: false, render: (p) => <span className="font-mono">{p.mrpId}</span> },
+    { key: "supplier", label: "Supplier", default: false, render: (p) => p.supplier },
+    { key: "po", label: "No PO", default: true, render: (p) => <span className="font-mono" title={p.id}>{poDisplayNo(p.id, p.entity)}</span> },
+    { key: "entitas", label: "Entitas", default: false, render: (p) => p.entity ?? "—" },
+    { key: "roll", label: "Roll", default: true, align: "right", aggregate: aggSum((p) => p.rollCount, (n) => <span className="font-semibold">{n.toLocaleString("id-ID")}</span>), render: (p) => <span className="font-mono">{p.rollCount}</span> },
+    { key: "nilai", label: "Nilai", default: true, align: "right", aggregate: aggSum((p) => p.amount, (n) => <span className="font-semibold">{formatRupiah(n)}</span>), render: (p) => <span className="font-mono">{formatRupiah(p.amount)}</span> },
+    {
+      key: "status",
+      label: "Status",
+      default: true,
+      render: (p) => (
+        <div className="flex flex-col gap-1">
+          <StatusPill tone={statusOf(p).tone}>{statusOf(p).label}</StatusPill>
+          <ApprovalChain state={poApprovalState(p)} />
+        </div>
+      ),
+    },
+  ];
+  const renderHistoryDetail = (p: MaterialPO) => {
+    const showKerahManset = poHasKerahManset(p, mrpDetails);
+    const gridColsClass = showKerahManset ? "grid-cols-9" : "grid-cols-7";
+    return (
+      <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
+        <div className={`grid ${gridColsClass} gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted`}>
+          <span>Warna / lengan</span>
+          <span className="text-right">Roll</span>
+          <span className="text-right">Rib (kg)</span>
+          {showKerahManset && <span className="text-right">Kerah (kg)</span>}
+          {showKerahManset && <span className="text-right">Manset (kg)</span>}
+          <span className="text-right">Harga/Kg</span>
+          <span className="text-right">Nilai material (estimasi)</span>
+          <span className="text-right">Biaya maklon (estimasi)</span>
+          <span>Entitas</span>
+        </div>
+        {p.colorBreakdown.map((c, i) => {
+          const hargaPerKg = hargaPerKgForColor(p.supplier, c, hargaKain, hargaKainPks);
+          return (
+            <div key={i} className={`grid ${gridColsClass} items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]`}>
+              <span className="font-medium">
+                {c.warna} · {c.lengan}
+              </span>
+              <span className="text-right font-mono">{c.rollCount}</span>
+              <span className="text-right font-mono">{ribKgForColor(p.mrpId, c, mrpDetails).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>
+              {showKerahManset && <span className="text-right font-mono">{kerahKgForColor(p.mrpId, c, mrpDetails).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>}
+              {showKerahManset && <span className="text-right font-mono">{mansetKgForColor(p.mrpId, c, mrpDetails).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>}
+              <span className="text-right font-mono">{hargaPerKg != null ? formatRupiah(hargaPerKg) : "—"}</span>
+              <span className="text-right font-mono">{formatRupiah(materialLineValue(p, c, hargaKain, hargaKainPks))}</span>
+              <span className="text-right font-mono">{formatRupiah(maklonFeeForColorLine(p, c, maklonPOs, mrpDetails))}</span>
+              <span>{c.entitas ?? "—"}</span>
+            </div>
+          );
+        })}
+        <div className={`grid ${gridColsClass} gap-x-2 border-t-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[11.5px] font-semibold text-info-fg`}>
+          <span>Subtotal PO {poDisplayNo(p.id, p.entity)}</span>
+          <span className="text-right font-mono">{p.rollCount} roll</span>
+          <span />
+          {showKerahManset && <span />}
+          {showKerahManset && <span />}
+          <span />
+          <span className="text-right font-mono">{formatRupiah(p.amount)}</span>
+          <span className="text-right font-mono">{formatRupiah(p.colorBreakdown.reduce((a, c) => a + maklonFeeForColorLine(p, c, maklonPOs, mrpDetails), 0))}</span>
+          <span />
+        </div>
+      </div>
+    );
+  };
 
   return (
     <>
@@ -588,173 +632,28 @@ export function PoMaterialPanel() {
         </div>
       )}
 
-      <div className="overflow-hidden border border-border-subtle bg-surface-card">
-        <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Riwayat PO Material (disetujui &amp; sedang berjalan)</div>
-        {approvedMrpSummaries.length === 0 && (
-          <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada riwayat PO material.</div>
-        )}
-        {approvedMrpSummaries.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
-              <thead>
-                <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
-                  <th className="px-5 py-[9px] text-left">No MRP / Supplier / Vendor Produksi</th>
-                  <th className="px-3 py-[9px] text-right">Roll</th>
-                  <th className="px-3 py-[9px] text-right">Nilai</th>
-                  <th className="px-3 py-[9px] text-left">Status</th>
-                  <SysadminTh />
-                </tr>
-              </thead>
-              <tbody>
-                {approvedMrpSummaries.map((m) => {
-                  const mrpActive = expandedMrpApproved === m.mrpId;
-                  return (
-                    <Fragment key={m.mrpId}>
-                      <tr
-                        onClick={() => {
-                          const next = mrpActive ? null : m.mrpId;
-                          setExpandedMrpApproved(next);
-                          setExpandedSupplierApproved(null);
-                          setExpandedPoApproved(null);
-                        }}
-                        className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] hover:bg-[#FAFBFC] " + (mrpActive ? "bg-info-bg" : "")}
-                      >
-                        <td className="px-5 py-[11px]">
-                          <span className="mr-1.5 text-text-muted">{mrpActive ? "▾" : "▸"}</span>
-                          <span className="font-mono font-semibold text-text-primary">{m.mrpId}</span>
-                          <span className="ml-1.5 font-sans text-[10.5px] text-text-muted">{m.supplierCount} supplier</span>
-                        </td>
-                        <td className="px-3 py-[11px] text-right font-mono tabular-nums">{m.totalRoll} roll</td>
-                        <td className="px-3 py-[11px] text-right font-mono tabular-nums font-medium">{formatRupiah(m.totalNilai)}</td>
-                        <td className="px-3 py-[11px]">
-                          <StatusPill tone="neutral">{m.pos.length} PO</StatusPill>
-                        </td>
-                      <SysadminTd className="py-[11px]" />
-                      </tr>
-                      {mrpActive &&
-                        approvedSupplierSummariesForMrp(m.pos).map((s) => {
-                          const supplierKey = `${m.mrpId}::${s.supplier}`;
-                          const supplierActive = expandedSupplierApproved === supplierKey;
-                          return (
-                            <Fragment key={supplierKey}>
-                              <tr
-                                onClick={() => {
-                                  const next = supplierActive ? null : supplierKey;
-                                  setExpandedSupplierApproved(next);
-                                  setExpandedPoApproved(null);
-                                }}
-                                className={"cursor-pointer border-b border-[#F1F4F7] bg-[#FBFCFD] font-sans text-[11.5px] text-[#31414F] hover:bg-[#F2F5F8] " + (supplierActive ? "bg-info-bg" : "")}
-                              >
-                                <td className="py-[10px] pl-10 pr-3">
-                                  <span className="mr-1.5 text-text-muted">{supplierActive ? "▾" : "▸"}</span>
-                                  <span className="font-medium text-text-primary">{s.supplier}</span>
-                                  <span className="ml-1.5 font-sans text-[10.5px] text-text-muted">{s.vendorCount} vendor</span>
-                                </td>
-                                <td className="px-3 py-[10px] text-right font-mono tabular-nums">{s.totalRoll} roll</td>
-                                <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(s.totalNilai)}</td>
-                                <td className="px-3 py-[10px]">
-                                  <StatusPill tone="neutral">{s.pos.length} PO</StatusPill>
-                                </td>
-                                <SysadminTd />
-                              </tr>
-                              {supplierActive &&
-                                s.pos.map((p) => {
-                                  const poActive = expandedPoApproved === p.id;
-                                  // PO yang belum final: tampilkan posisi approval-nya (mis. "Menunggu Level 4 (General Manager)").
-                                  const badge = p.approved ? approvedStatusBadge(p) : { tone: "warning" as const, label: poApprovalSummary(poApprovalState(p)) };
-                                  const showKerahManset = poHasKerahManset(p, mrpDetails);
-                                  const gridColsClass = showKerahManset ? "grid-cols-9" : "grid-cols-7";
-                                  return (
-                                    <Fragment key={p.id}>
-                                      <tr
-                                        onClick={() => setExpandedPoApproved(poActive ? null : p.id)}
-                                        className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-[11.5px] text-[#31414F] hover:bg-[#FAFBFC] " + (poActive ? "bg-info-bg" : "")}
-                                      >
-                                        <td className="py-[10px] pl-16 pr-3">
-                                          <span className="mr-1.5 text-text-muted">{poActive ? "▾" : "▸"}</span>
-                                          <span className="font-medium text-text-primary">{VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi}</span>
-                                          <span className="ml-1.5 font-mono text-[10.5px] text-text-muted">{p.id}</span>
-                                        </td>
-                                        <td className="px-3 py-[10px] text-right font-mono tabular-nums">{p.rollCount} roll</td>
-                                        <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(p.amount)}</td>
-                                        <td className="px-3 py-[10px]">
-                                          <div className="flex flex-col gap-1">
-                                            <StatusPill tone={badge.tone}>{badge.label}</StatusPill>
-                                            {/* Revisi 2026-09-28 (owner: "kita bisa tau juga siapa2 sudah approve") --
-                                               PO Level 1-2 (selesai di Procurement) TETAP tampil di sini (tidak
-                                               disaring), sekarang jelas kelihatan sampai level mana & siapa yang
-                                               approve, bukan cuma label "disetujui" polos. */}
-                                            <ApprovalChain state={poApprovalState(p)} />
-                                          </div>
-                                        </td>
-                                        <SysadminTd actions={materialPoCorrections(p)} />
-                                      </tr>
-                                      {poActive && (
-                                        <tr>
-                                          <td colSpan={4 + (sysadminMode ? 1 : 0)} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
-                                            <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
-                                              <div className={`grid ${gridColsClass} gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted`}>
-                                                <span>Warna / lengan</span>
-                                                <span className="text-right">Roll</span>
-                                                <span className="text-right">Rib (kg)</span>
-                                                {showKerahManset && <span className="text-right">Kerah (kg)</span>}
-                                                {showKerahManset && <span className="text-right">Manset (kg)</span>}
-                                                <span className="text-right">Harga/Kg</span>
-                                                <span className="text-right">Nilai material (estimasi)</span>
-                                                <span className="text-right">Biaya maklon (estimasi)</span>
-                                                <span>Entitas</span>
-                                              </div>
-                                              {p.colorBreakdown.map((c, i) => {
-                                                const hargaPerKg = hargaPerKgForColor(p.supplier, c, hargaKain, hargaKainPks);
-                                                return (
-                                                  <div key={i} className={`grid ${gridColsClass} items-center gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]`}>
-                                                    <span className="font-medium">
-                                                      {c.warna} · {c.lengan}
-                                                    </span>
-                                                    <span className="text-right font-mono">{c.rollCount}</span>
-                                                    <span className="text-right font-mono">{ribKgForColor(p.mrpId, c, mrpDetails).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>
-                                                    {showKerahManset && (
-                                                      <span className="text-right font-mono">{kerahKgForColor(p.mrpId, c, mrpDetails).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>
-                                                    )}
-                                                    {showKerahManset && (
-                                                      <span className="text-right font-mono">{mansetKgForColor(p.mrpId, c, mrpDetails).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>
-                                                    )}
-                                                    <span className="text-right font-mono">{hargaPerKg != null ? formatRupiah(hargaPerKg) : "—"}</span>
-                                                    <span className="text-right font-mono">{formatRupiah(materialLineValue(p, c, hargaKain, hargaKainPks))}</span>
-                                                    <span className="text-right font-mono">{formatRupiah(maklonFeeForColorLine(p, c, maklonPOs, mrpDetails))}</span>
-                                                    <span>{c.entitas ?? "—"}</span>
-                                                  </div>
-                                                );
-                                              })}
-                                              <div className={`grid ${gridColsClass} gap-x-2 border-t-2 border-accent-blue bg-info-bg px-3 py-1.5 font-sans text-[11.5px] font-semibold text-info-fg`}>
-                                                <span>Subtotal PO {p.id}</span>
-                                                <span className="text-right font-mono">{p.rollCount} roll</span>
-                                                <span />
-                                                {showKerahManset && <span />}
-                                                {showKerahManset && <span />}
-                                                <span />
-                                                <span className="text-right font-mono">{formatRupiah(p.amount)}</span>
-                                                <span className="text-right font-mono">{formatRupiah(p.colorBreakdown.reduce((a, c) => a + maklonFeeForColorLine(p, c, maklonPOs, mrpDetails), 0))}</span>
-                                                <span />
-                                              </div>
-                                            </div>
-                                          </td>
-                                        </tr>
-                                      )}
-                                    </Fragment>
-                                  );
-                                })}
-                            </Fragment>
-                          );
-                        })}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      {historyRows.length === 0 ? (
+        <div className="rounded-lg border border-border-subtle bg-surface-card px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada riwayat PO material.</div>
+      ) : (
+        <DataTable<MaterialPO>
+          title="Riwayat PO Material (disetujui & sedang berjalan)"
+          columns={historyColumns}
+          rows={historyRows}
+          keyOf={(p) => p.id}
+          firstColumnLabel="Vendor Produksi"
+          firstColumnRender={(p) => <span className="font-medium">{vendorLabel(p)}</span>}
+          defaultGroupBy={["No. MRP", "Supplier"]}
+          filterDefs={[
+            { label: "No. MRP", options: Array.from(mrpOrder.keys()), test: (p, v) => p.mrpId === v },
+            { label: "Supplier", options: Array.from(new Set(historyRows.map((p) => p.supplier))).sort(), test: (p, v) => p.supplier === v },
+            { label: "Vendor Produksi", options: Array.from(new Set(historyRows.map(vendorLabel))).sort(), test: (p, v) => vendorLabel(p) === v },
+            { label: "Status", options: Array.from(new Set(historyRows.map((p) => statusOf(p).label))), test: (p, v) => statusOf(p).label === v },
+          ]}
+          search={{ placeholder: "Cari No PO, MRP, supplier, vendor…", getText: (p) => `${p.id} ${p.mrpId} ${p.supplier} ${vendorLabel(p)} ${statusOf(p).label}` }}
+          renderExpanded={renderHistoryDetail}
+          emptyText="Belum ada riwayat PO material."
+        />
+      )}
     </>
   );
 }

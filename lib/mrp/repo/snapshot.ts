@@ -687,6 +687,7 @@ export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean; vers
       approvalLevel: p.approval_level ?? undefined,
       approvalLog: (p.approval_log ?? []) as PoApprovalEntry[],
       approvalSubmittedAt: p.approval_submitted_at ?? undefined,
+      createdAt: p.created_at ?? undefined,
     };
   });
 

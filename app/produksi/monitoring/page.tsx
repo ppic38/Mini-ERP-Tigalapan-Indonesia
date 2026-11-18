@@ -4,7 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
 import {
   formatDate,
@@ -742,8 +742,8 @@ export default function ProduksiMonitoringPage() {
       render: (g) => <span className="font-mono text-[11px]">{g.vendorPOs.length <= 2 ? g.vendorPOs.map((p) => p.id).join(", ") : `${g.vendorPOs.length} PO`}</span>,
     },
     { key: "vendorCount", label: "Vendor", default: true, sortValue: vendorLabel, render: vendorLabel },
-    { key: "qty", label: "Total Qty", default: true, align: "right", sortValue: (g) => g.vendorPOs.reduce((a, p) => a + p.qty, 0), render: (g) => formatPcs(g.vendorPOs.reduce((a, p) => a + p.qty, 0)) + " pcs" },
-    { key: "nilai", label: "Total Nilai", default: true, align: "right", sortValue: (g) => g.vendorPOs.reduce((a, p) => a + p.amount, 0), render: (g) => formatRupiah(g.vendorPOs.reduce((a, p) => a + p.amount, 0)) },
+    { key: "qty", aggregate: aggSum((g) => g.vendorPOs.reduce((a, p) => a + p.qty, 0), (n) => <span className="font-semibold">{formatPcs(n) + " pcs"}</span>), label: "Total Qty", default: true, align: "right", sortValue: (g) => g.vendorPOs.reduce((a, p) => a + p.qty, 0), render: (g) => formatPcs(g.vendorPOs.reduce((a, p) => a + p.qty, 0)) + " pcs" },
+    { key: "nilai", aggregate: aggSum((g) => g.vendorPOs.reduce((a, p) => a + p.amount, 0), (n) => <span className="font-semibold">{formatRupiah(n)}</span>), label: "Total Nilai", default: true, align: "right", sortValue: (g) => g.vendorPOs.reduce((a, p) => a + p.amount, 0), render: (g) => formatRupiah(g.vendorPOs.reduce((a, p) => a + p.amount, 0)) },
     {
       key: "status",
       label: "Status",

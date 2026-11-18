@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { useMrpStore } from "@/lib/mrp/store";
 import { formatPcs, vendorItemSizeProgress } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -156,11 +156,11 @@ export default function ProduksiRejectPage() {
       default: true,
       render: (g) => (g.vendorPOs.length === 1 ? (VENDOR_PRODUKSI[g.vendorPOs[0].vendorProduksi]?.name ?? g.vendorPOs[0].vendorProduksi) : `${g.vendorPOs.length} vendor`),
     },
-    { key: "reject", label: "Total Reject", default: true, align: "right", render: (g) => <span className="text-danger-fg">{formatPcs(g.summary.reject)}</span> },
-    { key: "rework", label: "Sudah Rework", default: true, align: "right", render: (g) => <span className="text-warning-fg">{formatPcs(g.summary.rework)}</span> },
-    { key: "sisa", label: "Sisa Reject", default: true, align: "right", render: (g) => <span className="font-semibold">{formatPcs(g.summary.sisa)}</span> },
-    { key: "material", label: "Reject Material", default: true, align: "right", render: (g) => formatPcs(g.summary.material) },
-    { key: "proses", label: "Reject Produksi / Proses", default: true, align: "right", render: (g) => formatPcs(g.summary.proses) },
+    { key: "reject", aggregate: aggSum((g) => g.summary.reject, (n) => <span className="font-semibold">{formatPcs(n)}</span>), label: "Total Reject", default: true, align: "right", render: (g) => <span className="text-danger-fg">{formatPcs(g.summary.reject)}</span> },
+    { key: "rework", aggregate: aggSum((g) => g.summary.rework, (n) => <span className="font-semibold">{formatPcs(n)}</span>), label: "Sudah Rework", default: true, align: "right", render: (g) => <span className="text-warning-fg">{formatPcs(g.summary.rework)}</span> },
+    { key: "sisa", aggregate: aggSum((g) => g.summary.sisa, (n) => <span className="font-semibold">{formatPcs(n)}</span>), label: "Sisa Reject", default: true, align: "right", render: (g) => <span className="font-semibold">{formatPcs(g.summary.sisa)}</span> },
+    { key: "material", aggregate: aggSum((g) => g.summary.material, (n) => <span className="font-semibold">{formatPcs(n)}</span>), label: "Reject Material", default: true, align: "right", render: (g) => formatPcs(g.summary.material) },
+    { key: "proses", aggregate: aggSum((g) => g.summary.proses, (n) => <span className="font-semibold">{formatPcs(n)}</span>), label: "Reject Produksi / Proses", default: true, align: "right", render: (g) => formatPcs(g.summary.proses) },
     {
       key: "status",
       label: "Status",

@@ -1,8 +1,8 @@
 import type { MrpDetail } from "./store";
-import { SIZE_ORDER, compareNoKoli } from "./derive";
+import { SIZE_ORDER, compareNoKoli, targetSizesForBatch } from "./derive";
 import { LT_CUTTING_KE_FG, LT_FG_KE_KIRIM, dayKey, ltTiba, maxDay, minDay, parseLooseDay, plusDays } from "./itemEstimates";
 import type { WosKoliStatus } from "./wosStatusMap";
-import type { DeliveryKoli, Lengan, ProductionBatch, ProductionResult, RawMaterialInvoice, WarehouseReceipt } from "./types";
+import type { AduanPolaRow, DeliveryKoli, Lengan, MaterialPO, ProductionBatch, ProductionResult, RawMaterialInvoice, WarehouseReceipt } from "./types";
 
 /** Tracking Item (PPIC dan SCM, owner 2026-10-26): memantau SATU ITEM (warna + lengan + size, mis. "HITAM 24S PDK L"), bukan satu warna, dari rencana
  *  MRP sampai diterima gudang. Semua angka turunan dari data yang sudah ada:
@@ -168,6 +168,9 @@ export type ItemTrackingExtra = {
   invoices?: RawMaterialInvoice[];
   /** Status penerimaan DC per koli dari WOS (tab ERP_INCOMING); kosong = integrasi belum aktif. */
   wosByKoli?: Record<string, WosKoliStatus>;
+  /** Untuk tanggal Tracking per roll: hasil FG (tanggal FG pertama per roll) dan PO Material (tanggal PO). */
+  results?: ProductionResult[];
+  materialPOs?: MaterialPO[];
 };
 
 export function buildItemTracking(
@@ -405,4 +408,348 @@ export function koliRowsForItem(item: ItemTrackRow, kolis: DeliveryKoli[], recei
   return out.sort(
     (a, b) => b.mrpId.localeCompare(a.mrpId, undefined, { numeric: true }) || a.vendorProduksi.localeCompare(b.vendorProduksi) || (a.noResi ?? "").localeCompare(b.noResi ?? "") || compareNoKoli(a.noKoli, b.noKoli)
   );
+}
+
+/* ------------------------------------------------------------------------------------------------------------------------------
+ * Tracking per ROLL x SIZE (owner 2026-11-16, revisi: "line seperti Detail Roll HPP; aduan M-L = 2 line, M-M = 1 line, karena
+ * produksi by aduan"). Satu baris = satu roll (production_batches) x satu size aduan roll itu:
+ *   target     : target roll itu = target aduan diprorata menurut jumlah roll (targetSizesForBatch, sama dengan form Cutting vendor)
+ *   cutting/FG : hasil cutting dan Finish Good roll itu (`sizeQty`, `fgSizeQty`); reject = cutting - FG kalau roll sudah ditutup
+ *   koli       : item koli yang roll asalnya (sourceBatchId) roll itu
+ * Roll yang belum di-resting belum punya kode roll: sisa target aduannya tampil sebagai satu baris per size berstatus
+ * "Belum resting". Yang tidak bisa ditelusuri ke satu roll (FG rework dan sisa kain, koli lama tanpa roll asal) menjadi baris
+ * "Rework / tanpa roll", dan target tanpa vendor menjadi "Belum dialokasikan"; keduanya selisih terhadap angka sel Tracking Item
+ * (buildItemTracking), sehingga jumlah semua baris sama dengan angka sel itu.
+ * ------------------------------------------------------------------------------------------------------------------------------ */
+
+/** Urutan tahapan baris (dipakai status dan filter). */
+// Nama status mengikuti status staging standar (lib/mrp/flowStatus.ts, owner 2026-11-16). "Belum dialokasikan" dan "Belum resting" tetap: baris rencana
+// belum punya roll, jadi tahap materialnya tidak bisa ditentukan per baris.
+export const ADUAN_STAGES = ["Belum dialokasikan", "Belum resting", "Resting", "Cutting", "Finish Good", "Done FG", "Packing", "Delivery", "GR DC"] as const;
+export type AduanStage = (typeof ADUAN_STAGES)[number];
+
+export type AduanTrackRow = {
+  key: string;
+  /** Kunci sel Tracking Item (MRP|vendor|warna|lengan|size), dipakai export. */
+  cellKey: string;
+  mrpId: string;
+  vendorProduksi: string;
+  /** Kode aduan (kosong untuk baris sisa / belum dialokasikan). */
+  kode: string;
+  /** Kode roll (kosong kalau belum resting atau baris sisa). */
+  codeRoll: string;
+  /** "roll" = roll yang sudah di-resting; "rencana" = roll aduan yang belum di-resting; "sisa" = rework / tanpa roll asal;
+   *  "belum" = target belum dialokasikan ke vendor. */
+  jenis: "roll" | "rencana" | "sisa" | "belum";
+  /** Jumlah roll di baris ini: 1 untuk baris roll, sisa roll rencana untuk baris "rencana". */
+  qtyRoll: number;
+  /** Penanda roll yang sama di beberapa baris size (id roll, atau "rencana|{id aduan}"). Dipakai menjumlah roll tanpa
+   *  menghitung satu roll dua kali (aduan M-L = satu roll di dua baris). Kosong untuk baris sisa. */
+  rollKey: string;
+  kategori: string;
+  warna: string;
+  lengan: Lengan;
+  size: string;
+  itemName: string;
+  target: number;
+  cutting: number;
+  fg: number;
+  reject: number;
+  diKoli: number;
+  dikirim: number;
+  tibaDc: number;
+  diterima: number;
+  belumCutting: number;
+  cuttingWip: number;
+  fgWip: number;
+  perjalanan: number;
+  status: AduanStage;
+  /** Tanggal PO Material (PO yang memuat warna x lengan ini untuk vendor itu; paling awal). */
+  poMaterialAt?: string;
+  /** Tanggal bahan dikirim ke vendor (Set Delivery invoice bahan) dan tanggal roll diterima vendor (Good Receive). Baris roll
+   *  memakai invoice yang memuat code roll itu; baris lain memakai yang paling awal untuk MRP x vendor x warna x lengan. */
+  deliveryAt?: string;
+  grAt?: string;
+  restingAt?: string;
+  cuttingAt?: string;
+  /** Tanggal Finish Good pertama roll x size ini (catatan hasil "Roll {kode}", sama dengan export WIP). */
+  fgFirstAt?: string;
+  closedAt?: string;
+  koliFirstAt?: string;
+  shipLastAt?: string;
+  estTiba?: string;
+  shipDates: string[];
+  koliNos: string[];
+};
+
+const SUM_FIELDS = ["target", "cutting", "fg", "reject", "diKoli", "dikirim", "tibaDc", "diterima"] as const;
+
+export function buildAduanTracking(
+  items: ItemTrackRow[],
+  mrpDetails: MrpDetail[],
+  batches: ProductionBatch[],
+  kolis: DeliveryKoli[],
+  receipts: WarehouseReceipt[],
+  extra: ItemTrackingExtra = {}
+): AduanTrackRow[] {
+  const active = mrpDetails.filter((d) => d.ppicApproval !== "REJECTED");
+  const activeIds = new Set(active.map((d) => d.mrp.id));
+  const kategoriOf = new Map<string, string>();
+  for (const d of active) for (const g of d.lenganGroups) kategoriOf.set(`${d.mrp.id}|${g.warna}|${g.lengan}`, g.kategori || d.mrp.kategori || "");
+  const aduanById = new Map<string, { mrpId: string; a: AduanPolaRow; aduanRows: AduanPolaRow[] }>();
+  for (const d of active) for (const a of d.aduanRows) aduanById.set(a.id, { mrpId: d.mrp.id, a, aduanRows: d.aduanRows });
+
+  const rows = new Map<string, AduanTrackRow>();
+  const blank = (key: string, mrpId: string, vendor: string, kode: string, codeRoll: string, jenis: AduanTrackRow["jenis"], warna: string, lengan: Lengan, size: string): AduanTrackRow => ({
+    key,
+    cellKey: `${mrpId}|${vendor}|${warna}|${lengan}|${size}`,
+    mrpId,
+    vendorProduksi: vendor,
+    kode,
+    codeRoll,
+    jenis,
+    qtyRoll: 0,
+    rollKey: "",
+    kategori: kategoriOf.get(`${mrpId}|${warna}|${lengan}`) ?? "",
+    warna,
+    lengan,
+    size,
+    itemName: itemNameOf(warna, lengan, size),
+    target: 0,
+    cutting: 0,
+    fg: 0,
+    reject: 0,
+    diKoli: 0,
+    dikirim: 0,
+    tibaDc: 0,
+    diterima: 0,
+    belumCutting: 0,
+    cuttingWip: 0,
+    fgWip: 0,
+    perjalanan: 0,
+    status: "GR DC",
+    shipDates: [],
+    koliNos: [],
+  });
+
+  // Baris roll: satu per roll x size (size aduan, ditambah size lain yang muncul di hasil roll, mis. alih size).
+  const batchById = new Map<string, ProductionBatch>();
+  const startedByAduan = new Map<string, ProductionBatch[]>();
+  const rollRow = (b: ProductionBatch, size: string) => {
+    const key = `${b.id}|${size}`;
+    let r = rows.get(key);
+    if (!r) {
+      const info = aduanById.get(b.aduanRowId);
+      r = blank(key, b.mrpId, b.vendorProduksi, info?.a.kode ?? b.kode ?? "", b.codeRoll ?? "", "roll", b.warna, b.lengan, size);
+      r.qtyRoll = 1;
+      r.rollKey = b.id;
+      r.restingAt = b.restingAt ? dayKey(b.restingAt) : undefined;
+      r.cuttingAt = b.cuttingAt ? dayKey(b.cuttingAt) : undefined;
+      r.closedAt = b.closedAt ? dayKey(b.closedAt) : undefined;
+      rows.set(key, r);
+    }
+    return r;
+  };
+  for (const b of batches) {
+    if (!activeIds.has(b.mrpId)) continue;
+    batchById.set(b.id, b);
+    const info = aduanById.get(b.aduanRowId);
+    if (info) {
+      const list = startedByAduan.get(b.aduanRowId);
+      if (list) list.push(b);
+      else startedByAduan.set(b.aduanRowId, [b]);
+    }
+    const target = info ? targetSizesForBatch(b, info.aduanRows) : {};
+    const sizes = new Set([...Object.keys(target), ...Object.keys(b.cuttingAt ? (b.sizeQty ?? {}) : {}), ...Object.keys(b.fgSizeQty ?? {})]);
+    for (const size of sizes) {
+      const r = rollRow(b, size);
+      r.target += target[size] ?? 0;
+      const cut = b.cuttingAt ? (b.sizeQty?.[size] ?? 0) : 0;
+      const fg = b.fgSizeQty?.[size] ?? 0;
+      r.cutting += cut;
+      r.fg += fg;
+      if (b.closedAt) r.reject += Math.max(0, cut - fg);
+    }
+  }
+
+  // Baris rencana: roll aduan yang belum di-resting (belum ada kode roll), sisa target per size.
+  for (const [aduanId, info] of aduanById) {
+    const started = startedByAduan.get(aduanId) ?? [];
+    const plan = Math.max(started.length, Math.ceil(info.a.qtyRoll - 0.01));
+    const restRolls = plan - started.length;
+    if (started.length === 0 && restRolls <= 0) continue;
+    const usedTarget: Record<string, number> = {};
+    for (const b of started) for (const [size, q] of Object.entries(targetSizesForBatch(b, info.aduanRows))) usedTarget[size] = (usedTarget[size] ?? 0) + q;
+    for (const s of info.a.sizes) {
+      const rest = s.qty - (usedTarget[s.size] ?? 0);
+      // Target per roll dibulatkan, jadi jumlahnya bisa lebih/kurang beberapa pcs dari target aduan. Kalau tidak ada roll
+      // rencana yang menampung selisihnya, selisih itu dibebankan ke roll terakhir supaya jumlah target tetap = target aduan.
+      if (restRolls <= 0 || rest <= 0) {
+        const last = started[started.length - 1];
+        const lastRow = last ? rows.get(`${last.id}|${s.size}`) : undefined;
+        if (rest !== 0 && lastRow) lastRow.target = Math.max(0, lastRow.target + rest);
+        continue;
+      }
+      const r = blank(`rencana|${aduanId}|${s.size}`, info.mrpId, info.a.vendor, info.a.kode, "", "rencana", info.a.warna, info.a.lengan, s.size);
+      r.qtyRoll = restRolls;
+      r.rollKey = `rencana|${aduanId}`;
+      r.target = rest;
+      rows.set(r.key, r);
+    }
+  }
+
+  // Koli: item yang roll asalnya roll itu.
+  const erpReceived = new Set<string>();
+  for (const rc of receipts) if (activeIds.has(rc.mrpId)) for (const id of rc.koliIds) erpReceived.add(id);
+  const wos = extra.wosByKoli ?? {};
+  for (const k of kolis) {
+    if (!activeIds.has(k.mrpId)) continue;
+    const koliNo = k.noKoli || k.id;
+    const sentDay = k.deliveredAt ? dayKey(k.deliveredAt) : undefined;
+    const w = wos[k.id];
+    const received = erpReceived.has(k.id) || (!!w && (w.code === "DITERIMA" || w.code === "BERMASALAH"));
+    const arrived = !received && !!w && w.code === "TIBA";
+    for (const it of k.items) {
+      if (it.kind === "REJECT" || !it.sourceBatchId) continue;
+      const b = batchById.get(it.sourceBatchId);
+      if (!b) continue;
+      const r = rollRow(b, it.size);
+      r.koliFirstAt = minDay(r.koliFirstAt, dayKey(k.createdAt));
+      if (!r.koliNos.includes(koliNo)) r.koliNos.push(koliNo);
+      if (!k.deliveredAt) {
+        r.diKoli += it.qty;
+        continue;
+      }
+      r.dikirim += it.qty;
+      if (sentDay) {
+        if (!r.shipDates.includes(sentDay)) r.shipDates.push(sentDay);
+        r.shipLastAt = maxDay(r.shipLastAt, sentDay);
+      }
+      if (received) r.diterima += it.qty;
+      else if (arrived) r.tibaDc += it.qty;
+      else if (sentDay) r.estTiba = maxDay(r.estTiba, plusDays(sentDay, ltTiba(k.vendorProduksi)));
+    }
+  }
+
+  // Baris sisa: selisih angka sel Tracking Item terhadap jumlah baris roll/rencana sel itu.
+  const sumByCell = new Map<string, Record<(typeof SUM_FIELDS)[number], number>>();
+  for (const r of rows.values()) {
+    const t = sumByCell.get(r.cellKey) ?? { target: 0, cutting: 0, fg: 0, reject: 0, diKoli: 0, dikirim: 0, tibaDc: 0, diterima: 0 };
+    for (const f of SUM_FIELDS) t[f] += r[f];
+    sumByCell.set(r.cellKey, t);
+  }
+  for (const it of items) {
+    for (const c of it.breakdown) {
+      const t = sumByCell.get(c.key);
+      const cellVal: Record<(typeof SUM_FIELDS)[number], number> = {
+        target: c.alokasi,
+        cutting: c.cutting,
+        fg: c.fg,
+        reject: c.reject,
+        diKoli: c.diKoli,
+        dikirim: c.dikirim,
+        tibaDc: c.tibaDc,
+        diterima: c.diterima,
+      };
+      const rest = SUM_FIELDS.map((f) => [f, cellVal[f] - (t?.[f] ?? 0)] as const);
+      if (!rest.some(([, v]) => v > 0)) continue;
+      const r = blank(`sisa|${c.key}`, c.mrpId, c.vendorProduksi, "", "", c.vendorProduksi ? "sisa" : "belum", it.warna, it.lengan, it.size);
+      for (const [f, v] of rest) r[f] = Math.max(0, v);
+      r.cuttingAt = c.cuttingAt;
+      r.koliFirstAt = c.koliFirstAt;
+      r.shipDates = c.shipments.map((s) => s.date);
+      r.shipLastAt = c.shipLastAt;
+      r.estTiba = c.estTiba;
+      r.koliNos = [...c.inKoli];
+      rows.set(r.key, r);
+    }
+  }
+
+  // Tanggal PO Material, delivery bahan, Good Receive, dan FG pertama.
+  const poAt = new Map<string, string>(); // mrp|vendor|warna|lengan
+  for (const po of extra.materialPOs ?? []) {
+    if (po.status === "CANCELLED" || !activeIds.has(po.mrpId)) continue;
+    const day = dayKey(po.createdAt ?? po.approvalSubmittedAt);
+    if (!day) continue;
+    const lines = po.colorBreakdown.length > 0 ? po.colorBreakdown : [{ warna: po.warna, lengan: po.lengan }];
+    for (const c of lines) {
+      const k = `${po.mrpId}|${po.vendorProduksi}|${c.warna}|${c.lengan}`;
+      poAt.set(k, minDay(poAt.get(k), day)!);
+    }
+  }
+  const matByRoll = new Map<string, { delivery?: string; gr?: string }>(); // mrp|vendor|codeRoll
+  const matByGroup = new Map<string, { delivery?: string; gr?: string }>(); // mrp|vendor|warna|lengan
+  for (const inv of extra.invoices ?? []) {
+    if (!activeIds.has(inv.mrpId)) continue;
+    const delivery = inv.deliveredAt ? dayKey(inv.deliveredAt) : undefined;
+    for (const c of inv.colorEntries) {
+      const gk = `${inv.mrpId}|${inv.destinationVendor}|${c.warna}|${c.lengan}`;
+      const g = matByGroup.get(gk) ?? {};
+      g.delivery = minDay(g.delivery, delivery);
+      for (const a of inv.rollArrivals[c.warna + "|" + c.lengan] ?? []) {
+        if (!a) continue;
+        const gr = dayKey(a.arrivedAt);
+        g.gr = minDay(g.gr, gr);
+        if (a.codeRoll) matByRoll.set(`${inv.mrpId}|${inv.destinationVendor}|${a.codeRoll}`, { delivery, gr });
+      }
+      matByGroup.set(gk, g);
+    }
+  }
+  const fgFirst = new Map<string, string>(); // mrp|vendor|codeRoll|size
+  for (const res of extra.results ?? []) {
+    if (res.kind !== "FG" || !res.note?.startsWith("Roll ") || !activeIds.has(res.mrpId)) continue;
+    const day = dayKey(res.recordedAt);
+    for (const [size, qty] of Object.entries(res.sizeQty)) {
+      if (!(qty > 0)) continue;
+      const k = `${res.mrpId}|${res.vendorProduksi}|${res.note.slice(5).trim()}|${size}`;
+      fgFirst.set(k, minDay(fgFirst.get(k), day)!);
+    }
+  }
+  for (const r of rows.values()) {
+    const gk = `${r.mrpId}|${r.vendorProduksi}|${r.warna}|${r.lengan}`;
+    r.poMaterialAt = poAt.get(gk);
+    const mat = (r.codeRoll ? matByRoll.get(`${r.mrpId}|${r.vendorProduksi}|${r.codeRoll}`) : undefined) ?? matByGroup.get(gk);
+    r.deliveryAt = mat?.delivery;
+    r.grAt = r.jenis === "rencana" ? undefined : mat?.gr;
+    if (r.codeRoll) r.fgFirstAt = fgFirst.get(`${r.mrpId}|${r.vendorProduksi}|${r.codeRoll}|${r.size}`);
+  }
+
+  for (const r of rows.values()) {
+    const b = r.jenis === "roll" ? batchById.get(r.key.slice(0, r.key.lastIndexOf("|"))) : undefined;
+    r.belumCutting = r.jenis === "rencana" || r.jenis === "belum" || (b && !b.cuttingAt) ? r.target : 0;
+    r.cuttingWip = Math.max(0, r.cutting - r.fg - r.reject);
+    r.fgWip = Math.max(0, r.fg - r.diKoli - r.dikirim);
+    r.perjalanan = Math.max(0, r.dikirim - r.diterima - r.tibaDc);
+    r.shipDates.sort();
+    r.koliNos.sort(compareNoKoli);
+    r.status = rowStatus(r, b);
+  }
+
+  return Array.from(rows.values()).sort(
+    (a, b) =>
+      b.mrpId.localeCompare(a.mrpId, undefined, { numeric: true }) ||
+      a.vendorProduksi.localeCompare(b.vendorProduksi) ||
+      a.warna.localeCompare(b.warna) ||
+      a.lengan.localeCompare(b.lengan) ||
+      a.kode.localeCompare(b.kode) ||
+      a.codeRoll.localeCompare(b.codeRoll) ||
+      sizeRank(a.size) - sizeRank(b.size)
+  );
+}
+
+/** Status satu baris. Baris roll mengikuti status roll: belum dicutting -> Resting; dicutting dan belum ditutup -> Cutting
+ *  (atau Finish Good kalau FG-nya sudah mulai diisi); sesudah roll ditutup, tahap paling awal yang masih memegang barang. */
+function rowStatus(r: AduanTrackRow, b?: ProductionBatch): AduanStage {
+  if (r.jenis === "belum") return "Belum dialokasikan";
+  if (r.jenis === "rencana") return "Belum resting";
+  if (b) {
+    if (!b.cuttingAt) return "Resting";
+    if (!b.closedAt) return r.fg > 0 ? "Finish Good" : "Cutting";
+  }
+  if (r.cuttingWip > 0) return "Cutting";
+  if (r.fgWip > 0) return b ? "Done FG" : "Finish Good";
+  if (r.diKoli > 0) return "Packing";
+  // Tiba DC (WOS, belum divalidasi) masih Delivery; GR DC = sudah dibongkar / diterima gudang.
+  if (r.perjalanan > 0 || r.tibaDc > 0) return "Delivery";
+  return "GR DC";
 }

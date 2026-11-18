@@ -5,7 +5,7 @@ import { Banknote, Boxes, Factory, Percent } from "lucide-react";
 import { AppShell } from "@/components/shell/app-shell";
 import { Button } from "@/components/ui/button";
 import { KpiCard } from "@/components/ui/kpi-card";
-import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
+import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import { MultiSelectFilter } from "@/components/mrp/multi-select-filter";
 import { InfoPopover } from "@/components/ui/info-popover";
 import { useMrpStore } from "@/lib/mrp/store";
@@ -13,6 +13,8 @@ import { formatDate, formatRupiah } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { rawMaterialLines, summarizeRawMaterial, type RawMaterialSummary } from "@/lib/mrp/rawMaterialReport";
 import { exportRawMaterialExcel } from "@/lib/mrp/exportRawMaterialExcel";
+import { Tabs } from "@/components/ui/tabs";
+import { RawMaterialRollTab } from "@/components/procurement/raw-material-roll-tab";
 
 const vendorName = (id: string) => VENDOR_PRODUKSI[id]?.name ?? id;
 const rp = (n: number) => formatRupiah(Math.round(n));
@@ -157,9 +159,12 @@ function RawMaterialDetailModal({ summary, mrpCreated, onClose }: { summary: Raw
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-6 max-md:p-0" onClick={onClose}>
+    // Redesign 2026-11-16 (pola PPIC): rincian dibuka sebagai panel samping kanan, isinya sama.
+    <div className="fixed inset-0 z-50 flex justify-end bg-[#0B131B]/35" onClick={onClose}>
       <div
-        className="flex max-h-[80vh] w-full max-w-[1320px] flex-col overflow-hidden rounded-lg bg-white shadow-[0_8px_24px_rgba(11,19,27,.25)] max-md:h-full max-md:max-h-none max-md:max-w-none max-md:rounded-none"
+        role="dialog"
+        aria-modal="true"
+        className="flex h-full w-full max-w-[1180px] flex-col overflow-hidden bg-white shadow-[-12px_0_32px_rgba(11,19,27,.18)] motion-safe:animate-in motion-safe:slide-in-from-right-8 motion-safe:fade-in motion-safe:duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border-subtle px-5 py-3">
@@ -344,13 +349,12 @@ export default function RawMaterialPage() {
   const staticMrps = useMrpStore((s) => s.staticMrps);
 
   const [bulan, setBulan] = useState<string[]>([]);
-  const [mrp, setMrp] = useState<string[]>([]);
-  const [vendor, setVendor] = useState<string[]>([]);
   const [kategori, setKategori] = useState<string[]>([]);
   const [jenis, setJenis] = useState<string[]>([]);
   const [exporting, setExporting] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [detailKey, setDetailKey] = useState<string | null>(null);
+  const [tab, setTab] = useState<"roll" | "mrp">("roll");
 
   const allLines = useMemo(() => rawMaterialLines(invoices, productionBatches, mrpDetails, staticMrps), [invoices, productionBatches, mrpDetails, staticMrps]);
   const lines = useMemo(
@@ -358,18 +362,19 @@ export default function RawMaterialPage() {
       allLines.filter(
         (l) =>
           (bulan.length === 0 || bulan.includes(l.bookedAt.slice(0, 7))) &&
-          (mrp.length === 0 || mrp.includes(l.mrpId)) &&
-          (vendor.length === 0 || vendor.includes(vendorName(l.vendorProduksi))) &&
           (kategori.length === 0 || kategori.includes(l.kategori)) &&
           (jenis.length === 0 || jenis.includes(l.jenis))
       ),
-    [allLines, bulan, mrp, vendor, kategori, jenis]
+    [allLines, bulan, kategori, jenis]
   );
   // Urutan MRP mengikuti tanggal MRP dibuat (terbaru di atas), sama seperti halaman MRP di PPIC.
   const mrpCreated = useMemo(() => new Map(mrpDetails.map((d) => [d.mrp.id, d.dates?.created ?? ""])), [mrpDetails]);
-  const summaries = useMemo(() => summarizeRawMaterial(lines, mrpCreated), [lines, mrpCreated]);
+  const allSummaries = useMemo(() => summarizeRawMaterial(lines, mrpCreated), [lines, mrpCreated]);
+  // No. MRP dan Vendor kini filter gaya Odoo di tabel; kartu dan export mengikuti baris yang lolos filter tabel.
+  const [shownKeys, setShownKeys] = useState<Set<string> | null>(null);
 
   if (!mounted) return null;
+  const summaries = shownKeys ? allSummaries.filter((s) => shownKeys.has(s.key)) : allSummaries;
 
   const bulanOptions = Array.from(new Set(allLines.map((l) => l.bookedAt.slice(0, 7)).filter(Boolean))).sort().reverse();
   const totalSetelah = sum(summaries.map((s) => s.nilaiSetelahDiskon));
@@ -382,29 +387,30 @@ export default function RawMaterialPage() {
   const rollSelesai = sum(summaries.map((s) => s.rollSelesai));
   const rollSisa = sum(summaries.map((s) => s.rollSisa));
 
-  const filterLabel = [bulan.length > 0 && `bulan ${bulan.map(bulanLabel).join("/")}`, mrp.length > 0 && `MRP ${mrp.join("/")}`, vendor.length > 0 && `vendor ${vendor.join("/")}`, kategori.length > 0 && `kategori ${kategori.join("/")}`, jenis.length > 0 && `jenis ${jenis.join("/")}`].filter(Boolean).join(", ");
+  const filterLabel = [bulan.length > 0 && `bulan ${bulan.map(bulanLabel).join("/")}`, shownKeys && shownKeys.size < allSummaries.length && `${shownKeys.size} baris MRP x vendor tersaring`, kategori.length > 0 && `kategori ${kategori.join("/")}`, jenis.length > 0 && `jenis ${jenis.join("/")}`].filter(Boolean).join(", ");
 
   const columns: ColumnDef<RawMaterialSummary>[] = [
-    { key: "vendor", label: "Vendor", default: true, render: (s) => vendorName(s.vendorProduksi) },
+    { key: "mrp", label: "No. MRP", default: false, render: (s) => <span className="font-mono">{s.mrpId}</span> },
     { key: "kategori", label: "Kategori produk", default: true, render: (s) => s.kategori },
     { key: "jenis", label: "Jenis bahan", default: false, render: (s) => s.jenis },
-    { key: "invoice", label: "Invoice", default: false, align: "right", render: (s) => s.invoiceCount },
-    { key: "rollBeli", label: "Roll dibeli", default: true, align: "right", render: (s) => s.rollBeli },
-    { key: "rollWip", label: "Roll WIP", default: true, align: "right", info: INFO.rollWip, render: (s) => s.rollWip },
-    { key: "rollSelesai", label: "Roll selesai", default: true, align: "right", info: INFO.rollSelesai, render: (s) => s.rollSelesai },
-    { key: "rollSisa", label: "Roll sisa", default: true, align: "right", info: INFO.rollSisa, render: (s) => s.rollSisa },
-    { key: "sebelum", label: "Total sebelum diskon", default: false, align: "right", info: INFO.sebelum, render: (s) => rp(s.nilaiSebelumDiskon) },
-    { key: "diskon", label: "Diskon", default: true, align: "right", info: INFO.diskon, render: (s) => rp(s.diskon) },
-    { key: "setelah", label: "Total invoice setelah diskon", default: true, align: "right", info: INFO.setelah, render: (s) => <span className="font-semibold">{rp(s.nilaiSetelahDiskon)}</span> },
-    { key: "wip", label: "WIP (Rp)", default: true, align: "right", info: INFO.wip, render: (s) => rp(s.nilaiWip) },
-    { key: "selesai", label: "Selesai produksi (Rp)", default: false, align: "right", info: INFO.selesai, render: (s) => rp(s.nilaiSelesai) },
-    { key: "sisa", label: "Sisa bahan baku (Rp)", default: true, align: "right", info: INFO.sisa, render: (s) => rp(s.nilaiSisa) },
+    { key: "invoice", aggregate: aggSum((s) => s.invoiceCount, (n) => <span className="font-semibold">{n}</span>), label: "Invoice", default: false, align: "right", render: (s) => s.invoiceCount },
+    { key: "rollBeli", aggregate: aggSum((s) => s.rollBeli, (n) => <span className="font-semibold">{n}</span>), label: "Roll dibeli", default: true, align: "right", render: (s) => s.rollBeli },
+    { key: "rollWip", aggregate: aggSum((s) => s.rollWip, (n) => <span className="font-semibold">{n}</span>), label: "Roll WIP", default: true, align: "right", info: INFO.rollWip, render: (s) => s.rollWip },
+    { key: "rollSelesai", aggregate: aggSum((s) => s.rollSelesai, (n) => <span className="font-semibold">{n}</span>), label: "Roll selesai", default: true, align: "right", info: INFO.rollSelesai, render: (s) => s.rollSelesai },
+    { key: "rollSisa", aggregate: aggSum((s) => s.rollSisa, (n) => <span className="font-semibold">{n}</span>), label: "Roll sisa", default: true, align: "right", info: INFO.rollSisa, render: (s) => s.rollSisa },
+    { key: "sebelum", aggregate: aggSum((s) => s.nilaiSebelumDiskon, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Total sebelum diskon", default: false, align: "right", info: INFO.sebelum, render: (s) => rp(s.nilaiSebelumDiskon) },
+    { key: "diskon", aggregate: aggSum((s) => s.diskon, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Diskon", default: true, align: "right", info: INFO.diskon, render: (s) => rp(s.diskon) },
+    { key: "setelah", aggregate: aggSum((s) => s.nilaiSetelahDiskon, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Total invoice setelah diskon", default: true, align: "right", info: INFO.setelah, render: (s) => <span className="font-semibold">{rp(s.nilaiSetelahDiskon)}</span> },
+    { key: "wip", aggregate: aggSum((s) => s.nilaiWip, (n) => <span className="font-semibold">{rp(n)}</span>), label: "WIP (Rp)", default: true, align: "right", info: INFO.wip, render: (s) => rp(s.nilaiWip) },
+    { key: "selesai", aggregate: aggSum((s) => s.nilaiSelesai, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Selesai produksi (Rp)", default: false, align: "right", info: INFO.selesai, render: (s) => rp(s.nilaiSelesai) },
+    { key: "sisa", aggregate: aggSum((s) => s.nilaiSisa, (n) => <span className="font-semibold">{rp(n)}</span>), label: "Sisa bahan baku (Rp)", default: true, align: "right", info: INFO.sisa, render: (s) => rp(s.nilaiSisa) },
   ];
 
   async function doExport(mrpIds: string[]) {
     const chosen = new Set(mrpIds);
     const chosenSummaries = summaries.filter((x) => chosen.has(x.mrpId));
-    const chosenLines = lines.filter((l) => chosen.has(l.mrpId));
+    const shownSet = new Set(summaries.map((x) => x.key));
+    const chosenLines = lines.filter((l) => chosen.has(l.mrpId) && shownSet.has(`${l.mrpId}|${l.vendorProduksi}`));
     setExporting(true);
     try {
       await exportRawMaterialExcel(chosenSummaries, chosenLines, [filterLabel, `MRP diunduh: ${mrpIds.join(", ")}`].filter(Boolean).join(" · "));
@@ -425,8 +431,19 @@ export default function RawMaterialPage() {
       activeHref="/procurement/raw-material"
       breadcrumb={["Dashboard", "Raw Material"]}
       title="Raw Material"
-      subtitle="Pembelian dan penggunaan bahan baku per MRP dan vendor produksi"
+      subtitle="Pembelian dan penggunaan bahan baku per roll, per MRP dan vendor produksi"
     >
+      <Tabs
+        items={[
+          { key: "roll", label: "Per Roll" },
+          { key: "mrp", label: "Per MRP dan vendor" },
+        ]}
+        active={tab}
+        onChange={(k) => setTab(k as "roll" | "mrp")}
+      />
+      {tab === "roll" && <RawMaterialRollTab focus="roll" />}
+      {tab === "mrp" && (
+      <>
       <div className="grid grid-cols-4 gap-3.5 max-lg:grid-cols-2 max-sm:grid-cols-1">
         <KpiCard label="Total invoice setelah diskon" value={rp(totalSetelah)} valueClassName="text-[20px]" sub={`Sebelum diskon ${rp(totalSebelum)}`} accent="blue" icon={Banknote} />
         <KpiCard label="Total diskon" value={rp(totalDiskon)} valueClassName="text-[20px]" sub={totalSebelum > 0 ? `${((totalDiskon / totalSebelum) * 100).toFixed(2).replace(".", ",")}% dari total sebelum diskon` : undefined} accent="teal" icon={Percent} />
@@ -434,53 +451,53 @@ export default function RawMaterialPage() {
         <KpiCard label="Sisa bahan baku" value={rp(nilaiSisa)} valueClassName="text-[20px]" sub={`${rollSisa} roll belum dipakai · ${rollSelesai} selesai dari ${rollBeli} dibeli`} accent="purple" icon={Boxes} />
       </div>
 
-      <div className="mt-4 rounded-lg border border-border-subtle bg-surface-card">
-        <div className="flex flex-wrap items-center gap-2 rounded-t-lg border-b border-border-subtle bg-[#FAFBFC] px-5 py-2.5">
-          <MultiSelectFilter label="Bulan invoice" options={bulanOptions} value={bulan} onChange={setBulan} labelOf={bulanLabel} />
-          <MultiSelectFilter label="No. MRP" options={Array.from(new Set(allLines.map((l) => l.mrpId))).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))} value={mrp} onChange={setMrp} />
-          <MultiSelectFilter label="Vendor" options={Array.from(new Set(allLines.map((l) => vendorName(l.vendorProduksi)))).sort()} value={vendor} onChange={setVendor} />
-          <MultiSelectFilter label="Kategori produk" options={Array.from(new Set(allLines.map((l) => l.kategori))).sort()} value={kategori} onChange={setKategori} />
-          <MultiSelectFilter label="Jenis bahan" options={Array.from(new Set(allLines.map((l) => l.jenis))).sort()} value={jenis} onChange={setJenis} />
-          {bulan.length + mrp.length + vendor.length + kategori.length + jenis.length > 0 && (
-            <button
-              onClick={() => {
-                setBulan([]);
-                setMrp([]);
-                setVendor([]);
-                setKategori([]);
-                setJenis([]);
-              }}
-              className="font-sans text-[11.5px] font-semibold text-action-primary underline"
-            >
-              Hapus filter
-            </button>
-          )}
-        </div>
-        {bulan.length > 0 && (
-          <div className="border-b border-border-subtle bg-[#FAFBFC] px-5 py-1.5 font-sans text-[10.5px] text-text-muted">
-            Bulan {bulan.map(bulanLabel).join(", ")}: invoice yang dibuat pada bulan itu. Angka WIP dan sisa adalah kondisi saat ini untuk roll dari invoice tersebut.
-          </div>
-        )}
-      </div>
-
-      <div className="mt-4">
+      <div>
         <DataTable
           title="Raw material per MRP dan vendor"
-          subtitle={`${summaries.length} baris · klik baris untuk membuka rincian per warna dan jenis bahan`}
+          subtitle={
+            bulan.length > 0
+              ? `Bulan ${bulan.map(bulanLabel).join(", ")}: invoice yang dibuat pada bulan itu; WIP dan sisa adalah kondisi saat ini.`
+              : `${summaries.length} baris · klik baris untuk membuka rincian per warna dan jenis bahan`
+          }
           headerActions={
-            <Button onClick={() => setExportOpen(true)} disabled={summaries.length === 0} variant="muted" size="xs">
-              Export Excel
-            </Button>
+            <>
+            <MultiSelectFilter label="Bulan invoice" options={bulanOptions} value={bulan} onChange={setBulan} labelOf={bulanLabel} />
+            <MultiSelectFilter label="Kategori produk" options={Array.from(new Set(allLines.map((l) => l.kategori))).sort()} value={kategori} onChange={setKategori} />
+            <MultiSelectFilter label="Jenis bahan" options={Array.from(new Set(allLines.map((l) => l.jenis))).sort()} value={jenis} onChange={setJenis} />
+            {bulan.length + kategori.length + jenis.length > 0 && (
+              <button
+                onClick={() => {
+                  setBulan([]);
+                  setKategori([]);
+                  setJenis([]);
+                }}
+                className="font-sans text-[11.5px] font-semibold text-action-primary underline"
+              >
+                Hapus filter
+              </button>
+            )}
+              <Button onClick={() => setExportOpen(true)} disabled={summaries.length === 0} variant="muted" size="xs">
+                Export Excel
+              </Button>
+            </>
           }
           columns={columns}
-          rows={summaries}
+          rows={allSummaries}
           keyOf={(s) => s.key}
-          firstColumnLabel="No. MRP"
-          firstColumnRender={(s) => <span className="font-mono">{s.mrpId}</span>}
+          firstColumnLabel="Vendor"
+          firstColumnRender={(s) => <span className="font-medium">{vendorName(s.vendorProduksi)}</span>}
+          filterDefs={[
+            { label: "No. MRP", options: Array.from(new Set(allSummaries.map((s) => s.mrpId))), test: (s, v) => s.mrpId === v },
+            { label: "Vendor", options: Array.from(new Set(allSummaries.map((s) => vendorName(s.vendorProduksi)))).sort(), test: (s, v) => vendorName(s.vendorProduksi) === v },
+          ]}
+          defaultGroupBy={["No. MRP"]}
+          onFilteredRows={(list) => setShownKeys(new Set(list.map((s) => s.key)))}
           onRowClick={(s) => setDetailKey(s.key)}
           emptyText="Belum ada invoice bahan untuk filter ini."
         />
       </div>
+      </>
+      )}
       {exportOpen && <ExportMrpDialog options={exportOptions} onCancel={() => setExportOpen(false)} onConfirm={(ids) => void doExport(ids)} busy={exporting} />}
       {detailKey && summaries.find((x) => x.key === detailKey) && (
         <RawMaterialDetailModal summary={summaries.find((x) => x.key === detailKey) as RawMaterialSummary} mrpCreated={mrpCreated} onClose={() => setDetailKey(null)} />

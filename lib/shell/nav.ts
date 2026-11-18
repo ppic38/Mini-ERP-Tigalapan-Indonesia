@@ -29,9 +29,9 @@ export const NAV: Record<RoleKey, RoleNav> = {
       { label: "Purchase Order", href: "/procurement/po-approval" },
       { label: "Paying Voucher (Invoice)", href: "/raw-material" },
       { label: "Material Tracking", href: "/procurement/material-tracking" },
-      { label: "Material per Warna", href: "/procurement/material-per-warna" },
-      { label: "Raw Material", href: "/procurement/raw-material" },
       { label: "Klaim Material", href: "/procurement/material-claims" },
+      { label: "Raw Material", href: "/procurement/raw-material" },
+      { label: "Material per Warna", href: "/procurement/material-per-warna" },
       { label: "Master Data", href: "/procurement/master-data" },
     ],
   },
@@ -52,6 +52,7 @@ export const NAV: Record<RoleKey, RoleNav> = {
       // dihapus. Halaman /finance/ledger sendiri TIDAK disentuh (masih ada, tetap bisa diakses
       // langsung lewat URL kalau memang dibutuhkan) -- panggil lagi kalau mau dimunculkan ulang.
       // { label: "Ledger", href: "/finance/ledger" },
+      { label: "Posisi Stok", href: "/finance/posisi-stok" },
       { label: "Laporan HPP", href: "/finance/laporan-hpp" },
       { label: "Master Data", href: "/finance/master-data" },
     ],
@@ -60,12 +61,15 @@ export const NAV: Record<RoleKey, RoleNav> = {
     role: "SCM",
     entity: "Tigalapan Indonesia",
     items: [
+      { label: "Dashboard", href: "/scm/dashboard" },
       { label: "Approval MRP", href: "/scm/approval-mrp" },
       { label: "Approval PO", href: "/scm/approval-po" },
       { label: "Monitoring", href: "/scm/monitoring" },
       { label: "Tracking Item", href: "/scm/item-tracking" },
-      { label: "Material per Warna", href: "/scm/material-per-warna" },
-      { label: "Laporan HPP", href: "/scm/laporan-hpp" },
+      // Owner 2026-11-16: menu SCM hanya approval dan monitoring progress. Dua menu ini disembunyikan (halaman tetap ada lewat URL;
+      // Material per Warna juga di Procurement, Laporan HPP juga di Finance).
+      // { label: "Material per Warna", href: "/scm/material-per-warna" },
+      // { label: "Laporan HPP", href: "/scm/laporan-hpp" },
       // Revisi 2026-09-30 (owner): Master Data SCM -- saat ini toleransi selisih berat (berlaku semua vendor produksi).
       { label: "Master Data", href: "/scm/master-data" },
     ],
@@ -99,7 +103,11 @@ export const NAV: Record<RoleKey, RoleNav> = {
     role: "Produksi",
     entity: "Tigalapan Indonesia",
     items: [
+      // Owner 2026-11-17: panel dashboard operasional yang sama dengan modul lain.
+      { label: "Dashboard", href: "/produksi/dashboard" },
       { label: "Monitoring Produksi", href: "/produksi/monitoring" },
+      // Owner 2026-11-16: monitoring SLA produksi (kendala lewat SLA antar gate, yield per roll / MRP / vendor).
+      { label: "SLA Produksi", href: "/produksi/sla" },
       { label: "Monitoring Reject", href: "/produksi/reject" },
       { label: "Kebutuhan Bahan", href: "/produksi/material-status" },
       { label: "Yield Alert", href: "/produksi/yield-alerts" },

@@ -2,43 +2,41 @@
 
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/shell/app-shell";
-import { StatusPill } from "@/components/ui/status-pill";
+import { KpiCard } from "@/components/ui/kpi-card";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { MrpWarnaBreakdownTable } from "@/components/mrp/mrp-warna-breakdown-table";
+import { mrpProgressColumns, mrpProgressFilters, useMrpProgressRows, type MrpProgressRow } from "@/components/mrp/mrp-progress";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { mrpApprovalCorrections } from "@/components/sysadmin/ppic-corrections";
 import { useMrpStore } from "@/lib/mrp/store";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
 import { scmMayApproveMrp } from "@/lib/mrp/poApproval";
-import type { MrpDetail } from "@/lib/mrp/store";
-import { effectiveMrpQty, formatDate, formatPcs, mrpWarnaBreakdown, ppicApprovalBadge, vendorsForMrp } from "@/lib/mrp/derive";
+import { effectiveMrpQty, formatDate, formatPcs, mrpWarnaBreakdown } from "@/lib/mrp/derive";
 
+/** Approval MRP SCM (redesign 2026-11-16, owner: "tampilan history MRP sama dengan PPIC"): dua tabel bersama dengan kolom yang sama dengan
+ *  tabel MRP PPIC (Qty, Roll, Status staging, Est. HPP %, tanggal). Keputusan Setujui / Tolak tetap di panel rincian MRP yang menunggu. */
 export default function ScmApprovalMrpPage() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const maklonPOs = useMrpStore((s) => s.maklonPOs);
   const materialPOs = useMrpStore((s) => s.materialPOs);
   const approvePpicMrp = useMrpStore((s) => s.approvePpicMrp);
   const rejectPpicMrp = useMrpStore((s) => s.rejectPpicMrp);
+  const rows = useMrpProgressRows();
 
   // Approval MRP hanya untuk scm02 (Asisten Manager SCM).
   const scmUsername = useInternalAuthStore((s) => s.actors.scm?.username);
   const mayDecide = scmMayApproveMrp(scmUsername);
   const notAllowedTitle = "Approval MRP hanya untuk akun scm02 (Asisten Manager SCM)";
-
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({});
 
   if (!mounted) return null;
 
-  const pending = mrpDetails.filter((d) => d.ppicApproval === "WAITING_PPIC_APPROVAL");
-  // Riwayat: MRP terbaru (tanggal dibuat) paling atas, sama seperti daftar MRP di PPIC; tanggal sama = yang masuk belakangan dulu.
-  const history = mrpDetails
-    .map((d, idx) => ({ d, idx }))
-    .filter(({ d }) => d.ppicApproval === "PPIC_APPROVED" || d.ppicApproval === "REJECTED")
-    .sort((x, y) => (x.d.dates.created < y.d.dates.created ? 1 : x.d.dates.created > y.d.dates.created ? -1 : y.idx - x.idx))
-    .map(({ d }) => d);
+  type Row = MrpProgressRow;
+  const withDetail = rows.filter((r) => r.detail);
+  const pending = withDetail.filter((r) => r.detail!.ppicApproval === "WAITING_PPIC_APPROVAL");
+  const history = withDetail.filter((r) => r.detail!.ppicApproval === "PPIC_APPROVED" || r.detail!.ppicApproval === "REJECTED");
 
   function reject(mrpId: string) {
     const note = (noteDraft[mrpId] ?? "").trim();
@@ -47,69 +45,52 @@ export default function ScmApprovalMrpPage() {
     setNoteDraft((prev) => ({ ...prev, [mrpId]: "" }));
   }
 
-  // Kolom dibuat mirip tabel "Material Requirement Planning" di PPIC — supaya SCM bisa lihat
-  // rincian per-warna (qty/roll/rib) dulu SEBELUM memutuskan, bukan cuma qty total, dengan cara
-  // klik baris untuk expand (chevron di ujung kanan, lihat DataTable renderExpanded).
-  const pendingColumns: ColumnDef<MrpDetail>[] = [
-    { key: "qty", label: "Qty", default: true, align: "right", render: (d) => formatPcs(effectiveMrpQty(d.mrp.id, d.mrp.qty, maklonPOs)) + " pcs" },
-    { key: "vendor", label: "Jumlah Vendor", default: true, render: (d) => `${vendorsForMrp(d).length} vendor` },
-    { key: "tglSubmit", label: "Tanggal Diajukan", default: true, render: (d) => formatDate(d.dates.ppicSubmitted) },
-    {
-      key: "status",
-      label: "Status",
-      default: true,
-      render: (d) => <StatusPill tone={ppicApprovalBadge(d.ppicApproval).tone}>{ppicApprovalBadge(d.ppicApproval).label}</StatusPill>,
-    },
+  const base = mrpProgressColumns<Row>(maklonPOs);
+  const pendingColumns: ColumnDef<Row>[] = [
+    ...base.filter((c) => ["kategori", "qty", "roll", "vendor"].includes(c.key)),
+    { key: "tglSubmit", label: "Tgl Diajukan", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates.ppicSubmitted)}</span> },
   ];
-
-  const historyColumns: ColumnDef<MrpDetail>[] = [
-    { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (d) => <SysadminActionsBar compact actions={mrpApprovalCorrections(d.mrp.id, { detail: d, materialPOs, maklonPOs })} /> },
-    { key: "qty", label: "Qty", default: true, align: "right", render: (d) => formatPcs(effectiveMrpQty(d.mrp.id, d.mrp.qty, maklonPOs)) },
-    { key: "vendor", label: "Jumlah Vendor", default: true, render: (d) => `${vendorsForMrp(d).length} vendor` },
-    { key: "tglSubmit", label: "Tanggal Diajukan", default: true, render: (d) => formatDate(d.dates.ppicSubmitted) },
-    { key: "tglKeputusan", label: "Tanggal Keputusan", default: true, render: (d) => formatDate(d.dates.ppicApproved) },
+  const historyColumns: ColumnDef<Row>[] = [
     {
-      key: "status",
-      label: "Status",
+      key: "sysadmin",
+      label: "Aksi Sysadmin",
       default: true,
-      render: (d) => <StatusPill tone={ppicApprovalBadge(d.ppicApproval).tone}>{ppicApprovalBadge(d.ppicApproval).label}</StatusPill>,
+      sysadmin: true,
+      render: (r) => <SysadminActionsBar compact actions={mrpApprovalCorrections(r.mrp.id, { detail: r.detail!, materialPOs, maklonPOs })} />,
     },
-    {
-      key: "catatan",
-      label: "Catatan",
-      default: true,
-      render: (d) => (d.ppicApproval === "REJECTED" ? d.ppicRejectionNote ?? "—" : "—"),
-    },
+    ...base,
+    { key: "tglKeputusan", label: "Tgl Keputusan SCM", default: false, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates.ppicApproved)}</span> },
+    { key: "catatan", label: "Catatan SCM", default: false, render: (r) => (r.detail?.ppicApproval === "REJECTED" ? r.detail.ppicRejectionNote ?? "—" : "—") },
   ];
 
   return (
-    <AppShell
-      role="scm"
-      activeHref="/scm/approval-mrp"
-      breadcrumb={["Dashboard", "Approval MRP"]}
-      title="Approval MRP"
-      subtitle={`${pending.length} MRP dari PPIC menunggu keputusan Anda`}
-    >
-      <DataTable
+    <AppShell role="scm" activeHref="/scm/approval-mrp" breadcrumb={["Dashboard", "Approval MRP"]} title="Approval MRP">
+      <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+        <KpiCard label="Menunggu approval" value={pending.length} sub={`${formatPcs(pending.reduce((s, r) => s + effectiveMrpQty(r.mrp.id, r.mrp.qty, maklonPOs), 0))} pcs`} accent="orange" />
+        <KpiCard label="Disetujui" value={history.filter((r) => r.detail!.ppicApproval === "PPIC_APPROVED").length} sub="MRP" accent="teal" />
+        <KpiCard label="Ditolak" value={history.filter((r) => r.detail!.ppicApproval === "REJECTED").length} sub="MRP" accent="purple" />
+        <KpiCard label="Hak keputusan" value={mayDecide ? "Ya" : "Tidak"} sub={mayDecide ? "akun ini boleh menyetujui" : "hanya akun scm02"} accent="blue" />
+      </div>
+
+      <DataTable<Row>
         title="Menunggu approval"
         columns={pendingColumns}
         rows={pending}
-        keyOf={(d) => d.mrp.id}
+        keyOf={(r) => r.mrp.id}
         firstColumnLabel="No. MRP"
-        firstColumnRender={(d) => <span className="font-mono">{d.mrp.id}</span>}
-        singleExpand
-        renderExpanded={(d) => (
+        firstColumnRender={(r) => <span className="font-mono font-medium">{r.mrp.id}</span>}
+        renderExpanded={(r) => (
           <div className="flex flex-col gap-3">
-            <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(d, { includeZeroQty: false })} />
+            <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(r.detail, { includeZeroQty: false })} />
             <div className="flex flex-wrap items-center gap-2">
               <input
-                value={noteDraft[d.mrp.id] ?? ""}
-                onChange={(e) => setNoteDraft((prev) => ({ ...prev, [d.mrp.id]: e.target.value }))}
+                value={noteDraft[r.mrp.id] ?? ""}
+                onChange={(e) => setNoteDraft((prev) => ({ ...prev, [r.mrp.id]: e.target.value }))}
                 placeholder="Alasan (wajib diisi kalau mau Tolak, opsional kalau Setujui)…"
                 className="input min-w-[280px] flex-1 text-[11.5px]"
               />
               <button
-                onClick={() => approvePpicMrp(d.mrp.id)}
+                onClick={() => approvePpicMrp(r.mrp.id)}
                 disabled={!mayDecide}
                 title={!mayDecide ? notAllowedTitle : undefined}
                 className="rounded-md bg-success px-3.5 py-[7px] font-sans text-[11.5px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
@@ -117,9 +98,9 @@ export default function ScmApprovalMrpPage() {
                 Setujui
               </button>
               <button
-                onClick={() => reject(d.mrp.id)}
-                disabled={!mayDecide || !(noteDraft[d.mrp.id] ?? "").trim()}
-                title={!mayDecide ? notAllowedTitle : !(noteDraft[d.mrp.id] ?? "").trim() ? "Isi alasan penolakan dulu" : undefined}
+                onClick={() => reject(r.mrp.id)}
+                disabled={!mayDecide || !(noteDraft[r.mrp.id] ?? "").trim()}
+                title={!mayDecide ? notAllowedTitle : !(noteDraft[r.mrp.id] ?? "").trim() ? "Isi alasan penolakan dulu" : undefined}
                 className="rounded-md border border-[#EFC9C4] bg-white px-3.5 py-[7px] font-sans text-[11.5px] font-semibold text-danger-fg disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Tolak
@@ -130,27 +111,16 @@ export default function ScmApprovalMrpPage() {
         emptyText="Tidak ada MRP yang menunggu approval saat ini."
       />
 
-      <DataTable
+      <DataTable<Row>
         title="Riwayat Material Requirement Planning"
         columns={historyColumns}
         rows={history}
-        keyOf={(d) => d.mrp.id}
+        keyOf={(r) => r.mrp.id}
         firstColumnLabel="No. MRP"
-        firstColumnRender={(d) => <span className="font-mono">{d.mrp.id}</span>}
-        singleExpand
-        renderExpanded={(d) => (
-          <div>
-            <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(d)} />
-          </div>
-        )}
-        filterDefs={[
-          { label: "No MRP", options: Array.from(new Set(history.map((d) => d.mrp.id))), test: (d, v) => d.mrp.id === v },
-          {
-            label: "Status",
-            options: Array.from(new Set(history.map((d) => ppicApprovalBadge(d.ppicApproval).label))),
-            test: (d, v) => ppicApprovalBadge(d.ppicApproval).label === v,
-          },
-        ]}
+        firstColumnRender={(r) => <span className="font-mono font-medium">{r.mrp.id}</span>}
+        filterDefs={mrpProgressFilters(history)}
+        search={{ placeholder: "Cari MRP, kategori, vendor…", getText: (r) => `${r.mrp.id} ${r.mrp.kategori} ${r.vendors.join(" ")} ${r.stage}` }}
+        renderExpanded={(r) => <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(r.detail)} />}
         emptyText="Belum ada MRP yang diputuskan."
       />
     </AppShell>

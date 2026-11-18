@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AppShell } from "@/components/shell/app-shell";
 import { StatusPill } from "@/components/ui/status-pill";
@@ -8,7 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
 import { VendorSwitchModal } from "@/components/mrp/vendor-switch-modal";
 import { MaklonPoWarnaLenganTable } from "@/components/mrp/maklon-po-warna-lengan-table";
-import type { ColumnDef } from "@/components/mrp/data-table";
+import { DataTable, aggSame, aggSum, type ColumnDef, type FilterDef } from "@/components/mrp/data-table";
+import { SidePanel } from "@/components/ui/side-panel";
+import { KpiCard } from "@/components/ui/kpi-card";
+import type { PillTone } from "@/components/ui/status-pill";
 import { useMrpStore } from "@/lib/mrp/store";
 import { aduanRowsOfPo } from "@/lib/mrp/exportPoExcel";
 import {
@@ -27,6 +30,7 @@ import {
   maklonPoDeliveryProgress,
   maklonPoInvoiceLockedBy,
   maklonRateExplanation,
+  poDisplayNo,
   materialGroupsByWarna,
   materialPoFullStatus,
   materialPoFullStatusBadge,
@@ -38,7 +42,7 @@ import {
 } from "@/lib/mrp/derive";
 import { countMaterialRowsWithoutSupplierForMrp, countPoInProgress, pendingMarker } from "@/lib/shell/badges";
 import { PoApprovalQueue } from "@/components/mrp/po-approval-queue";
-import { SysadminActionsBar, SysadminTd, SysadminTh } from "@/components/sysadmin/correction-dialog";
+import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { sysadminSwitchAduanVendorAction } from "@/lib/mrp/sysadminActions";
 import { maklonPoCorrections, materialPoCorrections } from "@/components/sysadmin/procurement-corrections";
@@ -111,66 +115,6 @@ export default function PoApprovalPage() {
   // berubah), cuma dipindah jadi tab ketiga di sini supaya Procurement tidak perlu pindah menu.
   type PoApprovalTab = "material" | "produksi" | "approval";
   const [tab, setTab] = useState<PoApprovalTab>("material");
-  // Revisi 2026-09-17 (owner: "jangan card grouping, mau row tabel memanjang, dikelompokkan per
-  // No MRP dulu, baru klik untuk lihat supplier, baru klik supplier untuk lihat vendor produksi")
-  // -- pohon 3 tingkat dalam SATU container: MRP -> Supplier -> Vendor Produksi (leaf = 1 PO
-  // material). expandedSupplierMaterial dikunci ke `${mrpId}::${supplier}` supaya supplier dengan
-  // nama sama di MRP lain tidak ikut kebuka.
-  const [expandedMrpMaterial, setExpandedMrpMaterial] = useState<string | null>(null);
-  const [expandedSupplierMaterial, setExpandedSupplierMaterial] = useState<string | null>(null);
-  const [expandedVendorMaterial, setExpandedVendorMaterial] = useState<string | null>(null);
-  // Item revisi 2026-09-17 (owner: "kolom Sumber di-hide-kan saja, jadikan fitur kolom yang bisa
-  // ditampilkan/di-hide seperti fitur kolom di ERP ini") -- tabel pohon PO Material ini custom
-  // HTML table (bukan DataTable/ColumnDef), jadi TIDAK otomatis dapat toggle "⊞ Kolom" bawaan
-  // DataTable (lihat components/mrp/data-table.tsx) -- ditiru manual di sini, cuma untuk kolom
-  // yang isinya baru muncul di leaf (level PO), bukan kolom "No MRP/Supplier/Vendor Produksi"
-  // (selalu tampil, sama seperti firstColumn di DataTable yang tidak bisa dimatikan).
-  const materialTreeColumns: { key: string; label: string; default: boolean }[] = [
-    { key: "jumlah", label: "Jumlah", default: true },
-    { key: "roll", label: "Roll", default: true },
-    { key: "nilai", label: "Nilai", default: true },
-    { key: "sumber", label: "Sumber", default: false },
-    { key: "status", label: "Status", default: true },
-    { key: "aksi", label: "Aksi", default: true },
-  ];
-  const [visibleMaterialCols, setVisibleMaterialCols] = useState<Set<string>>(new Set(materialTreeColumns.filter((c) => c.default).map((c) => c.key)));
-  const [materialColOpen, setMaterialColOpen] = useState(false);
-  function toggleMaterialCol(key: string) {
-    setVisibleMaterialCols((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
-  // Revisi 2026-09-17 (owner: "PO Produksi juga digrouping, dari pilih No MRP dulu baru masuk ke
-  // list vendor produksi") -- pilih No MRP dulu lewat tabel ringkas, baru tabel PO Vendor Produksi
-  // (DataTable lama, lengkap dengan toggle Kolom/filter/expand rincian warna-lengan) muncul
-  // TERBATAS ke MRP itu saja -- bukan pohon expand custom lagi karena DataTable-nya sendiri sudah
-  // representasi "list vendor produksi" yang lengkap, tinggal di-scope.
-  const [expandedMaklonMrp, setExpandedMaklonMrp] = useState<string | null>(null);
-  const [expandedMaklonPo, setExpandedMaklonPo] = useState<string | null>(null);
-  // Revisi 2026-09-21 (owner: hierarki PO Produksi disamakan dengan PO Material): pohon MRP -> Vendor
-  // Produksi (leaf = 1 PO, klik untuk rincian warna/lengan) dengan toggle "Kolom" yang sama seperti tabel PO Material.
-  const maklonTreeColumns: { key: string; label: string; default: boolean }[] = [
-    { key: "jumlah", label: "Jumlah", default: true },
-    { key: "qty", label: "Qty", default: true },
-    { key: "nilai", label: "Nilai", default: true },
-    { key: "sumber", label: "Sumber", default: false },
-    { key: "progress", label: "Progress kirim/tagih", default: false },
-    { key: "status", label: "Status", default: true },
-    { key: "aksi", label: "Aksi", default: true },
-  ];
-  const [visibleMaklonCols, setVisibleMaklonCols] = useState<Set<string>>(new Set(maklonTreeColumns.filter((c) => c.default).map((c) => c.key)));
-  const [maklonColOpen, setMaklonColOpen] = useState(false);
-  function toggleMaklonCol(key: string) {
-    setVisibleMaklonCols((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
   // Owner 2026-09-16: tabel Material dikelompokkan per kategori kain + checkbox bulk-assign
   // supplier untuk banyak warna sekaligus. State ini di-reset di onChange dropdown MRP di bawah
   // (bukan useEffect, supaya tidak melanggar react-hooks/set-state-in-effect) supaya centangan/
@@ -178,6 +122,11 @@ export default function PoApprovalPage() {
   const [materialKategoriFilter, setMaterialKategoriFilter] = useState<string>("");
   const [selectedWarna, setSelectedWarna] = useState<Set<string>>(new Set());
   const [bulkSupplier, setBulkSupplier] = useState<string>("");
+  // Pola PPIC (owner 2026-11-16): panel "Buat PO", kartu mengikuti filter, filter dari kartu.
+  const [buatPoOpen, setBuatPoOpen] = useState(false);
+  const [shownMaterialIds, setShownMaterialIds] = useState<Set<string> | null>(null);
+  const [shownMaklonIds, setShownMaklonIds] = useState<Set<string> | null>(null);
+  const [poPreset, setPoPreset] = useState<{ nonce: number; filters: Record<string, string[]>; card: string }>({ nonce: 0, filters: {}, card: "" });
 
   // MRP baru bisa dibuatkan PO setelah disetujui SCM (lihat approvePpicMrp di lib/mrp/store.ts) —
   // ini gerbang yang sengaja ditambahkan supaya PPIC tidak langsung "tembus" ke Procurement tanpa
@@ -218,45 +167,6 @@ export default function PoApprovalPage() {
   // bawah yang memang sudah begini dari awal — filter Status tersedia kalau cuma mau lihat
   // yang masih pending.
   const allMaterialPOs = materialPOs.filter((p) => p.status !== "CANCELLED");
-
-  // Pohon 3 tingkat (lihat catatan di deklarasi expandedMrpMaterial): tingkat 1 kelompokkan PO
-  // material per No MRP -- ini yang dibuka duluan. Tingkat 2 (per supplier) dihitung on-demand
-  // lewat supplierSummariesForMrp() begitu satu baris MRP diklik, supaya tidak menghitung ulang
-  // grouping untuk MRP yang belum dibuka.
-  const materialMrpSummaries = (() => {
-    const map = new Map<string, MaterialPO[]>();
-    for (const p of allMaterialPOs) {
-      if (!map.has(p.mrpId)) map.set(p.mrpId, []);
-      map.get(p.mrpId)!.push(p);
-    }
-    return Array.from(map.entries())
-      .map(([mrpId, pos]) => ({
-        mrpId,
-        pos,
-        supplierCount: new Set(pos.map((p) => p.supplier || "— Belum ada supplier —")).size,
-        totalRoll: pos.reduce((sum, p) => sum + p.rollCount, 0),
-        totalNilai: pos.reduce((sum, p) => sum + p.amount, 0),
-      }))
-      .sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID"));
-  })();
-
-  function supplierSummariesForMrp(pos: MaterialPO[]) {
-    const map = new Map<string, MaterialPO[]>();
-    for (const p of pos) {
-      const key = p.supplier || "— Belum ada supplier —";
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(p);
-    }
-    return Array.from(map.entries())
-      .map(([supplier, ps]) => ({
-        supplier,
-        pos: ps,
-        vendorCount: new Set(ps.map((p) => p.vendorProduksi)).size,
-        totalRoll: ps.reduce((sum, p) => sum + p.rollCount, 0),
-        totalNilai: ps.reduce((sum, p) => sum + p.amount, 0),
-      }))
-      .sort((a, b) => a.supplier.localeCompare(b.supplier, "id-ID"));
-  }
 
   // Rincian per-warna (leaf tingkat 4, dibuka dari baris vendor produksi) -- dulu ini
   // renderExpanded milik DataTable kartu-per-supplier, sekarang jadi fungsi biasa karena
@@ -309,30 +219,71 @@ export default function PoApprovalPage() {
     );
   }
 
-  // Pohon 1 tingkat untuk PO Vendor Produksi (lihat catatan di deklarasi expandedMaklonMrp):
-  // kelompokkan maklonPOs per No MRP dulu -- tabel DataTable di bawahnya baru muncul begitu satu
-  // MRP dipilih, terbatas ke PO vendor produksi milik MRP itu saja.
-  const maklonMrpSummaries = (() => {
-    const map = new Map<string, MaklonPO[]>();
-    for (const p of maklonPOs) {
-      if (!map.has(p.mrpId)) map.set(p.mrpId, []);
-      map.get(p.mrpId)!.push(p);
+  const vendorName = (id: string) => VENDOR_PRODUKSI[id]?.name ?? id;
+  const shownMaterial = shownMaterialIds ? allMaterialPOs.filter((p) => shownMaterialIds.has(p.id)) : allMaterialPOs;
+  const shownMaklon = shownMaklonIds ? maklonPOs.filter((p) => shownMaklonIds.has(p.id)) : maklonPOs;
+  const materialStatusCache = new Map<string, { label: string; tone: PillTone }>();
+  const materialStatus = (p: MaterialPO) => {
+    let st = materialStatusCache.get(p.id);
+    if (!st) {
+      st = materialPoFullStatusBadge(materialPoFullStatus(p, invoices, productionBatches, productionResults, mrpDetails, deliveryKolis, vendorInvoices, maklonPOs));
+      materialStatusCache.set(p.id, st);
     }
-    return Array.from(map.entries())
-      .map(([mrpId, pos]) => ({
-        mrpId,
-        pos,
-        totalQty: pos.reduce((sum, p) => sum + p.qty, 0),
-        totalNilai: pos.reduce((sum, p) => sum + p.amount, 0),
-      }))
-      .sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID"));
-  })();
-
+    return st;
+  };
+  const uniqSorted = (xs: string[]) => Array.from(new Set(xs.filter(Boolean))).sort((a, b) => a.localeCompare(b, "id-ID", { numeric: true }));
+  const approvalLabel = (p: { approved: boolean }) => (p.approved ? "Sudah" : "Menunggu");
+  const materialFilterDefs: FilterDef<MaterialPO>[] = [
+    { label: "No. MRP", options: uniqSorted(allMaterialPOs.map((p) => p.mrpId)).reverse(), test: (p, v) => p.mrpId === v },
+    { label: "Supplier", options: uniqSorted(allMaterialPOs.map((p) => p.supplier || "Belum ada supplier")), test: (p, v) => (p.supplier || "Belum ada supplier") === v },
+    { label: "Vendor", options: uniqSorted(allMaterialPOs.map((p) => vendorName(p.vendorProduksi))), test: (p, v) => vendorName(p.vendorProduksi) === v },
+    { label: "Status", options: uniqSorted(allMaterialPOs.map((p) => materialStatus(p).label)), test: (p, v) => materialStatus(p).label === v },
+    { label: "Approval", options: ["Menunggu", "Sudah"], test: (p, v) => approvalLabel(p) === v },
+  ];
+  const materialColumns: ColumnDef<MaterialPO>[] = [
+    { key: "sysadmin", label: "Aksi Sysadmin", default: true, sysadmin: true, render: (p) => <SysadminActionsBar compact actions={materialPoCorrections(p)} /> },
+    { key: "mrp", label: "No. MRP", default: true, aggregate: aggSame((p) => p.mrpId), render: (p) => <span className="font-mono">{p.mrpId}</span> },
+    { key: "supplier", label: "Supplier", default: true, aggregate: aggSame((p) => p.supplier || "Belum ada supplier"), render: (p) => p.supplier || <span className="text-text-muted">Belum ada supplier</span> },
+    { key: "vendor", label: "Vendor", default: true, aggregate: aggSame((p) => vendorName(p.vendorProduksi)), render: (p) => vendorName(p.vendorProduksi) },
+    { key: "roll", label: "Roll", default: true, align: "right", aggregate: aggSum((p) => p.rollCount, (n) => <span className="font-semibold">{n.toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>), render: (p) => <span className="font-mono">{p.rollCount}</span> },
+    { key: "nilai", label: "Nilai", default: true, align: "right", aggregate: aggSum((p) => p.amount, (n) => <span className="font-semibold">{formatRupiah(n)}</span>), render: (p) => <span className="font-mono">{formatRupiah(p.amount)}</span> },
+    { key: "entitas", label: "Entitas", default: true, aggregate: aggSame((p) => (poEntitasFinalized(p) ? p.entity : "")), render: (p) => (poEntitasFinalized(p) && p.entity ? p.entity : <span className="text-text-muted">—</span>) },
+    { key: "sumber", label: "Sumber", default: false, render: (p) => <RateBadge explanation={materialRateExplanation(hargaKain, hargaKainPks, p.supplier, p.colorBreakdown)} /> },
+    { key: "approval", label: "Approval", default: false, aggregate: aggSame((p) => approvalLabel(p)), render: (p) => <StatusPill tone={p.approved ? "success" : "warning"}>{approvalLabel(p)}</StatusPill> },
+    {
+      key: "status",
+      label: "Status",
+      default: true,
+      aggregate: aggSame(
+        (p) => materialStatus(p).label,
+        (v) => <StatusPill tone={allMaterialPOs.map(materialStatus).find((x) => x.label === v)?.tone ?? "neutral"}>{v}</StatusPill>
+      ),
+      render: (p) => <StatusPill tone={materialStatus(p).tone}>{materialStatus(p).label}</StatusPill>,
+    },
+    {
+      key: "aksi",
+      label: "Aksi",
+      default: true,
+      render: (p) => (
+        <span onClick={(e) => e.stopPropagation()}>
+          <Button onClick={() => setDownloadReq({ kind: "material", pos: [p], baseName: `PO-${p.id}` })} disabled={!p.supplier} title={!p.supplier ? "Tetapkan vendor material dulu" : undefined} variant="ghost" size="xs">
+            Download PO
+          </Button>
+        </span>
+      ),
+    },
+  ];
+  const maklonFilterDefs: FilterDef<MaklonPO>[] = [
+    { label: "No. MRP", options: uniqSorted(maklonPOs.map((p) => p.mrpId)).reverse(), test: (p, v) => p.mrpId === v },
+    { label: "Vendor", options: uniqSorted(maklonPOs.map((p) => vendorName(p.vendorProduksi))), test: (p, v) => vendorName(p.vendorProduksi) === v },
+    { label: "Status", options: uniqSorted(maklonPOs.map((p) => maklonPoBadgeWithApproval(p, vendorInvoices).label)), test: (p, v) => maklonPoBadgeWithApproval(p, vendorInvoices).label === v },
+    { label: "Approval", options: ["Menunggu", "Sudah"], test: (p, v) => approvalLabel(p) === v },
+  ];
   const maklonColumns: ColumnDef<MaklonPO>[] = [
-    { key: "noPo", label: "No PO", default: true, render: (p) => <span className="font-mono font-medium">{p.id}</span> },
-    { key: "vendor", label: "Vendor", default: true, render: (p) => VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi },
-    { key: "qty", label: "Qty", default: true, align: "right", render: (p) => formatPcs(p.qty) + " pcs" },
-    { key: "nilai", label: "Nilai", default: true, align: "right", render: (p) => formatRupiah(p.amount) },
+    { key: "mrp", label: "No. MRP", default: true, aggregate: aggSame((p) => p.mrpId), render: (p) => <span className="font-mono">{p.mrpId}</span> },
+    { key: "vendor", label: "Vendor", default: true, aggregate: aggSame((p) => vendorName(p.vendorProduksi)), render: (p) => vendorName(p.vendorProduksi) },
+    { key: "qty", label: "Qty", default: true, align: "right", aggregate: aggSum((p) => p.qty, (n) => <span className="font-semibold">{formatPcs(n)}</span>), render: (p) => <span className="font-mono">{formatPcs(p.qty)}</span> },
+    { key: "nilai", label: "Nilai", default: true, align: "right", aggregate: aggSum((p) => p.amount, (n) => <span className="font-semibold">{formatRupiah(n)}</span>), render: (p) => <span className="font-mono">{formatRupiah(p.amount)}</span> },
     {
       key: "sumber",
       label: "Sumber",
@@ -350,13 +301,13 @@ export default function PoApprovalPage() {
         return <RateBadge explanation={maklonRateExplanation(hargaMaklon, p.vendorProduksi, aduanRows)} />;
       },
     },
-    { key: "tglMrp", label: "Tanggal MRP", default: false, render: (p) => formatDate(mrpDetailFor(p.mrpId, mrpDetails)?.dates.created) },
-    { key: "tglPO", label: "Tanggal PO", default: false, render: (p) => formatDate(mrpDetailFor(p.mrpId, mrpDetails)?.dates.poSent) },
+    { key: "tglMrp", label: "Tgl MRP", default: false, render: (p) => formatDate(mrpDetailFor(p.mrpId, mrpDetails)?.dates.created) },
+    { key: "tglPO", label: "Tgl PO", default: false, render: (p) => formatDate(mrpDetailFor(p.mrpId, mrpDetails)?.dates.poSent) },
     {
       // default:false — sudah terwakili "Status" (begitu status maju dari FULL_WAITING_MATERIAL
       // dst, PO itu pasti approved), jadi kolom ini murni berguna SEBELUM approve saja.
       key: "approved",
-      label: "Approved",
+      label: "Approval",
       default: false,
       render: (p) => <StatusPill tone={p.approved ? "success" : "warning"}>{p.approved ? "Ya" : "Menunggu"}</StatusPill>,
     },
@@ -371,7 +322,7 @@ export default function PoApprovalPage() {
     },
     {
       key: "progress",
-      label: "Progress kirim/tagih",
+      label: "Kirim / tagih",
       // default:false — visual 2-bar ini bagus untuk deep-dive tapi berat (multi-baris per
       // sel), jadi dijadikan opsional lewat toggle "Kolom" supaya tabel tetap ringkas &
       // presisi sebagai default (lihat pembatasan 7 kolom total termasuk kolom identitas).
@@ -445,85 +396,394 @@ export default function PoApprovalPage() {
   ];
 
   return (
-    <AppShell role="procurement" activeHref="/procurement/po-approval" breadcrumb={["Dashboard", "Purchase Order"]} title="Purchase Order">
-      <div className="flex items-center gap-3 rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">MRP tanpa PO</div>
-            {selectable.length > 0 && (
-              <StatusPill tone="warning">{selectable.length} MRP belum dibuatkan PO</StatusPill>
-            )}
-            {awaitingScm > 0 && (
-              <span title="MRP dari PPIC yang belum disetujui SCM — belum bisa diproses di sini">
-                <StatusPill tone="neutral">{awaitingScm} MRP menunggu approval SCM</StatusPill>
-              </span>
-            )}
-          </div>
-          <select
-            value={selectedId}
-            onChange={(e) => {
-              setSelectedId(e.target.value);
-              setDrillVendor(null);
-              setMaterialKategoriFilter("");
-              setSelectedWarna(new Set());
-              setBulkSupplier("");
-            }}
-            className="mt-1 rounded-md border border-[#DDE4EB] px-[11px] py-[9px] font-sans text-[12.5px] font-medium text-text-primary"
-          >
-            <option value="">— pilih MRP —</option>
-            {selectable.map((d) => (
-              <option key={d.mrp.id} value={d.mrp.id}>
-                {d.mrp.id} · {formatPcs(d.mrp.qty)} pcs{pendingMarker(countMaterialRowsWithoutSupplierForMrp(d), "material belum ada vendor")}
-              </option>
-            ))}
-          </select>
-        </div>
-        {detail && (
-          <div className="ml-auto flex items-center gap-2">
-            {outstandingMaterialRows.length > 0 && (
-              <span title="Warna yang belum dipilih vendor material ATAU belum pernah dikirim ke PO">
-                <StatusPill tone="warning">{outstandingMaterialRows.length} warna outstanding</StatusPill>
-              </span>
-            )}
-            {pendingFobGroups.length > 0 && (
-              <span title="Grup FOB yang siap dikirim jadi PO Produksi (harga jadi per pcs, tanpa PO Material)">
-                <StatusPill tone="info">{pendingFobGroups.length} grup FOB siap kirim</StatusPill>
-              </span>
-            )}
-            <button
-              onClick={() => hasSendableMaterial && sendPoToFinance(detail.mrp.id)}
-              disabled={!hasSendableMaterial}
-              title={!hasSendableMaterial ? "Pilih vendor material untuk minimal 1 warna CMT, atau pastikan ada grup FOB yang siap dikirim" : undefined}
-              className="rounded-md bg-action-primary px-3.5 py-[9px] font-sans text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+    <AppShell
+      role="procurement"
+      activeHref="/procurement/po-approval"
+      breadcrumb={["Dashboard", "Purchase Order"]}
+      title="Purchase Order"
+      actions={
+        <button onClick={() => setBuatPoOpen(true)} className="flex items-center gap-2 rounded-[5px] bg-action-primary px-3 py-[7px] font-sans text-xs font-semibold text-white">
+          Buat PO
+          {selectable.length > 0 && <span className="rounded-full bg-white/25 px-1.5 font-mono text-[10.5px]">{selectable.length} MRP</span>}
+        </button>
+      }
+    >
+      {/* Pembuatan PO (pola PPIC: form besar di panel samping, daftar PO tetap di halaman). Isi panel = alat yang sama
+          seperti sebelumnya: pilih MRP, pilih vendor material per warna, vendor produksi, lalu "Kirim PO ke Finance". */}
+      <SidePanel open={buatPoOpen} onClose={() => setBuatPoOpen(false)} title="Buat PO" subtitle="Pilih MRP yang sudah disetujui SCM, tetapkan vendor material dan vendor produksi, lalu kirim ke Finance." width={1180}>
+        <div className="flex flex-col gap-3.5">
+        <div className="flex items-center gap-3 rounded-lg border border-border-subtle bg-surface-card px-4 py-3.5">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">MRP tanpa PO</div>
+              {selectable.length > 0 && (
+                <StatusPill tone="warning">{selectable.length} MRP belum dibuatkan PO</StatusPill>
+              )}
+              {awaitingScm > 0 && (
+                <span title="MRP dari PPIC yang belum disetujui SCM — belum bisa diproses di sini">
+                  <StatusPill tone="neutral">{awaitingScm} MRP menunggu approval SCM</StatusPill>
+                </span>
+              )}
+            </div>
+            <select
+              value={selectedId}
+              onChange={(e) => {
+                setSelectedId(e.target.value);
+                setDrillVendor(null);
+                setMaterialKategoriFilter("");
+                setSelectedWarna(new Set());
+                setBulkSupplier("");
+              }}
+              className="mt-1 rounded-md border border-[#DDE4EB] px-[11px] py-[9px] font-sans text-[12.5px] font-medium text-text-primary"
             >
-              {outstandingMaterialRows.length > 0 && outstandingMaterialRows.some((m) => !m.supplier) ? "Kirim PO ke Finance (parsial)" : "Kirim PO ke Finance"}
-            </button>
+              <option value="">— pilih MRP —</option>
+              {selectable.map((d) => (
+                <option key={d.mrp.id} value={d.mrp.id}>
+                  {d.mrp.id} · {formatPcs(d.mrp.qty)} pcs{pendingMarker(countMaterialRowsWithoutSupplierForMrp(d), "material belum ada vendor")}
+                </option>
+              ))}
+            </select>
           </div>
-        )}
-      </div>
-
-      {!detail && selectable.length === 0 && (
-        <div className="rounded-lg border border-border-subtle bg-surface-card px-5 py-8 text-center font-sans text-xs text-text-muted">
-          {awaitingScm > 0 ? (
-            <>
-              {awaitingScm} MRP dari PPIC sedang menunggu approval SCM — belum bisa dibuatkan PO sampai disetujui.
-            </>
-          ) : (
-            <>
-              Belum ada MRP yang perlu dibuatkan PO.{" "}
-              <Link href="/mrp/ppic" className="font-semibold text-action-primary">
-                Import MRP baru dari halaman MRP Saya.
-              </Link>
-            </>
+          {detail && (
+            <div className="ml-auto flex items-center gap-2">
+              {outstandingMaterialRows.length > 0 && (
+                <span title="Warna yang belum dipilih vendor material ATAU belum pernah dikirim ke PO">
+                  <StatusPill tone="warning">{outstandingMaterialRows.length} warna outstanding</StatusPill>
+                </span>
+              )}
+              {pendingFobGroups.length > 0 && (
+                <span title="Grup FOB yang siap dikirim jadi PO Produksi (harga jadi per pcs, tanpa PO Material)">
+                  <StatusPill tone="info">{pendingFobGroups.length} grup FOB siap kirim</StatusPill>
+                </span>
+              )}
+              <button
+                onClick={() => hasSendableMaterial && sendPoToFinance(detail.mrp.id)}
+                disabled={!hasSendableMaterial}
+                title={!hasSendableMaterial ? "Pilih vendor material untuk minimal 1 warna CMT, atau pastikan ada grup FOB yang siap dikirim" : undefined}
+                className="rounded-md bg-action-primary px-3.5 py-[9px] font-sans text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {outstandingMaterialRows.length > 0 && outstandingMaterialRows.some((m) => !m.supplier) ? "Kirim PO ke Finance (parsial)" : "Kirim PO ke Finance"}
+              </button>
+            </div>
           )}
         </div>
-      )}
 
-      {!detail && selectable.length > 0 && (
-        <div className="rounded-lg border border-border-subtle bg-surface-card px-5 py-8 text-center font-sans text-xs text-text-muted">
-          Pilih salah satu MRP di atas untuk mulai membuat PO.
+        {!detail && selectable.length === 0 && (
+          <div className="rounded-lg border border-border-subtle bg-surface-card px-5 py-8 text-center font-sans text-xs text-text-muted">
+            {awaitingScm > 0 ? (
+              <>
+                {awaitingScm} MRP dari PPIC sedang menunggu approval SCM — belum bisa dibuatkan PO sampai disetujui.
+              </>
+            ) : (
+              <>
+                Belum ada MRP yang perlu dibuatkan PO.{" "}
+                <Link href="/mrp/ppic" className="font-semibold text-action-primary">
+                  Import MRP baru dari halaman MRP Saya.
+                </Link>
+              </>
+            )}
+          </div>
+        )}
+
+        {!detail && selectable.length > 0 && (
+          <div className="rounded-lg border border-border-subtle bg-surface-card px-5 py-8 text-center font-sans text-xs text-text-muted">
+            Pilih salah satu MRP di atas untuk mulai membuat PO.
+          </div>
+        )}
+
+        {detail && (
+            <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
+              <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Vendor produksi</div>
+              {/* Item 2026-09-13 (user-reported): kolom "%" (persentase kapasitas terpakai) dihapus
+                 -- tidak relevan buat keputusan di halaman ini, cuma bikin tabel penuh.
+                 Revisi 2026-09-18 (owner: "buat tampilannya seperti PO Material, kolomnya terlalu
+                 jauh"): header disamakan (biru, border-accent-blue) dengan tabel Material, dan
+                 "Nama vendor" TIDAK LAGI minmax(0,1fr) (dulu memaksa nama merentang penuh lebar
+                 tabel, mendorong 3 kolom angka terisolasi jauh ke kanan) -- sekarang lebar tetap
+                 wajar, sisa ruang kosong di ujung kanan (bukan disebar ke celah antar kolom). */}
+              <div
+                className="grid gap-x-3 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
+                style={{ gridTemplateColumns: "260px 90px 100px 140px" }}
+              >
+                <span className="whitespace-nowrap">Nama vendor</span>
+                <span className="whitespace-nowrap text-right">Qty plan</span>
+                <span className="whitespace-nowrap text-right">Kapasitas</span>
+                <span className="whitespace-nowrap text-right">Est. biaya</span>
+              </div>
+              {vendorRows.map((v) => {
+                const aduanRows = detail?.aduanRows.filter((a) => a.vendor === v.vendor) ?? [];
+                return (
+                  <button
+                    key={v.vendor}
+                    onClick={() => setDrillVendor(v.vendor)}
+                    className="grid items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] text-left font-sans text-xs text-[#31414F] last:border-b-0 hover:bg-[#F7F9FB]"
+                    style={{ gridTemplateColumns: "260px 90px 100px 140px" }}
+                  >
+                    <span className="font-medium">{v.name}</span>
+                    <span className="text-right font-mono">{formatPcs(v.qty)}</span>
+                    <span className="text-right font-mono">{formatPcs(v.baseCapacity)}</span>
+                    <span className="flex flex-col items-end gap-0.5 font-mono">
+                      <span>{formatRupiah(v.fee)}</span>
+                      <RateBadge explanation={maklonRateExplanation(hargaMaklon, v.vendor, aduanRows)} />
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+        )}
+
+        {detail && (
+            <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
+              <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Material</div>
+              {(() => {
+                // Item 2026-09-18 ("Kirim PO ke Finance" parsial): baris yang SUDAH ikut PO
+                // (sentToPoAt terisi) dikeluarkan dari tabel ini -- tidak ada lagi yang perlu
+                // dilakukan Procurement untuk warna itu. Sisa yang tampil di sini otomatis JADI
+                // daftar "outstanding" (belum dipilih vendor material / belum dikirim).
+                const materialGroups = materialGroupsByWarna(detail.materialRows.filter((m) => !m.sentToPoAt));
+                // Item BAGIAN 2 (Req 20) — kolom Kerah/Manset kg cuma ditampilkan kalau ADA material
+                // row MRP ini yang benar-benar punya nilai (kategori "WANGKI MYNO").
+                const showKerahManset = materialGroups.some((g) => g.totalKerahKg > 0 || g.totalMansetKg > 0);
+                // + 2 kolom "Est. Kerah (Rp)"/"Est. Manset (Rp)" (PURELY DISPLAY, tidak mengubah nilai
+                // PO Bahan aktual) -- gated kondisi SAMA seperti kolom kg (showKerahManset).
+                // Kolom "Est. Rib (Rp)" (Master Data Harga RIB, migration 0037) SELALU tampil -- rib
+                // ada di semua kategori, bukan cuma WANGKI MYNO.
+                // Kolom Warna diberi lebar minimum supaya nama warna tidak patah per kata (revisi
+                // 2026-09-15, owner: tabel Material terlalu sempit).
+                // Lebar kolom Kerah/Manset kg & Est. (Rp) dilebarkan (revisi 2026-09-18, owner:
+                // "header-nya jangan 2 baris") supaya label header ("MANSET KG", "EST. MANSET (RP)")
+                // muat 1 baris tanpa patah kata -- lihat whitespace-nowrap di header di bawah.
+                // Revisi 2026-09-18 (owner: "tambah kolom estimasi harga roll" + "pisahkan kg dan
+                // harga per jenis bahan biar kelihatan pasangannya") -- kolom kg & Est.(Rp) SEKARANG
+                // BERPASANGAN bersebelahan per jenis bahan (Roll+EstKain, RibKg+EstRib, dst, bukan
+                // lagi semua kg dulu baru semua Est. di akhir) + 1 kolom baru "Est. Kain (Rp)" untuk
+                // harga kain utamanya sendiri (sebelumnya cuma RIB/Kerah/Manset yang ada estimasinya,
+                // padahal harga kain-nya sendiri yang paling besar porsinya). Pemisah visual antar
+                // jenis bahan pakai warna latar (lihat MATERIAL_GROUP_BG di bawah), bukan cuma grid gap.
+                const cols = showKerahManset
+                  ? "20px minmax(120px, 1.3fr) 44px 104px 64px 104px 70px 104px 76px 104px minmax(150px, 1fr)"
+                  : "20px minmax(140px, 1.5fr) 44px 104px 64px 104px minmax(160px, 1fr)";
+                // Owner 2026-09-16: kelompokkan per kategori kain (WANGKI MYNO/30S/KID/dsb sering
+                // campur dalam 1 MRP, lihat inferMaterialKategori) + filter kategori + checkbox
+                // bulk-assign supplier untuk banyak warna sekaligus (bukan 1-per-1 seperti dulu).
+                const kategoriHadir = MATERIAL_KATEGORI_URUTAN.filter((k) => materialGroups.some((g) => inferMaterialKategori(g.warna) === k));
+                const visibleGroups = materialKategoriFilter ? materialGroups.filter((g) => inferMaterialKategori(g.warna) === materialKategoriFilter) : materialGroups;
+                const groupsByKategori = MATERIAL_KATEGORI_URUTAN.map((k) => ({ kategori: k, groups: visibleGroups.filter((g) => inferMaterialKategori(g.warna) === k) })).filter(
+                  (k) => k.groups.length > 0
+                );
+                function toggleWarna(warna: string) {
+                  setSelectedWarna((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(warna)) next.delete(warna);
+                    else next.add(warna);
+                    return next;
+                  });
+                }
+                function applyBulkSupplier() {
+                  if (!bulkSupplier || selectedWarna.size === 0 || !detail) return;
+                  const rowIds = materialGroups.filter((g) => selectedWarna.has(g.warna)).flatMap((g) => g.rowIds);
+                  assignMaterialSupplier(detail.mrp.id, rowIds, bulkSupplier);
+                  setSelectedWarna(new Set());
+                  setBulkSupplier("");
+                }
+                return (
+                  <>
+                    {kategoriHadir.length > 1 && (
+                      <div className="flex items-center gap-1.5 border-b border-border-subtle px-4 py-2">
+                        <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Filter kategori:</span>
+                        <select value={materialKategoriFilter} onChange={(e) => setMaterialKategoriFilter(e.target.value)} className="input w-auto !py-1 !text-[11px]">
+                          <option value="">Semua kategori ({materialGroups.length} warna)</option>
+                          {kategoriHadir.map((k) => (
+                            <option key={k} value={k}>
+                              {k} ({materialGroups.filter((g) => inferMaterialKategori(g.warna) === k).length})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    {selectedWarna.size > 0 && (
+                      <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle bg-info-bg px-4 py-2">
+                        <span className="font-sans text-[11px] font-semibold text-info-fg">{selectedWarna.size} warna dipilih —</span>
+                        <select value={bulkSupplier} onChange={(e) => setBulkSupplier(e.target.value)} className="input w-auto !py-1 !text-[11px]">
+                          <option value="">— samakan ke supplier —</option>
+                          {Array.from(new Set(Array.from(selectedWarna).flatMap((w) => materialSupplierNamesForWarna(hargaKain, w)))).map((s) => (
+                            <option key={s} value={s}>
+                              {s}
+                            </option>
+                          ))}
+                        </select>
+                        <Button onClick={applyBulkSupplier} variant="primary" size="xs" disabled={!bulkSupplier}>
+                          Terapkan
+                        </Button>
+                        <Button onClick={() => setSelectedWarna(new Set())} variant="ghost" size="xs">
+                          Batal pilih
+                        </Button>
+                      </div>
+                    )}
+                    <div
+                      className="grid gap-x-3 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
+                      style={{ gridTemplateColumns: cols }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={visibleGroups.length > 0 && visibleGroups.every((g) => selectedWarna.has(g.warna))}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setSelectedWarna((prev) => {
+                            const next = new Set(prev);
+                            for (const g of visibleGroups) {
+                              if (checked) next.add(g.warna);
+                              else next.delete(g.warna);
+                            }
+                            return next;
+                          });
+                        }}
+                        className="h-3.5 w-3.5"
+                        aria-label={materialKategoriFilter ? `Pilih semua warna kategori ${materialKategoriFilter}` : "Pilih semua warna"}
+                      />
+                      <span className="whitespace-nowrap">Warna</span>
+                      <span className="whitespace-nowrap text-right">Roll</span>
+                      <span className="whitespace-nowrap text-right">Est. Kain (Rp)</span>
+                      <span className={MATERIAL_GROUP_BG.rib + " whitespace-nowrap border-l border-[#E4E9EE] pl-2 text-right"}>Rib kg</span>
+                      <span className={MATERIAL_GROUP_BG.rib + " whitespace-nowrap text-right"}>Est. Rib (Rp)</span>
+                      {showKerahManset && <span className={MATERIAL_GROUP_BG.kerah + " whitespace-nowrap border-l border-[#E4E9EE] pl-2 text-right"}>Kerah kg</span>}
+                      {showKerahManset && <span className={MATERIAL_GROUP_BG.kerah + " whitespace-nowrap text-right"}>Est. Kerah (Rp)</span>}
+                      {showKerahManset && <span className={MATERIAL_GROUP_BG.manset + " whitespace-nowrap border-l border-[#E4E9EE] pl-2 text-right"}>Manset kg</span>}
+                      {showKerahManset && <span className={MATERIAL_GROUP_BG.manset + " whitespace-nowrap text-right"}>Est. Manset (Rp)</span>}
+                      <span className="whitespace-nowrap">Vendor material</span>
+                    </div>
+                    {groupsByKategori.map(({ kategori, groups }) => (
+                      <div key={kategori}>
+                        {kategoriHadir.length > 1 && !materialKategoriFilter && (
+                          <div className="border-b border-border-subtle bg-[#FBFCFD] px-4 py-1.5 font-sans text-[10.5px] font-semibold text-text-muted">{kategori}</div>
+                        )}
+                        {groups.map((g) => {
+                      // Dipersempit ke supplier yang benar-benar punya harga untuk warna ini di Harga
+                      // Kain — supaya tidak bisa pilih kombinasi supplier+warna yang harganya tidak ada
+                      // sama sekali (yang berujung PO jatuh ke fallback "Estimasi" pakai angka flat jauh
+                      // di bawah harga pasar). Daftar dummy tab Supplier sudah TIDAK ikut (2026-09-15).
+                      const optionsForWarna = materialSupplierNamesForWarna(hargaKain, g.warna);
+                      // Fix (review 2026-09-14): MRP WANGKI MYNO yang di-import SEBELUM fitur konversi
+                      // pcs->kg ini (lihat parseImport.ts) masih punya kerah_kg/manset_kg berisi ANGKA
+                      // PCS MENTAH (bukan kg -- data lama SENGAJA tidak dimigrasi, lihat spec Non-goals).
+                      // Tanpa penanda apa pun, itu kelihatan "sama sahnya" dengan kg yang sudah benar --
+                      // heuristik murah di sini: kg per roll yang MASUK AKAL untuk Kerah/Manset ada di
+                      // kisaran ~117 pcs/roll x 0.02-0.03 kg/pcs = 2-4 kg/roll (lihat rollEstimate di
+                      // parseImport.ts) -- kalau lebih dari 10x lipat itu, kemungkinan besar angkanya
+                      // masih pcs mentah (bukan bug perhitungan baru, cuma data historis yang belum
+                      // pernah lewat konversi ini). Estimasi Rp di kolom sebelah jadi ikut TIDAK MASUK
+                      // AKAL kalau ini terjadi -- badge ini murni sinyal visual, TIDAK mengubah angka
+                      // apa pun, TIDAK memblokir apa pun.
+                      const kerahLooksUnconverted = g.totalRoll > 0 && g.totalKerahKg / g.totalRoll > 10;
+                      const mansetLooksUnconverted = g.totalRoll > 0 && g.totalMansetKg / g.totalRoll > 10;
+                      // Harga RIB/kg dari Master Data Harga RIB -- supplier terpilih dulu, lalu acuan
+                      // KNITTO (lihat hargaRibRateInfo). Belum pilih supplier pun tetap dapat estimasi.
+                      const ribRate = hargaRibRateInfo(hargaRib, g.supplier, g.warna);
+                      // Harga Kerah/Manset per kg -- Master Data per Supplier (migration 0038), fallback
+                      // KNITTO lalu harga global lama (lihat hargaKerahMansetRateInfo).
+                      const kerahRate = hargaKerahMansetRateInfo(hargaKerahManset, kerahMansetSettings, g.supplier, "KERAH");
+                      const mansetRate = hargaKerahMansetRateInfo(hargaKerahManset, kerahMansetSettings, g.supplier, "MANSET");
+                      // Estimasi Harga Kain (Rp) -- owner 2026-09-18: "tambah kolom estimasi harga
+                      // roll" -- sebelumnya cuma RIB/Kerah/Manset yang ada estimasinya, padahal kain
+                      // utamanya sendiri yang paling besar porsi biayanya. Rumus SAMA dengan
+                      // materialAmountForPo (dipakai p.amount PO Material sungguhan) supaya angka di
+                      // sini tidak menyesatkan -- kg dari roll x ROLL_KG_ESTIMATE, rate dari
+                      // hargaKainRate (Harga Kain PKS by tonase, fallback Harga Kain flat). Perlu
+                      // supplier dulu (tidak ada fallback tanpa supplier, beda dari RIB/Kerah/Manset
+                      // yang punya acuan KNITTO) -- tampilkan "—" kalau belum dipilih.
+                      const kainKg = g.totalRoll * ROLL_KG_ESTIMATE;
+                      const kainRate = g.supplier ? hargaKainRate(hargaKain, hargaKainPks, g.supplier, g.warna, kainKg) : null;
+                      return (
+                        <div key={g.warna} className="grid gap-x-3 items-center border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0" style={{ gridTemplateColumns: cols }}>
+                          <input type="checkbox" checked={selectedWarna.has(g.warna)} onChange={() => toggleWarna(g.warna)} className="h-3.5 w-3.5" aria-label={`Pilih warna ${g.warna}`} />
+                          <span>{g.warna}</span>
+                          <span className="text-right font-mono">{g.totalRoll}</span>
+                          <span className="text-right font-mono" title={kainRate != null ? `${kainKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kg x ${formatRupiah(kainRate)}/kg` : "Pilih vendor material dulu untuk lihat estimasi."}>
+                            {kainRate != null ? formatRupiah(kainKg * kainRate) : "—"}
+                          </span>
+                          <span className={MATERIAL_GROUP_BG.rib + " border-l border-[#F1F4F7] pl-2 text-right font-mono"}>{g.totalRibKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>
+                          {/* Estimasi Rp (kg terkonversi x harga/kg dari Master Data RIB/Kerah/Manset) --
+                              PURELY DISPLAY, tidak mengubah total_biaya/nilai PO Bahan aktual manapun. */}
+                          <span
+                            className={MATERIAL_GROUP_BG.rib + " text-right font-mono"}
+                            title={
+                              ribRate
+                                ? `Rib ${g.totalRibKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kg x ${formatRupiah(ribRate.rate)}/kg (Master Data Harga RIB, ${ribRate.sourceSupplier}${ribRate.viaReference ? " — acuan, supplier ini belum punya harga RIB sendiri" : ""})`
+                                : `Belum ada harga RIB untuk warna ${g.warna} di Master Data Harga RIB.`
+                            }
+                          >
+                            {ribRate ? formatRupiah(g.totalRibKg * ribRate.rate) : "—"}
+                          </span>
+                          {showKerahManset && (
+                            <span
+                              className={MATERIAL_GROUP_BG.kerah + " border-l border-[#F1F4F7] pl-2 text-right font-mono"}
+                              title={kerahLooksUnconverted ? "Angka ini tampak jauh di luar wajar (kg per roll terlalu besar) -- kemungkinan MRP lama yang di-import sebelum Master Data Kerah/Manset ada, belum pernah terkonversi ke kg sungguhan." : undefined}
+                            >
+                              {kerahLooksUnconverted && <span className="text-warning-fg">⚠ </span>}
+                              {g.totalKerahKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })}
+                            </span>
+                          )}
+                          {showKerahManset && (
+                            <span
+                              className={MATERIAL_GROUP_BG.kerah + " text-right font-mono"}
+                              title={`Kerah ${g.totalKerahKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kg x ${formatRupiah(kerahRate.rate)}/kg (${kerahRate.sourceLabel}${kerahRate.viaFallback ? " — acuan, supplier ini belum punya harga Kerah sendiri" : ""})`}
+                            >
+                              {formatRupiah(g.totalKerahKg * kerahRate.rate)}
+                            </span>
+                          )}
+                          {showKerahManset && (
+                            <span
+                              className={MATERIAL_GROUP_BG.manset + " border-l border-[#F1F4F7] pl-2 text-right font-mono"}
+                              title={mansetLooksUnconverted ? "Angka ini tampak jauh di luar wajar (kg per roll terlalu besar) -- kemungkinan MRP lama yang di-import sebelum Master Data Kerah/Manset ada, belum pernah terkonversi ke kg sungguhan." : undefined}
+                            >
+                              {mansetLooksUnconverted && <span className="text-warning-fg">⚠ </span>}
+                              {g.totalMansetKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })}
+                            </span>
+                          )}
+                          {showKerahManset && (
+                            <span
+                              className={MATERIAL_GROUP_BG.manset + " text-right font-mono"}
+                              title={`Manset ${g.totalMansetKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kg x ${formatRupiah(mansetRate.rate)}/kg (${mansetRate.sourceLabel}${mansetRate.viaFallback ? " — acuan, supplier ini belum punya harga Manset sendiri" : ""})`}
+                            >
+                              {formatRupiah(g.totalMansetKg * mansetRate.rate)}
+                            </span>
+                          )}
+                          <select
+                            value={g.supplier ?? ""}
+                            onChange={(e) => {
+                              // Satu pilihan supplier berlaku untuk SEMUA lengan warna ini (pendek +
+                              // panjang digabung jadi satu keputusan bahan) — bukan per lengan lagi.
+                              // Dikirim sebagai SATU panggilan (bukan .forEach per rowId) supaya cuma 1
+                              // update + 1 refresh, bukan N yang saling susul-menyusul.
+                              assignMaterialSupplier(detail.mrp.id, g.rowIds, e.target.value);
+                            }}
+                            className="rounded-md border border-[#DDE4EB] px-2 py-[5px] font-sans text-[11.5px] font-medium text-text-primary"
+                          >
+                            <option value="">— pilih vendor —</option>
+                            {optionsForWarna.map((s) => (
+                              <option key={s} value={s}>
+                                {s}
+                              </option>
+                            ))}
+                          </select>
+                          {optionsForWarna.length === 0 && (
+                            <div className={(showKerahManset ? "col-span-11" : "col-span-7") + " -mt-1.5 pb-0.5 font-sans text-[10.5px] font-medium text-warning-fg"}>
+                              ⚠ Belum ada supplier dengan harga untuk warna {g.warna} di Master Data Harga Kain.
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                      </div>
+                    ))}
+                  </>
+                );
+              })()}
+            </div>
+        )}
+
         </div>
-      )}
+      </SidePanel>
 
       <Tabs
         items={[
@@ -539,677 +799,133 @@ export default function PoApprovalPage() {
       {/* TIDAK butuh `detail`/MRP terpilih -- beda dari 2 tab lain, ini antrean LINTAS MRP. */}
       {tab === "approval" && <PoApprovalQueue role="procurement" />}
 
-      {tab === "produksi" && detail && (
-          <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-            <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Vendor produksi</div>
-            {/* Item 2026-09-13 (user-reported): kolom "%" (persentase kapasitas terpakai) dihapus
-               -- tidak relevan buat keputusan di halaman ini, cuma bikin tabel penuh.
-               Revisi 2026-09-18 (owner: "buat tampilannya seperti PO Material, kolomnya terlalu
-               jauh"): header disamakan (biru, border-accent-blue) dengan tabel Material, dan
-               "Nama vendor" TIDAK LAGI minmax(0,1fr) (dulu memaksa nama merentang penuh lebar
-               tabel, mendorong 3 kolom angka terisolasi jauh ke kanan) -- sekarang lebar tetap
-               wajar, sisa ruang kosong di ujung kanan (bukan disebar ke celah antar kolom). */}
-            <div
-              className="grid gap-x-3 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
-              style={{ gridTemplateColumns: "260px 90px 100px 140px" }}
-            >
-              <span className="whitespace-nowrap">Nama vendor</span>
-              <span className="whitespace-nowrap text-right">Qty plan</span>
-              <span className="whitespace-nowrap text-right">Kapasitas</span>
-              <span className="whitespace-nowrap text-right">Est. biaya</span>
-            </div>
-            {vendorRows.map((v) => {
-              const aduanRows = detail?.aduanRows.filter((a) => a.vendor === v.vendor) ?? [];
-              return (
-                <button
-                  key={v.vendor}
-                  onClick={() => setDrillVendor(v.vendor)}
-                  className="grid items-center gap-x-3 border-b border-[#F1F4F7] px-4 py-[11px] text-left font-sans text-xs text-[#31414F] last:border-b-0 hover:bg-[#F7F9FB]"
-                  style={{ gridTemplateColumns: "260px 90px 100px 140px" }}
-                >
-                  <span className="font-medium">{v.name}</span>
-                  <span className="text-right font-mono">{formatPcs(v.qty)}</span>
-                  <span className="text-right font-mono">{formatPcs(v.baseCapacity)}</span>
-                  <span className="flex flex-col items-end gap-0.5 font-mono">
-                    <span>{formatRupiah(v.fee)}</span>
-                    <RateBadge explanation={maklonRateExplanation(hargaMaklon, v.vendor, aduanRows)} />
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-      )}
-
-      {tab === "material" && detail && (
-          <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-card">
-            <div className="border-b border-border-subtle px-4 py-3 font-sans text-[13px] font-semibold text-text-primary">Material</div>
-            {(() => {
-              // Item 2026-09-18 ("Kirim PO ke Finance" parsial): baris yang SUDAH ikut PO
-              // (sentToPoAt terisi) dikeluarkan dari tabel ini -- tidak ada lagi yang perlu
-              // dilakukan Procurement untuk warna itu. Sisa yang tampil di sini otomatis JADI
-              // daftar "outstanding" (belum dipilih vendor material / belum dikirim).
-              const materialGroups = materialGroupsByWarna(detail.materialRows.filter((m) => !m.sentToPoAt));
-              // Item BAGIAN 2 (Req 20) — kolom Kerah/Manset kg cuma ditampilkan kalau ADA material
-              // row MRP ini yang benar-benar punya nilai (kategori "WANGKI MYNO").
-              const showKerahManset = materialGroups.some((g) => g.totalKerahKg > 0 || g.totalMansetKg > 0);
-              // + 2 kolom "Est. Kerah (Rp)"/"Est. Manset (Rp)" (PURELY DISPLAY, tidak mengubah nilai
-              // PO Bahan aktual) -- gated kondisi SAMA seperti kolom kg (showKerahManset).
-              // Kolom "Est. Rib (Rp)" (Master Data Harga RIB, migration 0037) SELALU tampil -- rib
-              // ada di semua kategori, bukan cuma WANGKI MYNO.
-              // Kolom Warna diberi lebar minimum supaya nama warna tidak patah per kata (revisi
-              // 2026-09-15, owner: tabel Material terlalu sempit).
-              // Lebar kolom Kerah/Manset kg & Est. (Rp) dilebarkan (revisi 2026-09-18, owner:
-              // "header-nya jangan 2 baris") supaya label header ("MANSET KG", "EST. MANSET (RP)")
-              // muat 1 baris tanpa patah kata -- lihat whitespace-nowrap di header di bawah.
-              // Revisi 2026-09-18 (owner: "tambah kolom estimasi harga roll" + "pisahkan kg dan
-              // harga per jenis bahan biar kelihatan pasangannya") -- kolom kg & Est.(Rp) SEKARANG
-              // BERPASANGAN bersebelahan per jenis bahan (Roll+EstKain, RibKg+EstRib, dst, bukan
-              // lagi semua kg dulu baru semua Est. di akhir) + 1 kolom baru "Est. Kain (Rp)" untuk
-              // harga kain utamanya sendiri (sebelumnya cuma RIB/Kerah/Manset yang ada estimasinya,
-              // padahal harga kain-nya sendiri yang paling besar porsinya). Pemisah visual antar
-              // jenis bahan pakai warna latar (lihat MATERIAL_GROUP_BG di bawah), bukan cuma grid gap.
-              const cols = showKerahManset
-                ? "20px minmax(120px, 1.3fr) 44px 104px 64px 104px 70px 104px 76px 104px minmax(150px, 1fr)"
-                : "20px minmax(140px, 1.5fr) 44px 104px 64px 104px minmax(160px, 1fr)";
-              // Owner 2026-09-16: kelompokkan per kategori kain (WANGKI MYNO/30S/KID/dsb sering
-              // campur dalam 1 MRP, lihat inferMaterialKategori) + filter kategori + checkbox
-              // bulk-assign supplier untuk banyak warna sekaligus (bukan 1-per-1 seperti dulu).
-              const kategoriHadir = MATERIAL_KATEGORI_URUTAN.filter((k) => materialGroups.some((g) => inferMaterialKategori(g.warna) === k));
-              const visibleGroups = materialKategoriFilter ? materialGroups.filter((g) => inferMaterialKategori(g.warna) === materialKategoriFilter) : materialGroups;
-              const groupsByKategori = MATERIAL_KATEGORI_URUTAN.map((k) => ({ kategori: k, groups: visibleGroups.filter((g) => inferMaterialKategori(g.warna) === k) })).filter(
-                (k) => k.groups.length > 0
-              );
-              function toggleWarna(warna: string) {
-                setSelectedWarna((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(warna)) next.delete(warna);
-                  else next.add(warna);
-                  return next;
-                });
-              }
-              function applyBulkSupplier() {
-                if (!bulkSupplier || selectedWarna.size === 0 || !detail) return;
-                const rowIds = materialGroups.filter((g) => selectedWarna.has(g.warna)).flatMap((g) => g.rowIds);
-                assignMaterialSupplier(detail.mrp.id, rowIds, bulkSupplier);
-                setSelectedWarna(new Set());
-                setBulkSupplier("");
-              }
-              return (
-                <>
-                  {kategoriHadir.length > 1 && (
-                    <div className="flex items-center gap-1.5 border-b border-border-subtle px-4 py-2">
-                      <span className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Filter kategori:</span>
-                      <select value={materialKategoriFilter} onChange={(e) => setMaterialKategoriFilter(e.target.value)} className="input w-auto !py-1 !text-[11px]">
-                        <option value="">Semua kategori ({materialGroups.length} warna)</option>
-                        {kategoriHadir.map((k) => (
-                          <option key={k} value={k}>
-                            {k} ({materialGroups.filter((g) => inferMaterialKategori(g.warna) === k).length})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                  {selectedWarna.size > 0 && (
-                    <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle bg-info-bg px-4 py-2">
-                      <span className="font-sans text-[11px] font-semibold text-info-fg">{selectedWarna.size} warna dipilih —</span>
-                      <select value={bulkSupplier} onChange={(e) => setBulkSupplier(e.target.value)} className="input w-auto !py-1 !text-[11px]">
-                        <option value="">— samakan ke supplier —</option>
-                        {Array.from(new Set(Array.from(selectedWarna).flatMap((w) => materialSupplierNamesForWarna(hargaKain, w)))).map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
-                      <Button onClick={applyBulkSupplier} variant="primary" size="xs" disabled={!bulkSupplier}>
-                        Terapkan
-                      </Button>
-                      <Button onClick={() => setSelectedWarna(new Set())} variant="ghost" size="xs">
-                        Batal pilih
-                      </Button>
-                    </div>
-                  )}
-                  <div
-                    className="grid gap-x-3 border-b-2 border-accent-blue bg-info-bg px-4 py-[9px] font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg"
-                    style={{ gridTemplateColumns: cols }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={visibleGroups.length > 0 && visibleGroups.every((g) => selectedWarna.has(g.warna))}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        setSelectedWarna((prev) => {
-                          const next = new Set(prev);
-                          for (const g of visibleGroups) {
-                            if (checked) next.add(g.warna);
-                            else next.delete(g.warna);
-                          }
-                          return next;
-                        });
-                      }}
-                      className="h-3.5 w-3.5"
-                      aria-label={materialKategoriFilter ? `Pilih semua warna kategori ${materialKategoriFilter}` : "Pilih semua warna"}
-                    />
-                    <span className="whitespace-nowrap">Warna</span>
-                    <span className="whitespace-nowrap text-right">Roll</span>
-                    <span className="whitespace-nowrap text-right">Est. Kain (Rp)</span>
-                    <span className={MATERIAL_GROUP_BG.rib + " whitespace-nowrap border-l border-[#E4E9EE] pl-2 text-right"}>Rib kg</span>
-                    <span className={MATERIAL_GROUP_BG.rib + " whitespace-nowrap text-right"}>Est. Rib (Rp)</span>
-                    {showKerahManset && <span className={MATERIAL_GROUP_BG.kerah + " whitespace-nowrap border-l border-[#E4E9EE] pl-2 text-right"}>Kerah kg</span>}
-                    {showKerahManset && <span className={MATERIAL_GROUP_BG.kerah + " whitespace-nowrap text-right"}>Est. Kerah (Rp)</span>}
-                    {showKerahManset && <span className={MATERIAL_GROUP_BG.manset + " whitespace-nowrap border-l border-[#E4E9EE] pl-2 text-right"}>Manset kg</span>}
-                    {showKerahManset && <span className={MATERIAL_GROUP_BG.manset + " whitespace-nowrap text-right"}>Est. Manset (Rp)</span>}
-                    <span className="whitespace-nowrap">Vendor material</span>
-                  </div>
-                  {groupsByKategori.map(({ kategori, groups }) => (
-                    <div key={kategori}>
-                      {kategoriHadir.length > 1 && !materialKategoriFilter && (
-                        <div className="border-b border-border-subtle bg-[#FBFCFD] px-4 py-1.5 font-sans text-[10.5px] font-semibold text-text-muted">{kategori}</div>
-                      )}
-                      {groups.map((g) => {
-                    // Dipersempit ke supplier yang benar-benar punya harga untuk warna ini di Harga
-                    // Kain — supaya tidak bisa pilih kombinasi supplier+warna yang harganya tidak ada
-                    // sama sekali (yang berujung PO jatuh ke fallback "Estimasi" pakai angka flat jauh
-                    // di bawah harga pasar). Daftar dummy tab Supplier sudah TIDAK ikut (2026-09-15).
-                    const optionsForWarna = materialSupplierNamesForWarna(hargaKain, g.warna);
-                    // Fix (review 2026-09-14): MRP WANGKI MYNO yang di-import SEBELUM fitur konversi
-                    // pcs->kg ini (lihat parseImport.ts) masih punya kerah_kg/manset_kg berisi ANGKA
-                    // PCS MENTAH (bukan kg -- data lama SENGAJA tidak dimigrasi, lihat spec Non-goals).
-                    // Tanpa penanda apa pun, itu kelihatan "sama sahnya" dengan kg yang sudah benar --
-                    // heuristik murah di sini: kg per roll yang MASUK AKAL untuk Kerah/Manset ada di
-                    // kisaran ~117 pcs/roll x 0.02-0.03 kg/pcs = 2-4 kg/roll (lihat rollEstimate di
-                    // parseImport.ts) -- kalau lebih dari 10x lipat itu, kemungkinan besar angkanya
-                    // masih pcs mentah (bukan bug perhitungan baru, cuma data historis yang belum
-                    // pernah lewat konversi ini). Estimasi Rp di kolom sebelah jadi ikut TIDAK MASUK
-                    // AKAL kalau ini terjadi -- badge ini murni sinyal visual, TIDAK mengubah angka
-                    // apa pun, TIDAK memblokir apa pun.
-                    const kerahLooksUnconverted = g.totalRoll > 0 && g.totalKerahKg / g.totalRoll > 10;
-                    const mansetLooksUnconverted = g.totalRoll > 0 && g.totalMansetKg / g.totalRoll > 10;
-                    // Harga RIB/kg dari Master Data Harga RIB -- supplier terpilih dulu, lalu acuan
-                    // KNITTO (lihat hargaRibRateInfo). Belum pilih supplier pun tetap dapat estimasi.
-                    const ribRate = hargaRibRateInfo(hargaRib, g.supplier, g.warna);
-                    // Harga Kerah/Manset per kg -- Master Data per Supplier (migration 0038), fallback
-                    // KNITTO lalu harga global lama (lihat hargaKerahMansetRateInfo).
-                    const kerahRate = hargaKerahMansetRateInfo(hargaKerahManset, kerahMansetSettings, g.supplier, "KERAH");
-                    const mansetRate = hargaKerahMansetRateInfo(hargaKerahManset, kerahMansetSettings, g.supplier, "MANSET");
-                    // Estimasi Harga Kain (Rp) -- owner 2026-09-18: "tambah kolom estimasi harga
-                    // roll" -- sebelumnya cuma RIB/Kerah/Manset yang ada estimasinya, padahal kain
-                    // utamanya sendiri yang paling besar porsi biayanya. Rumus SAMA dengan
-                    // materialAmountForPo (dipakai p.amount PO Material sungguhan) supaya angka di
-                    // sini tidak menyesatkan -- kg dari roll x ROLL_KG_ESTIMATE, rate dari
-                    // hargaKainRate (Harga Kain PKS by tonase, fallback Harga Kain flat). Perlu
-                    // supplier dulu (tidak ada fallback tanpa supplier, beda dari RIB/Kerah/Manset
-                    // yang punya acuan KNITTO) -- tampilkan "—" kalau belum dipilih.
-                    const kainKg = g.totalRoll * ROLL_KG_ESTIMATE;
-                    const kainRate = g.supplier ? hargaKainRate(hargaKain, hargaKainPks, g.supplier, g.warna, kainKg) : null;
-                    return (
-                      <div key={g.warna} className="grid gap-x-3 items-center border-b border-[#F1F4F7] px-4 py-[11px] font-sans text-xs text-[#31414F] last:border-b-0" style={{ gridTemplateColumns: cols }}>
-                        <input type="checkbox" checked={selectedWarna.has(g.warna)} onChange={() => toggleWarna(g.warna)} className="h-3.5 w-3.5" aria-label={`Pilih warna ${g.warna}`} />
-                        <span>{g.warna}</span>
-                        <span className="text-right font-mono">{g.totalRoll}</span>
-                        <span className="text-right font-mono" title={kainRate != null ? `${kainKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kg x ${formatRupiah(kainRate)}/kg` : "Pilih vendor material dulu untuk lihat estimasi."}>
-                          {kainRate != null ? formatRupiah(kainKg * kainRate) : "—"}
-                        </span>
-                        <span className={MATERIAL_GROUP_BG.rib + " border-l border-[#F1F4F7] pl-2 text-right font-mono"}>{g.totalRibKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })}</span>
-                        {/* Estimasi Rp (kg terkonversi x harga/kg dari Master Data RIB/Kerah/Manset) --
-                            PURELY DISPLAY, tidak mengubah total_biaya/nilai PO Bahan aktual manapun. */}
-                        <span
-                          className={MATERIAL_GROUP_BG.rib + " text-right font-mono"}
-                          title={
-                            ribRate
-                              ? `Rib ${g.totalRibKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kg x ${formatRupiah(ribRate.rate)}/kg (Master Data Harga RIB, ${ribRate.sourceSupplier}${ribRate.viaReference ? " — acuan, supplier ini belum punya harga RIB sendiri" : ""})`
-                              : `Belum ada harga RIB untuk warna ${g.warna} di Master Data Harga RIB.`
-                          }
-                        >
-                          {ribRate ? formatRupiah(g.totalRibKg * ribRate.rate) : "—"}
-                        </span>
-                        {showKerahManset && (
-                          <span
-                            className={MATERIAL_GROUP_BG.kerah + " border-l border-[#F1F4F7] pl-2 text-right font-mono"}
-                            title={kerahLooksUnconverted ? "Angka ini tampak jauh di luar wajar (kg per roll terlalu besar) -- kemungkinan MRP lama yang di-import sebelum Master Data Kerah/Manset ada, belum pernah terkonversi ke kg sungguhan." : undefined}
-                          >
-                            {kerahLooksUnconverted && <span className="text-warning-fg">⚠ </span>}
-                            {g.totalKerahKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })}
-                          </span>
-                        )}
-                        {showKerahManset && (
-                          <span
-                            className={MATERIAL_GROUP_BG.kerah + " text-right font-mono"}
-                            title={`Kerah ${g.totalKerahKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kg x ${formatRupiah(kerahRate.rate)}/kg (${kerahRate.sourceLabel}${kerahRate.viaFallback ? " — acuan, supplier ini belum punya harga Kerah sendiri" : ""})`}
-                          >
-                            {formatRupiah(g.totalKerahKg * kerahRate.rate)}
-                          </span>
-                        )}
-                        {showKerahManset && (
-                          <span
-                            className={MATERIAL_GROUP_BG.manset + " border-l border-[#F1F4F7] pl-2 text-right font-mono"}
-                            title={mansetLooksUnconverted ? "Angka ini tampak jauh di luar wajar (kg per roll terlalu besar) -- kemungkinan MRP lama yang di-import sebelum Master Data Kerah/Manset ada, belum pernah terkonversi ke kg sungguhan." : undefined}
-                          >
-                            {mansetLooksUnconverted && <span className="text-warning-fg">⚠ </span>}
-                            {g.totalMansetKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })}
-                          </span>
-                        )}
-                        {showKerahManset && (
-                          <span
-                            className={MATERIAL_GROUP_BG.manset + " text-right font-mono"}
-                            title={`Manset ${g.totalMansetKg.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kg x ${formatRupiah(mansetRate.rate)}/kg (${mansetRate.sourceLabel}${mansetRate.viaFallback ? " — acuan, supplier ini belum punya harga Manset sendiri" : ""})`}
-                          >
-                            {formatRupiah(g.totalMansetKg * mansetRate.rate)}
-                          </span>
-                        )}
-                        <select
-                          value={g.supplier ?? ""}
-                          onChange={(e) => {
-                            // Satu pilihan supplier berlaku untuk SEMUA lengan warna ini (pendek +
-                            // panjang digabung jadi satu keputusan bahan) — bukan per lengan lagi.
-                            // Dikirim sebagai SATU panggilan (bukan .forEach per rowId) supaya cuma 1
-                            // update + 1 refresh, bukan N yang saling susul-menyusul.
-                            assignMaterialSupplier(detail.mrp.id, g.rowIds, e.target.value);
-                          }}
-                          className="rounded-md border border-[#DDE4EB] px-2 py-[5px] font-sans text-[11.5px] font-medium text-text-primary"
-                        >
-                          <option value="">— pilih vendor —</option>
-                          {optionsForWarna.map((s) => (
-                            <option key={s} value={s}>
-                              {s}
-                            </option>
-                          ))}
-                        </select>
-                        {optionsForWarna.length === 0 && (
-                          <div className={(showKerahManset ? "col-span-11" : "col-span-7") + " -mt-1.5 pb-0.5 font-sans text-[10.5px] font-medium text-warning-fg"}>
-                            ⚠ Belum ada supplier dengan harga untuk warna {g.warna} di Master Data Harga Kain.
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                    </div>
-                  ))}
-                </>
-              );
-            })()}
-          </div>
+      {tab !== "approval" && (
+        // Kartu angka (pola PPIC): dihitung dari baris yang sedang lolos filter tabel; "Menunggu approval" diklik = filter.
+        <div className="grid grid-cols-4 gap-3 max-lg:grid-cols-2">
+          {(() => {
+            const list = tab === "material" ? shownMaterial : shownMaklon;
+            const waiting = list.filter((p) => !p.approved).length;
+            const qtyLabel = tab === "material" ? "Total roll" : "Total qty";
+            const qtyValue =
+              tab === "material"
+                ? (list as MaterialPO[]).reduce((s, p) => s + p.rollCount, 0).toLocaleString("id-ID", { maximumFractionDigits: 2 })
+                : formatPcs((list as MaklonPO[]).reduce((s, p) => s + p.qty, 0));
+            return (
+              <>
+                <KpiCard label="Jumlah PO" value={list.length} sub={tab === "material" ? "PO Material yang tampil" : "PO Produksi yang tampil"} accent="blue" />
+                <KpiCard
+                  label="Menunggu approval"
+                  value={waiting}
+                  sub="klik untuk menyaring"
+                  accent="orange"
+                  active={poPreset.card === tab}
+                  onClick={() =>
+                    setPoPreset((p) => (p.card === tab ? { nonce: p.nonce + 1, filters: {} as Record<string, string[]>, card: "" } : { nonce: p.nonce + 1, filters: { Approval: ["Menunggu"] }, card: tab }))
+                  }
+                />
+                <KpiCard label={qtyLabel} value={qtyValue} sub={tab === "material" ? "roll" : "pcs"} accent="purple" />
+                <KpiCard label="Total nilai" value={formatRupiah(list.reduce((s, p) => s + p.amount, 0))} valueClassName="text-[20px]" sub="nilai PO yang tampil" accent="teal" />
+              </>
+            );
+          })()}
+        </div>
       )}
 
       {tab === "material" && (
-      <div className="overflow-hidden border border-border-subtle bg-surface-card">
-        <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
-          <span className="font-sans text-[13px] font-semibold text-text-primary">PO Material</span>
-          <div className="ml-auto flex items-center gap-2">
-            {/* Item 2026-09-18 (owner: "roll_count di sini kadang pecahan, apa adanya dari sheet
-               Aduan Pola Excel -- mau bisa dibulatkan, tapi tetap bisa dikembalikan selama Finance
-               belum approve PO-nya"): 2 tombol terpisah (bukan 1 toggle) karena PO yang sudah
-               dibulatkan & yang belum bisa hidup berdampingan (mis. baru sebagian PO dibulatkan) --
-               masing-masing cuma muncul kalau memang ada PO yang relevan (belum approved). */}
-            {hasUnroundedFractionalRoll(allMaterialPOs) && (
-              <Button onClick={() => roundMaterialPoRollCounts()} variant="muted" size="xs" title="Bulatkan roll_count yang masih pecahan pada PO Material yang belum di-approve Finance">
-                Bulatkan Roll
-              </Button>
-            )}
-            {hasRoundedRollPendingRevert(allMaterialPOs) && (
-              <Button onClick={() => revertMaterialPoRollRounding()} variant="ghost" size="xs" title="Kembalikan roll_count yang sudah dibulatkan ke pecahan semula">
-                Kembalikan ke Pecahan
-              </Button>
-            )}
-            <div className="relative">
-              <button
-                onClick={() => setMaterialColOpen((v) => !v)}
-                className="rounded-md border border-[#CBD5DF] px-2.5 py-[6px] font-sans text-[11.5px] font-semibold text-action-primary"
-              >
-                ⊞ Kolom
-              </button>
-            {materialColOpen && (
-              <div className="absolute right-0 top-[110%] z-20 max-h-72 w-56 overflow-y-auto rounded-md border border-border-subtle bg-surface-card p-2 shadow-[0_8px_20px_rgba(11,19,27,.15)]">
-                {materialTreeColumns.map((c) => (
-                  <label key={c.key} className="flex items-center gap-2 rounded px-2 py-1.5 font-sans text-xs text-[#31414F] hover:bg-[#F7F9FB]">
-                    <input type="checkbox" checked={visibleMaterialCols.has(c.key)} onChange={() => toggleMaterialCol(c.key)} className="h-3.5 w-3.5 accent-accent-blue" />
-                    {c.label}
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-          </div>
-        </div>
-        {materialMrpSummaries.length === 0 && (
-          <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada PO material yang dibuat.</div>
-        )}
-        {materialMrpSummaries.length > 0 && (
-        <div className="overflow-x-auto">
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
-              <th className="px-5 py-[9px] text-left">No MRP / Supplier / Vendor Produksi</th>
-              {visibleMaterialCols.has("jumlah") && <th className="px-3 py-[9px] text-right">Jumlah</th>}
-              {visibleMaterialCols.has("roll") && <th className="px-3 py-[9px] text-right">Roll</th>}
-              {visibleMaterialCols.has("nilai") && <th className="px-3 py-[9px] text-right">Nilai</th>}
-              {visibleMaterialCols.has("sumber") && <th className="px-3 py-[9px] text-left">Sumber</th>}
-              {visibleMaterialCols.has("status") && <th className="px-3 py-[9px] text-left">Status</th>}
-              {visibleMaterialCols.has("aksi") && <th className="px-3 py-[9px] text-left">Aksi</th>}
-              <SysadminTh />
-            </tr>
-          </thead>
-          <tbody>
-        {materialMrpSummaries.map((m) => {
-          const mrpActive = expandedMrpMaterial === m.mrpId;
-          return (
-            <Fragment key={m.mrpId}>
-              <tr
+        <DataTable<MaterialPO>
+          title="PO Material"
+          headerActions={
+            <>
+              {/* Item 2026-09-18 (owner): Bulatkan Roll / Kembalikan ke Pecahan selama PO belum di-approve Finance. */}
+              {hasUnroundedFractionalRoll(allMaterialPOs) && (
+                <Button onClick={() => roundMaterialPoRollCounts()} variant="muted" size="xs" title="Bulatkan roll_count yang masih pecahan pada PO Material yang belum di-approve Finance">
+                  Bulatkan Roll
+                </Button>
+              )}
+              {hasRoundedRollPendingRevert(allMaterialPOs) && (
+                <Button onClick={() => revertMaterialPoRollRounding()} variant="ghost" size="xs" title="Kembalikan roll_count yang sudah dibulatkan ke pecahan semula">
+                  Kembalikan ke Pecahan
+                </Button>
+              )}
+              <Button
                 onClick={() => {
-                  const next = mrpActive ? null : m.mrpId;
-                  setExpandedMrpMaterial(next);
-                  setExpandedSupplierMaterial(null);
-                  setExpandedVendorMaterial(null);
+                  const pos = shownMaterial.filter((p) => p.supplier);
+                  const mrps = Array.from(new Set(pos.map((p) => p.mrpId)));
+                  setDownloadReq({ kind: "material", pos, baseName: mrps.length === 1 ? `PO-Material-${mrps[0]}` : "PO-Material" });
                 }}
-                className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] hover:bg-[#FAFBFC] " + (mrpActive ? "bg-info-bg" : "")}
+                disabled={!shownMaterial.some((p) => p.supplier)}
+                title="Download semua PO Material yang sedang tampil (ikut filter) jadi 1 file"
+                variant="muted"
+                size="xs"
               >
-                <td className="px-5 py-[11px]">
-                  <span className="mr-1.5 text-text-muted">{mrpActive ? "▾" : "▸"}</span>
-                  <span className="font-mono font-semibold text-text-primary">{m.mrpId}</span>
-                </td>
-                {visibleMaterialCols.has("jumlah") && <td className="px-3 py-[11px] text-right font-mono tabular-nums text-text-muted">{m.supplierCount} supplier</td>}
-                {visibleMaterialCols.has("roll") && <td className="px-3 py-[11px] text-right font-mono tabular-nums">{m.totalRoll}</td>}
-                {visibleMaterialCols.has("nilai") && <td className="px-3 py-[11px] text-right font-mono tabular-nums font-medium">{formatRupiah(m.totalNilai)}</td>}
-                {visibleMaterialCols.has("sumber") && <td className="px-3 py-[11px]" />}
-                {visibleMaterialCols.has("status") && (
-                  <td className="px-3 py-[11px]">
-                    <StatusPill tone="neutral">{m.pos.length} PO</StatusPill>
-                  </td>
-                )}
-                {visibleMaterialCols.has("aksi") && (
-                  <td className="px-3 py-[11px]">
-                    <Button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDownloadReq({ kind: "material", pos: m.pos, baseName: `PO-Material-${m.mrpId}` });
-                      }}
-                      disabled={m.pos.every((p) => !p.supplier)}
-                      title={m.pos.every((p) => !p.supplier) ? "Belum ada PO di MRP ini yang punya vendor material" : `Download semua ${m.pos.length} PO material MRP ini jadi 1 file`}
-                      variant="ghost"
-                      size="xs"
-                    >
-                      Download PO
-                    </Button>
-                  </td>
-                )}
-                <SysadminTd className="py-[11px]" />
-              </tr>
-              {mrpActive &&
-                supplierSummariesForMrp(m.pos).map((s) => {
-                  const supplierKey = `${m.mrpId}::${s.supplier}`;
-                  const supplierActive = expandedSupplierMaterial === supplierKey;
-                  return (
-                    <Fragment key={supplierKey}>
-                      <tr
-                        onClick={() => {
-                          const next = supplierActive ? null : supplierKey;
-                          setExpandedSupplierMaterial(next);
-                          setExpandedVendorMaterial(null);
-                        }}
-                        className={"cursor-pointer border-b border-[#F1F4F7] bg-[#FBFCFD] font-sans text-[11.5px] text-[#31414F] hover:bg-[#F2F5F8] " + (supplierActive ? "bg-info-bg" : "")}
-                      >
-                        <td className="py-[10px] pl-10 pr-3">
-                          <span className="mr-1.5 text-text-muted">{supplierActive ? "▾" : "▸"}</span>
-                          <span className="font-medium text-text-primary">{s.supplier}</span>
-                        </td>
-                        {visibleMaterialCols.has("jumlah") && <td className="px-3 py-[10px] text-right font-mono tabular-nums text-text-muted">{s.vendorCount} vendor</td>}
-                        {visibleMaterialCols.has("roll") && <td className="px-3 py-[10px] text-right font-mono tabular-nums">{s.totalRoll}</td>}
-                        {visibleMaterialCols.has("nilai") && <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(s.totalNilai)}</td>}
-                        {visibleMaterialCols.has("sumber") && <td className="px-3 py-[10px]" />}
-                        {visibleMaterialCols.has("status") && (
-                          <td className="px-3 py-[10px]">
-                            <StatusPill tone="neutral">{s.pos.length} PO</StatusPill>
-                          </td>
-                        )}
-                        {visibleMaterialCols.has("aksi") && (
-                          <td className="px-3 py-[10px]">
-                            <Button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setDownloadReq({ kind: "material", pos: s.pos, baseName: `PO-Material-${m.mrpId}-${s.supplier}` });
-                              }}
-                              disabled={s.pos.every((p) => !p.supplier)}
-                              title={s.pos.every((p) => !p.supplier) ? "Belum ada vendor material untuk grup ini" : `Download semua ${s.pos.length} PO material supplier ini jadi 1 file`}
-                              variant="ghost"
-                              size="xs"
-                            >
-                              Download PO
-                            </Button>
-                          </td>
-                        )}
-                        <SysadminTd />
-                      </tr>
-                      {supplierActive &&
-                        s.pos.map((p) => {
-                          const vendorActive = expandedVendorMaterial === p.id;
-                          const statusInfo = materialPoFullStatusBadge(
-                            materialPoFullStatus(p, invoices, productionBatches, productionResults, mrpDetails, deliveryKolis, vendorInvoices, maklonPOs)
-                          );
-                          return (
-                            <Fragment key={p.id}>
-                              <tr
-                                onClick={() => setExpandedVendorMaterial(vendorActive ? null : p.id)}
-                                className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-[11.5px] text-[#31414F] hover:bg-[#FAFBFC] " + (vendorActive ? "bg-info-bg" : "")}
-                              >
-                                <td className="py-[10px] pl-16 pr-3">
-                                  <span className="mr-1.5 text-text-muted">{vendorActive ? "▾" : "▸"}</span>
-                                  <span className="font-medium text-text-primary">{VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi}</span>
-                                  <span className="ml-1.5 font-mono text-[10.5px] text-text-muted">{p.id}</span>
-                                </td>
-                                {visibleMaterialCols.has("jumlah") && <td className="px-3 py-[10px]" />}
-                                {visibleMaterialCols.has("roll") && <td className="px-3 py-[10px] text-right font-mono tabular-nums">{p.rollCount}</td>}
-                                {visibleMaterialCols.has("nilai") && <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(p.amount)}</td>}
-                                {visibleMaterialCols.has("sumber") && (
-                                  <td className="px-3 py-[10px]">
-                                    <RateBadge explanation={materialRateExplanation(hargaKain, hargaKainPks, p.supplier, p.colorBreakdown)} />
-                                  </td>
-                                )}
-                                {visibleMaterialCols.has("status") && (
-                                  <td className="px-3 py-[10px]">
-                                    <StatusPill tone={statusInfo.tone}>{statusInfo.label}</StatusPill>
-                                  </td>
-                                )}
-                                {visibleMaterialCols.has("aksi") && (
-                                  <td className="px-3 py-[10px]">
-                                    <Button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setDownloadReq({ kind: "material", pos: [p], baseName: `PO-${p.id}` });
-                                      }}
-                                      disabled={!p.supplier}
-                                      title={!p.supplier ? "Tetapkan vendor material dulu" : undefined}
-                                      variant="ghost"
-                                      size="xs"
-                                    >
-                                      Download PO
-                                    </Button>
-                                  </td>
-                                )}
-                                <SysadminTd actions={materialPoCorrections(p)} />
-                              </tr>
-                              {vendorActive && (
-                                <tr>
-                                  <td colSpan={1 + visibleMaterialCols.size + (sysadminMode ? 1 : 0)} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
-                                    {materialPoColorBreakdown(p)}
-                                  </td>
-                                </tr>
-                              )}
-                            </Fragment>
-                          );
-                        })}
-                    </Fragment>
-                  );
-                })}
-            </Fragment>
-          );
-        })}
-          </tbody>
-        </table>
-        </div>
-        )}
-      </div>
+                Download PO ({shownMaterial.filter((p) => p.supplier).length})
+              </Button>
+            </>
+          }
+          columns={materialColumns}
+          rows={allMaterialPOs}
+          keyOf={(p) => p.id}
+          firstColumnLabel="No PO"
+          // Nomor PO tampilan tanpa akhiran entitas (poDisplayNo); id asli tetap kunci. Kolom Entitas membedakan PO yang dipecah per entitas.
+          firstColumnRender={(p) => <span className="font-mono font-medium" title={p.id}>{poDisplayNo(p.id, p.entity)}</span>}
+          filterDefs={materialFilterDefs}
+          filterPreset={poPreset}
+          defaultGroupBy={["No. MRP", "Supplier"]}
+          search={{ placeholder: "Cari no PO, MRP, supplier, vendor…", getText: (p) => `${p.id} ${p.mrpId} ${p.supplier} ${vendorName(p.vendorProduksi)} ${materialStatus(p).label}` }}
+          renderExpanded={(p) => materialPoColorBreakdown(p)}
+          onFilteredRows={(list) => setShownMaterialIds(new Set(list.map((p) => p.id)))}
+          emptyText="Belum ada PO material."
+          nowrap
+        />
       )}
 
       {tab === "produksi" && (
-      <div className="overflow-hidden border border-border-subtle bg-surface-card">
-        <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
-          <span className="font-sans text-[13px] font-semibold text-text-primary">PO Produksi</span>
-          <div className="relative ml-auto">
-            <button
-              onClick={() => setMaklonColOpen((v) => !v)}
-              className="rounded-md border border-[#CBD5DF] px-2.5 py-[6px] font-sans text-[11.5px] font-semibold text-action-primary"
+        <DataTable<MaklonPO>
+          title="PO Produksi"
+          headerActions={
+            <Button
+              onClick={() => {
+                const mrps = Array.from(new Set(shownMaklon.map((p) => p.mrpId)));
+                setDownloadReq({ kind: "maklon", pos: shownMaklon, baseName: mrps.length === 1 ? `PO-Produksi-${mrps[0]}` : "PO-Produksi" });
+              }}
+              disabled={shownMaklon.length === 0}
+              title="Download semua PO Produksi yang sedang tampil (ikut filter) jadi 1 file"
+              variant="muted"
+              size="xs"
             >
-              ⊞ Kolom
-            </button>
-            {maklonColOpen && (
-              <div className="absolute right-0 top-[110%] z-20 max-h-72 w-56 overflow-y-auto rounded-md border border-border-subtle bg-surface-card p-2 shadow-[0_8px_20px_rgba(11,19,27,.15)]">
-                {maklonTreeColumns.map((c) => (
-                  <label key={c.key} className="flex items-center gap-2 rounded px-2 py-1.5 font-sans text-xs text-[#31414F] hover:bg-[#F7F9FB]">
-                    <input type="checkbox" checked={visibleMaklonCols.has(c.key)} onChange={() => toggleMaklonCol(c.key)} className="h-3.5 w-3.5 accent-accent-blue" />
-                    {c.label}
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-        {maklonMrpSummaries.length === 0 && (
-          <div className="px-5 py-8 text-center font-sans text-xs text-text-muted">Belum ada PO vendor produksi.</div>
-        )}
-        {maklonMrpSummaries.length > 0 && (
-        <div className="overflow-x-auto">
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="border-b-2 border-accent-blue bg-info-bg font-sans text-[10.5px] font-medium uppercase tracking-wider text-info-fg">
-              <th className="px-5 py-[9px] text-left">No MRP / Vendor Produksi</th>
-              {visibleMaklonCols.has("jumlah") && <th className="px-3 py-[9px] text-right">Jumlah</th>}
-              {visibleMaklonCols.has("qty") && <th className="px-3 py-[9px] text-right">Qty</th>}
-              {visibleMaklonCols.has("nilai") && <th className="px-3 py-[9px] text-right">Nilai</th>}
-              {visibleMaklonCols.has("sumber") && <th className="px-3 py-[9px] text-left">Sumber</th>}
-              {visibleMaklonCols.has("progress") && <th className="px-3 py-[9px] text-left">Progress kirim/tagih</th>}
-              {visibleMaklonCols.has("status") && <th className="px-3 py-[9px] text-left">Status</th>}
-              {visibleMaklonCols.has("aksi") && <th className="px-3 py-[9px] text-left">Aksi</th>}
-              <SysadminTh />
-            </tr>
-          </thead>
-          <tbody>
-            {maklonMrpSummaries.map((m) => {
-              const mrpActive = expandedMaklonMrp === m.mrpId;
-              return (
-                <Fragment key={m.mrpId}>
-                  <tr
-                    onClick={() => {
-                      setExpandedMaklonMrp(mrpActive ? null : m.mrpId);
-                      setExpandedMaklonPo(null);
-                    }}
-                    className={"cursor-pointer border-b border-[#F1F4F7] font-sans text-xs text-[#31414F] hover:bg-[#FAFBFC] " + (mrpActive ? "bg-info-bg" : "")}
-                  >
-                    <td className="px-5 py-[11px]">
-                      <span className="mr-1.5 text-text-muted">{mrpActive ? "▾" : "▸"}</span>
-                      <span className="font-mono font-semibold text-text-primary">{m.mrpId}</span>
-                    </td>
-                    {visibleMaklonCols.has("jumlah") && <td className="px-3 py-[11px] text-right font-mono tabular-nums text-text-muted">{m.pos.length} vendor</td>}
-                    {visibleMaklonCols.has("qty") && <td className="px-3 py-[11px] text-right font-mono tabular-nums">{formatPcs(m.totalQty)} pcs</td>}
-                    {visibleMaklonCols.has("nilai") && <td className="px-3 py-[11px] text-right font-mono tabular-nums font-medium">{formatRupiah(m.totalNilai)}</td>}
-                    {visibleMaklonCols.has("sumber") && <td className="px-3 py-[11px]" />}
-                    {visibleMaklonCols.has("progress") && <td className="px-3 py-[11px]" />}
-                    {visibleMaklonCols.has("status") && (
-                      <td className="px-3 py-[11px]">
-                        <StatusPill tone="neutral">{m.pos.length} PO</StatusPill>
-                      </td>
-                    )}
-                    {visibleMaklonCols.has("aksi") && (
-                      <td className="px-3 py-[11px]">
-                        <Button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDownloadReq({ kind: "maklon", pos: m.pos, baseName: `PO-Produksi-${m.mrpId}` });
-                          }}
-                          title={`Download semua ${m.pos.length} PO produksi MRP ini jadi 1 file`}
-                          variant="ghost"
-                          size="xs"
-                        >
-                          Download PO
-                        </Button>
-                      </td>
-                    )}
-                    <SysadminTd className="py-[11px]" />
-                  </tr>
-                  {mrpActive &&
-                    [...m.pos]
-                      .sort((a, b) => (VENDOR_PRODUKSI[a.vendorProduksi]?.name ?? a.vendorProduksi).localeCompare(VENDOR_PRODUKSI[b.vendorProduksi]?.name ?? b.vendorProduksi, "id-ID"))
-                      .map((p) => {
-                        const poActive = expandedMaklonPo === p.id;
-                        const colRender = (key: string) => maklonColumns.find((c) => c.key === key)?.render(p);
-                        return (
-                          <Fragment key={p.id}>
-                            <tr
-                              onClick={() => setExpandedMaklonPo(poActive ? null : p.id)}
-                              className={"cursor-pointer border-b border-[#F1F4F7] bg-[#FBFCFD] font-sans text-[11.5px] text-[#31414F] hover:bg-[#F2F5F8] " + (poActive ? "bg-info-bg" : "")}
-                            >
-                              <td className="py-[10px] pl-10 pr-3">
-                                <span className="mr-1.5 text-text-muted">{poActive ? "▾" : "▸"}</span>
-                                <span className="font-medium text-text-primary">{VENDOR_PRODUKSI[p.vendorProduksi]?.name ?? p.vendorProduksi}</span>
-                                <span className="ml-1.5 font-mono text-[10.5px] text-text-muted">{p.id}</span>
-                              </td>
-                              {visibleMaklonCols.has("jumlah") && <td className="px-3 py-[10px]" />}
-                              {visibleMaklonCols.has("qty") && <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatPcs(p.qty)} pcs</td>}
-                              {visibleMaklonCols.has("nilai") && <td className="px-3 py-[10px] text-right font-mono tabular-nums font-medium">{formatRupiah(p.amount)}</td>}
-                              {visibleMaklonCols.has("sumber") && <td className="px-3 py-[10px]">{colRender("sumber")}</td>}
-                              {visibleMaklonCols.has("progress") && <td className="px-3 py-[10px]">{colRender("progress")}</td>}
-                              {visibleMaklonCols.has("status") && <td className="px-3 py-[10px]">{colRender("status")}</td>}
-                              {visibleMaklonCols.has("aksi") && (
-                                <td className="px-3 py-[10px]">
-                                  <Button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setDownloadReq({ kind: "maklon", pos: [p], baseName: `PO-${p.id}` });
-                                    }}
-                                    variant="ghost"
-                                    size="xs"
-                                  >
-                                    Download PO
-                                  </Button>
-                                </td>
-                              )}
-                              <SysadminTd actions={maklonPoCorrections(p)} />
-                            </tr>
-                            {poActive && (
-                              // Rincian per warna x lengan (qty PDK/PJG, harga maklon per tipe, total) -- komponen yang
-                              // sama dengan Finance > PO Approval > PO Maklon (MaklonPoWarnaLenganTable).
-                              <tr>
-                                <td colSpan={1 + visibleMaklonCols.size + (sysadminMode ? 1 : 0)} className="border-b border-[#F1F4F7] bg-white px-4 py-3 pl-16">
-                                  <MaklonPoWarnaLenganTable
-                                    vendorProduksi={p.vendorProduksi}
-                                    amount={p.amount}
-                                    aduanRows={aduanRowsOfPo(mrpDetailFor(p.mrpId, mrpDetails), p, maklonPOs)}
-                                    hargaMaklon={hargaMaklon}
-                                  />
-                                  {p.cancelledLines.length > 0 && (
-                                    <div className="mt-2 font-sans text-[11px] text-danger-fg">
-                                      {p.cancelledLines.map((c, i) => (
-                                        <div key={i}>
-                                          Cancel: {c.warna ? `${c.warna} · ${c.lengan} — ` : ""}
-                                          {c.rolls} roll{c.pcs ? ` (${c.pcs} pcs)` : ""}: {c.note}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </td>
-                              </tr>
-                            )}
-                          </Fragment>
-                        );
-                      })}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-        </div>
-        )}
-      </div>
+              Download PO ({shownMaklon.length})
+            </Button>
+          }
+          columns={maklonColumns}
+          rows={maklonPOs}
+          keyOf={(p) => p.id}
+          firstColumnLabel="No PO"
+          firstColumnRender={(p) => <span className="font-mono font-medium">{p.id}</span>}
+          filterDefs={maklonFilterDefs}
+          filterPreset={poPreset}
+          defaultGroupBy={["No. MRP"]}
+          search={{ placeholder: "Cari no PO, MRP, vendor…", getText: (p) => `${p.id} ${p.mrpId} ${vendorName(p.vendorProduksi)} ${maklonPoBadgeWithApproval(p, vendorInvoices).label}` }}
+          renderExpanded={(p) => (
+            // Rincian per warna x lengan (qty PDK/PJG, harga maklon per tipe, total) -- komponen yang sama dengan Finance > PO Approval > PO Maklon.
+            <>
+              <MaklonPoWarnaLenganTable vendorProduksi={p.vendorProduksi} amount={p.amount} aduanRows={aduanRowsOfPo(mrpDetailFor(p.mrpId, mrpDetails), p, maklonPOs)} hargaMaklon={hargaMaklon} />
+              {p.cancelledLines.length > 0 && (
+                <div className="mt-2 font-sans text-[11px] text-danger-fg">
+                  {p.cancelledLines.map((c, i) => (
+                    <div key={i}>
+                      Cancel: {c.warna ? `${c.warna} · ${c.lengan} — ` : ""}
+                      {c.rolls} roll{c.pcs ? ` (${c.pcs} pcs)` : ""}: {c.note}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+          onFilteredRows={(list) => setShownMaklonIds(new Set(list.map((p) => p.id)))}
+          emptyText="Belum ada PO vendor produksi."
+          nowrap
+        />
       )}
-
       {downloadReq && <PoDownloadModal request={downloadReq} mrpDetails={mrpDetails} onClose={() => setDownloadReq(null)} />}
 
       {detail && drillVendor && (

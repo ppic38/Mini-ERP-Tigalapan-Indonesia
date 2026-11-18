@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { OpsDashboard } from "@/components/dashboard/ops-dashboard";
 import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { StatusPill } from "@/components/ui/status-pill";
@@ -75,6 +76,9 @@ export default function PpicDashboardPage() {
 
   return (
     <AppShell role="ppic" activeHref="/dashboard/ppic" breadcrumb={["Dashboard", "Overview"]} title="Overview produksi">
+      {/* Dashboard operasional bersama (owner 2026-11-16): progres produksi, pembelian material, SLA lewat, KPI Yield dan HPP %. */}
+      <OpsDashboard />
+      <h2 className="mt-2 font-sans text-[13.5px] font-semibold text-text-primary">Tugas modul ini</h2>
       <div className="grid grid-cols-4 gap-3.5">
         <KpiCard label="MRP Aktif" value={String(mrpDetails.filter((d) => d.mrp.live).length)} sub={`${formatPcs(stats.totalQty)} pcs terjadwal`} accent="blue" />
         <KpiCard label="Menunggu Approval SCM" value={String(stats.waitingScm)} sub="perlu ditindaklanjuti PPIC" accent="purple" />
