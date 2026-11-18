@@ -65,6 +65,9 @@ function badgeFor(item: NavItem, badgeOverrides?: Record<string, number>): numbe
 const OPEN_GROUPS_KEY = "sidebar-open-groups-v1";
 const COLLAPSED_KEY = "sidebar-collapsed-v1";
 
+/** Singkatan grup modul di sidebar Sysadmin saat dilipat (kunci = RoleKey grup). */
+const GROUP_ABBR: Record<string, string> = { sysadmin: "SY", ppic: "PP", procurement: "PC", finance: "FN", scm: "SC", gm: "GM", produksi: "PD", warehouse: "WH", vendorMaklon: "VP" };
+
 /** Pilihan lipat sidebar (layar lebar) -- kenyamanan per browser, jadi semua akses localStorage dibungkus try/catch. */
 function readCollapsed(): boolean {
   try {
@@ -197,6 +200,16 @@ export function Sidebar({
       return next;
     });
   }
+  /** Klik grup saat sidebar terlipat (Sysadmin): sidebar dibuka penuh dan grup itu ikut dibuka. */
+  function expandGroup(key: string) {
+    setCollapsedPref(false);
+    try {
+      window.localStorage.setItem(COLLAPSED_KEY, "0");
+    } catch {
+      // abaikan
+    }
+    if (!openKeys.includes(key)) toggleGroup(key);
+  }
   const isOpen = (key: string) => openKeys.includes(key);
   function toggleGroup(key: string) {
     setOpenKeys((prev) => {
@@ -260,7 +273,8 @@ export function Sidebar({
                     aria-expanded={open}
                     className={cn(
                       "flex items-center gap-1.5 rounded-[8px] px-2 py-2 text-left font-sans text-[11px] font-semibold uppercase tracking-wider",
-                      isActiveGroup || accent ? "text-white" : "text-[#7C89A6] hover:text-white"
+                      isActiveGroup || accent ? "text-white" : "text-[#7C89A6] hover:text-white",
+                      collapsed && "lg:hidden"
                     )}
                   >
                     {open ? <ChevronDown size={13} className="flex-shrink-0" /> : <ChevronRight size={13} className="flex-shrink-0" />}
@@ -273,7 +287,22 @@ export function Sidebar({
                       <span className="flex-shrink-0 rounded-full bg-danger px-[5px] py-px font-mono text-[9px] font-semibold normal-case tracking-normal text-white">{groupBadge}</span>
                     )}
                   </button>
-                  {open && group.items.map((item) => <SidebarItem key={item.label} item={item} activeHref={activeHref} badgeOverrides={badgeOverrides} nested onNavigate={onClose} />)}
+                  {collapsed && (
+                    <button
+                      type="button"
+                      onClick={() => expandGroup(group.key)}
+                      title={group.label + (groupBadge > 0 ? " (" + groupBadge + ")" : "")}
+                      aria-label={"Buka menu " + group.label}
+                      className={cn(
+                        "relative hidden h-8 items-center justify-center rounded-[8px] font-sans text-[10px] font-bold tracking-wide lg:flex",
+                        isActiveGroup || accent ? "text-white" : "text-[#7C89A6] hover:text-white"
+                      )}
+                    >
+                      {GROUP_ABBR[group.key] ?? group.label.slice(0, 2).toUpperCase()}
+                      {groupBadge > 0 && <span className="absolute right-1.5 top-1 h-2 w-2 rounded-full bg-danger ring-2 ring-surface-nav" aria-hidden />}
+                    </button>
+                  )}
+                  {open && group.items.map((item) => <SidebarItem key={item.label} item={item} activeHref={activeHref} badgeOverrides={badgeOverrides} nested onNavigate={onClose} collapsed={collapsed} />)}
                 </div>
               );
             })

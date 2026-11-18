@@ -6,6 +6,7 @@
 Owner: tombol lipat sidebar supaya tabel lebar (mis. Tracking Item 22 kolom) punya ruang lebih tanpa pindah ke menu atas.
 - `components/shell/sidebar.tsx`: prop opsional `collapsible` (bawaan false = perilaku lama). Di layar lebar (lg ke atas) tombol di kepala sidebar melipat lebar 212px jadi 60px: hanya ikon, nama menu jadi tooltip (`title`), badge angka jadi titik merah di ikon, judul dan versi disembunyikan. Pilihan diingat per browser (`localStorage` `sidebar-collapsed-v1`, dibungkus try/catch). Di HP/tablet tegak sidebar tetap laci penuh seperti biasa.
 - `components/shell/app-shell.tsx`: `collapsible={isGated && !sysadminMode}` -- hanya modul internal. Portal Vendor Produksi dan Mode Sysadmin (sidebar bertumpuk) TIDAK berubah.
+- Revisi (permintaan owner, hari yang sama): Mode Sysadmin (sidebar bertumpuk) ikut bisa dilipat (`collapsible={internalShell}`). Saat terlipat tiap grup modul jadi singkatan dua huruf (SY, PP, PC, FN, SC, GM, PD, WH, VP; `GROUP_ABBR`) dengan titik merah kalau ada badge; grup yang sedang terbuka menampilkan menunya sebagai ikon; mengklik singkatan grup membuka sidebar penuh dan membuka grup itu. Portal Vendor Produksi tetap tidak berubah.
 - Diuji: tsc bersih; eslint sama dengan sebelumnya (3 temuan lama). Belum dilihat di layar (pratinjau lokal terhalang unduhan font Google di laptop ini).
 
 ## Kerangka menu kembali ke sidebar kiri dan halaman login kembali ke tampilan lama (2026-11-18, tanpa migration)
