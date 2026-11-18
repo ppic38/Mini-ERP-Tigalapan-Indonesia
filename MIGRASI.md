@@ -1,6 +1,13 @@
 # Migrasi Project — Status & Riwayat
 
 
+
+## Sidebar bisa dilipat jadi ikon saja, modul internal (2026-11-18, tanpa migration)
+Owner: tombol lipat sidebar supaya tabel lebar (mis. Tracking Item 22 kolom) punya ruang lebih tanpa pindah ke menu atas.
+- `components/shell/sidebar.tsx`: prop opsional `collapsible` (bawaan false = perilaku lama). Di layar lebar (lg ke atas) tombol di kepala sidebar melipat lebar 212px jadi 60px: hanya ikon, nama menu jadi tooltip (`title`), badge angka jadi titik merah di ikon, judul dan versi disembunyikan. Pilihan diingat per browser (`localStorage` `sidebar-collapsed-v1`, dibungkus try/catch). Di HP/tablet tegak sidebar tetap laci penuh seperti biasa.
+- `components/shell/app-shell.tsx`: `collapsible={isGated && !sysadminMode}` -- hanya modul internal. Portal Vendor Produksi dan Mode Sysadmin (sidebar bertumpuk) TIDAK berubah.
+- Diuji: tsc bersih; eslint sama dengan sebelumnya (3 temuan lama). Belum dilihat di layar (pratinjau lokal terhalang unduhan font Google di laptop ini).
+
 ## Kerangka menu kembali ke sidebar kiri dan halaman login kembali ke tampilan lama (2026-11-18, tanpa migration)
 Owner: dari redesign Odoo (merge PR #2), hanya dua hal yang dikembalikan: menu halaman memakai sidebar saja, dan halaman login seperti sebelumnya. Sisa redesign (tabel bersama, dashboard, mode gelap, urutan menu di `nav.ts`) tidak disentuh.
 - `components/shell/app-shell.tsx`: `TOP_NAV_ENABLED` = false (saklar bawaan redesign): modul internal memakai sidebar kiri lagi (`drawerOnly` mati, bar atas tanpa menu modul). Komponen `top-nav.tsx` dan `lib/shell/modules.ts` dibiarkan (tidak terpakai) supaya bisa dihidupkan lagi lewat saklar itu.

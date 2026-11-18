@@ -353,6 +353,8 @@ export function AppShell({
         mobileOpen={navOpen}
         onClose={() => setNavOpen(false)}
         drawerOnly={topNav}
+        // Tombol lipat sidebar (layar lebar): hanya modul internal. Portal Vendor Produksi dan Mode Sysadmin (sidebar bertumpuk) tidak berubah.
+        collapsible={isGated && !sysadminMode}
         // PO Produksi Saya & PO Material Saya dibingkai garis ungu (tanpa latar/label) di portal Vendor Produksi.
         boxedHrefs={role === "vendorMaklon" && !sysadminMode ? ["/vendor-maklon/po-produksi", "/vendor-maklon/po-material"] : undefined}
         // Link Panduan Penggunaan: untuk saat ini HANYA portal Vendor Produksi (bukan mode Sysadmin).

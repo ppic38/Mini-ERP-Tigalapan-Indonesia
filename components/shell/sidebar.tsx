@@ -23,6 +23,8 @@ import {
   Database,
   X,
   BookOpen,
+  PanelLeftClose,
+  PanelLeftOpen,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -61,6 +63,16 @@ function badgeFor(item: NavItem, badgeOverrides?: Record<string, number>): numbe
 }
 
 const OPEN_GROUPS_KEY = "sidebar-open-groups-v1";
+const COLLAPSED_KEY = "sidebar-collapsed-v1";
+
+/** Pilihan lipat sidebar (layar lebar) -- kenyamanan per browser, jadi semua akses localStorage dibungkus try/catch. */
+function readCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 function readOpenGroups(): string[] {
   try {
@@ -72,30 +84,49 @@ function readOpenGroups(): string[] {
   }
 }
 
-function SidebarItem({ item, activeHref, badgeOverrides, nested, onNavigate }: { item: NavItem; activeHref?: string; badgeOverrides?: Record<string, number>; nested?: boolean; onNavigate?: () => void }) {
+function SidebarItem({
+  item,
+  activeHref,
+  badgeOverrides,
+  nested,
+  onNavigate,
+  collapsed = false,
+}: {
+  item: NavItem;
+  activeHref?: string;
+  badgeOverrides?: Record<string, number>;
+  nested?: boolean;
+  onNavigate?: () => void;
+  /** Sidebar dilipat (hanya berlaku di layar lebar, lg ke atas): tampil ikon saja, nama menu jadi tooltip, badge jadi titik. */
+  collapsed?: boolean;
+}) {
   const active = !!item.href && item.href === activeHref;
   const badge = badgeFor(item, badgeOverrides);
   const className = cn(
     "flex items-center gap-2.5 rounded-[8px] py-2 font-sans text-[12.5px]",
     nested ? "px-3 pl-4" : "px-3",
     active ? "bg-accent-blue font-semibold text-white" : "font-medium text-[#9AA4BE] hover:text-white",
-    !item.href && "cursor-default opacity-60"
+    !item.href && "cursor-default opacity-60",
+    collapsed && "lg:justify-center lg:px-0"
   );
   const content = (
     <>
-      {createElement(iconForLabel(item.label), { size: 15, strokeWidth: 2, className: "flex-shrink-0 opacity-90" })}
-      <span className="flex-1">{item.label}</span>
+      <span className="relative flex flex-shrink-0">
+        {createElement(iconForLabel(item.label), { size: 15, strokeWidth: 2, className: "flex-shrink-0 opacity-90" })}
+        {collapsed && !!badge && badge > 0 && <span className="absolute -right-1.5 -top-1.5 hidden h-2.5 w-2.5 rounded-full bg-danger ring-2 ring-surface-nav lg:block" aria-hidden />}
+      </span>
+      <span className={cn("flex-1", collapsed && "lg:hidden")}>{item.label}</span>
       {!!badge && badge > 0 && (
-        <span className="flex-shrink-0 rounded-full bg-danger px-[5px] py-px font-mono text-[9px] font-semibold text-white">{badge}</span>
+        <span className={cn("flex-shrink-0 rounded-full bg-danger px-[5px] py-px font-mono text-[9px] font-semibold text-white", collapsed && "lg:hidden")}>{badge}</span>
       )}
-      {!item.href && <Lock size={12} className="flex-shrink-0 opacity-50" />}
+      {!item.href && <Lock size={12} className={cn("flex-shrink-0 opacity-50", collapsed && "lg:hidden")} />}
     </>
   );
   if (!item.href) {
     return <div className={className}>{content}</div>;
   }
   return (
-    <Link href={item.href} className={className} onClick={onNavigate}>
+    <Link href={item.href} className={className} onClick={onNavigate} title={collapsed ? item.label : undefined}>
       {content}
     </Link>
   );
@@ -112,7 +143,10 @@ export function Sidebar({
   help,
   boxedHrefs,
   drawerOnly = false,
+  collapsible = false,
 }: {
+  /** Tombol lipat sidebar jadi ikon saja (hanya layar lebar; di HP sidebar tetap laci penuh). Pilihan diingat per browser. Bawaan false = perilaku lama. */
+  collapsible?: boolean;
   /** Kerangka menu atas (gaya Odoo): sidebar hanya dipakai sebagai laci di layar kecil dan disembunyikan di
    *  layar lebar, karena menunya sudah ada di bar atas. Bawaan false = perilaku lama. */
   drawerOnly?: boolean;
@@ -150,6 +184,19 @@ export function Sidebar({
     const stored = readOpenGroups();
     return activeGroup && !stored.includes(activeGroup) ? [...stored, activeGroup] : stored;
   });
+  const [collapsedPref, setCollapsedPref] = useState<boolean>(() => (collapsible ? readCollapsed() : false));
+  const collapsed = collapsible && collapsedPref;
+  function toggleCollapsed() {
+    setCollapsedPref((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(COLLAPSED_KEY, next ? "1" : "0");
+      } catch {
+        // localStorage bisa tidak tersedia -- pilihan tetap berlaku untuk sesi halaman ini.
+      }
+      return next;
+    });
+  }
   const isOpen = (key: string) => openKeys.includes(key);
   function toggleGroup(key: string) {
     setOpenKeys((prev) => {
@@ -170,19 +217,30 @@ export function Sidebar({
         // < lg: laci tetap di kiri layar, geser masuk/keluar. >= lg: kolom biasa di samping konten.
         "fixed inset-y-0 left-0 z-40 transition-transform duration-200 ease-out",
         mobileOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full",
-        drawerOnly ? "lg:hidden" : "lg:z-auto lg:w-[212px] lg:max-w-none lg:translate-x-0 lg:shadow-none lg:transition-none",
+        drawerOnly ? "lg:hidden" : cn("lg:z-auto lg:max-w-none lg:translate-x-0 lg:shadow-none lg:transition-none", collapsed ? "lg:w-[60px]" : "lg:w-[212px]"),
         // Dengan blok bantuan, sidebar menempel setinggi layar supaya Panduan & nomor feedback selalu terlihat di dasar layar
         // (bukan di dasar halaman yang panjang). Tanpa bantuan: perilaku lama.
         drawerOnly ? "" : help ? "lg:sticky lg:top-0 lg:h-screen lg:self-start lg:overflow-y-auto" : "lg:static lg:overflow-visible"
       )}
     >
-      <div className="flex h-[52px] flex-none items-center gap-[9px] border-b border-white/8 px-4">
-        <span className="font-heading text-[13px] font-bold leading-tight tracking-tight text-white">Tigalapan Indonesia</span>
+      <div className={cn("flex h-[52px] flex-none items-center gap-[9px] border-b border-white/8 px-4", collapsed && "lg:justify-center lg:px-0")}>
+        <span className={cn("font-heading text-[13px] font-bold leading-tight tracking-tight text-white", collapsed && "lg:hidden")}>Tigalapan Indonesia</span>
         <button type="button" onClick={onClose} aria-label="Tutup menu" className="ml-auto flex h-8 w-8 items-center justify-center rounded-md text-[#9AA4BE] hover:text-white lg:hidden">
           <X size={18} />
         </button>
+        {collapsible && !drawerOnly && (
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            aria-label={collapsed ? "Buka menu penuh" : "Lipat menu"}
+            title={collapsed ? "Buka menu penuh" : "Lipat menu jadi ikon"}
+            className={cn("hidden h-8 w-8 flex-none items-center justify-center rounded-md text-[#9AA4BE] hover:bg-white/8 hover:text-white lg:flex", !collapsed && "ml-auto")}
+          >
+            {collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+          </button>
+        )}
       </div>
-      <div className="flex flex-col gap-0.5 p-2.5">
+      <div className={cn("flex flex-col gap-0.5 p-2.5", collapsed && "lg:px-1.5")}>
         {groups
           ? groups.map((group) => {
               const open = isOpen(group.key);
@@ -227,7 +285,7 @@ export function Sidebar({
                 out.push(
                   <div key={"box-" + run[0].label} className="mb-1.5 flex flex-col gap-0.5 rounded-[10px] border border-accent-purple/60 p-1">
                     {run.map((item) => (
-                      <SidebarItem key={item.label} item={item} activeHref={activeHref} badgeOverrides={badgeOverrides} onNavigate={onClose} />
+                      <SidebarItem key={item.label} item={item} activeHref={activeHref} badgeOverrides={badgeOverrides} onNavigate={onClose} collapsed={collapsed} />
                     ))}
                   </div>
                 );
@@ -237,7 +295,7 @@ export function Sidebar({
                 if (item.href && boxedHrefs?.includes(item.href)) run.push(item);
                 else {
                   flush();
-                  out.push(<SidebarItem key={item.label} item={item} activeHref={activeHref} badgeOverrides={badgeOverrides} onNavigate={onClose} />);
+                  out.push(<SidebarItem key={item.label} item={item} activeHref={activeHref} badgeOverrides={badgeOverrides} onNavigate={onClose} collapsed={collapsed} />);
                 }
               }
               flush();
@@ -259,7 +317,7 @@ export function Sidebar({
           </Link>
         </div>
       )}
-      <div className={cn("border-t border-white/8 px-4 py-3.5 font-mono text-[10.5px] text-[#5E7288]", !help && "mt-auto")}>
+      <div className={cn("border-t border-white/8 px-4 py-3.5 font-mono text-[10.5px] text-[#5E7288]", !help && "mt-auto", collapsed && "lg:hidden")}>
         v1.0 · Tigalapan Indonesia
       </div>
     </div>
