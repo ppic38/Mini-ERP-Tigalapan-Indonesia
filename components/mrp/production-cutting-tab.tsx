@@ -310,7 +310,17 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
         .map((p) => p.mrpId)
     )
   );
-  const readyMrps = mrpDetails.filter((d) => readyMrpIds.includes(d.mrp.id));
+  // MRP yang SUDAH selesai (semua target tercapai, status PO pindah ke DELIVERY, tidak ada roll tersisa) tetap bisa dibuka untuk melihat riwayat
+  // dan mengedit hasil cutting (selama roll belum masuk resi), seperti dropdown "sudah tercutting" di tab Finish Good. Tampil sebagai item biasa, satu daftar
+  // dengan MRP yang masih berjalan, diurutkan dari MRP paling lama dibuat sampai terbaru (tanggal sama: nomor MRP).
+  const doneMrpIdSet = new Set(productionBatches.filter((b) => b.vendorProduksi === vendorId).map((b) => b.mrpId));
+  const dropdownMrps = mrpDetails
+    .filter((d) => readyMrpIds.includes(d.mrp.id) || doneMrpIdSet.has(d.mrp.id))
+    .sort((a, b) => {
+      const ca = a.dates?.created ?? "";
+      const cb = b.dates?.created ?? "";
+      return ca !== cb ? (ca < cb ? -1 : 1) : a.mrp.id.localeCompare(b.mrp.id, undefined, { numeric: true });
+    });
 
   const selectedDetail = mrpDetails.find((d) => d.mrp.id === selectedMrpId);
   const aduanRows = (selectedDetail?.aduanRows ?? []).filter((a) => a.vendor === vendorId);
@@ -926,14 +936,14 @@ export function ProductionCuttingTab({ vendorId }: { vendorId: string }) {
           className="mt-1 w-full max-w-[420px] rounded-md border border-[#DDE4EB] px-[11px] py-[9px] font-sans text-[12.5px] font-medium text-text-primary"
         >
           <option value="">— pilih MRP —</option>
-          {readyMrps.map((d) => (
+          {dropdownMrps.map((d) => (
             <option key={d.mrp.id} value={d.mrp.id}>
               {d.mrp.id}
-              {pendingMarker(countCuttingAwaitingUpdateForMrp(d.mrp.id, vendorId, productionBatches, invoices, claimDicts, maklonPOs), "roll belum selesai")}
+              {readyMrpIds.includes(d.mrp.id) ? pendingMarker(countCuttingAwaitingUpdateForMrp(d.mrp.id, vendorId, productionBatches, invoices, claimDicts, maklonPOs), "roll belum selesai") : ""}
             </option>
           ))}
         </select>
-        {readyMrps.length === 0 && <div className="mt-2 font-sans text-xs text-text-muted">Belum ada MRP dengan bahan siap dan pekerjaan belum selesai.</div>}
+        {dropdownMrps.length === 0 && <div className="mt-2 font-sans text-xs text-text-muted">Belum ada MRP dengan bahan siap dan pekerjaan belum selesai.</div>}
       </div>
 
       {pendingApprovalGroups.length > 0 && (

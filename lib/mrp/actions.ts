@@ -2713,7 +2713,21 @@ export async function saveBatchExtraFgAction(batchId: string, entries: { lengan:
     if (!batch) throw new Error("Roll tidak ditemukan.");
     assertSameVendor(actor.vendorId, batch.vendor_produksi, "Roll ini");
     await assertCuttingNotPending(db, batchId);
+    // Grup tujuan yang sudah "Finish Good Selesai" (tahap 1) tetap boleh menerima FG hasil tambahan (sama seperti roll baru): reject otomatis grup itu
+    // dihitung ulang sesudahnya. Kalau reject grup itu sudah pernah dirework/dibuang, ditolak supaya hitungan reject tidak kehilangan dasarnya
+    // (sama dengan aturan "Buka lagi" roll). Final Produksi (tahap 2) tetap mengunci (diperiksa di saveBatchExtraFg).
+    const confirmedGroupKeys: { groupKey: string; lengan: Lengan }[] = [];
+    for (const lg of Array.from(new Set(entries.map((e) => e.lengan)))) {
+      const groupKey = `${batch.mrp_id}|${batch.warna}|${lg}`;
+      const { data: meta } = await db.from("production_group_meta").select("fg_confirmed_at").eq("group_key", groupKey).eq("vendor_produksi", batch.vendor_produksi).maybeSingle();
+      if (!meta?.fg_confirmed_at) continue;
+      if (await groupHasReworkOrWaste(db, groupKey, batch.vendor_produksi)) {
+        throw new Error(`Reject ${batch.warna} · ${lg} sudah dirework/dibuang -- Finish Good hasil tambahan tidak bisa diubah lagi supaya hitungan reject tetap konsisten.`);
+      }
+      confirmedGroupKeys.push({ groupKey, lengan: lg as Lengan });
+    }
     await saveBatchExtraFg(db, batch, entries);
+    for (const g of confirmedGroupKeys) await recomputeAutoRejectForGroup(db, g.groupKey, batch.mrp_id, batch.vendor_produksi, batch.warna, g.lengan);
     await logVendorAction(actor, `Input Finish Good hasil tambahan sisa kain roll ${batch.code_roll ?? batch.id}`, "production_batches", batchId);
   });
 }
@@ -5147,7 +5161,15 @@ async function maybeAdvanceMaklonToDelivery(mrpId: string, vendorProduksi: strin
   }
 }
 
-export async function reworkRejectSizeAction(input: { mrpId: string; vendorProduksi: string; warna: string; lengan: Lengan; fromSize: string; qty: number; toLengan: Lengan; toSize: string; usia: Usia }): Promise<void> {
+type ReworkRejectSizeInput = { mrpId: string; vendorProduksi: string; warna: string; lengan: Lengan; fromSize: string; qty: number; toLengan: Lengan; toSize: string; usia: Usia };
+
+/** Dibungkus ActionResult: di production Next menyembunyikan pesan galat yang dilempar langsung (vendor hanya melihat "Minified React error #441"),
+ *  sedangkan alasan penolakan di sini penting (grup sudah Selesai Produksi, melebihi sisa reject, reject sudah masuk pengiriman, dst.). */
+export async function reworkRejectSizeAction(input: ReworkRejectSizeInput): Promise<ActionResult<void>> {
+  return toActionResultKeepAuth(() => reworkRejectSizeImpl(input));
+}
+
+async function reworkRejectSizeImpl(input: ReworkRejectSizeInput): Promise<void> {
   assertSameVendor(await requireVendorSession(), input.vendorProduksi, "Data rework ini");
   // Rework fisik cuma bisa memotong lengan PANJANG jadi PENDEK (sisa potongan lengan), tidak bisa
   // sebaliknya (lengan PENDEK tidak bisa "dipanjangkan" lagi) — dulu tidak ada guard sama sekali,
@@ -8820,7 +8842,7 @@ async function runVendorSheetSync(vendorId: string, mrpId: string, maxOps: numbe
           } else if (op.kind === "REJECT_SPLIT") {
             await setGroupRejectSplitImpl(op.groupKey, op.material, op.proses);
           } else {
-            await reworkRejectSizeAction({ ...op.input, vendorProduksi: vendorId, lengan: op.input.lengan as Lengan, toLengan: op.input.toLengan as Lengan, usia: op.input.usia as Usia });
+            await reworkRejectSizeImpl({ ...op.input, vendorProduksi: vendorId, lengan: op.input.lengan as Lengan, toLengan: op.input.toLengan as Lengan, usia: op.input.usia as Usia });
           }
           appliedLabels.push(`${kindLabel}: ${op.label}`);
         } catch (e) {

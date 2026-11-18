@@ -939,7 +939,8 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                           const overflow = sizesOpen.filter((size) => (sizeTotalDraft[size] ?? 0) > totalCapacity[size]);
                           // Size tambahan dari sisa kain: tiap baris = 1 card di samping card size biasa, disimpan bareng tombol Simpan.
                           const extraRows = groupBatches.flatMap((rb) => (rb.extraResults ?? []).map((x) => ({ rb, x })));
-                          const extraLocked = isFgConfirmed || isFinalDone;
+                          // FG size tambahan hanya terkunci setelah Final Produksi: sesudah "Finish Good Selesai" tetap bisa diisi (reject grup dihitung ulang server).
+                          const extraLocked = isFinalDone;
                           const extraChanged = extraRows.filter(({ rb, x }) => extraFgDraft[extraKey(rb, x)] !== undefined && extraFgDraft[extraKey(rb, x)] !== (x.fgQty ?? 0) && rb.cuttingApproval?.status !== "PENDING");
                           async function saveExtras() {
                             const byBatch = new Map<string, { lengan: Lengan; usia: "KIDS" | "DEWASA"; size: string; fgQty: number }[]>();
