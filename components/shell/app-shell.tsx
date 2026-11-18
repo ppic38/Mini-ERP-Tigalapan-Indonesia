@@ -44,7 +44,7 @@ import {
 import { countEkspedisiReadyToPay, countEkspedisiToProcess } from "@/lib/mrp/ekspedisiInvoice";
 
 /** Saklar kerangka menu atas (gaya Odoo). false = semua modul kembali memakai sidebar kiri. */
-const TOP_NAV_ENABLED = true;
+const TOP_NAV_ENABLED = false;
 
 const GATED_ROLES: InternalRole[] = ["ppic", "procurement", "finance", "scm", "gm", "produksi", "warehouse", "sysadmin"];
 

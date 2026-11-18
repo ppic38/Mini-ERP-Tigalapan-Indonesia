@@ -2,16 +2,28 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Building2, Lock, X, Eye, EyeOff, Users } from "lucide-react";
+import { ArrowLeft, ClipboardList, Package, Wallet, Building2, Lock, X, ShieldCheck, Factory, Eye, EyeOff, Warehouse, Crown, ShieldAlert, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
 import { INTERNAL_ACCOUNTS, type InternalRole } from "@/lib/internal-auth";
 import { useVendorAuthStore } from "@/lib/mrp/vendor-auth-store";
 import { internalRoleRequiresUsernameAction } from "@/lib/auth/actions";
 import { VendorLoginForm } from "@/components/mrp/vendor-login-form";
-import { MODULES } from "@/lib/shell/modules";
 
-// Daftar modul (ikon, warna, urutan) ada di lib/shell/modules.ts, dipakai juga oleh pemindah modul di bar atas.
+// Urutan kartu (owner 2026-09-27): ppic, procurement, finance, produksi, warehouse, scm, general
+// manager, sysadmin, lalu Vendor Produksi (kartu terpisah, selalu paling akhir -- lihat di bawah).
+// Revisi 2026-10-06 (owner: deskripsi kartu dipersingkat, kartu dibuat berwarna beranimasi): `color` =
+// warna aksen tiap kartu (dipakai lewat CSS variable --c di .mod-card, app/globals.css).
+const MODULES: { role: InternalRole; label: string; desc: string; icon: typeof ClipboardList; color: string }[] = [
+  { role: "ppic", label: "PPIC", desc: "Planning & MRP", icon: ClipboardList, color: "#3B82F6" },
+  { role: "procurement", label: "Procurement", desc: "PO & invoice", icon: Package, color: "#F59E0B" },
+  { role: "finance", label: "Finance", desc: "Approval & bayar", icon: Wallet, color: "#10B981" },
+  { role: "produksi", label: "Produksi", desc: "Monitoring vendor", icon: Factory, color: "#06B6D4" },
+  { role: "warehouse", label: "Warehouse", desc: "Penerimaan koli", icon: Warehouse, color: "#EC4899" },
+  { role: "scm", label: "SCM", desc: "Approval MRP & PO", icon: ShieldCheck, color: "#6366F1" },
+  { role: "gm", label: "General Manager", desc: "Approval PO L4", icon: Crown, color: "#EAB308" },
+  { role: "sysadmin", label: "Sysadmin", desc: "Akun & koreksi", icon: ShieldAlert, color: "#8B5CF6" },
+];
 
 const WELCOME_TITLE = "Mini ERP Tigalapan";
 const WELCOME_WORDS = ["Planning", "Procurement", "Produksi", "Finance", "Warehouse"];
@@ -69,8 +81,6 @@ export default function ModuleSelectPage() {
 
   const login = useInternalAuthStore((s) => s.login);
   const loginUser = useInternalAuthStore((s) => s.loginUser);
-  const unlockedRoles = useInternalAuthStore((s) => s.unlockedRoles);
-  const setActiveIdentity = useInternalAuthStore((s) => s.setActiveIdentity);
   const logoutVendor = useVendorAuthStore((s) => s.logout);
   const setLoginOrigin = useVendorAuthStore((s) => s.setLoginOrigin);
   const router = useRouter();
@@ -154,30 +164,11 @@ export default function ModuleSelectPage() {
     return () => window.clearTimeout(t);
   }, [mounted]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Pemindah modul di bar atas mengarahkan modul yang belum login ke sini (?modul=finance): buka form password-nya.
-  useEffect(() => {
-    if (!mounted || typeof window === "undefined") return;
-    const want = new URLSearchParams(window.location.search).get("modul");
-    if (!want) return;
-    window.history.replaceState(null, "", "/");
-    const found = MODULES.find((m) => m.role === want);
-    if (!found) return;
-    const t = window.setTimeout(() => setSelectedRole(found.role), 0);
-    return () => window.clearTimeout(t);
-  }, [mounted]);
-
   if (!mounted) return null;
   const vendorFaded = vendorStage === "opening" || vendorStage === "open";
   const vendorExpanded = vendorStage === "open";
 
   function pickRole(role: InternalRole) {
-    // Sesi modul ini masih terbuka di browser ini: langsung masuk tanpa mengetik password lagi (gaya Odoo).
-    // Akses tetap diperiksa server (proxy.ts); kalau sesinya ternyata sudah habis, halaman modul mengembalikan ke sini.
-    if (unlockedRoles.includes(role)) {
-      setActiveIdentity(role);
-      router.push(INTERNAL_ACCOUNTS.find((a) => a.role === role)!.homeHref);
-      return;
-    }
     setSelectedRole(role);
     setUsername("");
     setPassword("");
@@ -232,32 +223,47 @@ export default function ModuleSelectPage() {
       {/* Kartu SELALU punya tinggi tetap (tidak pernah berubah bentuk saat diklik) — form
          password ditampilkan di modal terpisah (lihat di bawah), bukan ditempel di dalam kartu. */}
       <div ref={gridWrapRef} className="relative">
-      <div className="grid w-full grid-cols-3 gap-x-2 gap-y-3">
+      <div className="grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">
         {MODULES.map((m) => {
           const Icon = m.icon;
           const active = selectedRole === m.role;
-          const unlocked = unlockedRoles.includes(m.role);
+          // Sysadmin ditandai khusus (ungu, bukan biru seperti modul lain) -- pola sama dengan
+          // kartu Vendor Produksi (ikon di kotak warna solid saat hover/aktif) supaya keduanya
+          // sama-sama "menonjol beda" dari modul kerja biasa, tapi tidak memakai warna yang sama
+          // (oranye = Vendor Produksi, ungu = Sysadmin).
+          const isSysadmin = m.role === "sysadmin";
           return (
             <button
               key={m.role}
               onClick={() => pickRole(m.role)}
-              title={unlocked ? m.label + " (sudah masuk)" : m.label}
               className={cn(
-                "group flex flex-col items-center gap-2 rounded-xl px-1.5 py-3 text-center font-sans transition-all duration-200 hover:bg-white/10",
+                "group flex items-center gap-3 rounded-xl border bg-surface-card p-3 text-left font-sans shadow-[0_8px_22px_rgba(0,0,0,.22)] transition-all duration-200",
                 vendorFaded && "pointer-events-none scale-95 opacity-0",
-                active && "bg-white/10"
+                active
+                  ? isSysadmin
+                    ? "border-accent-purple shadow-[0_12px_28px_rgba(124,58,237,.32)]"
+                    : "border-accent-blue shadow-[0_12px_28px_rgba(37,99,235,.32)]"
+                  : "border-white/10 hover:-translate-y-0.5 hover:border-white/25 hover:shadow-[0_12px_28px_rgba(0,0,0,.32)]"
               )}
             >
               <span
-                className="relative flex h-[58px] w-[58px] flex-none items-center justify-center rounded-2xl shadow-[0_8px_20px_rgba(0,0,0,.35)] transition-transform duration-200 group-hover:-translate-y-0.5"
-                style={{ background: m.color }}
+                className={cn(
+                  "flex h-11 w-11 flex-none items-center justify-center rounded-lg transition-colors duration-200",
+                  isSysadmin ? (active ? "bg-accent-purple" : "bg-accent-purple-bg group-hover:bg-accent-purple") : active ? "bg-accent-blue" : "bg-info-bg group-hover:bg-accent-blue"
+                )}
               >
-                <Icon size={27} strokeWidth={1.75} className="text-white" />
-                {unlocked && <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-[#22C55E] ring-2 ring-[#0B1730]" aria-hidden />}
+                <Icon
+                  size={22}
+                  strokeWidth={1.75}
+                  className={cn(
+                    "transition-colors duration-200",
+                    isSysadmin ? (active ? "text-white" : "text-accent-purple group-hover:text-white") : active ? "text-white" : "text-action-primary group-hover:text-white"
+                  )}
+                />
               </span>
               <span className="min-w-0">
-                <span className="block text-[12.5px] font-semibold leading-tight text-white">{m.label}</span>
-                <span className="mt-0.5 block text-[10.5px] leading-[1.3] text-white/55">{m.desc}</span>
+                <span className="block text-[13px] font-semibold text-text-primary">{m.label}</span>
+                <span className="mt-0.5 line-clamp-2 block text-[10.5px] leading-[1.35] text-text-muted">{m.desc}</span>
               </span>
             </button>
           );
@@ -267,16 +273,16 @@ export default function ModuleSelectPage() {
           ref={vendorBtnRef}
           onClick={openVendorLogin}
           className={cn(
-            "group flex flex-col items-center gap-2 rounded-xl px-1.5 py-3 text-center font-sans transition-all duration-200 hover:bg-white/10",
+            "group flex items-center gap-3 rounded-xl border border-white/10 bg-surface-card p-3 text-left font-sans shadow-[0_8px_22px_rgba(0,0,0,.22)] transition-all duration-200 hover:-translate-y-0.5 hover:border-white/25 hover:shadow-[0_12px_28px_rgba(0,0,0,.32)] sm:col-span-2",
             vendorStage !== "closed" && "invisible"
           )}
         >
-          <span className="flex h-[58px] w-[58px] flex-none items-center justify-center rounded-2xl bg-accent-orange shadow-[0_8px_20px_rgba(0,0,0,.35)] transition-transform duration-200 group-hover:-translate-y-0.5">
-            <Building2 size={27} strokeWidth={1.75} className="text-white" />
+          <span className="flex h-11 w-11 flex-none items-center justify-center rounded-lg bg-accent-orange-bg transition-colors duration-200 group-hover:bg-accent-orange">
+            <Building2 size={22} strokeWidth={1.75} className="text-accent-orange transition-colors duration-200 group-hover:text-white" />
           </span>
           <span className="min-w-0">
-            <span className="block text-[12.5px] font-semibold leading-tight text-white">Vendor Produksi</span>
-            <span className="mt-0.5 block text-[10.5px] leading-[1.3] text-white/55">Portal vendor</span>
+            <span className="block text-[13px] font-semibold text-text-primary">Vendor Produksi</span>
+            <span className="mt-0.5 block text-[10.5px] leading-[1.35] text-text-muted">Portal vendor</span>
           </span>
         </button>
       </div>
@@ -290,11 +296,14 @@ export default function ModuleSelectPage() {
               style={vendorExpanded ? { top: 0, left: 0, width: "100%", height: "100%" } : (vendorRect ?? undefined)}
             >
               {/* Wajah kartu (ikon + teks) -- memudar saat lapisan membesar, supaya terasa kartu itu yang berubah jadi form. */}
-              <div className={cn("absolute inset-0 flex flex-col items-center justify-center gap-2 transition-opacity duration-150", vendorExpanded ? "opacity-0" : "opacity-100")}>
-                <span className="flex h-[58px] w-[58px] flex-none items-center justify-center rounded-2xl bg-accent-orange">
-                  <Building2 size={27} strokeWidth={1.75} className="text-white" />
+              <div className={cn("absolute inset-0 flex items-center gap-3 p-3 transition-opacity duration-150", vendorExpanded ? "opacity-0" : "opacity-100")}>
+                <span className="flex h-11 w-11 flex-none items-center justify-center rounded-lg bg-accent-orange-bg">
+                  <Building2 size={22} strokeWidth={1.75} className="text-accent-orange" />
                 </span>
-                <span className="font-sans text-[12.5px] font-semibold text-text-primary">Vendor Produksi</span>
+                <span className="min-w-0 font-sans">
+                  <span className="block text-[13px] font-semibold text-text-primary">Vendor Produksi</span>
+                  <span className="mt-0.5 block text-[10.5px] leading-[1.35] text-text-muted">Portal vendor</span>
+                </span>
               </div>
 
               {(vendorStage === "open" || vendorStage === "closing") && (

@@ -1,5 +1,12 @@
 # Migrasi Project — Status & Riwayat
 
+
+## Kerangka menu kembali ke sidebar kiri dan halaman login kembali ke tampilan lama (2026-11-18, tanpa migration)
+Owner: dari redesign Odoo (merge PR #2), hanya dua hal yang dikembalikan: menu halaman memakai sidebar saja, dan halaman login seperti sebelumnya. Sisa redesign (tabel bersama, dashboard, mode gelap, urutan menu di `nav.ts`) tidak disentuh.
+- `components/shell/app-shell.tsx`: `TOP_NAV_ENABLED` = false (saklar bawaan redesign): modul internal memakai sidebar kiri lagi (`drawerOnly` mati, bar atas tanpa menu modul). Komponen `top-nav.tsx` dan `lib/shell/modules.ts` dibiarkan (tidak terpakai) supaya bisa dihidupkan lagi lewat saklar itu.
+- `app/page.tsx` dikembalikan ke versi sebelum redesign (`a88eeb7`): kartu modul besar dua kolom dengan daftar warna lama; fitur "masuk langsung kalau sesi modul masih terbuka" dan tautan `?modul=` dari pemindah modul atas ikut tidak ada.
+- Tombol mode gelap di bar atas tetap ada (bagian redesign yang tidak diminta diubah). Diuji: tsc bersih; pratinjau lokal tidak bisa dibuka di laptop ini karena unduhan font Google gagal (lihat RENCANA.md), jadi tampilan belum dilihat langsung.
+
 ## Tracking Item: kolom bawaan disederhanakan, tanpa filter dan urutan bawaan (2026-11-17, tanpa migration) [redesign-ppic]
 Owner mengirim tangkapan layar tabel "Tracking per roll" sebagai patokan tampilan bawaan. `components/mrp/item-tracking-view.tsx` (PPIC dan SCM): kolom bawaan = Item, No. MRP, Vendor, Warna, Roll, Target, Cutting, Finish Good, Packing, Delivery, GR DC, Status. Aduan, Code Roll, Tgl PO Material, Tgl Delivery, Tgl GR, Tgl Awal FG, dan Tgl Kirim kini tersembunyi bawaan (tetap ada di menu Kolom). Tabel tidak memasang filter, kelompok, atau urutan bawaan; baris tampil dalam urutan data, dan filter / urutan hanya muncul kalau pengguna memilihnya sendiri atau menyimpan Favorit sebagai bawaan. Pilihan kolom yang sudah tersimpan di browser pengguna tetap berlaku ("Kembalikan kolom bawaan" di menu Kolom untuk kembali ke patokan ini). Export Excel tidak berubah. Diuji di app lokal (1366 px, tanpa pilihan tersimpan): 12 kolom sesuai patokan, 4.448 baris. tsc bersih.
 
