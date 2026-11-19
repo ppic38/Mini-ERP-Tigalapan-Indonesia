@@ -3,6 +3,12 @@
 
 
 
+
+## Download PO (PDF/Excel): entitas tampil setelah Finance approve, tidak menunggu approval GM (2026-11-19, tanpa migration)
+Owner: Procurement mengunduh PO tetapi kolom Entitas kosong ("—"), padahal Finance sudah mengisi entitas dan PO baru menunggu GM (Level 4). Penyebab: revisi 2026-10-19 sudah mengubah tabel PO (`poEntitasFinalized` di `lib/mrp/poApproval.ts`: entitas final begitu Finance approve), tetapi file unduhan masih memakai `po.approved` (approval penuh).
+- `lib/mrp/exportPoPdf.ts` (3 tempat: kotak info "Entitas", tabel rincian, pengelompokan per entitas) dan `lib/mrp/exportPoExcel.ts` (4 tempat: info, tabel, rincian, versi satu sheet `entOf`) kini memakai `poEntitasFinalized(po)`. Baris "Status" (Disetujui / Menunggu Persetujuan) tetap memakai `po.approved`. PO yang ditolak atau masih menunggu Finance tetap menampilkan "—" / "Menunggu input Finance".
+- Diuji: tsc bersih. Belum dicoba mengunduh file sungguhan.
+
 ## Procurement PO Approval: Download PO per kelompok (per No. MRP / per Supplier) sekaligus (2026-11-19, tanpa migration)
 Owner: tombol Download PO hanya per PO satu-satu (atau semua yang tampil sekaligus lewat tombol di kepala tabel); minta unduh per kelompok sekaligus.
 - `app/procurement/po-approval/page.tsx`: kolom Aksi tabel PO Material dan PO Produksi memakai `aggregate` yang sudah ada di DataTable (tanpa mengubah komponen tabel): di baris kelompok muncul tombol "Download PO (N)" yang membuka popup format (PDF/Excel) yang sama untuk semua PO di kelompok itu jadi 1 file. PO Material: kelompok No. MRP dan kelompok Supplier (PO tanpa vendor material belum bisa diunduh, tidak ikut dan tidak dihitung); PO Produksi: kelompok No. MRP. Nama file mengikuti isi kelompok (mis. PO-Material-W45-KNITTO). Tombol per PO dan tombol kepala tabel tidak berubah.
