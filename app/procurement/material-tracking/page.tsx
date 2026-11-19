@@ -264,6 +264,14 @@ export default function MaterialTrackingPage() {
   // Warna (owner 2026-11-19): satu invoice bisa memuat beberapa warna. Filter = invoice yang memuat warna itu; kelompok = warna pertama
   // (urut abjad) yang dimuat invoice. Untuk rincian per warna yang tepat, pakai tab Per Roll.
   const warnaList = (r: TrackingRow) => (r.invoice ? r.invoice.colorEntries.map((c) => c.warna) : r.warna.split(", ").filter((w) => w && w !== "—"));
+  // Tanggal delivery (owner 2026-11-19): label sama dengan kolom Tgl Delivery; urutan terbaru dulu, invoice belum delivery di akhir.
+  const delivLabel = (r: TrackingRow) => (r.tglDelivery ? formatDate(r.tglDelivery) : "Belum dikirim");
+  const delivOptions = (() => {
+    const first = new Map<string, string>();
+    for (const r of rows) if (r.tglDelivery) first.set(delivLabel(r), r.tglDelivery);
+    const dates = [...first.entries()].sort((a, b) => b[1].localeCompare(a[1])).map(([l]) => l);
+    return rows.some((r) => !r.tglDelivery) ? [...dates, "Belum dikirim"] : dates;
+  })();
   const trackingFilters: FilterDef<TrackingRow>[] = [
     { label: "No. MRP", options: uniqSorted(rows.map((r) => r.mrpId)).reverse(), test: (r, v) => r.mrpId === v },
     { label: "Supplier", options: uniqSorted(rows.map((r) => r.supplier)), test: (r, v) => r.supplier === v },
@@ -274,6 +282,7 @@ export default function MaterialTrackingPage() {
     { label: "Entitas", options: uniqSorted(rows.map((r) => r.entitas)), test: (r, v) => r.entitas === v },
     { label: "Status", options: uniqSorted(rows.map((r) => trackingStatusBadge(r).label)), test: (r, v) => trackingStatusBadge(r).label === v },
     { label: "Delivery", options: ["Belum delivery", "Sudah delivery"], test: (r, v) => deliveryLabel(r) === v },
+    { label: "Tgl Delivery", options: delivOptions, test: (r, v) => delivLabel(r) === v },
     { label: "Roll diterima", options: ["Belum", "Parsial", "Lengkap"], test: (r, v) => arrivalLabel(r) === v },
   ];
   const trackingColumns: ColumnDef<TrackingRow>[] = [
