@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
 import { alertDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, aggSame, aggSum, type ColumnDef, type FilterDef } from "@/components/mrp/data-table";
@@ -9,31 +9,44 @@ import { useMrpStore } from "@/lib/mrp/store";
 import { formatDate, formatPcs, localDateString, skuItemNameLookup } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { getWosKoliStatusAction, type WosKoliStatusResult } from "@/lib/mrp/wosStatusActions";
-import { ADUAN_STAGES, buildAduanTracking, buildItemTracking, itemWithBreakdown, lenganShort, type AduanStage, type AduanTrackRow, type ItemTrackRow } from "@/lib/mrp/itemTracking";
-import { exportTrackingExcel } from "@/lib/mrp/exportTrackingExcel";
+import { TRACK_STAGES, TRACK_STATUSES, buildAduanTracking, buildItemTracking, buildTrackLines, type TrackLine, type TrackStage } from "@/lib/mrp/itemTracking";
+import { returnedRollKeys } from "@/lib/mrp/flowStatus";
+import { exportTrackLinesExcel } from "@/lib/mrp/exportTrackLinesExcel";
 import { cn } from "@/lib/utils";
 
 const vendorLabel = (id: string) => (id ? VENDOR_PRODUKSI[id]?.name ?? id : "Belum dialokasikan");
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
-const dateText = (iso?: string) => (iso ? formatDate(iso) : "-");
 const uniq = (xs: string[]) => Array.from(new Set(xs.filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-/** Tahapan yang ditampilkan sebagai titik di sel Status (tanpa "Belum dialokasikan" dan "Selesai" yang di luar alur). */
-const FLOW: readonly string[] = ADUAN_STAGES.filter((s) => s !== "Belum dialokasikan");
+const FLOW: readonly string[] = TRACK_STAGES;
+const qtyAt = (r: TrackLine, stages: readonly TrackStage[]) => (stages.includes(r.stage) ? r.qty : 0);
 
-/** Kartu posisi barang (redesign 2026-11-16): angka dari baris yang SEDANG lolos filter tabel, diklik = filter Status. */
-const CARDS: { key: string; label: string; value: (r: AduanTrackRow) => number; stages: AduanStage[] }[] = [
-  { key: "target", label: "Target MRP", value: (r) => r.target, stages: [] },
-  { key: "belum", label: "Belum cutting", value: (r) => r.belumCutting, stages: ["Belum dialokasikan", "Belum resting", "Resting"] },
-  { key: "cutting", label: "Di cutting", value: (r) => r.cuttingWip, stages: ["Cutting"] },
-  { key: "fg", label: "Finish Good", value: (r) => r.fgWip, stages: ["Finish Good", "Done FG"] },
-  { key: "koli", label: "Packing", value: (r) => r.diKoli, stages: ["Packing"] },
-  { key: "kirim", label: "Delivery", value: (r) => r.perjalanan + r.tibaDc, stages: ["Delivery"] },
-  { key: "dc", label: "GR DC", value: (r) => r.diterima, stages: ["GR DC"] },
+/** Kartu posisi barang (owner 2026-11-19): qty baris yang SEDANG lolos filter tabel per kelompok status; diklik = filter Status. */
+const CARDS: { key: string; label: string; stages: TrackStage[] }[] = [
+  { key: "wpv", label: "Wait PV", stages: ["Wait PV"] },
+  { key: "bayar", label: "PV & Paid", stages: ["PV", "Paid"] },
+  { key: "mat", label: "Del & GR Mat", stages: ["Del Mat", "GR Mat"] },
+  { key: "cut", label: "Resting & Cut", stages: ["Resting", "Cutting"] },
+  { key: "fg", label: "FG & Done FG", stages: ["FG", "Done FG"] },
+  { key: "koli", label: "Packing", stages: ["Packing"] },
+  { key: "kirim", label: "Delivery", stages: ["Delivery"] },
+  { key: "dc", label: "GR DC", stages: ["GR DC"] },
 ];
 
+/** Filter dari tautan (klik sel matriks dashboard): ?mrp=W44,W43&status=Wait PV,PV&group=Status,Vendor,Warna */
+type UrlView = { filters: Record<string, string[]>; group: string[] | undefined };
+function parseUrlView(search: string): UrlView {
+  const q = new URLSearchParams(search);
+  const list = (k: string) => (q.get(k) ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  const filters: Record<string, string[]> = {};
+  if (list("mrp").length) filters["No MRP"] = list("mrp");
+  if (list("status").length) filters["Status"] = list("status");
+  return { filters, group: list("group").length ? list("group") : undefined };
+}
+
 /** Isi halaman Tracking Item, dipakai PPIC dan SCM (data sama, hanya pembungkus halaman yang beda).
- *  Redesign 2026-11-16 (owner): satu tabel gaya Odoo, satu baris per roll x size (seperti Detail Roll HPP), status dari status roll; tanpa
- *  pop-up rincian (semua data ada di tabel, kolom tambahan lewat menu Kolom). */
+ *  Redesign 2026-11-16 (owner): satu tabel gaya Odoo; tanpa pop-up rincian (semua data ada di tabel, kolom tambahan lewat menu Kolom).
+ *  Revisi 2026-11-19 (owner): satu baris per roll x size x STATUS (`buildTrackLines`): qty hanya di kolom statusnya, jadi filter Status
+ *  menampilkan qty yang masih berada di status itu saja. Tahap sama dengan matriks 11 gate dashboard + Wait PV + Reject. */
 export function ItemTrackingView() {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const productionBatches = useMrpStore((s) => s.productionBatches);
@@ -42,6 +55,7 @@ export function ItemTrackingView() {
   const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
   const invoices = useMrpStore((s) => s.invoices);
   const materialPOs = useMrpStore((s) => s.materialPOs);
+  const materialClaimHistory = useMrpStore((s) => s.materialClaimHistory);
   const today = localDateString(new Date());
   const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
 
@@ -50,6 +64,13 @@ export function ItemTrackingView() {
   const [dateTo, setDateTo] = useState("");
   const [shownKeys, setShownKeys] = useState<Set<string> | null>(null);
   const [preset, setPreset] = useState<{ nonce: number; filters: Record<string, string[]>; card: string }>({ nonce: 0, filters: {}, card: "" });
+  // Tabel dipasang SETELAH alamat dibaca (kelompok bawaan dari tautan dipakai saat tabel dibuat), lalu filter tautan dipasang lewat preset.
+  const search = useSyncExternalStore(
+    () => () => {},
+    () => window.location.search,
+    () => null
+  );
+  const urlView = useMemo(() => (search === null ? null : parseUrlView(search)), [search]);
 
   // Penerimaan di DC dari WOS (tab ERP_INCOMING): dipakai bersama penerimaan Warehouse ERP untuk kolom Diterima DC.
   const [wos, setWos] = useState<WosKoliStatusResult | null>(null);
@@ -70,20 +91,23 @@ export function ItemTrackingView() {
     () => buildItemTracking(mrpDetails, productionBatches, productionResults, deliveryKolis, warehouseReceipts, { invoices, wosByKoli: wos?.byKoli }),
     [mrpDetails, productionBatches, productionResults, deliveryKolis, warehouseReceipts, invoices, wos]
   );
-  const all = useMemo(
-    () => buildAduanTracking(items, mrpDetails, productionBatches, deliveryKolis, warehouseReceipts, { wosByKoli: wos?.byKoli, invoices, results: productionResults, materialPOs }),
-    [items, mrpDetails, productionBatches, deliveryKolis, warehouseReceipts, wos, invoices, productionResults, materialPOs]
-  );
+  const all = useMemo(() => {
+    const rs = buildAduanTracking(items, mrpDetails, productionBatches, deliveryKolis, warehouseReceipts, { wosByKoli: wos?.byKoli, invoices, results: productionResults, materialPOs });
+    return buildTrackLines(rs, { batches: productionBatches, invoices, returned: returnedRollKeys(materialClaimHistory), today });
+  }, [items, mrpDetails, productionBatches, deliveryKolis, warehouseReceipts, wos, invoices, productionResults, materialPOs, materialClaimHistory, today]);
+  const skuOf = useMemo(() => skuItemNameLookup(itemSellingPrices), [itemSellingPrices]);
+  /** Item (SKU) = nama item Master SKU; kalau item belum ada di Master SKU, nama item ERP. */
+  const itemSkuOf = (r: TrackLine) => skuOf(r.warna, r.lengan, r.size) || r.itemName;
   const rows = useMemo(() => {
     if (!dateFrom && !dateTo) return all;
     return all.filter((r) => r.shipDates.some((d) => (!dateFrom || d >= dateFrom) && (!dateTo || d <= dateTo)));
   }, [all, dateFrom, dateTo]);
   const shown = shownKeys ? rows.filter((r) => shownKeys.has(r.key)) : rows;
 
-  const lenganLabel = (r: AduanTrackRow) => (r.lengan === "PENDEK" ? "Pendek" : "Panjang");
-  const filterDefs: FilterDef<AduanTrackRow>[] = [
-    { label: "Status", options: ADUAN_STAGES.filter((s) => rows.some((r) => r.status === s)), test: (r, v) => r.status === v },
-    { label: "No. MRP", options: uniq(rows.map((r) => r.mrpId)).reverse(), test: (r, v) => r.mrpId === v },
+  const lenganLabel = (r: TrackLine) => (r.lengan === "PENDEK" ? "Pendek" : "Panjang");
+  const filterDefs: FilterDef<TrackLine>[] = [
+    { label: "Status", options: TRACK_STATUSES.filter((s) => rows.some((r) => r.stage === s)), test: (r, v) => r.stage === v },
+    { label: "No MRP", options: uniq(rows.map((r) => r.mrpId)).reverse(), test: (r, v) => r.mrpId === v },
     { label: "Vendor", options: uniq(rows.map((r) => vendorLabel(r.vendorProduksi))), test: (r, v) => vendorLabel(r.vendorProduksi) === v },
     { label: "Item", options: uniq(rows.map((r) => r.itemName)), test: (r, v) => r.itemName === v },
     { label: "Warna", options: uniq(rows.map((r) => r.warna)), test: (r, v) => r.warna === v },
@@ -95,111 +119,76 @@ export function ItemTrackingView() {
 
   const pcs = (n: number) => <span className={n === 0 ? "text-text-muted" : undefined}>{formatPcs(n)}</span>;
   // Baris kelompok (owner 2026-11-16): angka dijumlah; teks dan status hanya tampil kalau sama di semua baris, kalau berbeda dikosongkan.
-  const sumPcs = (get: (r: AduanTrackRow) => number) => aggSum<AduanTrackRow>(get, (n) => <span className="font-semibold">{formatPcs(n)}</span>);
-  const sameText = (get: (r: AduanTrackRow) => string) => aggSame<AduanTrackRow>(get);
-  // Kolom bawaan (owner 2026-11-17, tangkapan layar "Tracking per roll"): Item, No. MRP, Vendor, Warna, Roll, Target, Cutting, Finish Good,
-  // Packing, Delivery, GR DC, Status. Aduan, Code Roll, dan kolom tanggal tetap ada di menu Kolom. Tanpa filter, kelompok, atau urutan bawaan.
-  const columns: ColumnDef<AduanTrackRow>[] = [
-    { key: "mrp", aggregate: sameText((r) => r.mrpId), label: "No. MRP", default: true, render: (r) => <span className="font-mono">{r.mrpId}</span> },
+  const sumPcs = (get: (r: TrackLine) => number) => aggSum<TrackLine>(get, (n) => <span className="font-semibold">{formatPcs(n)}</span>);
+  const sameText = (get: (r: TrackLine) => string) => aggSame<TrackLine>(get);
+  // Kolom tetap (owner 2026-11-19): Item (SKU), No. MRP, Vendor, Kategori, Warna, Size, Code Roll, Target, satu kolom per status, Status,
+  // Est. Delivery, Est. Tiba. Tanggal lain hanya dipakai sebagai filter (Tgl kirim). Export Excel memakai kolom yang sama.
+  const dateCell = (iso: string | undefined, late = false) =>
+    iso ? <span className={cn("whitespace-nowrap", late && "font-semibold text-[#B91C1C]")}>{formatDate(iso)}</span> : <span className="text-text-muted">-</span>;
+  const columns: ColumnDef<TrackLine>[] = [
+    { key: "mrp", aggregate: sameText((r) => r.mrpId), label: "No MRP", default: true, render: (r) => <span className="font-mono">{r.mrpId}</span> },
     { key: "vendor", aggregate: sameText((r) => vendorLabel(r.vendorProduksi)), label: "Vendor", default: true, render: (r) => vendorLabel(r.vendorProduksi) },
+    { key: "kategori", aggregate: sameText((r) => r.kategori), label: "Kategori", default: true, render: (r) => r.kategori || "-" },
     { key: "warna", aggregate: sameText((r) => r.warna), label: "Warna", default: true, render: (r) => r.warna },
-    {
-      key: "kode", aggregate: sameText((r) => r.kode),
-      label: "Aduan",
-      default: false,
-      render: (r) =>
-        r.jenis === "roll" || r.jenis === "rencana" ? (
-          <span className="font-mono">{r.kode}</span>
-        ) : (
-          <span className="text-text-muted" title={r.jenis === "sisa" ? "FG rework / sisa kain atau koli lama yang tidak tercatat roll asalnya" : "Target MRP yang belum punya vendor"}>
-            {r.jenis === "sisa" ? "Rework / tanpa roll" : "Belum dialokasikan"}
-          </span>
-        ),
-    },
+    { key: "size", aggregate: sameText((r) => r.size), label: "Size", default: true, render: (r) => r.size },
     {
       key: "codeRoll",
       label: "Code Roll",
-      default: false,
+      default: true,
       render: (r) =>
-        r.codeRoll ? <span className="font-mono">{r.codeRoll}</span> : r.jenis === "rencana" ? <span className="text-text-muted">belum resting</span> : <span className="text-text-muted">-</span>,
+        r.codeRoll ? <span className="font-mono">{r.codeRoll}</span> : <span className="text-text-muted">{r.jenis === "rencana" ? "belum resting" : r.jenis === "sisa" ? "rework / tanpa roll" : "-"}</span>,
     },
     {
-      key: "qtyRoll",
-      // Roll dijumlah per roll, bukan per baris: satu roll aduan M-L tampil di dua baris size tetapi tetap dihitung satu.
-      aggregate: (list) => {
-        const seen = new Map<string, number>();
-        for (const r of list) if (r.rollKey) seen.set(r.rollKey, r.qtyRoll);
-        return <span className="font-semibold">{formatPcs(sum([...seen.values()]))}</span>;
-      },
-      label: "Roll",
+      key: "target",
+      aggregate: sumPcs((r) => r.target),
+      label: "Target",
       default: true,
       align: "right",
-      info: { title: "Roll", body: "1 untuk baris roll. Baris yang belum resting memuat jumlah roll aduan yang belum di-resting." },
-      render: (r) => (r.qtyRoll > 0 ? <span className="font-mono">{r.qtyRoll}</span> : <span className="text-text-muted">-</span>),
+      info: { title: "Target", body: "Target roll x size, hanya di baris pertama roll x size (baris lain kosong supaya jumlahnya tidak ganda)." },
+      render: (r) => (r.target ? pcs(r.target) : <span className="text-text-muted">-</span>),
     },
-    { key: "kategori", aggregate: sameText((r) => r.kategori), label: "Kategori", default: false, render: (r) => r.kategori || "-" },
-    { key: "target", aggregate: sumPcs((r) => r.target), label: "Target", default: true, align: "right", render: (r) => pcs(r.target) },
-    { key: "cutting", aggregate: sumPcs((r) => r.cutting), label: "Cutting", default: true, align: "right", info: { title: "Cutting", body: "Hasil cutting roll ini untuk size ini." }, render: (r) => pcs(r.cutting) },
-    { key: "fg", aggregate: sumPcs((r) => r.fg), label: "Finish Good", default: true, align: "right", info: { title: "Finish Good", body: "Finish Good roll ini (termasuk yang sudah dikemas dan dikirim)." }, render: (r) => pcs(r.fg) },
-    { key: "reject", aggregate: sumPcs((r) => r.reject), label: "Reject", default: false, align: "right", render: (r) => pcs(r.reject) },
-    { key: "diKoli", aggregate: sumPcs((r) => r.diKoli), label: "Packing", default: true, align: "right", render: (r) => pcs(r.diKoli) },
-    { key: "dikirim", aggregate: sumPcs((r) => r.dikirim), label: "Delivery", default: true, align: "right", render: (r) => pcs(r.dikirim) },
-    { key: "diterima", aggregate: sumPcs((r) => r.diterima), label: "GR DC", default: true, align: "right", render: (r) => pcs(r.diterima) },
+    ...TRACK_STATUSES.map(
+      (st): ColumnDef<TrackLine> => ({
+        key: "st:" + st,
+        aggregate: sumPcs((r) => qtyAt(r, [st])),
+        label: st,
+        default: true,
+        align: "right",
+        render: (r) => (r.stage === st ? <span className="font-semibold">{formatPcs(r.qty)}</span> : null),
+      })
+    ),
     {
-      key: "status", aggregate: aggSame<AduanTrackRow>((r) => r.status, (v) => <StageBadge stages={FLOW} current={v} tone={v === "GR DC" ? "done" : undefined} />),
+      key: "status", aggregate: aggSame<TrackLine>((r) => r.stage, (v) => <StageBadge stages={FLOW} current={v} tone={v === "Reject" ? "danger" : v === "GR DC" ? "done" : undefined} />),
       label: "Status",
       default: true,
-      render: (r) => <StageBadge stages={FLOW} current={r.status} tone={r.status === "GR DC" ? "done" : undefined} />,
+      render: (r) => <StageBadge stages={FLOW} current={r.stage} tone={r.stage === "Reject" ? "danger" : r.stage === "GR DC" ? "done" : undefined} />,
     },
-    { key: "belumCutting", aggregate: sumPcs((r) => r.belumCutting), label: "Sisa belum cutting", default: false, align: "right", render: (r) => pcs(r.belumCutting) },
-    { key: "fgWip", aggregate: sumPcs((r) => r.fgWip), label: "FG belum dikemas", default: false, align: "right", render: (r) => pcs(r.fgWip) },
-    { key: "perjalanan", aggregate: sumPcs((r) => r.perjalanan), label: "Di perjalanan", default: false, align: "right", render: (r) => pcs(r.perjalanan) },
-    { key: "tibaDc", aggregate: sumPcs((r) => r.tibaDc), label: "Tiba DC (belum validasi)", default: false, align: "right", render: (r) => pcs(r.tibaDc) },
-    { key: "tglPo", label: "Tgl PO Material", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.poMaterialAt)}</span> },
-    { key: "tglDelivery", label: "Tgl Delivery", default: false, info: { title: "Tgl Delivery", body: "Tanggal bahan dikirim ke vendor (Set Delivery invoice bahan). Baris roll memakai invoice yang memuat code roll itu." }, render: (r) => <span className="whitespace-nowrap">{dateText(r.deliveryAt)}</span> },
-    { key: "tglGr", label: "Tgl GR", default: false, info: { title: "Tgl GR", body: "Tanggal roll diterima vendor (Good Receive). Baris yang belum resting tidak punya tanggal ini." }, render: (r) => <span className="whitespace-nowrap">{dateText(r.grAt)}</span> },
-    { key: "tglResting", label: "Tgl Resting", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.restingAt)}</span> },
-    { key: "tglCutting", label: "Tgl Cutting", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.cuttingAt)}</span> },
-    { key: "tglFg", label: "Tgl Awal FG", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.fgFirstAt)}</span> },
-    { key: "tglKoli", label: "Tgl Awal Di Koli", default: false, render: (r) => <span className="whitespace-nowrap">{dateText(r.koliFirstAt)}</span> },
-    { key: "tglKirim", label: "Tgl Kirim", default: false, render: (r) => <span className="whitespace-nowrap" title={r.shipDates.map(formatDate).join(", ") || undefined}>{dateText(r.shipLastAt)}</span> },
     {
-      key: "estTiba",
-      label: "Est. Tiba DC",
-      default: false,
-      info: { title: "Est. Tiba DC", body: "Tanggal kirim + lead time ke DC (7 hari; Konveksi Makassar 1 hari), hanya untuk koli yang sudah dikirim dan belum sampai di DC." },
-      render: (r) => (r.estTiba ? <span className={cn("whitespace-nowrap", r.estTiba < today && "font-semibold text-[#B91C1C]")}>{formatDate(r.estTiba)}</span> : <span className="text-text-muted">-</span>),
+      key: "estKirim",
+      label: "ETD",
+      default: true,
+      info: { title: "ETD (estimasi delivery)", body: "Perkiraan qty baris ini dikirim vendor: tanggal masuk status + lead time sisa tahap (Wait PV, PV, Paid dihitung dari hari ini). Status Delivery = tanggal kirim aktual. Merah = sudah lewat." },
+      render: (r) => dateCell(r.estKirim, r.stage !== "Delivery" && !!r.estKirim && r.estKirim <= today),
     },
-    { key: "koli", label: "No. Koli", default: false, render: (r) => <span className="font-mono text-[11px]">{r.koliNos.join(", ") || "-"}</span> },
+    {
+      key: "estTibaDc",
+      label: "ETA",
+      default: true,
+      info: { title: "ETA (estimasi tiba DC)", body: "ETD + lead time ke DC (7 hari; Konveksi Makassar 1 hari). Merah = sudah lewat tetapi belum diterima DC." },
+      render: (r) => dateCell(r.estTibaDc, !!r.estTibaDc && r.estTibaDc < today),
+    },
   ];
 
-  /** Export Excel tetap memakai susunan WIP yang lama: dibentuk dari sel item (MRP x vendor x item) baris yang sedang tampil. */
+  /** Export Excel (owner 2026-11-19): kolom tetap sama dengan tabel, mengikuti baris yang tampil (filter tabel dan Tgl kirim). */
   async function exportExcel() {
-    const keys = new Set(shown.map((r) => r.cellKey));
-    const exportRows: ItemTrackRow[] = [];
-    for (const it of items) {
-      const bd = it.breakdown.filter((c) => keys.has(c.key));
-      if (bd.length === 0) continue;
-      exportRows.push(bd.length === it.breakdown.length ? it : itemWithBreakdown(it, bd));
-    }
     const parts: string[] = [];
-    if (shown.length !== all.length) parts.push(`${shown.length} dari ${all.length} baris roll yang tampil`);
+    if (shown.length !== all.length) parts.push(`${shown.length} dari ${all.length} baris`);
     if (dateFrom || dateTo) parts.push(`tanggal kirim ${dateFrom ? formatDate(dateFrom) : "…"} s/d ${dateTo ? formatDate(dateTo) : "…"}`);
     try {
-      await exportTrackingExcel(
-        {
-          rows: exportRows,
-          filterLabel: parts.length > 0 ? "Filter: " + parts.join(" · ") : undefined,
-          batches: productionBatches,
-          results: productionResults,
-          kolis: deliveryKolis,
-          invoices,
-          aduans: mrpDetails.flatMap((d) => d.aduanRows),
-          aduanMrpIds: Object.fromEntries(mrpDetails.flatMap((d) => d.aduanRows.map((a) => [a.id, d.mrp.id] as const))),
-          materialPOs,
-          itemSkuOf: skuItemNameLookup(itemSellingPrices),
-        },
-        `WIP-Tracking-Item-${today}.xlsx`
+      await exportTrackLinesExcel(
+        shown.map((r) => ({ ...r, itemSku: itemSkuOf(r), vendorName: vendorLabel(r.vendorProduksi) })),
+        `Tracking-Item-${today}.xlsx`,
+        parts.length > 0 ? "Filter: " + parts.join(" · ") : undefined
       );
     } catch (e) {
       await alertDialog({ title: "Gagal membuat Excel", message: e instanceof Error ? e.message : "Terjadi kesalahan saat membuat file Excel.", tone: "danger" });
@@ -209,11 +198,11 @@ export function ItemTrackingView() {
   const dateCls = "rounded-md border border-border-subtle bg-white px-2 py-[5px] font-sans text-[11.5px] text-[#31414F]";
   return (
     <>
-      <div className="grid grid-cols-7 gap-2.5 max-xl:grid-cols-4 max-sm:grid-cols-2">
+      <div className="grid grid-cols-8 gap-2.5 max-xl:grid-cols-4 max-sm:grid-cols-2">
         {CARDS.map((c) => {
-          const value = sum(shown.map(c.value));
+          const value = sum(shown.map((r) => qtyAt(r, c.stages)));
           const active = preset.card === c.key;
-          const clickable = c.stages.length > 0;
+          const clickable = true;
           return (
             <button
               key={c.key}
@@ -224,7 +213,7 @@ export function ItemTrackingView() {
                 setPreset((p) =>
                   p.card === c.key
                     ? { nonce: p.nonce + 1, filters: {} as Record<string, string[]>, card: "" }
-                    : { nonce: p.nonce + 1, filters: { Status: c.stages.filter((s) => rows.some((r) => r.status === s)) as string[] }, card: c.key }
+                    : { nonce: p.nonce + 1, filters: { ...urlView?.filters, Status: c.stages.filter((s) => rows.some((r) => r.stage === s)) as string[] }, card: c.key }
                 )
               }
               className={cn(
@@ -241,7 +230,7 @@ export function ItemTrackingView() {
         })}
       </div>
 
-      <DataTable<AduanTrackRow>
+      {urlView && <DataTable<TrackLine>
         title="Tracking per roll"
         subtitle={wos && (!wos.configured || !wos.hasStatusColumn) ? "Status penerimaan DC dari WOS belum aktif; Diterima DC hanya dari penerimaan Warehouse ERP." : undefined}
         headerActions={
@@ -263,19 +252,16 @@ export function ItemTrackingView() {
         columns={columns}
         rows={rows}
         keyOf={(r) => r.key}
-        firstColumnLabel="Item"
-        firstColumnRender={(r) => (
-          <span className="whitespace-nowrap font-semibold">
-            {r.warna} <span className="text-text-muted">{lenganShort(r.lengan)}</span> {r.size}
-          </span>
-        )}
+        firstColumnLabel="Item SKU"
+        firstColumnRender={(r) => <span className="whitespace-nowrap font-semibold">{itemSkuOf(r)}</span>}
         filterDefs={filterDefs}
         filterPreset={preset}
         onFilteredRows={(list) => setShownKeys(new Set(list.map((r) => r.key)))}
-        search={{ placeholder: "Cari item, MRP, vendor, aduan, code roll…", getText: (r) => `${r.itemName} ${r.mrpId} ${vendorLabel(r.vendorProduksi)} ${r.kode} ${r.codeRoll} ${r.status} ${r.kategori}` }}
+        search={{ placeholder: "Cari item, MRP, vendor, aduan, code roll…", getText: (r) => `${itemSkuOf(r)} ${r.itemName} ${r.mrpId} ${vendorLabel(r.vendorProduksi)} ${r.kode} ${r.codeRoll} ${r.stage} ${r.kategori}` }}
         emptyText="Belum ada baris untuk filter ini."
         nowrap
-      />
+        openView={urlView}
+      />}
     </>
   );
 }

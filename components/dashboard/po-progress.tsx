@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Grid3x3, List } from "lucide-react";
 import { DataTable, type FilterDef } from "@/components/mrp/data-table";
 import type { MrpProgressRow } from "@/components/mrp/mrp-progress";
@@ -8,6 +9,7 @@ import { formatPcs } from "@/lib/mrp/derive";
 import { FLOW_STAGES, flowRank, type FlowStage } from "@/lib/mrp/flowStatus";
 import { yieldPct, type RollYieldRow } from "@/lib/mrp/opsMonitor";
 import { YIELD_ALERT_THRESHOLD_PCT } from "@/lib/mrp/derive";
+import { stagesBefore, type TrackStage } from "@/lib/mrp/itemTracking";
 
 /** "Progres PO hingga delivery" (owner 2026-11-17, sesuai gambar contoh): persentase roll tiap MRP yang sudah melewati 11 gate, dari PV sampai
  *  GR DC. Filter dan pencarian memakai kotak cari Odoo tabel bersama (`DataTable` dengan `body`), kartu dan matriks mengikuti filter.
@@ -16,7 +18,7 @@ import { YIELD_ALERT_THRESHOLD_PCT } from "@/lib/mrp/derive";
 type Gate = { label: string; from: FlowStage };
 const GROUPS: { label: string; gates: Gate[] }[] = [
   { label: "PO & pembayaran", gates: [{ label: "PV", from: "PV Material" }, { label: "Paid", from: "Paid" }] },
-  { label: "Material", gates: [{ label: "Kirim Mat.", from: "Delivery Material" }, { label: "Terima", from: "Receiving Material" }] },
+  { label: "Material", gates: [{ label: "Del Mat", from: "Delivery Material" }, { label: "GR Mat", from: "Receiving Material" }] },
   {
     label: "Produksi",
     gates: [
@@ -98,13 +100,27 @@ function heat(p: number): { background: string; color: string } | null {
   return { background: "#DCE8FB", color: "#0F2747" };
 }
 
-function HeatCell({ p, title, bold }: { p: number; title: string; bold?: boolean }) {
+function HeatCell({ p, title, bold, onOpen }: { p: number; title: string; bold?: boolean; onOpen?: () => void }) {
   const st = heat(p);
+  const open = onOpen && p < 100;
   return (
     <td className="px-[3px] py-[5px]">
       <div
-        title={title}
-        className={"flex h-[30px] min-w-[54px] items-center justify-center rounded-[5px] font-mono text-[12px] tabular-nums " + (bold || (st && st.color === "#FFFFFF") ? "font-semibold" : "")}
+        title={open ? title + " · klik: buka Tracking Item yang belum lolos gate ini" : title}
+        role={open ? "link" : undefined}
+        onClick={
+          open
+            ? (e) => {
+                e.stopPropagation();
+                onOpen();
+              }
+            : undefined
+        }
+        className={
+          "flex h-[30px] min-w-[54px] items-center justify-center rounded-[5px] font-mono text-[12px] tabular-nums " +
+          (bold || (st && st.color === "#FFFFFF") ? "font-semibold " : "") +
+          (open ? "cursor-pointer hover:ring-2 hover:ring-action-primary" : "")
+        }
         style={st ?? { color: "#6B7A8A" }}
       >
         {p}%
@@ -113,7 +129,15 @@ function HeatCell({ p, title, bold }: { p: number; title: string; bold?: boolean
   );
 }
 
-export function PoProgress({ rows, hppActual, yields }: { rows: MrpProgressRow[]; hppActual: Map<string, HppAgg>; yields: RollYieldRow[] }) {
+export function PoProgress({ rows, hppActual, yields, trackingHref }: { rows: MrpProgressRow[]; hppActual: Map<string, HppAgg>; yields: RollYieldRow[]; trackingHref?: string }) {
+  const router = useRouter();
+  /** Klik sel gate (owner 2026-11-19): buka Tracking Item terfilter MRP itu, status yang BELUM melewati gate, dikelompokkan Status > Vendor > Warna. */
+  const openTracking = trackingHref
+    ? (mrpIds: string[], gate: string) => () => {
+        const q = new URLSearchParams({ mrp: mrpIds.join(","), status: stagesBefore(gate as TrackStage).join(","), group: "Status,Vendor,Warna" });
+        router.push(`${trackingHref}?${q.toString()}`);
+      }
+    : undefined;
   const [shownIds, setShownIds] = useState<Set<string> | null>(null);
   const [view, setView] = useState<"matriks" | "ringkasan">("matriks");
   const [selected, setSelected] = useState<string | null>(null);
@@ -224,7 +248,14 @@ export function PoProgress({ rows, hppActual, yields }: { rows: MrpProgressRow[]
                 <td className="border-r border-[#EEF1F4] px-3 text-center font-mono tabular-nums">{formatPcs(t)}</td>
                 {GATES.map((g) => {
                   const n = rollsAtLeast(r.rollsByStage, g.from);
-                  return <HeatCell key={g.from} p={t ? Math.round((n / t) * 100) : 0} title={`${r.mrp.id} · ${g.label}: ${formatPcs(n)} dari ${formatPcs(t)} roll`} />;
+                  return (
+                    <HeatCell
+                      key={g.from}
+                      p={t ? Math.round((n / t) * 100) : 0}
+                      title={`${r.mrp.id} · ${g.label}: ${formatPcs(n)} dari ${formatPcs(t)} roll`}
+                      onOpen={openTracking?.([r.mrp.id], g.label)}
+                    />
+                  );
                 })}
                 <KpiCells k={kpi(r)} />
               </tr>
@@ -235,7 +266,7 @@ export function PoProgress({ rows, hppActual, yields }: { rows: MrpProgressRow[]
               <td className="sticky left-0 z-10 bg-surface-card py-2 pl-4 pr-3 font-sans text-[12.5px] font-semibold">Total cuplikan</td>
               <td className="border-r border-[#EEF1F4] px-3 text-center font-mono font-semibold tabular-nums">{formatPcs(roll)}</td>
               {GATES.map((g) => (
-                <HeatCell key={g.from} p={pctOf(shown, g.from)} title={`Semua MRP tampil · ${g.label}`} bold />
+                <HeatCell key={g.from} p={pctOf(shown, g.from)} title={`Semua MRP tampil · ${g.label}`} bold onOpen={openTracking?.(shown.map((r) => r.mrp.id), g.label)} />
               ))}
               <KpiCells k={tot} label="gabungan" />
             </tr>

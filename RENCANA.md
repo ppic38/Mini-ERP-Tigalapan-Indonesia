@@ -36,7 +36,7 @@ Laporan HPP gaya Odoo, Tracking Item per roll x size (12 kolom bawaan, tanpa fil
 Ritual tetap: `git fetch` lalu `git merge origin/main` sebelum mulai; tim IT/owner commit langsung ke `main` beberapa kali sehari.
 
 **Menunggu keputusan owner (jangan dikerjakan sebelum owner bilang ya):**
-1. **Filter "Posisi barang" di Tracking Item** (PPIC dan SCM, `components/mrp/item-tracking-view.tsx`). Latar: owner menyaring
+1. **SELESAI 2026-11-19 (lihat MIGRASI.md, PR dari `redesign-lanjutan`): diganti baris per roll x size x STATUS, sehingga filter Status = posisi qty.** Riwayat usulan: **Filter "Posisi barang" di Tracking Item** (PPIC dan SCM, `components/mrp/item-tracking-view.tsx`). Latar: owner menyaring
    Status = Belum resting/Resting/Cutting/Finish Good tetapi kolom Packing/Delivery tetap terisi. Itu BENAR menurut aturan:
    status baris (roll x size) mengikuti kondisi ROLL (`rowStatus` di `lib/mrp/itemTracking.ts`: roll terbuka = Cutting atau
    Finish Good kalau FG sudah diisi), sedangkan kolom Packing/Delivery adalah JUMLAH pcs, dan FG per roll boleh dikirim
@@ -93,7 +93,8 @@ dengan versi live terbaru. Hanya data live yang DIBACA; live tidak pernah dituli
 
 **Jebakan Windows yang sudah memakan waktu (jangan diulang)**: `psql.exe` menulis akhir baris CR+LF, sehingga nama tabel
 hasil query berakhiran CR dan pola `pg_dump -t/-T` tidak cocok dengan apa pun TANPA pesan error (dump nyaris kosong).
-`tr -d ''` ternyata tidak bekerja di dalam script ini; yang terbukti bekerja adalah mengekstrak identifier saja
+`tr -d '
+'` ternyata tidak bekerja di dalam script ini; yang terbukti bekerja adalah mengekstrak identifier saja
 (`grep -oE '[A-Za-z0-9_]+'`). Script kini menolak jalan kalau dump berisi < 20 tabel.
 
 **Menunggu tim IT (jangan diselesaikan sendiri):**
@@ -101,7 +102,8 @@ hasil query berakhiran CR dan pola `pg_dump -t/-T` tidak cocok dengan apa pun TA
    dengan SESSION_SECRET; kolom ini TERBACA oleh akun baca-saja walau `password_hash` tidak). Tidak disalin ke lokal.
 2. Ganti password `partner_ro` setelah pekerjaan ini selesai (pernah terlihat di chat).
 Cara cek `LIVE_DB_URL` terisi yang BENAR (pola `.*` ikut cocok dengan nilai kosong):
-`awk -F= '/^LIVE_DB_URL=/{v=substr($0,14); gsub(//,"",v); print length(v)}' .env.db-sync` -- harus > 0.
+`awk -F= '/^LIVE_DB_URL=/{v=substr($0,14); gsub(/
+/,"",v); print length(v)}' .env.db-sync` -- harus > 0.
 
 **Gabung dengan main (2026-11-17)**: branch `redesign-fondasi-tabel` sudah memuat semua commit tim IT sampai `1923df5` (merge commit
 sesudah `820a1f0`; `820a1f0` = titik mundur sebelum penggabungan). Konflik di tabel bersama, Tracking Item, Produksi Monitoring,
@@ -417,7 +419,7 @@ Kalau sedang di tengah branch modul, tambahkan `git merge main` SETIAP HARI. Kon
 - Fase 1-5: SELESAI dan TAYANG lewat PR #2 (2026-11-18) untuk modul internal; menu atas dan halaman login dikembalikan owner
   ke versi lama (`d0485c7`). Rincian per modul di MIGRASI.md (entri bertanda `[redesign-...]`).
 - Portal Vendor Produksi: TIDAK diubah (keputusan owner 2026-11-17).
-- Modul yang sedang dirombak saat ini: (tidak ada). Usulan berikutnya: filter "Posisi barang" Tracking Item (menunggu owner).
+- Modul yang sedang dirombak saat ini: Tracking Item + matriks dashboard (branch `redesign-lanjutan`, PR 2026-11-19, menunggu review/merge owner). Yang belum: lead time Paid -> Del Mat, GR Mat -> Resting, Resting -> Cutting masih usulan.
 
 ## 3. Sederhanakan alur login -- DIBATALKAN OWNER (2026-11-13), JANGAN DIKERJAKAN
 > **Owner memutuskan tidak mengubah metode login.** Bagian ini disimpan sebagai hasil analisis saja, kalau

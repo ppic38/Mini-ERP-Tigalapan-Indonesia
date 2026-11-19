@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { usePathname } from "next/navigation";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { useMrpProgressRows } from "@/components/mrp/mrp-progress";
 import { PoProgress } from "@/components/dashboard/po-progress";
@@ -42,6 +43,9 @@ const rollsAtLeast = (by: Partial<Record<FlowStage, number>>, from: FlowStage) =
 
 export function OpsDashboard() {
   const rows = useMrpProgressRows();
+  // Sel matriks gate membuka Tracking Item modul ini; hanya PPIC dan SCM yang punya halaman Tracking Item (modul lain: sel tidak bisa diklik).
+  const pathname = usePathname();
+  const trackingHref = pathname.startsWith("/dashboard/ppic") ? "/mrp/ppic/item-tracking" : pathname.startsWith("/scm") ? "/scm/item-tracking" : undefined;
   const materialPOs = useMrpStore((s) => s.materialPOs);
   const invoices = useMrpStore((s) => s.invoices);
   const batches = useMrpStore((s) => s.productionBatches);
@@ -144,7 +148,7 @@ export function OpsDashboard() {
       </div>
 
       {/* Progres PO hingga delivery (owner 2026-11-17): matriks 11 gate dengan filter gaya Odoo. */}
-      <PoProgress rows={active} hppActual={hpp.byMrp} yields={yields} />
+      <PoProgress rows={active} hppActual={hpp.byMrp} yields={yields} trackingHref={trackingHref} />
 
       <div className="grid gap-4 xl:grid-cols-2">
         {/* Pembelian material */}
