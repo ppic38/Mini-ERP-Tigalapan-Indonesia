@@ -264,6 +264,25 @@ export default function PoApprovalPage() {
       key: "aksi",
       label: "Aksi",
       default: true,
+      // Baris kelompok (per No. MRP / per Supplier): unduh semua PO Material di kelompok itu sekaligus jadi 1 file (owner 2026-11-19). PO tanpa vendor material belum bisa diunduh, jadi tidak ikut.
+      aggregate: (rows) => {
+        const pos = rows.filter((p) => p.supplier);
+        const mrps = Array.from(new Set(pos.map((p) => p.mrpId)));
+        const sups = Array.from(new Set(pos.map((p) => p.supplier)));
+        return (
+          <span onClick={(e) => e.stopPropagation()}>
+            <Button
+              onClick={() => setDownloadReq({ kind: "material", pos, baseName: ["PO-Material", mrps.length === 1 ? mrps[0] : "", sups.length === 1 ? sups[0] : ""].filter(Boolean).join("-") })}
+              disabled={pos.length === 0}
+              title="Download semua PO Material di kelompok ini jadi 1 file"
+              variant="ghost"
+              size="xs"
+            >
+              Download PO ({pos.length})
+            </Button>
+          </span>
+        );
+      },
       render: (p) => (
         <span onClick={(e) => e.stopPropagation()}>
           <Button onClick={() => setDownloadReq({ kind: "material", pos: [p], baseName: `PO-${p.id}` })} disabled={!p.supplier} title={!p.supplier ? "Tetapkan vendor material dulu" : undefined} variant="ghost" size="xs">
@@ -384,6 +403,23 @@ export default function PoApprovalPage() {
       key: "aksi",
       label: "Aksi",
       default: true,
+      // Baris kelompok (per No. MRP): unduh semua PO Produksi di kelompok itu sekaligus jadi 1 file.
+      aggregate: (rows) => {
+        const mrps = Array.from(new Set(rows.map((p) => p.mrpId)));
+        return (
+          <span onClick={(e) => e.stopPropagation()}>
+            <Button
+              onClick={() => setDownloadReq({ kind: "maklon", pos: rows, baseName: mrps.length === 1 ? `PO-Produksi-${mrps[0]}` : "PO-Produksi" })}
+              disabled={rows.length === 0}
+              title="Download semua PO Produksi di kelompok ini jadi 1 file"
+              variant="ghost"
+              size="xs"
+            >
+              Download PO ({rows.length})
+            </Button>
+          </span>
+        );
+      },
       render: (p) => (
         <div>
           <Button onClick={() => setDownloadReq({ kind: "maklon", pos: [p], baseName: `PO-${p.id}` })} variant="ghost" size="xs">

@@ -2,6 +2,12 @@
 
 
 
+
+## Procurement PO Approval: Download PO per kelompok (per No. MRP / per Supplier) sekaligus (2026-11-19, tanpa migration)
+Owner: tombol Download PO hanya per PO satu-satu (atau semua yang tampil sekaligus lewat tombol di kepala tabel); minta unduh per kelompok sekaligus.
+- `app/procurement/po-approval/page.tsx`: kolom Aksi tabel PO Material dan PO Produksi memakai `aggregate` yang sudah ada di DataTable (tanpa mengubah komponen tabel): di baris kelompok muncul tombol "Download PO (N)" yang membuka popup format (PDF/Excel) yang sama untuk semua PO di kelompok itu jadi 1 file. PO Material: kelompok No. MRP dan kelompok Supplier (PO tanpa vendor material belum bisa diunduh, tidak ikut dan tidak dihitung); PO Produksi: kelompok No. MRP. Nama file mengikuti isi kelompok (mis. PO-Material-W45-KNITTO). Tombol per PO dan tombol kepala tabel tidak berubah.
+- Diuji: tsc bersih; eslint sama dengan sebelumnya. Belum dilihat di layar.
+
 ## Sidebar bisa dilipat jadi ikon saja, modul internal (2026-11-18, tanpa migration)
 Owner: tombol lipat sidebar supaya tabel lebar (mis. Tracking Item 22 kolom) punya ruang lebih tanpa pindah ke menu atas.
 - `components/shell/sidebar.tsx`: prop opsional `collapsible` (bawaan false = perilaku lama). Di layar lebar (lg ke atas) tombol di kepala sidebar melipat lebar 212px jadi 60px: hanya ikon, nama menu jadi tooltip (`title`), badge angka jadi titik merah di ikon, judul dan versi disembunyikan. Pilihan diingat per browser (`localStorage` `sidebar-collapsed-v1`, dibungkus try/catch). Di HP/tablet tegak sidebar tetap laci penuh seperti biasa.
