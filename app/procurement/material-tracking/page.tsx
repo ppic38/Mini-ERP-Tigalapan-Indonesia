@@ -12,6 +12,8 @@ import { MATERIAL_ROLL_STAGES, buildMaterialRolls, type MaterialRollRow } from "
 import { batchShippingMap, flowTone, invoiceFlowStage, returnedRollKeys, rollsByStageText, type FlowStage } from "@/lib/mrp/flowStatus";
 import { TransferMaterialModal, type TransferCandidate } from "@/components/mrp/transfer-material-modal";
 import { SetDeliveryModal } from "@/components/mrp/set-delivery-modal";
+import { SuratJalanModal } from "@/components/procurement/surat-jalan-modal";
+import { supplierUsesSuratJalan } from "@/lib/invoice-import/surat-jalan";
 import { WithdrawVendorModal } from "@/components/mrp/withdraw-vendor-modal";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { invoiceDeliveryCorrections } from "@/components/sysadmin/procurement-corrections";
@@ -121,6 +123,8 @@ export default function MaterialTrackingPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [transferOpen, setTransferOpen] = useState(false);
   const [deliveryOpen, setDeliveryOpen] = useState(false);
+  // Upload Surat Jalan supplier (code roll dari surat jalan, owner 2026-11-19): invoice yang popup-nya sedang dibuka.
+  const [sjInvoice, setSjInvoice] = useState<RawMaterialInvoice | null>(null);
   // "Vendor Berhenti Produksi" -- PO Produksi yang lagi dipilih untuk dipindahkan sisa
   // pekerjaannya, lihat WithdrawVendorModal & withdrawVendorProductionAction.
   const [withdrawTarget, setWithdrawTarget] = useState<MaklonPO | null>(null);
@@ -261,6 +265,7 @@ export default function MaterialTrackingPage() {
     { label: "No. MRP", options: uniqSorted(rows.map((r) => r.mrpId)).reverse(), test: (r, v) => r.mrpId === v },
     { label: "Supplier", options: uniqSorted(rows.map((r) => r.supplier)), test: (r, v) => r.supplier === v },
     { label: "Vendor", options: uniqSorted(rows.map((r) => vendorName(r.vendorProduksi))), test: (r, v) => vendorName(r.vendorProduksi) === v },
+    { label: "No. Invoice", options: uniqSorted(rows.map((r) => r.invoice?.noInvoiceVendor ?? "")), test: (r, v) => r.invoice?.noInvoiceVendor === v },
     { label: "No. PO", options: uniqSorted(rows.map((r) => r.poId)), test: (r, v) => r.poId === v },
     { label: "Entitas", options: uniqSorted(rows.map((r) => r.entitas)), test: (r, v) => r.entitas === v },
     { label: "Status", options: uniqSorted(rows.map((r) => trackingStatusBadge(r).label)), test: (r, v) => trackingStatusBadge(r).label === v },
@@ -272,7 +277,35 @@ export default function MaterialTrackingPage() {
     { key: "mrp", label: "No. MRP", default: true, aggregate: aggSame((r) => r.mrpId), render: (r) => <span className="font-mono">{r.mrpId}</span> },
     { key: "supplier", label: "Supplier", default: true, aggregate: aggSame((r) => r.supplier), render: (r) => r.supplier },
     { key: "vendor", label: "Vendor", default: true, aggregate: aggSame((r) => vendorName(r.vendorProduksi)), render: (r) => vendorName(r.vendorProduksi) },
-    { key: "invoice", label: "No Invoice", default: false, render: (r) => <span className="font-mono">{r.invoice?.noInvoiceVendor || "—"}</span> },
+    { key: "po", label: "No PO", default: false, render: (r) => <span className="font-mono" title={r.poId}>{poDisplayNo(r.poId, r.entitas)}</span> },
+    {
+      // Surat jalan supplier (KNITTO): code roll roll-roll invoice datang dari surat jalan yang diunggah Procurement, bukan diketik vendor.
+      key: "sj",
+      label: "Surat Jalan",
+      default: true,
+      render: (r) => {
+        const inv = r.invoice;
+        if (!inv || !supplierUsesSuratJalan(inv.supplier)) return <span className="text-text-muted">—</span>;
+        const total = inv.colorEntries.reduce((n, c) => n + c.rolls.length, 0);
+        const coded = inv.colorEntries.reduce(
+          (n, c) => n + c.rolls.filter((_, i) => !!(c.codeRolls?.[i] ?? inv.rollArrivals?.[c.warna + "|" + c.lengan]?.[i]?.codeRoll ?? "").trim()).length,
+          0
+        );
+        const full = total > 0 && coded >= total;
+        return (
+          <span className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+            <StatusPill tone={full ? "success" : coded > 0 ? "warning" : "neutral"}>
+              {full ? "Lengkap" : coded > 0 ? "Sebagian" : "Belum ada"} {coded}/{total}
+            </StatusPill>
+            {!full && (
+              <button onClick={() => setSjInvoice(inv)} className="rounded-md border border-[#A8C5DF] bg-white px-2 py-[3px] font-sans text-[10.5px] font-semibold text-action-primary hover:bg-[#F2F7FC]">
+                Upload
+              </button>
+            )}
+          </span>
+        );
+      },
+    },
     { key: "roll", label: "Roll", default: true, align: "right", aggregate: aggSum((r) => r.roll, (n) => bold(n.toLocaleString("id-ID", { maximumFractionDigits: 2 }))), render: (r) => <span className="font-mono">{r.roll}</span> },
     {
       key: "diterima",
@@ -412,7 +445,6 @@ export default function MaterialTrackingPage() {
     { key: "lengan", label: "Lengan", default: true, aggregate: aggSame((r) => r.lengan), render: (r) => (r.lengan === "PENDEK" ? "PDK" : "PJG") },
     { key: "invoice", label: "Invoice", default: false, aggregate: aggSame((r) => r.noInvoice), render: (r) => <span className="font-mono">{r.noInvoice || "—"}</span> },
     { key: "po", label: "No PO", default: false, render: (r) => <span className="font-mono" title={r.poId}>{poDisplayNo(r.poId, r.entitas)}</span> },
-    { key: "lot", label: "Code Lot", default: false, render: (r) => <span className="font-mono">{r.codeLot || "—"}</span> },
     { key: "kotor", label: "Berat kotor (kg)", default: true, align: "right", aggregate: aggSum((r) => r.beratKotor, (n) => bold(kgFmt(n))), render: (r) => <span className="font-mono">{kgFmt(r.beratKotor)}</span> },
     { key: "bersih", label: "Berat bersih (kg)", default: true, align: "right", aggregate: aggSum((r) => r.beratBersih ?? 0, (n) => bold(kgFmt(n))), render: (r) => <span className="font-mono">{r.beratBersih != null ? kgFmt(r.beratBersih) : <span className="text-text-muted">—</span>}</span> },
     {
@@ -513,19 +545,20 @@ export default function MaterialTrackingPage() {
           columns={trackingColumns}
           rows={sortedRows}
           keyOf={(r) => r.id}
-          firstColumnLabel="No PO"
+          firstColumnLabel="No Invoice"
           firstColumnRender={(r) => (
             <span className="flex items-center gap-2">
               <span onClick={(e) => e.stopPropagation()}>
                 <Checkbox checked={selected.has(r.id)} onChange={() => toggle(r.id)} />
               </span>
-              <span className="font-mono font-medium" title={r.poId}>{poDisplayNo(r.poId, r.entitas)}</span>
+              {/* Nomor invoice supplier (owner 2026-11-19, menggantikan No PO); nomor PO ada di tooltip dan kolom opsional "No PO". */}
+              <span className="font-mono font-medium" title={"PO " + poDisplayNo(r.poId, r.entitas)}>{r.invoice?.noInvoiceVendor || r.invoice?.id || poDisplayNo(r.poId, r.entitas)}</span>
             </span>
           )}
           filterDefs={trackingFilters}
           filterPreset={preset}
           defaultGroupBy={["No. MRP", "Supplier"]}
-          search={{ placeholder: "Cari no PO, invoice, MRP, supplier, vendor…", getText: (r) => `${r.poId} ${r.invoice?.noInvoiceVendor ?? ""} ${r.mrpId} ${r.supplier} ${vendorName(r.vendorProduksi)} ${r.warna} ${trackingStatusBadge(r).label}` }}
+          search={{ placeholder: "Cari no invoice, PO, MRP, supplier, vendor…", getText: (r) => `${r.poId} ${r.invoice?.noInvoiceVendor ?? ""} ${r.mrpId} ${r.supplier} ${vendorName(r.vendorProduksi)} ${r.warna} ${trackingStatusBadge(r).label}` }}
           renderExpanded={(r) => trackingDetail(r)}
           onFilteredRows={(list) => setShownIds(new Set(list.map((r) => r.id)))}
           emptyText="Belum ada invoice material yang sudah dibayar Finance."
@@ -577,7 +610,7 @@ export default function MaterialTrackingPage() {
           filterDefs={rollFilters}
           filterPreset={rollPreset}
           defaultGroupBy={["No. MRP", "Supplier"]}
-          search={{ placeholder: "Cari code roll, invoice, MRP, supplier, vendor, warna…", getText: (r) => `${r.codeRoll} ${r.codeLot} ${r.noInvoice} ${r.poId} ${r.mrpId} ${r.supplier} ${vendorName(r.vendorProduksi)} ${r.warna} ${r.status}` }}
+          search={{ placeholder: "Cari code roll, invoice, MRP, supplier, vendor, warna…", getText: (r) => `${r.codeRoll} ${r.noInvoice} ${r.poId} ${r.mrpId} ${r.supplier} ${vendorName(r.vendorProduksi)} ${r.warna} ${r.status}` }}
           onFilteredRows={(list) => setShownRollKeys(new Set(list.map((r) => r.key)))}
           emptyText="Belum ada roll untuk filter ini."
         />
@@ -613,6 +646,8 @@ export default function MaterialTrackingPage() {
           onClose={() => setWithdrawTarget(null)}
         />
       )}
+
+      {sjInvoice && <SuratJalanModal invoice={sjInvoice} onClose={() => setSjInvoice(null)} />}
 
       {deliveryOpen && (
         <SetDeliveryModal

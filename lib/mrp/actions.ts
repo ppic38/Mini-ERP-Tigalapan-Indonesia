@@ -51,6 +51,7 @@ import { getFlowSnapshot, getFlowSnapshotWithMeta } from "./repo/snapshot";
 import { scopeStateToVendor, stripVendorActorNames } from "./vendorScope";
 import { loadWeightTolerancePct, WEIGHT_TOLERANCE_KEY } from "./weightToleranceServer";
 import { assertRollCodesUnique } from "./rollCodeServer";
+import { supplierUsesSuratJalan } from "../invoice-import/surat-jalan";
 import { normalizeProposal, validateProposal } from "./proposal";
 import { detachBatchExtras, normalizeExtras, persistBatchExtras, removeBatchExtras, saveBatchExtraFg } from "./cuttingExtras";
 import type { CuttingExtra, CuttingExtraStored, EkspedisiInvoice, EkspedisiOperan } from "./types";
@@ -1884,6 +1885,60 @@ export async function setInvoicesDeliveryAction(invoiceIds: string[], deliveryDa
   }
 }
 
+/** Surat jalan supplier (KNITTO "Bukti Keluar Barang", owner 2026-11-19): Procurement mengunggahnya SETELAH invoice dibayar; isinya (code roll + bruto per roll) dicocokkan ke roll invoice di browser
+ *  (lib/invoice-import/surat-jalan.ts) dan hasilnya disimpan di sini sebagai code roll, supaya vendor tidak mengetik code roll di Good Receive. Server MEMVALIDASI ULANG semuanya (klien tidak
+ *  dipercaya): nomor invoice supplier harus sama dengan No Order surat jalan, tiap roll harus ada dan brutonya persis sama dengan bruto di database, roll yang sudah diterima dengan code
+ *  lain tidak diubah, dan code roll tidak boleh dipakai roll lain. Idempoten: unggah ulang surat jalan yang sama hanya mengembalikan jumlah "sudah sama". */
+export async function applySuratJalanAction(input: {
+  invoiceId: string;
+  noOrder: string;
+  fileName: string;
+  assignments: { warna: string; lengan: Lengan; rollIndex: number; codeRoll: string; bruto: number }[];
+}): Promise<ActionResult<{ updated: number; unchanged: number }>> {
+  return toActionResultKeepAuth(async () => {
+    const actor = await requireInternalRoleWithActor("procurement");
+    const db = supabaseServer();
+    if (input.assignments.length === 0) throw new Error("Tidak ada roll yang dicocokkan dari surat jalan.");
+    const { data: inv, error: invErr } = await db.from("raw_material_invoices").select("id,status,supplier,no_invoice_vendor,mrp_id").eq("id", input.invoiceId).maybeSingle();
+    if (invErr) throw new Error(invErr.message);
+    if (!inv) throw new Error("Invoice tidak ditemukan.");
+    if (inv.status === "INVOICED" || inv.status === "WAITING_INVOICE") throw new Error("Surat jalan hanya bisa dipasang pada invoice yang sudah dibayar.");
+    const norm = (x: unknown) => String(x ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!norm(inv.no_invoice_vendor) || norm(inv.no_invoice_vendor) !== norm(input.noOrder)) {
+      throw new Error(`Surat jalan ini untuk invoice ${input.noOrder}, bukan invoice ${inv.no_invoice_vendor || "(tanpa nomor)"}. Tidak disimpan.`);
+    }
+    const colorIds = Array.from(new Set(input.assignments.map((a) => `${input.invoiceId}-${a.warna}-${a.lengan}`)));
+    const { data: rows, error: rollErr } = await db.from("raw_material_invoice_rolls").select("invoice_color_id,roll_index,gross_kg,code_roll,received_at").in("invoice_color_id", colorIds);
+    if (rollErr) throw new Error(rollErr.message);
+    const byKey = new Map((rows ?? []).map((r) => [`${r.invoice_color_id}|${r.roll_index}`, r]));
+    const toSet: typeof input.assignments = [];
+    let unchanged = 0;
+    for (const a of input.assignments) {
+      const code = a.codeRoll.trim();
+      if (!code) throw new Error("Ada code roll kosong di hasil pencocokan.");
+      const row = byKey.get(`${input.invoiceId}-${a.warna}-${a.lengan}|${a.rollIndex}`);
+      if (!row) throw new Error(`Roll ${a.rollIndex + 1} ${a.warna} ${a.lengan} tidak ada di invoice ${input.invoiceId}.`);
+      if (Math.abs(Number(row.gross_kg) - a.bruto) > 0.004) throw new Error(`Roll ${code}: bruto surat jalan ${a.bruto} kg tidak sama dengan bruto invoice ${Number(row.gross_kg)} kg (${a.warna} ${a.lengan}, roll ${a.rollIndex + 1}). Tidak disimpan.`);
+      const cur = String(row.code_roll ?? "").trim();
+      if (cur && cur.toLowerCase() === code.toLowerCase()) {
+        unchanged++;
+        continue;
+      }
+      if (cur) throw new Error(`Roll ${a.rollIndex + 1} ${a.warna} ${a.lengan} sudah punya code roll ${cur}; tidak ditimpa oleh ${code}.`);
+      toSet.push({ ...a, codeRoll: code });
+    }
+    if (toSet.length > 0) {
+      await assertRollCodesUnique(db, toSet.map((a) => ({ invoiceId: input.invoiceId, warna: a.warna, lengan: a.lengan, rollIndex: a.rollIndex, codeRoll: a.codeRoll })));
+      for (const a of toSet) {
+        const { error } = await db.from("raw_material_invoice_rolls").update({ code_roll: a.codeRoll }).eq("invoice_color_id", `${input.invoiceId}-${a.warna}-${a.lengan}`).eq("roll_index", a.rollIndex).is("code_roll", null);
+        if (error) throw new Error(error.message);
+      }
+    }
+    await logInternalAction(actor, `Surat jalan ${input.noOrder}: ${toSet.length} code roll disimpan${unchanged > 0 ? `, ${unchanged} sudah sama` : ""} (${input.fileName})`, "raw_material_invoices", input.invoiceId);
+    return { updated: toSet.length, unchanged };
+  });
+}
+
 /** Tandai 1 roll FISIK DITERIMA di Good Receive — TIDAK menimbang (lihat
  *  receiveRawMaterialRollAction untuk itu, sekarang dipanggil dari halaman Cutting). Ini yang
  *  memindahkan status invoice DELIVERY → RECEIVING (dulu dipicu oleh penimbangan roll pertama). */
@@ -1893,13 +1948,40 @@ export async function markRollArrivedAction(invoiceId: string, warna: string, le
   return toActionResultKeepAuth(() => markRollArrivedImpl(invoiceId, warna, lengan, rollIndex, codeRoll, codeLot));
 }
 
+/** Code roll yang dipakai saat vendor menerima roll (owner 2026-11-19: vendor tidak lagi mengetik code roll). Code yang SUDAH ada di roll (dari invoice supplier atau surat jalan) selalu dipakai dan tidak bisa
+ *  diubah vendor. Roll tanpa code dari supplier yang memakai surat jalan (KNITTO) menunggu surat jalan diunggah Procurement. Selain itu (input manual / supplier lain) vendor tetap boleh mengisinya. */
+async function resolveReceiveCodes(
+  db: ReturnType<typeof supabaseServer>,
+  invoiceId: string,
+  warna: string,
+  lengan: Lengan,
+  rolls: { rollIndex: number; codeRoll?: string }[]
+): Promise<string[]> {
+  const colorId = `${invoiceId}-${warna}-${lengan}`;
+  const [{ data: inv }, { data: rows, error }] = await Promise.all([
+    db.from("raw_material_invoices").select("supplier").eq("id", invoiceId).maybeSingle(),
+    db.from("raw_material_invoice_rolls").select("roll_index,code_roll").eq("invoice_color_id", colorId).in("roll_index", rolls.map((r) => r.rollIndex)),
+  ]);
+  if (error) throw new Error(error.message);
+  const existing = new Map((rows ?? []).map((r) => [Number(r.roll_index), String(r.code_roll ?? "").trim()]));
+  const viaSj = supplierUsesSuratJalan(inv?.supplier);
+  return rolls.map((r) => {
+    const have = existing.get(r.rollIndex) ?? "";
+    if (have) return have;
+    if (viaSj) throw new Error(`Roll ${r.rollIndex + 1} ${warna} ${lengan}: code roll belum ada. Menunggu surat jalan ${inv?.supplier ?? "supplier"} diunggah Procurement (Material Tracking) -- vendor tidak mengisi code roll untuk supplier ini.`);
+    const typed = r.codeRoll?.trim();
+    if (!typed) throw new Error("Code roll wajib diisi sebelum roll diterima.");
+    return typed;
+  });
+}
+
 async function markRollArrivedImpl(invoiceId: string, warna: string, lengan: Lengan, rollIndex: number, codeRoll?: string, codeLot?: string): Promise<void> {
   const actor = await requireVendorSessionWithActor();
   const db = supabaseServer();
   await assertInvoiceOwnedByVendor(db, invoiceId, actor.vendorId);
   const colorId = `${invoiceId}-${warna}-${lengan}`;
-  // Revisi 2026-09-19: code roll WAJIB terisi (jaring pengaman selain tombol UI yang sudah disabled).
-  if (!codeRoll?.trim()) throw new Error("Code roll wajib diisi sebelum roll diterima.");
+  // Code roll dipakai dari data roll (invoice supplier / surat jalan); vendor hanya mengetik untuk supplier tanpa keduanya (resolveReceiveCodes).
+  codeRoll = (await resolveReceiveCodes(db, invoiceId, warna, lengan, [{ rollIndex, codeRoll }]))[0];
   await assertRollCodesUnique(db, [{ invoiceId, warna, lengan, rollIndex, codeRoll }]);
   // Code lot tidak lagi wajib (owner 2026-11-05: acuan sekarang code roll saja). Parameter `codeLot` tetap diterima (opsional) untuk kompatibilitas.
   // Item revisi 2026-09-08: code_lot awalnya CUMA diinput Procurement saat Paying Voucher
@@ -1957,7 +2039,8 @@ async function receiveMaterialBatchImpl(
   await assertInvoiceOwnedByVendor(db, invoiceId, actor.vendorId);
   const colorId = `${invoiceId}-${warna}-${lengan}`;
   const receivedAt = today();
-  if (rolls.some((r) => !r.codeRoll?.trim())) throw new Error("Code roll wajib diisi untuk semua roll yang diterima.");
+  const codesUsed = await resolveReceiveCodes(db, invoiceId, warna, lengan, rolls);
+  rolls = rolls.map((r, i) => ({ ...r, codeRoll: codesUsed[i] }));
   await assertRollCodesUnique(db, rolls.map((r) => ({ invoiceId, warna, lengan, rollIndex: r.rollIndex, codeRoll: r.codeRoll! })));
   // Code lot tidak lagi wajib (owner 2026-11-05: acuan sekarang code roll saja).
   // codeLot: sama aturan dengan markRollArrivedAction -- cuma disentuh kalau vendor mengisinya
