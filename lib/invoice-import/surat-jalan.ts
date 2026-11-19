@@ -9,6 +9,15 @@ import { normName, parseMrpWarna } from "./mapping";
 /** Supplier yang code rollnya datang dari SURAT JALAN (bukan dari invoice atau ketikan vendor): KNITTO. Dipakai klien dan server. */
 export const supplierUsesSuratJalan = (supplier: string | null | undefined) => /KNITTO/i.test(String(supplier ?? ""));
 
+/** Alur code roll dari surat jalan berlaku mulai MRP W45 (owner 2026-11-19); MRP W44 ke bawah (dan MRP tanpa pola W<angka>) tetap memakai alur lama: vendor mengisi code roll di Good Receive. */
+export const SURAT_JALAN_FROM_WEEK = 45;
+export function suratJalanActiveForMrp(mrpId: string | null | undefined): boolean {
+  const m = String(mrpId ?? "").toUpperCase().match(/(?:^|[^A-Z0-9])W(d{1,3})(?![0-9])/);
+  return !!m && parseInt(m[1], 10) >= SURAT_JALAN_FROM_WEEK;
+}
+/** Invoice ini memakai alur surat jalan: supplier KNITTO DAN MRP W45 ke atas. */
+export const invoiceUsesSuratJalan = (supplier: string | null | undefined, mrpId: string | null | undefined) => supplierUsesSuratJalan(supplier) && suratJalanActiveForMrp(mrpId);
+
 export type SjItem = { code: string; bruto: number };
 export type SjGroup = {
   /** "roll" = kain roll; "rib" = bagian RIB (kode berawalan lain, berat kecil) -- TIDAK dicocokkan ke roll invoice. */

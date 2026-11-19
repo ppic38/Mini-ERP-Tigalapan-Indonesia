@@ -13,7 +13,7 @@ import { batchShippingMap, flowTone, invoiceFlowStage, returnedRollKeys, rollsBy
 import { TransferMaterialModal, type TransferCandidate } from "@/components/mrp/transfer-material-modal";
 import { SetDeliveryModal } from "@/components/mrp/set-delivery-modal";
 import { SuratJalanModal } from "@/components/procurement/surat-jalan-modal";
-import { supplierUsesSuratJalan } from "@/lib/invoice-import/surat-jalan";
+import { invoiceUsesSuratJalan } from "@/lib/invoice-import/surat-jalan";
 import { WithdrawVendorModal } from "@/components/mrp/withdraw-vendor-modal";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { invoiceDeliveryCorrections } from "@/components/sysadmin/procurement-corrections";
@@ -285,7 +285,8 @@ export default function MaterialTrackingPage() {
       default: true,
       render: (r) => {
         const inv = r.invoice;
-        if (!inv || !supplierUsesSuratJalan(inv.supplier)) return <span className="text-text-muted">—</span>;
+        // Hanya KNITTO dan MRP W45 ke atas (alur surat jalan mulai W45; MRP lama tetap code roll dari vendor).
+        if (!inv || !invoiceUsesSuratJalan(inv.supplier, inv.mrpId)) return <span className="text-text-muted">—</span>;
         const total = inv.colorEntries.reduce((n, c) => n + c.rolls.length, 0);
         const coded = inv.colorEntries.reduce(
           (n, c) => n + c.rolls.filter((_, i) => !!(c.codeRolls?.[i] ?? inv.rollArrivals?.[c.warna + "|" + c.lengan]?.[i]?.codeRoll ?? "").trim()).length,

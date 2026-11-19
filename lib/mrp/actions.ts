@@ -51,7 +51,7 @@ import { getFlowSnapshot, getFlowSnapshotWithMeta } from "./repo/snapshot";
 import { scopeStateToVendor, stripVendorActorNames } from "./vendorScope";
 import { loadWeightTolerancePct, WEIGHT_TOLERANCE_KEY } from "./weightToleranceServer";
 import { assertRollCodesUnique } from "./rollCodeServer";
-import { supplierUsesSuratJalan } from "../invoice-import/surat-jalan";
+import { invoiceUsesSuratJalan, suratJalanActiveForMrp } from "../invoice-import/surat-jalan";
 import { normalizeProposal, validateProposal } from "./proposal";
 import { detachBatchExtras, normalizeExtras, persistBatchExtras, removeBatchExtras, saveBatchExtraFg } from "./cuttingExtras";
 import type { CuttingExtra, CuttingExtraStored, EkspedisiInvoice, EkspedisiOperan } from "./types";
@@ -1959,12 +1959,20 @@ async function resolveReceiveCodes(
 ): Promise<string[]> {
   const colorId = `${invoiceId}-${warna}-${lengan}`;
   const [{ data: inv }, { data: rows, error }] = await Promise.all([
-    db.from("raw_material_invoices").select("supplier").eq("id", invoiceId).maybeSingle(),
+    db.from("raw_material_invoices").select("supplier,mrp_id").eq("id", invoiceId).maybeSingle(),
     db.from("raw_material_invoice_rolls").select("roll_index,code_roll").eq("invoice_color_id", colorId).in("roll_index", rolls.map((r) => r.rollIndex)),
   ]);
   if (error) throw new Error(error.message);
   const existing = new Map((rows ?? []).map((r) => [Number(r.roll_index), String(r.code_roll ?? "").trim()]));
-  const viaSj = supplierUsesSuratJalan(inv?.supplier);
+  // MRP W44 ke bawah: alur lama (vendor mengisi code roll, boleh mengubah yang bawaan invoice). Alur surat jalan berlaku mulai W45.
+  if (!suratJalanActiveForMrp(inv?.mrp_id)) {
+    return rolls.map((r) => {
+      const typed = r.codeRoll?.trim();
+      if (!typed) throw new Error("Code roll wajib diisi sebelum roll diterima.");
+      return typed;
+    });
+  }
+  const viaSj = invoiceUsesSuratJalan(inv?.supplier, inv?.mrp_id);
   return rolls.map((r) => {
     const have = existing.get(r.rollIndex) ?? "";
     if (have) return have;

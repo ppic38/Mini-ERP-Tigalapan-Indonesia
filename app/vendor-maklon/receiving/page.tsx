@@ -26,7 +26,7 @@ import {
 } from "@/lib/mrp/derive";
 import { countGoodReceiveEligibleForMrp, pendingMarker } from "@/lib/shell/badges";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
-import { supplierUsesSuratJalan } from "@/lib/invoice-import/surat-jalan";
+import { invoiceUsesSuratJalan, suratJalanActiveForMrp } from "@/lib/invoice-import/surat-jalan";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { RollCodeEditor } from "@/components/sysadmin/roll-code-editor";
 import { rollArrivalCorrections } from "@/components/sysadmin/vendor-corrections";
@@ -332,7 +332,9 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   const rollsMissingCode = pendingRolls.filter((r) => !draftOf(r.lengan, r.idx).codeRoll.trim());
   // Owner 2026-11-19: vendor tidak lagi mengetik code roll. Code roll datang dari invoice supplier (FABRIKU) atau dari SURAT JALAN yang diunggah Procurement (KNITTO) dan tampil read-only;
   // roll tanpa code dari supplier surat-jalan menunggu surat jalan. Hanya supplier tanpa keduanya (input manual / supplier lain) yang masih boleh diisi vendor.
-  const viaSj = !!selectedInvoice && supplierUsesSuratJalan(selectedInvoice.supplier);
+  // Mulai MRP W45 saja (owner 2026-11-19); W44 ke bawah tetap alur lama (vendor mengisi/mengubah code roll).
+  const sjFlow = !!selectedInvoice && suratJalanActiveForMrp(selectedInvoice.mrpId);
+  const viaSj = !!selectedInvoice && invoiceUsesSuratJalan(selectedInvoice.supplier, selectedInvoice.mrpId);
   const rollsWithCodeConflict = pendingRolls.filter((r) => codeConflictFor(r.lengan, r.idx, draftOf(r.lengan, r.idx).codeRoll));
   function receiveAllRolls() {
     if (!selectedInvoice || pendingRolls.length === 0 || rollsMissingCode.length > 0 || rollsWithCodeConflict.length > 0) return;
@@ -787,6 +789,21 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                             <span className="font-mono font-medium max-md:text-[13px]">Roll {combinedRolls.indexOf(r) + 1}</span>
                             {arrival ? (
                               <span data-label="Code roll" className="font-mono text-[11px] max-md:col-span-full">{arrival.codeRoll || "—"}</span>
+                            ) : !sjFlow ? (
+                              // Alur lama (MRP W44 ke bawah): vendor mengisi code roll; yang bawaan invoice supplier boleh diubah.
+                              <span data-label="Code roll" className="flex items-center max-md:col-span-full">
+                                <input
+                                  value={code.codeRoll}
+                                  onChange={(e) => setDraftCode((prev) => ({ ...prev, [key]: { ...code, codeRoll: e.target.value } }))}
+                                  className="input w-full max-w-[240px] !py-1.5 font-mono text-[11px]"
+                                  placeholder="Code roll"
+                                />
+                                {r.presetCode && (
+                                  <span className={"ml-1.5 whitespace-nowrap text-[10px] font-semibold " + (code.codeRoll.trim() === r.presetCode ? "text-success-fg" : "text-warning-fg")}>
+                                    {code.codeRoll.trim() === r.presetCode ? "dari invoice" : "diubah"}
+                                  </span>
+                                )}
+                              </span>
                             ) : r.presetCode ? (
                               // Code roll dari invoice supplier / surat jalan: tampil saja, vendor tidak bisa mengubahnya.
                               <span data-label="Code roll" className="flex items-center gap-1.5 max-md:col-span-full">
