@@ -261,12 +261,16 @@ export default function MaterialTrackingPage() {
   const sortedRows = [...rows].sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID", { numeric: true }));
   const shownRows = shownIds ? sortedRows.filter((r) => shownIds.has(r.id)) : sortedRows;
 
+  // Warna (owner 2026-11-19): satu invoice bisa memuat beberapa warna. Filter = invoice yang memuat warna itu; kelompok = warna pertama
+  // (urut abjad) yang dimuat invoice. Untuk rincian per warna yang tepat, pakai tab Per Roll.
+  const warnaList = (r: TrackingRow) => (r.invoice ? r.invoice.colorEntries.map((c) => c.warna) : r.warna.split(", ").filter((w) => w && w !== "—"));
   const trackingFilters: FilterDef<TrackingRow>[] = [
     { label: "No. MRP", options: uniqSorted(rows.map((r) => r.mrpId)).reverse(), test: (r, v) => r.mrpId === v },
     { label: "Supplier", options: uniqSorted(rows.map((r) => r.supplier)), test: (r, v) => r.supplier === v },
     { label: "Vendor", options: uniqSorted(rows.map((r) => vendorName(r.vendorProduksi))), test: (r, v) => vendorName(r.vendorProduksi) === v },
     { label: "No. Invoice", options: uniqSorted(rows.map((r) => r.invoice?.noInvoiceVendor ?? "")), test: (r, v) => r.invoice?.noInvoiceVendor === v },
     { label: "No. PO", options: uniqSorted(rows.map((r) => r.poId)), test: (r, v) => r.poId === v },
+    { label: "Warna", options: uniqSorted(rows.flatMap(warnaList)), test: (r, v) => warnaList(r).includes(v) },
     { label: "Entitas", options: uniqSorted(rows.map((r) => r.entitas)), test: (r, v) => r.entitas === v },
     { label: "Status", options: uniqSorted(rows.map((r) => trackingStatusBadge(r).label)), test: (r, v) => trackingStatusBadge(r).label === v },
     { label: "Delivery", options: ["Belum delivery", "Sudah delivery"], test: (r, v) => deliveryLabel(r) === v },
@@ -348,6 +352,7 @@ export default function MaterialTrackingPage() {
     { key: "tglBayar", label: "Tgl Bayar", default: false, render: (r) => formatDate(r.tglPayment) },
     { key: "tglDelivery", label: "Tgl Delivery", default: true, render: (r) => formatDate(r.tglDelivery) },
     { key: "tglTerima", label: "Tgl Terima", default: false, render: (r) => formatDate(r.tglReceiving) },
+    { key: "warna", label: "Warna", default: false, aggregate: aggSame((r) => r.warna), render: (r) => r.warna },
     { key: "entitas", label: "Entitas", default: false, aggregate: aggSame((r) => r.entitas), render: (r) => r.entitas || "—" },
   ];
 
