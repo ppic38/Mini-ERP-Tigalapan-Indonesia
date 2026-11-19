@@ -7,6 +7,7 @@ import type { MrpDetail } from "./store";
 import type { MaklonPO, MaterialPO, PaymentProposal, VendorInvoice } from "./types";
 import { poApprovalSignBoxes, type PoApprovalSignBox } from "./poApproval";
 import { aduanRowsOfPo } from "./exportPoExcel";
+import { poEntitasFinalized } from "./poApproval";
 
 // Revisi 2026-09-28 (owner: "versi internal pake sekarang dan versi eksternal (untuk ke supplier
 // dan vendor produksi) itu bedanya tidak ada dibagi yang pendek dan panjang, langsung totalan") --
@@ -366,7 +367,7 @@ function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[
     [
       ["Vendor Produksi", vendorName],
       ["Vendor Material (Supplier)", po.supplier],
-      ["Entitas", po.approved ? po.entity : "Menunggu input Finance"],
+      ["Entitas", poEntitasFinalized(po) ? po.entity : "Menunggu input Finance"],
       ["Total Roll", formatDecimal(totalRoll, 1)],
       ["Total Kg (estimasi)", formatDecimal(totalKg, 1)],
     ]
@@ -380,8 +381,8 @@ function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[
     variant === "internal" && c.lengan ? `${c.warna} · ${c.lengan}` : c.warna,
     formatDecimal(c.rollCount, 1),
     formatDecimal(c.rollCount * ROLL_KG_ESTIMATE, 1),
-    // Entitas pilihan Finance per warna; sebelum PO disetujui nilainya masih bawaan sistem, jadi belum ditampilkan.
-    po.approved ? (c.entitas ?? po.entity) : "—",
+    // Entitas pilihan Finance per warna; baru ditampilkan setelah Finance approve (poEntitasFinalized, sama dengan tabel PO) -- sebelum itu nilainya masih bawaan sistem. Tidak menunggu approval GM (owner 2026-11-19).
+    poEntitasFinalized(po) ? (c.entitas ?? po.entity) : "—",
   ]);
 
   autoTable(doc, {
@@ -408,8 +409,8 @@ function renderMaterialPoPage(doc: jsPDF, po: MaterialPO, mrpDetails: MrpDetail[
     const list = po.colorBreakdown.map((c) => {
       const group = mrpDetail?.lenganGroups.find((g) => g.warna === c.warna && g.lengan === c.lengan);
       const kgPerRoll = group ? materialKgPerRollForGroup(group, kind) : 0;
-      // Entitas pilihan Finance; sebelum PO disetujui masih nilai bawaan sistem, jadi belum ditampilkan ("—").
-      return { warna: c.warna, lengan: c.lengan, rollCount: c.rollCount, kgPerRoll, kgForLine: kgPerRoll * c.rollCount, entitas: po.approved ? (c.entitas ?? po.entity) : "—" };
+      // Entitas pilihan Finance; baru ditampilkan setelah Finance approve (poEntitasFinalized), tidak menunggu approval GM; sebelum itu "—".
+      return { warna: c.warna, lengan: c.lengan, rollCount: c.rollCount, kgPerRoll, kgForLine: kgPerRoll * c.rollCount, entitas: poEntitasFinalized(po) ? (c.entitas ?? po.entity) : "—" };
     });
     if (variant === "internal") return { rows: list, totalKg: list.reduce((s, r) => s + r.kgForLine, 0) };
     // external -- gabung PENDEK+PANJANG warna yang sama; kolom "kg/roll" TIDAK ikut (rate-nya beda

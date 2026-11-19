@@ -5,6 +5,7 @@ import type { MrpDetail } from "./store";
 import type { AduanPolaRow, MaklonPO, MaterialPO } from "./types";
 import { poApprovalSignBoxes, type PoApprovalSignBox } from "./poApproval";
 import type { PoExportVariant } from "./exportPoPdf";
+import { poEntitasFinalized } from "./poApproval";
 
 // Export PO ke Excel (owner 2026-09-26: "download PO dalam bentuk excel atau pdf ... excelnya ada template
 // cantiknya, warna header, tidak tercrop, minimalis tapi memuat informasi PO, logo Tigalapan, kop tabel").
@@ -273,7 +274,7 @@ function materialSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: Mater
     [
       ["Vendor Produksi", vendorName],
       ["Vendor Material (Supplier)", po.supplier],
-      ["Entitas", po.approved ? po.entity : "Menunggu input Finance"],
+      ["Entitas", poEntitasFinalized(po) ? po.entity : "Menunggu input Finance"],
       ["Total Roll", `${totalRoll.toLocaleString("id-ID", { maximumFractionDigits: 1 })}`],
       ["Total Kg (estimasi)", `${totalKg.toLocaleString("id-ID", { maximumFractionDigits: 1 })}`],
     ]
@@ -282,7 +283,7 @@ function materialSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: Mater
   r = drawSection(ws, r, `1. Rincian Bahan — ${po.supplier}`);
   r = drawTable(ws, r, {
     head: ["No", "Kategori", "Warna", "Roll", "Kg", "Entitas"],
-    body: colorBreakdown.map((c, i) => [i + 1, kategori, variant === "internal" && c.lengan ? `${c.warna} · ${c.lengan}` : c.warna, c.rollCount, c.rollCount * ROLL_KG_ESTIMATE, po.approved ? (c.entitas ?? po.entity) : "—"]),
+    body: colorBreakdown.map((c, i) => [i + 1, kategori, variant === "internal" && c.lengan ? `${c.warna} · ${c.lengan}` : c.warna, c.rollCount, c.rollCount * ROLL_KG_ESTIMATE, poEntitasFinalized(po) ? (c.entitas ?? po.entity) : "—"]),
     foot: ["", "", "TOTAL", totalRoll, totalKg, ""],
     numFmt: [undefined, undefined, undefined, "#,##0.0", "#,##0.0", undefined],
     align: ["center", "left", "left", "right", "right", "left"],
@@ -298,8 +299,8 @@ function materialSheet(wb: Workbook, ws: Worksheet, logo: Logo | null, po: Mater
     const rawList = po.colorBreakdown.map((c) => {
       const group = mrpDetail?.lenganGroups.find((g) => g.warna === c.warna && g.lengan === c.lengan);
       const kgPerRoll = group ? materialKgPerRollForGroup(group, kind) : 0;
-      // Entitas pilihan Finance; sebelum PO disetujui masih nilai bawaan sistem, jadi belum ditampilkan ("—").
-      return { warna: c.warna, lengan: c.lengan, roll: c.rollCount, kgPerRoll, kg: kgPerRoll * c.rollCount, entitas: po.approved ? (c.entitas ?? po.entity) : "—" };
+      // Entitas pilihan Finance; baru ditampilkan setelah Finance approve (poEntitasFinalized), tidak menunggu approval GM; sebelum itu "—".
+      return { warna: c.warna, lengan: c.lengan, roll: c.rollCount, kgPerRoll, kg: kgPerRoll * c.rollCount, entitas: poEntitasFinalized(po) ? (c.entitas ?? po.entity) : "—" };
     });
     const list =
       variant === "internal"
@@ -446,7 +447,7 @@ export async function exportMaterialPoExcelSingleSheet(pos: MaterialPO[], mrpDet
   const ws = wb.addWorksheet("PO Material");
   const vendorOf = (po: MaterialPO) => VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi;
   const kategoriOf = (po: MaterialPO) => mrpDetailFor(po.mrpId, mrpDetails)?.mrp.kategori ?? "—";
-  const entOf = (po: MaterialPO, e?: string) => (po.approved ? (e ?? po.entity) : "—");
+  const entOf = (po: MaterialPO, e?: string) => (poEntitasFinalized(po) ? (e ?? po.entity) : "—");
 
   // Satu baris per PO x warna (x lengan untuk variant internal): bahan (roll, kg) dan kebutuhan RIB / KERAH / MANSET dalam kg.
   type Line = { po: MaterialPO; warna: string; lengan?: string; roll: number; kg: number; rib: number; kerah: number; manset: number; entitas: string };

@@ -416,6 +416,8 @@ type MrpGroup = { mrpId: string; vendorPOs: MaklonPO[] };
 type ItemRow = {
   key: string;
   poId: string;
+  /** No. Invoice Supplier (nomor dari supplier) invoice bahan MRP + vendor ini yang memuat warna·lengan itu; ini yang tampil sebagai "No. Order" (owner 2026-11-19). */
+  invoiceNos: string[];
   mrpId: string;
   vendorKey: string;
   vendorName: string;
@@ -446,6 +448,18 @@ function ItemListView({ pos }: { pos: MaklonPO[] }) {
   const rows = useMemo(() => {
     const out: ItemRow[] = [];
     const sizesCache = new Map<string, ReturnType<typeof vendorItemSizeProgress>>();
+    // Indeks sekali: mrp|vendor|warna|lengan -> nomor invoice supplier (tanpa duplikat, urut).
+    const invoiceNosOf = new Map<string, Set<string>>();
+    for (const inv of invoices) {
+      const no = (inv.noInvoiceVendor ?? "").trim();
+      if (!no) continue;
+      for (const c of inv.colorEntries) {
+        const k = inv.mrpId + "|" + inv.destinationVendor + "|" + c.warna + "|" + c.lengan;
+        const set = invoiceNosOf.get(k) ?? new Set<string>();
+        set.add(no);
+        invoiceNosOf.set(k, set);
+      }
+    }
     for (const po of pos) {
       const ck = po.mrpId + "|" + po.vendorProduksi;
       if (!sizesCache.has(ck)) sizesCache.set(ck, vendorItemSizeProgress(po.mrpId, po.vendorProduksi, mrpDetails, productionBatches, productionResults));
@@ -467,6 +481,7 @@ function ItemListView({ pos }: { pos: MaklonPO[] }) {
         out.push({
           key: po.id + "|" + gk,
           poId: po.id,
+          invoiceNos: Array.from(invoiceNosOf.get(po.mrpId + "|" + po.vendorProduksi + "|" + warna + "|" + lengan) ?? []).sort((a, b) => a.localeCompare(b, "id", { numeric: true })),
           mrpId: po.mrpId,
           vendorKey: po.vendorProduksi,
           vendorName: VENDOR_PRODUKSI[po.vendorProduksi]?.name ?? po.vendorProduksi,
@@ -488,7 +503,21 @@ function ItemListView({ pos }: { pos: MaklonPO[] }) {
 
   const fgPct = (r: ItemRow) => (r.cutting > 0 ? Math.min(100, (r.finishGood / r.cutting) * 100) : 0);
   const columns: ColumnDef<ItemRow>[] = [
-    { key: "po", label: "No. Order", default: true, sortValue: (r) => r.poId, render: (r) => <span className="font-mono">{r.poId}</span> },
+    {
+      // No. Order = No. Invoice Supplier invoice bahan warna·lengan ini (bisa lebih dari satu kalau bahannya datang dari beberapa invoice). Nomor PO produksi tetap ada di pencarian.
+      key: "po",
+      label: "No. Order",
+      default: true,
+      sortValue: (r) => r.invoiceNos.join(", "),
+      render: (r) =>
+        r.invoiceNos.length === 0 ? (
+          <span className="text-text-muted">—</span>
+        ) : (
+          <span className="inline-block max-w-[240px] truncate align-bottom font-mono" title={"No. Invoice Supplier: " + r.invoiceNos.join(", ") + " · PO " + r.poId}>
+            {r.invoiceNos.join(", ")}
+          </span>
+        ),
+    },
     { key: "vendor", label: "Vendor", default: true, sortValue: (r) => r.vendorName, render: (r) => r.vendorName },
     { key: "kategori", label: "Kategori", default: true, sortValue: (r) => r.kategori, render: (r) => r.kategori },
     { key: "warna", label: "Warna", default: true, sortValue: (r) => r.warna, render: (r) => <span className="font-medium">{r.warna}</span> },
@@ -537,11 +566,11 @@ function ItemListView({ pos }: { pos: MaklonPO[] }) {
         nowrap
         search={{
           placeholder: "Cari no. order, MRP, vendor, kategori, warna, lengan…",
-          getText: (r) => [r.poId, r.mrpId, r.vendorName, r.kategori, r.warna, r.lengan].join(" "),
+          getText: (r) => [r.invoiceNos.join(" "), r.poId, r.mrpId, r.vendorName, r.kategori, r.warna, r.lengan].join(" "),
         }}
         filterDefs={[
           { label: "No MRP", options: uniq((r) => r.mrpId), test: (r, v) => r.mrpId === v },
-          { label: "No. Order", options: uniq((r) => r.poId), test: (r, v) => r.poId === v },
+          { label: "No. Order", options: Array.from(new Set(rows.flatMap((r) => r.invoiceNos))).sort((a, b) => a.localeCompare(b, "id", { numeric: true })), test: (r, v) => r.invoiceNos.includes(v) },
           { label: "Vendor", options: uniq((r) => r.vendorName), test: (r, v) => r.vendorName === v },
           { label: "Kategori", options: uniq((r) => r.kategori), test: (r, v) => r.kategori === v },
           { label: "Lengan", options: uniq((r) => r.lengan), test: (r, v) => r.lengan === v },
