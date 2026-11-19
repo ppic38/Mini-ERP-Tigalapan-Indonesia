@@ -2,7 +2,7 @@
 
 > Dibaca otomatis setiap sesi (lewat CLAUDE.md). Sesi yang menyelesaikan atau mengubah rencana di sini WAJIB
 > memperbaruinya sebelum selesai. Riwayat fitur yang SUDAH jadi tetap dicatat di MIGRASI.md.
-> Terakhir diperbarui: 2026-11-13.
+> Terakhir diperbarui: 2026-11-19.
 
 ## Yang ingin dikerjakan owner (dikonfirmasi 2026-11-13)
 Hanya DUA hal:
@@ -18,6 +18,57 @@ nol pekerjaan data di live. Satu-satunya jalur ke live adalah git -> Vercel. Ris
 Semua dikerjakan di lokal dulu, baru dinaikkan ke live bertahap.
 
 ## TITIK LANJUT BERIKUTNYA (baca ini dulu)
+
+### STATUS TERKINI 2026-11-19 (paling penting, baca sebelum yang lain)
+**Redesign SUDAH TAYANG di live.** PR #2 (`redesign-fondasi-tabel` -> `main`, 75 commit, 86 file) di-merge akun `ppic38`
+pada 2026-11-18 13.37 WIB (merge commit `9a1ff52`). Titik mundur sebelum merge: `a88eeb7`. Tidak ada migration di dalamnya.
+Sesudah merge, owner (lewat sesi Claude lain) MENGEMBALIKAN dua hal, commit langsung ke `main`:
+- `d0485c7`: menu kembali ke **sidebar kiri** (`TOP_NAV_ENABLED = false` di `components/shell/app-shell.tsx`; `top-nav.tsx` dan
+  `lib/shell/modules.ts` dibiarkan tidak terpakai) dan **halaman login** (`app/page.tsx`) kembali ke versi sebelum redesign.
+- `423994c`, `238c247`: sidebar modul internal dan sidebar bertumpuk Sysadmin bisa **dilipat jadi ikon** (`collapsible`).
+Yang TETAP dari redesign: tabel bersama gaya Odoo (kotak cari, filter ganda, kelompok, favorit, urut kolom, panel samping,
+jumlah per kelompok), status staging standar (`lib/mrp/flowStatus.ts`), Est. HPP %, dashboard operasional (PPIC, Procurement,
+Finance, SCM, GM, Produksi), SCM Monitoring + Kendala SLA/Yield/HPP, SLA Produksi, Raw Material/Posisi Stok per roll,
+Laporan HPP gaya Odoo, Tracking Item per roll x size (12 kolom bawaan, tanpa filter/urutan bawaan), tombol mode gelap.
+**Portal Vendor Produksi** (desktop dan HP) sengaja SAMA seperti sebelum redesign (keputusan owner 2026-11-17).
+
+**Branch kerja sekarang: `redesign-lanjutan`** (dibuat dari `main` `238c247`). `redesign-fondasi-tabel` SELESAI, jangan dipakai lagi.
+Ritual tetap: `git fetch` lalu `git merge origin/main` sebelum mulai; tim IT/owner commit langsung ke `main` beberapa kali sehari.
+
+**Menunggu keputusan owner (jangan dikerjakan sebelum owner bilang ya):**
+1. **Filter "Posisi barang" di Tracking Item** (PPIC dan SCM, `components/mrp/item-tracking-view.tsx`). Latar: owner menyaring
+   Status = Belum resting/Resting/Cutting/Finish Good tetapi kolom Packing/Delivery tetap terisi. Itu BENAR menurut aturan:
+   status baris (roll x size) mengikuti kondisi ROLL (`rowStatus` di `lib/mrp/itemTracking.ts`: roll terbuka = Cutting atau
+   Finish Good kalau FG sudah diisi), sedangkan kolom Packing/Delivery adalah JUMLAH pcs, dan FG per roll boleh dikirim
+   sebelum roll ditutup (fitur [fg-ship] 2026-10-24). Contoh data: roll R2609036434 (W39 MKS Burgundy Panjang) cutting 96,
+   FG 88, terkirim 88, status Finish Good; 18 dari 56 roll Burgundy terbuka sudah punya isi di koli/terkirim.
+   Usulan yang sudah dijelaskan ke owner: filter baru "Posisi" (Belum cutting, Masih di cutting, FG belum dikemas, Di koli,
+   Dalam pengiriman, Sudah GR DC) yang menyaring baris yang MASIH punya qty di posisi itu (satu baris bisa lolos beberapa
+   posisi); kartu atas ikut menjumlah hanya qty posisi terpilih. Kolom Status dan data tidak berubah. Owner baru bertanya
+   "apa itu filter posisi", belum memutuskan.
+2. SLA: owner mengisi spreadsheet usulan SLA (tautan di `docs/usulan-sla-leadtime.md`), lalu tim IT membuat tabel `sla_settings`.
+   Sampai itu, angka SLA ada di kode (`SLA_DEFAULTS`, `lib/mrp/opsMonitor.ts`).
+3. Fase 0b (Supabase UJI + env Preview Vercel). Preview Vercel PR #2 build sukses tetapi kemungkinan tanpa data karena env
+   Supabase hanya untuk Production.
+
+**Belum pernah diuji sejak tayang** (minta kabar owner/kantor, perbaiki kalau ada laporan): aksi lewat tampilan baru
+(Setujui/Tolak PO di antrean satu tabel, Bayar Material/Maklon/Ekspedisi, simpan PV dan Buat PO di panel samping,
+Set Delivery, Bongkar Koli), Mode Sysadmin, tampilan HP modul internal, kecepatan halaman besar di komputer kantor.
+
+**Alat dan akun GitHub di laptop ini:**
+- Akun git aktif = `adryandamalik-source` (akses tulis). Akun `ppic38` = admin repo, dipakai tim IT/owner untuk semua commit
+  dan untuk menyetujui/merge PR. Pembuat PR tidak bisa approve PR-nya sendiri.
+- `gh` (GitHub CLI) TIDAK terpasang. PR #2 dibuat lewat API GitHub dengan token dari `git credential fill` (skrip Python,
+  token tidak pernah dicetak). Pemantau PR aplikasi tidak bisa terhubung tanpa `gh`.
+- `main` TIDAK punya branch protection: siapa pun yang punya akses bisa merge tanpa approval. Push/merge ke `main` = langsung
+  tayang lewat Vercel. Jangan lakukan tanpa persetujuan owner yang eksplisit.
+- Deskripsi PR #2 (berguna sebagai ringkasan isi redesign): `docs/PR-REDESIGN-DESKRIPSI.md`.
+
+**Lingkungan lokal setelah sinkron 2026-11-17:** database lokal ditimpa salinan live terbaru, jadi akun uji vendor CECEP
+(`VENDOR_TEST_PASSWORD_CE`) HILANG; buat ulang (hash bcrypt di `vendors_produksi.password_hash` LOKAL) kalau perlu
+menguji portal vendor. Tabel `vendor_mrp_sheets` (migration 0093) dibuat di lokal dari file migration (kosong, dikunci di live
+untuk `partner_ro`); skrip db-sync mempertahankannya. Kini 13 tabel terkunci.
+
 **Lingkungan lokal SUDAH SIAP dan terverifikasi (2026-11-15).** Aplikasi jalan di `http://localhost:3000` memakai
 Supabase lokal (Docker) berisi SALINAN data live: 12 MRP, 2.058 roll, 540 koli, 177 invoice material, 64 invoice
 vendor, 2.139 SKU, 10 vendor. `.env.local` menunjuk `127.0.0.1:54321` -- klik apa pun di app lokal TIDAK menyentuh
@@ -78,11 +129,8 @@ docs/DESAIN-DAN-FITUR.md; contoh layout di docs/mockup/.
 - **Laptop lain / Claude web:** pekerjaan harus di-commit dan di-push dulu ke GitHub
   (`ppic38/Mini-ERP-Tigalapan-Indonesia`); yang belum di-push tidak terlihat dari sana.
 - Branch: untuk pekerjaan redesign dipakai **satu branch per modul, umur maksimal 2-3 hari** (lihat bagian 2).
-  Status `pengembangan` per 2026-11-13 siang: **sudah memuat SEMUA pekerjaan tim IT** (`git merge origin/main`
-  dijalankan, bersih tanpa konflik, merge commit `43c52db`), di depan `origin/main` dan BELUM DI-PUSH.
-  **Belum ada satu pun pekerjaan redesign yang dimulai.** Isi commit kita sejauh ini: `4fb6951` Posisi Stok
-  (fitur warisan sesi lama yang tertinggal belum di-commit, bukan pekerjaan redesign), `b036813` lingkungan uji
-  lokal, sisanya pembaruan RENCANA.md saja.
+  Branch lama `pengembangan` dan `redesign-fondasi-tabel` SUDAH masuk `main` (PR #2, 2026-11-18). Branch kerja aktif:
+  `redesign-lanjutan` (lihat STATUS TERKINI di atas).
   Jangan push ke `main` tanpa persetujuan owner: push ke `main` langsung ter-deploy ke aplikasi online.
 - Catatan teknis laptop ini:
   - **Localhost "tidak bisa dirender" / halaman error 500 setelah folder `.next` dihapus (2026-11-16)**: Next mengunduh font Google
@@ -153,7 +201,7 @@ sebelum `docker version`/`supabase start` dicoba lagi.
 Aturan setelah ini: migration baru diuji dulu di lokal; `bash scripts/dev/db-sync.sh diff` (LIVE_DB_URL vs DEV)
 menunjukkan struktur yang belum ada di live. Migration ke live tetap dijalankan MANUAL oleh owner.
 
-## 2. Redesign tampilan ERP (5 fase) -- BELUM DIMULAI, MENUNGGU BAGIAN 1
+## 2. Redesign tampilan ERP (5 fase) -- SUDAH TAYANG 2026-11-18 (PR #2), LANJUTAN PER PERMINTAAN OWNER
 Tujuan owner: merapikan tampilan web (menu makin banyak, halaman makin lambat dan berantakan) TANPA merusak
 backend, database, business logic, dan alur transaksi yang sudah berjalan. Dikerjakan di lokal dulu, lalu
 dinaikkan ke live secara aman dan bertahap.
@@ -364,10 +412,12 @@ Kalau sedang di tengah branch modul, tambahkan `git merge main` SETIAP HARI. Kon
    menangkapnya otomatis setiap pagi.
 
 ### Status redesign (perbarui tiap sesi)
-- Fase 0 (lingkungan lokal): SEDANG DIKERJAKAN, lihat bagian 1.
+- Fase 0 (lingkungan lokal): SELESAI (2026-11-15).
 - Fase 0b (Supabase UJI + Vercel Preview): belum, menunggu keputusan owner.
-- Fase 1-5: belum dimulai.
-- Modul yang sedang dirombak saat ini: (belum ada).
+- Fase 1-5: SELESAI dan TAYANG lewat PR #2 (2026-11-18) untuk modul internal; menu atas dan halaman login dikembalikan owner
+  ke versi lama (`d0485c7`). Rincian per modul di MIGRASI.md (entri bertanda `[redesign-...]`).
+- Portal Vendor Produksi: TIDAK diubah (keputusan owner 2026-11-17).
+- Modul yang sedang dirombak saat ini: (tidak ada). Usulan berikutnya: filter "Posisi barang" Tracking Item (menunggu owner).
 
 ## 3. Sederhanakan alur login -- DIBATALKAN OWNER (2026-11-13), JANGAN DIKERJAKAN
 > **Owner memutuskan tidak mengubah metode login.** Bagian ini disimpan sebagai hasil analisis saja, kalau
@@ -423,8 +473,8 @@ mengarahkan ke halaman yang sesuai. Pola ini SUDAH ADA dan terbukti jalan di jal
   disimpan juga sebagai salinan terenkripsi yang bisa dibaca balik Sysadmin (`password_enc`, migration 0063/0065)
   supaya ada fitur "Lihat Password". Itu kelemahan keamanan tersendiri, keputusan owner apakah mau diubah.
 
-## 4. Halaman Finance > Posisi Stok -- KODE SELESAI & DI-COMMIT, BELUM DIUJI DENGAN DATA ASLI
-Di-commit sebagai `4fb6951` di branch `pengembangan` (belum di-push, belum masuk `main`, jadi belum tayang).
+## 4. Halaman Finance > Posisi Stok -- SUDAH TAYANG (ikut PR #2)
+Di-commit sebagai `4fb6951`, kini sudah di `main`; tampilan per roll diganti redesign (lihat MIGRASI.md [redesign-finance]).
 File: `app/finance/posisi-stok/page.tsx`, `lib/mrp/stockPosition.ts`, menu di `lib/shell/nav.ts`; entri MIGRASI.md
 "Posisi Stok di Finance (2026-11-06)". tsc bersih, uji data buatan lulus.
 Berikutnya: setelah lingkungan lokal jalan, login Finance di app lokal dan cocokkan angka (total dibeli = total invoice,
