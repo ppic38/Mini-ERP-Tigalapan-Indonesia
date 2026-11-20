@@ -181,7 +181,11 @@ export function DataTable<T>({
   fitExpanded,
   bordered,
   firstColumnSortValue,
+  openView,
 }: {
+  /** Opsional: tampilan saat tabel dibuka dari tautan (mis. klik sel dashboard), MENGALAHKAN favorit bawaan pengguna: filter dan
+   *  kelompok. Hanya dibaca saat tabel dibuat. Tidak diisi = perilaku biasa. */
+  openView?: { filters?: Record<string, string[]>; group?: string[] };
   /** Opsional: kelompok bawaan saat tabel dibuka (label filter, urut per tingkat), mis. ["No. MRP", "Supplier"]. Favorit
    *  bawaan pengguna tetap didahulukan. Pengguna bisa melepasnya lewat keping Kelompok. */
   defaultGroupBy?: string[];
@@ -323,6 +327,7 @@ export function DataTable<T>({
   // Filter: beberapa nilai per filter (baris lolos kalau cocok SALAH SATU nilai). Dikunci dengan label filter supaya
   // tetap benar kalau daftar filter sebuah halaman berubah. Favorit bawaan (kalau ada) dipasang sekali saat tabel dibuka.
   const [filterSel, setFilterSel] = useState<Record<string, string[]>>(() => {
+    if (openView?.filters && Object.keys(openView.filters).length > 0) return openView.filters;
     const f = parseFavs(readColPrefsRaw(typeof window === "undefined" ? null : favKey));
     return f.items.find((x) => x.name === f.def)?.filters ?? {};
   });
@@ -336,6 +341,7 @@ export function DataTable<T>({
     setSort((p) => (!p || p.key !== key ? { key, dir: "asc" } : p.dir === "asc" ? { key, dir: "desc" } : null));
   const sortMark = (key: string) => (sort?.key === key ? <span className="ml-1 text-[9px]">{sort.dir === "asc" ? "▲" : "▼"}</span> : null);
   const [groupBy, setGroupBy] = useState<string[]>(() => {
+    if (openView?.group?.length) return openView.group;
     const f = parseFavs(readColPrefsRaw(typeof window === "undefined" ? null : favKey));
     return f.items.find((x) => x.name === f.def)?.group ?? defaultGroupBy ?? [];
   });

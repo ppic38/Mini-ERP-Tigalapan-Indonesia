@@ -12,6 +12,10 @@ export const LT_TIBA_DEFAULT = 7;
 export const LT_TIBA_BY_VENDOR: Record<string, number> = { MKS: 1 };
 
 export const ltTiba = (vendorId: string): number => LT_TIBA_BY_VENDOR[vendorId] ?? LT_TIBA_DEFAULT;
+/** Lead time Delivery Material -> Good Receive vendor (SLA owner 2026-11-16: 3 hari; owner 2026-11-19: Konveksi Makassar 5 hari). */
+export const LT_DEL_MAT_DEFAULT = 3;
+export const LT_DEL_MAT_BY_VENDOR: Record<string, number> = { MKS: 5 };
+export const ltDelMat = (vendorId: string): number => LT_DEL_MAT_BY_VENDOR[vendorId] ?? LT_DEL_MAT_DEFAULT;
 
 /** Kunci tanggal lokal "YYYY-MM-DD" dari tanggal polos atau stempel waktu ISO (stempel waktu dikonversi ke tanggal lokal). Kosong/tidak valid = undefined. */
 export function dayKey(value?: string | null): string | undefined {

@@ -2,6 +2,15 @@
 
 
 
+## Tracking Item per roll x size x status, ETD/ETA, klik matriks dashboard (2026-11-19, tanpa migration) [redesign-ppic]
+Owner: status harus mencerminkan posisi qty (filter Status hanya menampilkan qty yang MASIH di status itu), tahap sama dengan matriks 11 gate dashboard + Wait PV, kolom tetap, dan klik sel dashboard membuka Tracking yang sudah terfilter.
+- `lib/mrp/itemTracking.ts` `buildTrackLines`: baris roll x size dipecah jadi satu baris per status yang masih memegang qty (qty 0 tidak tampil). Status: Wait PV (roll Aduan Pola yang belum ada di invoice bahan mana pun), PV (belum dibayar), Paid, Del Mat (Set Delivery, belum Good Receive), GR Mat (diterima vendor, belum resting), Resting, Cutting (cutting - FG, roll terbuka), FG / Done FG (FG belum di koli; roll terbuka / ditutup), Packing, Delivery, GR DC, Reject (roll ditutup, cutting - FG). Roll yang belum di-resting dibagi ke tahap material menurut invoice bahan grup MRP x vendor x warna x lengan (roll paling maju lebih dulu); target dibagi sebanding jumlah roll. Target hanya di baris pertama roll x size.
+- ETD = tanggal masuk status + lead time sisa sampai Delivery; ETA = ETD + lead time ke DC (7 hari, Makassar 1). Lead time: Wait PV -> PV 2, PV -> Paid 2, Paid -> Del Mat 1 (usulan), Del Mat -> GR Mat 3 (**Konveksi Makassar 5**, owner 2026-11-19; juga dipakai Kendala SLA "Delivery belum diterima vendor", `ltDelMat` di itemEstimates.ts), GR Mat -> Resting 3 (usulan), Resting -> Cutting 2 (usulan), Cutting -> FG 3, FG/Done FG/Packing -> Delivery 1. Wait PV, PV, Paid dihitung dari hari ini; tanggal yang sudah lewat dianggap hari ini dan ditandai merah.
+- `components/mrp/item-tracking-view.tsx` (PPIC dan SCM): kolom tetap Item SKU, No MRP, Vendor, Kategori, Warna, Size, Code Roll, Target, satu kolom per status, Status, ETD, ETA (kolom tanggal lain, Aduan, Roll, No. Koli dihapus dari tabel). Delapan kartu qty per kelompok status mengikuti filter. Export Excel diganti `lib/mrp/exportTrackLinesExcel.ts` dengan kolom yang sama (template WIP lama `exportTrackingExcel.ts` tidak dipakai lagi dari halaman ini).
+- Nama gate di matriks dashboard diseragamkan: Kirim Mat. -> Del Mat, Terima -> GR Mat. Sel matriks (PPIC dan SCM) bisa diklik: membuka Tracking Item dengan filter No MRP dan status yang BELUM melewati gate itu, dikelompokkan Status > Vendor > Warna (`?mrp=&status=&group=`). Tabel bersama dapat prop opsional `openView` (filter/kelompok dari tautan mengalahkan favorit).
+- Procurement > Material Tracking, tabel Material per invoice: filter dan kelompok **Warna** (invoice yang memuat warna itu; satu invoice berwarna banyak masuk kelompok warna pertama menurut abjad) dan kolom Warna (pilihan, tersembunyi bawaan). Rincian per warna yang tepat tetap di tab Per Roll. Juga filter dan kelompok **Tgl Delivery** (tanggal Set Delivery invoice bahan, terbaru dulu; tanpa tanggal = "Belum dikirim").
+- Diuji: tsc dan eslint bersih. BELUM dilihat di layar oleh sesi ini (login lokal dilakukan owner); jumlah baris diperkirakan naik dari 5.048 ke 8-10 ribu (dihitung sekali di browser, dibagi per halaman, tanpa query baru).
+
 
 
 

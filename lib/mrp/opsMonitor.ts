@@ -1,6 +1,6 @@
 import type { MrpDetail } from "./store";
 import { invoiceAwaitingPayment, isBillableKoliItem, localDateString, mrpDetailFor, targetSizesForBatch } from "./derive";
-import { LT_CUTTING_KE_FG, LT_FG_KE_KIRIM, dayKey, ltTiba } from "./itemEstimates";
+import { LT_CUTTING_KE_FG, LT_DEL_MAT_DEFAULT, LT_FG_KE_KIRIM, dayKey, ltDelMat, ltTiba } from "./itemEstimates";
 import type { DeliveryKoli, Lengan, MaterialPO, ProductionBatch, RawMaterialInvoice, WarehouseReceipt } from "./types";
 
 /** Monitoring kendala operasional (owner 2026-11-16, SCM Monitoring dan Produksi): baris yang MELEWATI batas waktu (SLA) antar gate.
@@ -21,7 +21,7 @@ export type SlaRule = { key: SlaKey; label: string; days: number; area: "Materia
 export const SLA_DEFAULTS: SlaRule[] = [
   { key: "PO_APPROVE_TO_PV", label: "PO disetujui -> PV Material dibuat", days: 2, area: "Material", sumber: "owner 2026-11-16" },
   { key: "PV_TO_PAID", label: "PO disetujui -> PV dibayar (Paid)", days: 2, area: "Material", sumber: "owner 2026-11-16" },
-  { key: "DELIVERY_TO_RECEIVE", label: "Delivery Material -> Receiving Material", days: 3, area: "Material", sumber: "owner 2026-11-16" },
+  { key: "DELIVERY_TO_RECEIVE", label: "Delivery Material -> Receiving Material (Konveksi Makassar 5 hari)", days: LT_DEL_MAT_DEFAULT, area: "Material", sumber: "owner 2026-11-16; Makassar 2026-11-19" },
   { key: "RECEIVE_TO_RESTING", label: "Receiving Material -> Resting", days: 3, area: "Produksi", sumber: "usulan, belum ditetapkan" },
   { key: "RESTING_TO_CUTTING", label: "Resting -> Cutting", days: 2, area: "Produksi", sumber: "usulan, belum ditetapkan" },
   { key: "CUTTING_TO_DONE_FG", label: "Cutting -> Done FG (roll ditutup)", days: LT_CUTTING_KE_FG, area: "Produksi", sumber: "estimasi Tracking Item" },
@@ -121,7 +121,7 @@ export function buildOpsIssues(input: {
       if (delivered && notArrived > 0)
         push(
           { key: `recv|${inv.id}|${key}`, area: "Material", kendala: "Delivery belum diterima vendor", sla: "DELIVERY_TO_RECEIVE", mrpId: inv.mrpId, vendorProduksi: inv.destinationVendor, supplier: inv.supplier, warna: c.warna, lengan: c.lengan, ref: inv.noInvoiceVendor || inv.id, roll: notArrived, pcs: 0, sejak: delivered },
-          slaDays("DELIVERY_TO_RECEIVE")
+          ltDelMat(inv.destinationVendor)
         );
       const oldest = waitingRest.filter(Boolean).sort()[0];
       if (oldest)

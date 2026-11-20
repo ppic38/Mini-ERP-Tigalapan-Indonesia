@@ -1,6 +1,6 @@
 import type { MrpDetail } from "./store";
-import { SIZE_ORDER, compareNoKoli, targetSizesForBatch } from "./derive";
-import { LT_CUTTING_KE_FG, LT_FG_KE_KIRIM, dayKey, ltTiba, maxDay, minDay, parseLooseDay, plusDays } from "./itemEstimates";
+import { SIZE_ORDER, compareNoKoli, invoiceAwaitingPayment, targetSizesForBatch } from "./derive";
+import { LT_CUTTING_KE_FG, LT_DEL_MAT_DEFAULT, LT_FG_KE_KIRIM, dayKey, ltDelMat, ltTiba, maxDay, minDay, parseLooseDay, plusDays } from "./itemEstimates";
 import type { WosKoliStatus } from "./wosStatusMap";
 import type { AduanPolaRow, DeliveryKoli, Lengan, MaterialPO, ProductionBatch, ProductionResult, RawMaterialInvoice, WarehouseReceipt } from "./types";
 
@@ -752,4 +752,198 @@ function rowStatus(r: AduanTrackRow, b?: ProductionBatch): AduanStage {
   // Tiba DC (WOS, belum divalidasi) masih Delivery; GR DC = sudah dibongkar / diterima gudang.
   if (r.perjalanan > 0 || r.tibaDc > 0) return "Delivery";
   return "GR DC";
+}
+
+/* ------------------------------------------------------------------------------------------------------------------------------
+ * Tracking per ROLL x SIZE x STATUS (owner 2026-11-19: "status mencerminkan posisi; filter status hanya menampilkan qty yang masih
+ * berada di status itu"; tahap sama dengan matriks 11 gate dashboard, ditambah Wait PV). Satu baris roll x size di atas dipecah
+ * menjadi satu baris per status yang MASIH memegang qty (qty 0 tidak ditampilkan). Jumlah semua baris satu roll x size = posisi barang
+ * roll itu; tidak ada qty yang terhitung dua kali.
+ *   Wait PV .. GR Mat : roll yang belum di-resting, per tahap material (invoice bahan roll itu). Roll aduan yang belum ada di invoice
+ *                          mana pun = Wait PV. Qty = target aduan diprorata jumlah roll.
+ *   Resting              : roll sudah di-resting, belum dicutting (qty = target roll).
+ *   Cutting              : hasil cutting yang belum jadi FG (roll terbuka).
+ *   FG / Done FG         : FG belum masuk koli (roll terbuka / sudah ditutup).
+ *   Packing, Delivery    : di koli belum dikirim; sudah dikirim belum diterima DC.
+ *   GR DC                : diterima DC.
+ *   Reject               : roll ditutup, hasil cutting yang tidak jadi FG (selisih selesai, bukan outstanding).
+ * Target hanya diisi di baris PERTAMA roll x size (baris rencana: bagian target roll di status itu), supaya jumlahnya tidak ganda.
+ * ------------------------------------------------------------------------------------------------------------------------------ */
+
+export const TRACK_STAGES = ["Wait PV", "PV", "Paid", "Del Mat", "GR Mat", "Resting", "Cutting", "FG", "Done FG", "Packing", "Delivery", "GR DC"] as const;
+export type TrackStage = (typeof TRACK_STAGES)[number] | "Reject";
+export const TRACK_STATUSES: readonly TrackStage[] = [...TRACK_STAGES, "Reject"];
+const MAT_STAGES: TrackStage[] = ["Wait PV", "PV", "Paid", "Del Mat", "GR Mat"];
+
+export type TrackLine = AduanTrackRow & {
+  /** Kunci baris roll x size asal. */
+  rsKey: string;
+  stage: TrackStage;
+  qty: number;
+  /** Estimasi qty baris ini dikirim vendor (status Delivery: tanggal kirim aktual) dan estimasi tiba di DC. Kosong untuk GR DC dan Reject. */
+  estKirim?: string;
+  estTibaDc?: string;
+};
+
+/** Lead time (hari) dari masuk satu status sampai pindah ke status berikutnya, dipakai estimasi kirim. Angka material dari SLA
+ *  (lib/mrp/opsMonitor.ts SLA_DEFAULTS); Paid -> Del Mat 1 hari = usulan (belum ditetapkan owner). FG, Done FG, dan Packing
+ *  bersama-sama = LT_FG_KE_KIRIM. */
+const LT_STEP: [TrackStage, number][] = [
+  ["Wait PV", 2],
+  ["PV", 2],
+  ["Paid", 1],
+  ["Del Mat", LT_DEL_MAT_DEFAULT],
+  ["GR Mat", 3],
+  ["Resting", 2],
+  ["Cutting", LT_CUTTING_KE_FG],
+];
+const DAYS_TO_KIRIM: Partial<Record<TrackStage, number>> = { FG: LT_FG_KE_KIRIM, "Done FG": LT_FG_KE_KIRIM, Packing: LT_FG_KE_KIRIM };
+for (let i = LT_STEP.length - 1, acc = LT_FG_KE_KIRIM; i >= 0; i--) {
+  acc += LT_STEP[i][1];
+  DAYS_TO_KIRIM[LT_STEP[i][0]] = acc;
+}
+
+/** Tanggal baris masuk statusnya sekarang (dasar estimasi). Wait PV, PV, Paid belum punya tanggal per roll: dihitung dari hari ini. */
+function stageSince(r: TrackLine): string | undefined {
+  switch (r.stage) {
+    case "Del Mat":
+      return r.deliveryAt;
+    case "GR Mat":
+      return r.grAt;
+    case "Resting":
+      return r.restingAt;
+    case "Cutting":
+      return r.cuttingAt;
+    case "FG":
+    case "Done FG":
+      return r.fgFirstAt ?? plusDays(r.cuttingAt, LT_CUTTING_KE_FG);
+    case "Packing":
+      return r.koliFirstAt;
+    default:
+      return undefined;
+  }
+}
+
+/** Estimasi kirim dan tiba DC satu baris: tanggal masuk status + lead time sisa tahap; yang sudah lewat hari ini dianggap hari ini
+ *  (terlambat). Status Delivery memakai tanggal kirim aktual dan estimasi tiba koli. */
+function lineEstimates(r: TrackLine, today: string): Pick<TrackLine, "estKirim" | "estTibaDc"> {
+  if (r.stage === "GR DC" || r.stage === "Reject") return {};
+  if (r.stage === "Delivery") return { estKirim: r.shipLastAt, estTibaDc: r.estTiba ?? plusDays(r.shipLastAt, ltTiba(r.vendorProduksi)) };
+  const base = DAYS_TO_KIRIM[r.stage];
+  if (base == null) return {};
+  // Delivery Material -> GR Material per vendor (Konveksi Makassar 5 hari): berlaku untuk baris yang belum melewati GR Mat.
+  const beforeGr = (TRACK_STAGES as readonly string[]).indexOf(r.stage) <= TRACK_STAGES.indexOf("Del Mat");
+  const days = base + (beforeGr ? ltDelMat(r.vendorProduksi) - LT_DEL_MAT_DEFAULT : 0);
+  const est = maxDay(plusDays(stageSince(r) ?? today, days), today);
+  return { estKirim: est, estTibaDc: plusDays(est, ltTiba(r.vendorProduksi)) };
+}
+
+/** Tahap dashboard yang BELUM dilewati: klik sel gate di matriks dashboard = status-status sebelum gate itu. */
+export function stagesBefore(gate: TrackStage): TrackStage[] {
+  const i = (TRACK_STAGES as readonly string[]).indexOf(gate);
+  return i <= 0 ? [] : (TRACK_STAGES.slice(0, i) as TrackStage[]);
+}
+
+export function buildTrackLines(
+  rows: AduanTrackRow[],
+  ctx: { batches: ProductionBatch[]; invoices: RawMaterialInvoice[]; returned?: Set<string>; today: string }
+): TrackLine[] {
+  const batchById = new Map(ctx.batches.map((b) => [b.id, b]));
+  const batchCodes = new Set(ctx.batches.map((b) => b.codeRoll).filter(Boolean) as string[]);
+
+  // Roll invoice bahan yang belum menjadi roll produksi, per MRP x vendor tujuan x warna x lengan, per tahap material (indeks MAT_STAGES).
+  const matByGroup = new Map<string, number[]>();
+  for (const inv of ctx.invoices) {
+    if (inv.status === "WAITING_INVOICE") continue;
+    const awaiting = invoiceAwaitingPayment(inv);
+    for (const c of inv.colorEntries) {
+      const key = `${c.warna}|${c.lengan}`;
+      const arrivals = inv.rollArrivals[key] ?? [];
+      const receipts = inv.rollReceipts[key] ?? [];
+      const gk = `${inv.mrpId}|${inv.destinationVendor}|${c.warna}|${c.lengan}`;
+      c.rolls.forEach((_, idx) => {
+        if (ctx.returned?.has(`${inv.id}|${c.warna}|${c.lengan}|${idx}`)) return;
+        const code = arrivals[idx]?.codeRoll || receipts[idx]?.codeRoll || c.codeRolls?.[idx] || "";
+        if (code && batchCodes.has(code)) return;
+        const st = awaiting ? 1 : arrivals[idx] ? 4 : inv.deliveredAt ? 3 : 2;
+        const arr = matByGroup.get(gk) ?? [0, 0, 0, 0, 0];
+        arr[st]++;
+        matByGroup.set(gk, arr);
+      });
+    }
+  }
+
+  // Roll rencana (aduan yang belum di-resting) dibagi ke tahap material: roll paling maju lebih dulu, sisanya Wait PV.
+  const aduanByGroup = new Map<string, Map<string, { kode: string; rolls: number }>>();
+  for (const r of rows) {
+    if (r.jenis !== "rencana") continue;
+    const gk = `${r.mrpId}|${r.vendorProduksi}|${r.warna}|${r.lengan}`;
+    const m = aduanByGroup.get(gk) ?? new Map();
+    m.set(r.rollKey, { kode: r.kode, rolls: r.qtyRoll });
+    aduanByGroup.set(gk, m);
+  }
+  const alloc = new Map<string, number[]>();
+  for (const [gk, aduans] of aduanByGroup) {
+    const pool = [...(matByGroup.get(gk) ?? [0, 0, 0, 0, 0])];
+    const list = [...aduans.entries()].sort((a, b) => a[1].kode.localeCompare(b[1].kode, undefined, { numeric: true }));
+    for (const [rk, a] of list) {
+      const counts = [0, 0, 0, 0, 0];
+      let need = a.rolls;
+      for (const st of [4, 3, 2, 1]) {
+        const take = Math.min(need, pool[st]);
+        counts[st] += take;
+        pool[st] -= take;
+        need -= take;
+      }
+      counts[0] = need;
+      alloc.set(rk, counts);
+    }
+  }
+
+  const statusToStage: Record<AduanStage, TrackStage> = {
+    "Belum dialokasikan": "Wait PV", "Belum resting": "Wait PV", Resting: "Resting", Cutting: "Cutting",
+    "Finish Good": "FG", "Done FG": "Done FG", Packing: "Packing", Delivery: "Delivery", "GR DC": "GR DC",
+  };
+  const out: TrackLine[] = [];
+  const line = (r: AduanTrackRow, stage: TrackStage, qty: number, target: number, extra: Partial<AduanTrackRow> = {}): TrackLine => ({
+    ...r, ...extra, key: `${r.key}|${stage}`, rsKey: r.key, stage, qty, target,
+  });
+
+  for (const r of rows) {
+    if (r.jenis === "rencana") {
+      const counts = alloc.get(r.rollKey) ?? [r.qtyRoll, 0, 0, 0, 0];
+      const total = counts.reduce((s, n) => s + n, 0) || 1;
+      const used = counts.map((n, i) => [n, i] as const).filter(([n]) => n > 0);
+      let left = r.target;
+      used.forEach(([n, i], j) => {
+        const q = j === used.length - 1 ? left : Math.round((r.target * n) / total);
+        left -= q;
+        const st = MAT_STAGES[i];
+        out.push(line(r, st, q, q, { qtyRoll: n, rollKey: `${r.rollKey}|${st}` }));
+      });
+      continue;
+    }
+    if (r.jenis === "belum") {
+      out.push(line(r, "Wait PV", r.target, r.target));
+      continue;
+    }
+    const parts: [TrackStage, number][] = [];
+    const b = r.jenis === "roll" ? batchById.get(r.rollKey) : undefined;
+    if (r.jenis === "roll" && !b?.cuttingAt) parts.push(["Resting", r.target]);
+    else {
+      // cuttingWip = cutting - FG - reject; roll ditutup: 0 (sisanya reject).
+      parts.push(["Cutting", r.cuttingWip]);
+      parts.push([b?.closedAt ? "Done FG" : "FG", r.fgWip]);
+      parts.push(["Packing", r.diKoli], ["Delivery", r.perjalanan + r.tibaDc], ["GR DC", r.diterima], ["Reject", r.reject]);
+      if (r.jenis === "sisa" && r.cutting === 0 && r.fg === 0 && r.target > 0 && parts.every(([, q]) => q <= 0)) parts.push(["Wait PV", r.target]);
+    }
+    const live = parts.filter(([, q]) => q > 0);
+    if (live.length === 0) {
+      out.push(line(r, statusToStage[r.status], 0, r.target));
+      continue;
+    }
+    live.forEach(([st, q], i) => out.push(line(r, st, q, i === 0 ? r.target : 0)));
+  }
+  for (const l of out) Object.assign(l, lineEstimates(l, ctx.today));
+  return out;
 }
