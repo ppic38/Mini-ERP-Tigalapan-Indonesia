@@ -108,7 +108,8 @@ import {
 } from "./poApproval";
 import { MIGRASI_SUPPLIER, MIGRASI_VENDOR_ID, type MigrationImportSummary, type MigrationLine, type MigrationMrp, type MigrationRoll } from "./migrationTypes";
 import type { ParsedMrpImport } from "./parseImport";
-import type { MrpDetail } from "./store";
+import type { FlowState, MrpDetail } from "./store";
+import { diffSlices, type SliceTokens } from "./sliceSync";
 import type {
   AddBuyItem,
   AduanPolaRow,
@@ -7271,7 +7272,25 @@ async function readMasterDataVersion(): Promise<number | null> {
  *  Kalau sama dengan versi di server, 6 tabel master harga (item_selling_prices dkk) tidak ditarik
  *  ulang dan field-nya dibuang dari hasil sehingga data master di browser tidak tertimpa. Perubahan
  *  harga menaikkan versi (trigger migration 0050) -> refresh berikutnya otomatis membawa harga baru. */
-export async function getFlowSnapshotAction(clientMasterVersion?: number | null) {
+/** Balasan snapshot: bagian data (FlowState) yang BERUBAH saja (lihat `lib/mrp/sliceSync.ts`) + penanda terbaru semua bagian. */
+export type FlowSnapshotPayload = Partial<FlowState> & {
+  dataVersion: number | null;
+  masterVersion: number | null;
+  weightTolerancePct: number;
+  /** Penanda isi terbaru tiap bagian yang ada di balasan ini DAN yang dilewati karena sama dengan yang dipegang browser. */
+  sliceTokens: SliceTokens;
+};
+
+/** `clientSliceTokens` = penanda isi bagian yang SUDAH dipegang browser dan belum diubah lokal (lihat store.refresh). Tanpa itu (muat pertama, login, muat ulang paksa)
+ *  semua bagian dikirim penuh. Bagian yang isinya sama dengan penanda browser tidak dikirim; browser mempertahankan objek lamanya. */
+export async function getFlowSnapshotAction(clientMasterVersion?: number | null, clientSliceTokens?: SliceTokens | null): Promise<FlowSnapshotPayload> {
+  const payload = await buildFlowSnapshotPayload(clientMasterVersion);
+  const { dataVersion, masterVersion, weightTolerancePct, ...state } = payload;
+  const { changed, tokens } = diffSlices(state as Record<string, unknown>, clientSliceTokens);
+  return { ...(changed as Partial<FlowState>), dataVersion, masterVersion, weightTolerancePct, sliceTokens: tokens };
+}
+
+async function buildFlowSnapshotPayload(clientMasterVersion?: number | null): Promise<Omit<FlowSnapshotPayload, "sliceTokens">> {
   const session = await requireSession();
   const vendorOnly = !!session.vendorId && session.internalRoles.length === 0;
   // Versi dibaca SEBELUM snapshot: kalau ada tulisan di sela-selanya, versi yang tersimpan di client

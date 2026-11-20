@@ -2,7 +2,7 @@
 
 > Dibaca otomatis setiap sesi (lewat CLAUDE.md). Sesi yang menyelesaikan atau mengubah rencana di sini WAJIB
 > memperbaruinya sebelum selesai. Riwayat fitur yang SUDAH jadi tetap dicatat di MIGRASI.md.
-> Terakhir diperbarui: 2026-11-19.
+> Terakhir diperbarui: 2026-11-20.
 
 ## Yang ingin dikerjakan owner (dikonfirmasi 2026-11-13)
 Hanya DUA hal:
@@ -50,6 +50,7 @@ Ritual tetap: `git fetch` lalu `git merge origin/main` sebelum mulai; tim IT/own
    Sampai itu, angka SLA ada di kode (`SLA_DEFAULTS`, `lib/mrp/opsMonitor.ts`).
 3. Fase 0b (Supabase UJI + env Preview Vercel). Preview Vercel PR #2 build sukses tetapi kemungkinan tanpa data karena env
    Supabase hanya untuk Production.
+4. **Percepatan muat data [snapshot-tabel] (2026-11-20): kode SUDAH selesai dan diuji, BELUM di-commit/push** (ada di working tree branch `main`: `lib/mrp/repo/snapshot.ts`, `lib/mrp/sliceSync.ts`, `lib/mrp/actions.ts`, `lib/mrp/store.ts`, `components/shell/store-hydrator.tsx`, MIGRASI.md). Snapshot dibaca per tabel paralel (0,9 dtk vs RPC 6,5 dtk) dan hanya bagian yang berubah dikirim ke browser; nol migration. Menunggu persetujuan owner untuk commit/push (push ke `main` = langsung tayang). Rincian dan cara mundur ada di MIGRASI.md (entri [snapshot-tabel]).
 
 **Belum pernah diuji sejak tayang** (minta kabar owner/kantor, perbaiki kalau ada laporan): aksi lewat tampilan baru
 (Setujui/Tolak PO di antrean satu tabel, Bayar Material/Maklon/Ekspedisi, simpan PV dan Buat PO di panel samping,
