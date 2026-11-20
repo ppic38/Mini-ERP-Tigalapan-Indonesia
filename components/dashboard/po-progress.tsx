@@ -28,7 +28,7 @@ const GROUPS: { label: string; gates: Gate[] }[] = [
       { label: "Done FG", from: "Done FG" },
     ],
   },
-  { label: "Pengiriman", gates: [{ label: "Packing", from: "Packing" }, { label: "Delivery", from: "Delivery" }, { label: "GR DC", from: "GR DC" }] },
+  { label: "Pengiriman", gates: [{ label: "Packing", from: "Packing" }, { label: "Delivery FG", from: "Delivery FG" }, { label: "GR DC", from: "GR DC" }] },
 ];
 const GATES = GROUPS.flatMap((g) => g.gates);
 
@@ -377,7 +377,7 @@ export function PoProgress({ rows, hppActual, yields, trackingHref }: { rows: Mr
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
         {card("Material diterima", "Receiving Material")}
-        {card("Delivery", "Delivery", true)}
+        {card("Delivery FG", "Delivery FG", true)}
         {card("GR DC", "GR DC")}
         <div className="rounded-lg border border-border-subtle bg-surface-card px-4 py-3">
           <div className="font-sans text-[12px] font-medium text-text-muted">HPP</div>

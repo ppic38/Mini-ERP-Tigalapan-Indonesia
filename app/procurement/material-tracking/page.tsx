@@ -9,7 +9,7 @@ import { DataTable, aggSame, aggSum, type ColumnDef, type FilterDef } from "@/co
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Tabs } from "@/components/ui/tabs";
 import { MATERIAL_ROLL_STAGES, buildMaterialRolls, type MaterialRollRow } from "@/lib/mrp/materialRolls";
-import { batchShippingMap, flowTone, invoiceFlowStage, returnedRollKeys, rollsByStageText, type FlowStage } from "@/lib/mrp/flowStatus";
+import { FLOW_STAGES, batchShippingMap, flowTone, invoiceFlowStage, returnedRollKeys, rollsByStageText, type FlowStage } from "@/lib/mrp/flowStatus";
 import { TransferMaterialModal, type TransferCandidate } from "@/components/mrp/transfer-material-modal";
 import { SetDeliveryModal } from "@/components/mrp/set-delivery-modal";
 import { SuratJalanModal } from "@/components/procurement/surat-jalan-modal";
@@ -281,8 +281,8 @@ export default function MaterialTrackingPage() {
     { label: "Warna", options: uniqSorted(rows.flatMap(warnaList)), test: (r, v) => warnaList(r).includes(v) },
     { label: "Entitas", options: uniqSorted(rows.map((r) => r.entitas)), test: (r, v) => r.entitas === v },
     { label: "Status", options: uniqSorted(rows.map((r) => trackingStatusBadge(r).label)), test: (r, v) => trackingStatusBadge(r).label === v },
-    { label: "Delivery", options: ["Belum delivery", "Sudah delivery"], test: (r, v) => deliveryLabel(r) === v },
-    { label: "Tgl Delivery", options: delivOptions, test: (r, v) => delivLabel(r) === v },
+    { label: "Delivery Material", options: ["Belum delivery", "Sudah delivery"], test: (r, v) => deliveryLabel(r) === v },
+    { label: "Tgl Delivery Material", options: delivOptions, test: (r, v) => delivLabel(r) === v },
     { label: "Roll diterima", options: ["Belum", "Parsial", "Lengkap"], test: (r, v) => arrivalLabel(r) === v },
   ];
   const trackingColumns: ColumnDef<TrackingRow>[] = [
@@ -347,19 +347,19 @@ export default function MaterialTrackingPage() {
       render: (r) => {
         const b = trackingStatusBadge(r);
         // Rincian roll per tahap (owner 2026-11-16): status = tahap paling AWAL, jadi tampilkan juga berapa roll yang sudah lebih maju.
-        const total = Object.values(r.flowRolls).reduce((s, n) => s + (n ?? 0), 0);
-        const ahead = total - (r.flowRolls[r.flow] ?? 0);
+        // Rincian terlihat langsung (owner 2026-11-20): jumlah roll per tahap, supaya jelas roll mana sudah Receiving / Resting / Cutting / Delivery FG.
+        const parts = (FLOW_STAGES as readonly string[]).map((st) => [st, r.flowRolls[st as FlowStage] ?? 0] as const).filter(([, n]) => n > 0);
         return (
-          <span className="flex items-center gap-1.5" title={b.title}>
+          <span className="flex items-center gap-1.5 whitespace-nowrap" title={b.title}>
             <StatusPill tone={b.tone}>{b.label}</StatusPill>
-            {ahead > 0 && <span className="font-sans text-[10.5px] text-text-muted">+{ahead} roll lebih maju</span>}
+            {parts.length > 1 && <span className="font-sans text-[10.5px] text-text-muted">{parts.map(([st, n]) => st + " " + n).join(" · ")}</span>}
           </span>
         );
       },
     },
     { key: "tglInvoice", label: "Tgl Invoice", default: false, render: (r) => formatDate(r.tglInvoice) },
     { key: "tglBayar", label: "Tgl Bayar", default: false, render: (r) => formatDate(r.tglPayment) },
-    { key: "tglDelivery", label: "Tgl Delivery", default: true, render: (r) => formatDate(r.tglDelivery) },
+    { key: "tglDelivery", label: "Tgl Delivery Material", default: true, render: (r) => formatDate(r.tglDelivery) },
     { key: "tglTerima", label: "Tgl Terima", default: false, render: (r) => formatDate(r.tglReceiving) },
     { key: "warna", label: "Warna", default: false, aggregate: aggSame((r) => r.warna), render: (r) => r.warna },
     { key: "entitas", label: "Entitas", default: false, aggregate: aggSame((r) => r.entitas), render: (r) => r.entitas || "—" },
@@ -475,7 +475,7 @@ export default function MaterialTrackingPage() {
     },
     { key: "tahap", label: "Tahap produksi", default: false, aggregate: aggSame((r) => r.tahapProduksi ?? ""), render: (r) => r.tahapProduksi ?? <span className="text-text-muted">—</span> },
     { key: "tglBayar", label: "Tgl Bayar", default: false, render: (r) => formatDate(r.paidAt) },
-    { key: "tglDelivery", label: "Tgl Delivery", default: true, render: (r) => formatDate(r.deliveryAt) },
+    { key: "tglDelivery", label: "Tgl Delivery Material", default: true, render: (r) => formatDate(r.deliveryAt) },
     { key: "tglGr", label: "Tgl GR", default: true, render: (r) => formatDate(r.grAt) },
     { key: "tglResting", label: "Tgl Resting", default: true, render: (r) => formatDate(r.restingAt) },
     { key: "tglCutting", label: "Tgl Cutting", default: false, render: (r) => formatDate(r.cuttingAt) },
@@ -518,7 +518,7 @@ export default function MaterialTrackingPage() {
             active={preset.card === "delivery"}
             onClick={() =>
               setPreset((p) =>
-                p.card === "delivery" ? { nonce: p.nonce + 1, filters: {} as Record<string, string[]>, card: "" } : { nonce: p.nonce + 1, filters: { Delivery: ["Belum delivery"] }, card: "delivery" }
+                p.card === "delivery" ? { nonce: p.nonce + 1, filters: {} as Record<string, string[]>, card: "" } : { nonce: p.nonce + 1, filters: { "Delivery Material": ["Belum delivery"] }, card: "delivery" }
               )
             }
           />
@@ -588,7 +588,7 @@ export default function MaterialTrackingPage() {
               { key: "bayar", label: "PV Material dan Paid", sub: "belum Delivery Material", stages: ["PV Material", "Paid"], accent: "orange" },
               { key: "kirim", label: "Delivery Material", sub: "belum Receiving Material", stages: ["Delivery Material"], accent: "blue" },
               { key: "terima", label: "Receiving Material", sub: "belum Resting", stages: ["Receiving Material"], accent: "purple" },
-              { key: "prod", label: "Produksi s/d GR DC", sub: "Resting sampai GR DC", stages: ["Resting", "Cutting", "Finish Good", "Done FG", "Packing", "Delivery", "GR DC"], accent: "teal" },
+              { key: "prod", label: "Produksi s/d GR DC", sub: "Resting sampai GR DC", stages: ["Resting", "Cutting", "Finish Good", "Done FG", "Packing", "Delivery FG", "GR DC"], accent: "teal" },
             ] as const
           ).map((c) => {
             const list = shownRolls.filter((r) => (c.stages as readonly string[]).includes(r.status));

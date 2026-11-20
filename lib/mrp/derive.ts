@@ -1283,8 +1283,8 @@ export function materialPoFullStatusBadge(status: MaterialPoFullStatus) {
     RECEIVING: { label: "Receiving Material", tone: "rework" },
     PRODUCTION: { label: "Cutting", tone: "locked" },
     FINISH_GOOD: { label: "Done FG", tone: "success" },
-    DELIVERED_FROM_VENDOR: { label: "Delivery", tone: "active" },
-    SELESAI: { label: "Delivery", tone: "done" },
+    DELIVERED_FROM_VENDOR: { label: "Delivery FG", tone: "active" },
+    SELESAI: { label: "Delivery FG", tone: "done" },
   };
   return map[status];
 }

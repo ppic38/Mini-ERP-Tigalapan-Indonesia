@@ -425,7 +425,7 @@ export function koliRowsForItem(item: ItemTrackRow, kolis: DeliveryKoli[], recei
 /** Urutan tahapan baris (dipakai status dan filter). */
 // Nama status mengikuti status staging standar (lib/mrp/flowStatus.ts, owner 2026-11-16). "Belum dialokasikan" dan "Belum resting" tetap: baris rencana
 // belum punya roll, jadi tahap materialnya tidak bisa ditentukan per baris.
-export const ADUAN_STAGES = ["Belum dialokasikan", "Belum resting", "Resting", "Cutting", "Finish Good", "Done FG", "Packing", "Delivery", "GR DC"] as const;
+export const ADUAN_STAGES = ["Belum dialokasikan", "Belum resting", "Resting", "Cutting", "Finish Good", "Done FG", "Packing", "Delivery FG", "GR DC"] as const;
 export type AduanStage = (typeof ADUAN_STAGES)[number];
 
 export type AduanTrackRow = {
@@ -750,7 +750,7 @@ function rowStatus(r: AduanTrackRow, b?: ProductionBatch): AduanStage {
   if (r.fgWip > 0) return b ? "Done FG" : "Finish Good";
   if (r.diKoli > 0) return "Packing";
   // Tiba DC (WOS, belum divalidasi) masih Delivery; GR DC = sudah dibongkar / diterima gudang.
-  if (r.perjalanan > 0 || r.tibaDc > 0) return "Delivery";
+  if (r.perjalanan > 0 || r.tibaDc > 0) return "Delivery FG";
   return "GR DC";
 }
 
@@ -770,7 +770,7 @@ function rowStatus(r: AduanTrackRow, b?: ProductionBatch): AduanStage {
  * Target hanya diisi di baris PERTAMA roll x size (baris rencana: bagian target roll di status itu), supaya jumlahnya tidak ganda.
  * ------------------------------------------------------------------------------------------------------------------------------ */
 
-export const TRACK_STAGES = ["Wait PV", "PV", "Paid", "Del Mat", "GR Mat", "Resting", "Cutting", "FG", "Done FG", "Packing", "Delivery", "GR DC"] as const;
+export const TRACK_STAGES = ["Wait PV", "PV", "Paid", "Del Mat", "GR Mat", "Resting", "Cutting", "FG", "Done FG", "Packing", "Delivery FG", "GR DC"] as const;
 export type TrackStage = (typeof TRACK_STAGES)[number] | "Reject";
 export const TRACK_STATUSES: readonly TrackStage[] = [...TRACK_STAGES, "Reject"];
 const MAT_STAGES: TrackStage[] = ["Wait PV", "PV", "Paid", "Del Mat", "GR Mat"];
@@ -780,7 +780,7 @@ export type TrackLine = AduanTrackRow & {
   rsKey: string;
   stage: TrackStage;
   qty: number;
-  /** Estimasi qty baris ini dikirim vendor (status Delivery: tanggal kirim aktual) dan estimasi tiba di DC. Kosong untuk GR DC dan Reject. */
+  /** Estimasi qty baris ini dikirim vendor (status Delivery FG: tanggal kirim aktual) dan estimasi tiba di DC. Kosong untuk GR DC dan Reject. */
   estKirim?: string;
   estTibaDc?: string;
 };
@@ -828,7 +828,7 @@ function stageSince(r: TrackLine): string | undefined {
  *  (terlambat). Status Delivery memakai tanggal kirim aktual dan estimasi tiba koli. */
 function lineEstimates(r: TrackLine, today: string): Pick<TrackLine, "estKirim" | "estTibaDc"> {
   if (r.stage === "GR DC" || r.stage === "Reject") return {};
-  if (r.stage === "Delivery") return { estKirim: r.shipLastAt, estTibaDc: r.estTiba ?? plusDays(r.shipLastAt, ltTiba(r.vendorProduksi)) };
+  if (r.stage === "Delivery FG") return { estKirim: r.shipLastAt, estTibaDc: r.estTiba ?? plusDays(r.shipLastAt, ltTiba(r.vendorProduksi)) };
   const base = DAYS_TO_KIRIM[r.stage];
   if (base == null) return {};
   // Delivery Material -> GR Material per vendor (Konveksi Makassar 5 hari): berlaku untuk baris yang belum melewati GR Mat.
@@ -902,7 +902,7 @@ export function buildTrackLines(
 
   const statusToStage: Record<AduanStage, TrackStage> = {
     "Belum dialokasikan": "Wait PV", "Belum resting": "Wait PV", Resting: "Resting", Cutting: "Cutting",
-    "Finish Good": "FG", "Done FG": "Done FG", Packing: "Packing", Delivery: "Delivery", "GR DC": "GR DC",
+    "Finish Good": "FG", "Done FG": "Done FG", Packing: "Packing", "Delivery FG": "Delivery FG", "GR DC": "GR DC",
   };
   const out: TrackLine[] = [];
   const line = (r: AduanTrackRow, stage: TrackStage, qty: number, target: number, extra: Partial<AduanTrackRow> = {}): TrackLine => ({
@@ -934,7 +934,7 @@ export function buildTrackLines(
       // cuttingWip = cutting - FG - reject; roll ditutup: 0 (sisanya reject).
       parts.push(["Cutting", r.cuttingWip]);
       parts.push([b?.closedAt ? "Done FG" : "FG", r.fgWip]);
-      parts.push(["Packing", r.diKoli], ["Delivery", r.perjalanan + r.tibaDc], ["GR DC", r.diterima], ["Reject", r.reject]);
+      parts.push(["Packing", r.diKoli], ["Delivery FG", r.perjalanan + r.tibaDc], ["GR DC", r.diterima], ["Reject", r.reject]);
       if (r.jenis === "sisa" && r.cutting === 0 && r.fg === 0 && r.target > 0 && parts.every(([, q]) => q <= 0)) parts.push(["Wait PV", r.target]);
     }
     const live = parts.filter(([, q]) => q > 0);

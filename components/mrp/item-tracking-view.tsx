@@ -28,7 +28,7 @@ const CARDS: { key: string; label: string; stages: TrackStage[] }[] = [
   { key: "cut", label: "Resting & Cut", stages: ["Resting", "Cutting"] },
   { key: "fg", label: "FG & Done FG", stages: ["FG", "Done FG"] },
   { key: "koli", label: "Packing", stages: ["Packing"] },
-  { key: "kirim", label: "Delivery", stages: ["Delivery"] },
+  { key: "kirim", label: "Delivery FG", stages: ["Delivery FG"] },
   { key: "dc", label: "GR DC", stages: ["GR DC"] },
 ];
 
@@ -168,7 +168,7 @@ export function ItemTrackingView() {
       label: "ETD",
       default: true,
       info: { title: "ETD (estimasi delivery)", body: "Perkiraan qty baris ini dikirim vendor: tanggal masuk status + lead time sisa tahap (Wait PV, PV, Paid dihitung dari hari ini). Status Delivery = tanggal kirim aktual. Merah = sudah lewat." },
-      render: (r) => dateCell(r.estKirim, r.stage !== "Delivery" && !!r.estKirim && r.estKirim <= today),
+      render: (r) => dateCell(r.estKirim, r.stage !== "Delivery FG" && !!r.estKirim && r.estKirim <= today),
     },
     {
       key: "estTibaDc",

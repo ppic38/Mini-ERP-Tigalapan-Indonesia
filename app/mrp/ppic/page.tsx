@@ -320,7 +320,7 @@ export default function MrpListPage() {
     { key: "awal", label: "Approval", value: inStages(["Approval MRP", "Ditolak", "Approval PO"]), sub: "Approval MRP dan Approval PO", accent: "orange", stages: ["Approval MRP", "Ditolak", "Approval PO"] },
     { key: "material", label: "Material", value: inStages(["PV Material", "Paid", "Delivery Material", "Receiving Material"]), sub: "PV Material s/d Receiving Material", accent: "purple", stages: ["PV Material", "Paid", "Delivery Material", "Receiving Material"] },
     { key: "produksi", label: "Produksi", value: inStages(["Resting", "Cutting", "Finish Good", "Done FG", "Packing"]), sub: "Resting s/d Packing", accent: "blue", stages: ["Resting", "Cutting", "Finish Good", "Done FG", "Packing"] },
-    { key: "selesai", label: "Delivery & GR DC", value: inStages(["Delivery", "GR DC"]), sub: "dikirim vendor atau diterima gudang", accent: "teal", stages: ["Delivery", "GR DC"] },
+    { key: "selesai", label: "Delivery FG & GR DC", value: inStages(["Delivery FG", "GR DC"]), sub: "dikirim vendor atau diterima gudang", accent: "teal", stages: ["Delivery FG", "GR DC"] },
   ];
 
   const openRow = openMrpId ? rows.find((r) => r.mrp.id === openMrpId) : undefined;

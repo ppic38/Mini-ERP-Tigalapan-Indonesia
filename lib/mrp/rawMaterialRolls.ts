@@ -12,7 +12,7 @@ import type { DeliveryKoli, Lengan, MaterialClaimHistory, ProductionBatch, RawMa
  *  Status = status staging standar (`lib/mrp/flowStatus.ts`, owner 2026-11-16): Paid -> Delivery Material -> Receiving Material -> Resting -> Cutting ->
  *  Finish Good -> Done FG -> Packing -> Delivery -> GR DC; Diretur = roll keluar lewat klaim retur. */
 
-export const RM_ROLL_STATUSES = ["Paid", "Delivery Material", "Receiving Material", "Resting", "Cutting", "Finish Good", "Done FG", "Packing", "Delivery", "GR DC", "Diretur"] as const;
+export const RM_ROLL_STATUSES = ["Paid", "Delivery Material", "Receiving Material", "Resting", "Cutting", "Finish Good", "Done FG", "Packing", "Delivery FG", "GR DC", "Diretur"] as const;
 export type RmRollStatus = Exclude<FlowStage, "Approval MRP" | "Approval PO" | "PV Material"> | "Diretur";
 
 /** Posisi ringkas untuk kartu (sama pengelompokan Posisi Stok). */
@@ -21,7 +21,7 @@ export type RmRollPosition = (typeof RM_ROLL_POSITIONS)[number];
 
 export function positionOf(status: RmRollStatus): RmRollPosition {
   if (status === "Paid" || status === "Delivery Material" || status === "Receiving Material") return "Belum produksi";
-  if (status === "Delivery" || status === "GR DC") return "Sudah delivery";
+  if (status === "Delivery FG" || status === "GR DC") return "Sudah delivery";
   if (status === "Diretur") return "Diretur";
   return "Proses produksi";
 }

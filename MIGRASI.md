@@ -15,6 +15,13 @@ Owner: status harus mencerminkan posisi qty (filter Status hanya menampilkan qty
 
 
 
+## Status "Delivery" dibedakan: tahap barang jadi menjadi "Delivery FG"; Material Tracking menampilkan rincian roll per tahap (2026-11-20, tanpa migration)
+Owner (Material Tracking, invoice berstatus "Delivery" padahal vendor sudah Receiving dan sudah kirim ke warehouse): tidak jelas "Delivery" itu kirim kain ke vendor atau kirim barang jadi ke warehouse; minta dibedakan, dan bisa dilacak apakah sudah Good Receive, Produksi, atau dikirim ke warehouse.
+- Tahap standar `Delivery` (barang jadi semua sudah dikirim vendor, belum dibongkar gudang) berganti nama **`Delivery FG`** di `lib/mrp/flowStatus.ts` (`FLOW_STAGES`, `batchFlowStage`) dan semua pemakainya: Tracking Item (`ADUAN_STAGES`, `TRACK_STAGES`, kartu Delivery FG, ETD/ETA), Raw Material / Posisi Stok per roll (`RM_ROLL_STATUSES`), PPIC MRP dan SCM Monitoring (kartu "Delivery FG & GR DC"), Procurement Material Tracking (kartu Produksi s/d GR DC), Dashboard (peta gate, kartu Progres PO, kolom "Delivery FG" di tabel progres MRP), dan label status PO Material (`DELIVERED_FROM_VENDOR`, `SELESAI`). "Delivery Material" (Set Delivery, supplier ke vendor) tidak berubah. Perhitungan tahap tidak berubah, hanya namanya. Filter / favorit tersimpan yang memuat nilai lama "Delivery" tidak cocok lagi dan perlu dipilih ulang.
+- Material Tracking: kolom, filter, dan kelompok "Tgl Delivery" menjadi **"Tgl Delivery Material"**, filter "Delivery" (Belum / Sudah delivery) menjadi "Delivery Material". Kolom Status tab per invoice kini menampilkan jumlah roll per tahap bila rollnya berbeda tahap (mis. "Receiving Material 3 · Cutting 20 · Delivery FG 29"; status utama tetap tahap paling awal; semua roll sama tahap = hanya label), menggantikan teks "+N roll lebih maju".
+- Tidak diubah: "Status kirim" Laporan HPP (`STATUS_KIRIM_DELIVERY`, konsep terpisah), fase "Delivery" di Gate-to-Gate (`lib/g2g/gates.ts`), halaman Sysadmin dan portal vendor.
+- Diuji: tsc bersih; eslint hanya temuan lama. Belum dilihat di layar.
+
 ## Alur surat jalan KNITTO hanya berlaku mulai MRP W45 (2026-11-19, tanpa migration)
 Owner: alur code roll dari surat jalan (entri di bawah) dimulai di W45; MRP W44 ke bawah sudah berjalan dengan vendor mengetik code roll sendiri dan tidak diubah.
 - `lib/invoice-import/surat-jalan.ts`: `SURAT_JALAN_FROM_WEEK = 45`, `suratJalanActiveForMrp(mrpId)` (pola nomor minggu sama dengan `mrpWeekNumber` di derive.ts: `W<angka>`; MRP tanpa pola itu dianggap lama) dan `invoiceUsesSuratJalan(supplier, mrpId)` = KNITTO DAN W45 ke atas.

@@ -13,7 +13,7 @@ const STAGE_COLS: { key: keyof MrpProgressStage; label: string; unit: string }[]
   { key: "rcvMaterial", label: "Rcv Material", unit: "roll" },
   { key: "cutting", label: "Cutting", unit: "roll" },
   { key: "fg", label: "FG", unit: "pcs" },
-  { key: "delivery", label: "Delivery", unit: "pcs" },
+  { key: "delivery", label: "Delivery FG", unit: "pcs" },
 ];
 
 function StageCell({ value }: { value: number }) {

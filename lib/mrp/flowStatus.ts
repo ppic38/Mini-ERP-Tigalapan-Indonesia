@@ -25,7 +25,7 @@ import type { EkspedisiRateRow, ItemSellingPriceRow } from "./masterData";
  *   Finish Good        : Finish Good mulai diinput, roll belum ditutup
  *   Done FG            : roll ditutup / produksi selesai, belum masuk koli
  *   Packing            : hasilnya (sebagian) sudah di koli, belum semua dikirim
- *   Delivery           : semua sudah dikirim vendor (koli punya ekspedisi dan resi), belum dibongkar gudang
+ *   Delivery FG        : barang jadi (FG) semua sudah dikirim vendor ke gudang (koli punya ekspedisi dan resi), belum dibongkar gudang. BEDA dari Delivery Material (kain dari supplier ke vendor).
  *   GR DC              : diterima gudang (Bongkar Koli Warehouse)
  *  Status samping (di luar urutan): Ditolak, Dibatalkan, Diretur.
  *  Satu baris yang memuat banyak barang (mis. satu MRP) memakai tahap PALING AWAL yang masih memegang barang. */
@@ -41,7 +41,7 @@ export const FLOW_STAGES = [
   "Finish Good",
   "Done FG",
   "Packing",
-  "Delivery",
+  "Delivery FG",
   "GR DC",
 ] as const;
 export type FlowStage = (typeof FLOW_STAGES)[number];
@@ -132,7 +132,7 @@ export function batchFlowStage(b: ProductionBatch, ship: BatchShipping | undefin
   const s = ship ?? { packed: 0, shipped: 0, received: 0 };
   if (b.closedAt && basis > 0) {
     if (s.received >= basis) return "GR DC";
-    if (s.shipped >= basis) return "Delivery";
+    if (s.shipped >= basis) return "Delivery FG";
   }
   if (s.packed > 0) return "Packing";
   if (b.closedAt) return "Done FG";
