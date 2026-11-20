@@ -43,6 +43,10 @@ export type ParsedInvoice = {
     rollan: { kg: number; n: number } | null;
     /** "Total Qty" (total kg semua barang) bila dicetak -- FABRIKU; dipakai sebagai pembanding berat. */
     totalKg?: number | null;
+    /** Template baru FABRIKU (2026-11-20): "DOWNPAYMENT Rp ..." = uang muka yang SUDAH dibayar lebih dulu. Kosong/0 = invoice tanpa DP (template lama). */
+    downpayment?: number | null;
+    /** "SISA Rp ..." tercetak di template DP = TOTAL - DOWNPAYMENT; itulah yang dibayar lewat PV. */
+    sisa?: number | null;
   };
   warnings: string[];
   rawText: string;
@@ -70,6 +74,8 @@ export type AppliedImport = {
   totalBayar: number;
   subtotal: number;
   diskon: number;
+  /** Uang muka (DP) yang tercetak di invoice; 0 = tidak ada. Yang dibayar Finance lewat PV = totalBayar - downpayment. */
+  downpayment?: number;
   rollCount: number;
   rollKg: number;
   ribKg: number;

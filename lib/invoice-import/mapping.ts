@@ -12,6 +12,13 @@
 import type { ParsedInvoice, ParsedInvoiceGroup } from "./types";
 import { round2 } from "./parser-knitto";
 
+/** DP (uang muka) yang sah dari hasil baca invoice: angka positif yang lebih kecil dari TOTAL. Selain itu dianggap tidak ada (kasus janggal
+ *  diblokir oleh pemeriksaan invoice, lihat validateFabrikuInvoice). Yang dibayar lewat PV = TOTAL - DP; nilai PV (dasar HPP) tetap TOTAL. */
+export function downpaymentOf(p: ParsedInvoice): number {
+  const dp = p.totals.downpayment;
+  return dp != null && Number.isFinite(dp) && dp > 0 && Number.isFinite(p.totals.totalBayar) && dp < p.totals.totalBayar ? dp : 0;
+}
+
 // ---------- Nama warna ----------
 
 export type ParsedMrpWarna = { base: string; benang: string; variant: string };

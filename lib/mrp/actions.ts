@@ -1147,7 +1147,7 @@ async function getInvoiceBuktiPvImpl(invoiceId: string): Promise<{ dataUrl: stri
   return { dataUrl: old.bukti_pv_storage_path, fileName: old.bukti_pv_file_name ?? undefined };
 }
 
-type BookInvoiceInput = { colorEntries: ColorEntry[]; addBuys: AddBuyItem[]; diskon: number; kodeTransaksi: string; noInvoiceVendor: string; buktiPvDataUrl?: string; buktiPvFileName?: string };
+type BookInvoiceInput = { colorEntries: ColorEntry[]; addBuys: AddBuyItem[]; diskon: number; kodeTransaksi: string; noInvoiceVendor: string; downpayment?: number; buktiPvDataUrl?: string; buktiPvFileName?: string };
 
 /** Revisi 2026-10-20: alasan penolakan dikembalikan sebagai NILAI ({ ok: false, error }) -- di production Next.js
  *  menyembunyikan pesan Error yang di-throw Server Action, jadi pesan jatah PO di bawah tidak akan sampai ke
@@ -1211,6 +1211,15 @@ async function bookInvoiceImpl(poId: string, input: BookInvoiceInput): Promise<v
   const materialTotal = input.colorEntries.reduce((a, c) => a + c.hargaPerRoll * c.rolls.reduce((s, w) => s + w, 0), 0);
   const addBuyTotal = input.addBuys.reduce((a, b) => a + b.totalHarga, 0);
   const totalBiaya = materialTotal + addBuyTotal - input.diskon;
+  // Downpayment (uang muka) dari invoice supplier template baru (FABRIKU, 2026-11-20): total_biaya TETAP nilai penuh PV (dasar HPP per roll,
+  // Posisi Stok, laporan bahan), sedangkan yang dibayar Finance hanya sisanya: DP dicatat sebagai kredit deposit supplier yang LANGSUNG
+  // diterapkan ke invoice ini (DEBIT source_invoice_id), persis pola PV pengganti klaim -- outstandingAmountForInvoice (derive.ts) dan
+  // setInvoicesPaidAction sudah menetto DEBIT itu dari tagihan.
+  const downpayment = Math.round(Number(input.downpayment ?? 0));
+  if (!Number.isFinite(downpayment) || downpayment < 0) throw new Error("Downpayment tidak valid.");
+  if (downpayment > 0 && downpayment >= Math.round(totalBiaya)) {
+    throw new Error(`Downpayment (Rp ${downpayment.toLocaleString("id-ID")}) harus lebih kecil dari total PV (Rp ${Math.round(totalBiaya).toLocaleString("id-ID")}).`);
+  }
   const invoiceId = await nextReadableId("INV");
 
   // Kode roll dari invoice supplier (upload FABRIKU): hanya dipakai kalau paralel ke rolls; harus unik di seluruh ERP -- dicek SEBELUM
@@ -1244,6 +1253,34 @@ async function bookInvoiceImpl(poId: string, input: BookInvoiceInput): Promise<v
     bukti_pv_file_name: input.buktiPvFileName ?? "bukti-pv.pdf",
   });
   if (insErr) throw new Error(`Gagal booking invoice: ${insErr.message}`);
+  if (downpayment > 0) {
+    // Dicatat SEGERA setelah invoice (sebelum langkah lain): kalau gagal, invoice dibatalkan supaya tidak ada PV tanpa DP yang terbayar penuh.
+    const creditId = await nextReadableId("VDP");
+    const debitId = await nextReadableId("VDP");
+    const ref = input.noInvoiceVendor || input.kodeTransaksi || invoiceId;
+    const rollback = async (msg: string): Promise<never> => {
+      await db.from("vendor_deposits").delete().in("id", [creditId, debitId]);
+      await db.from("raw_material_invoices").delete().eq("id", invoiceId);
+      throw new Error(`Downpayment gagal dicatat, PV dibatalkan (tidak ada yang tersimpan): ${msg}`);
+    };
+    const { error: crErr } = await db.from("vendor_deposits").insert({
+      id: creditId,
+      supplier: po.supplier,
+      kind: "CREDIT",
+      amount: downpayment,
+      note: `Downpayment invoice ${ref} (PO ${poId}, vendor produksi ${po.vendor_produksi}), dibayar sebelum PV.`,
+    });
+    if (crErr) await rollback(crErr.message);
+    const { error: dbErr } = await db.from("vendor_deposits").insert({
+      id: debitId,
+      supplier: po.supplier,
+      kind: "DEBIT",
+      amount: downpayment,
+      source_invoice_id: invoiceId,
+      note: `Otomatis diterapkan: downpayment invoice ${ref} ke PV ${invoiceId}. Sisa yang dibayar Rp ${Math.round(totalBiaya - downpayment).toLocaleString("id-ID")}.`,
+    });
+    if (dbErr) await rollback(dbErr.message);
+  }
   await saveInvoicePvFile(db, invoiceId, input.buktiPvDataUrl, input.buktiPvFileName ?? "bukti-pv.pdf");
 
   for (const c of input.colorEntries) {

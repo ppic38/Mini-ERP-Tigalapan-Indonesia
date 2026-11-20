@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { aliasesToSave, buildPvDraft } from "@/lib/invoice-import/mapping";
+import { aliasesToSave, buildPvDraft, downpaymentOf } from "@/lib/invoice-import/mapping";
 import { poAfterDraft, type BatchAssessment, type BatchStatus } from "@/lib/invoice-import/batch";
 import { round2 } from "@/lib/invoice-import/parser-knitto";
 import type { ParsedInvoice } from "@/lib/invoice-import/types";
@@ -15,6 +15,8 @@ export type PvBookInput = {
   diskon: number;
   kodeTransaksi: string;
   noInvoiceVendor: string;
+  /** Uang muka (DP) dari invoice; dicatat sebagai kredit deposit yang langsung diterapkan ke PV (Finance membayar sisanya). */
+  downpayment?: number;
   buktiPvDataUrl?: string;
   buktiPvFileName?: string;
 };
@@ -91,6 +93,7 @@ export function InvoiceBatchReview({
           diskon: draft.diskon,
           noInvoiceVendor: it.parsed.noPenjualan,
           kodeTransaksi: it.parsed.kodeTransfer,
+          downpayment: downpaymentOf(it.parsed) || undefined,
           buktiPvDataUrl,
           buktiPvFileName: it.file.name,
         });
@@ -148,7 +151,12 @@ export function InvoiceBatchReview({
                     <td className="px-3 py-2 font-mono">{it.parsed.noPenjualan || "—"}</td>
                     <td className="px-3 py-2 text-right font-mono">{a.evalResult.invoiceRolls}</td>
                     <td className="px-3 py-2 text-right font-mono">{round2(a.evalResult.invoiceRibKg).toLocaleString("id-ID")}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatRupiah(a.evalResult.invoiceTotalBayar)}</td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {formatRupiah(a.evalResult.invoiceTotalBayar)}
+                      {downpaymentOf(it.parsed) > 0 && (
+                        <div className="text-[10px] font-normal text-text-muted">DP {formatRupiah(downpaymentOf(it.parsed))} → sisa {formatRupiah(a.evalResult.invoiceTotalBayar - downpaymentOf(it.parsed))}</div>
+                      )}
+                    </td>
                     <td className="px-3 py-2">
                       {r ? (
                         <span className={"rounded px-1.5 py-0.5 text-[10.5px] font-semibold " + (r.state === "saved" ? "bg-success-bg text-success-fg" : r.state === "failed" ? "bg-danger-bg text-danger-fg" : "bg-[#EEF1F4] text-text-muted")}>

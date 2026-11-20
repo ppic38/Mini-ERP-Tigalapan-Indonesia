@@ -349,7 +349,7 @@ type FlowActions = {
   resubmitPo: (type: "MATERIAL" | "MAKLON", id: string) => Promise<void>;
   bookInvoice: (
     poId: string,
-    input: { colorEntries: ColorEntry[]; addBuys: AddBuyItem[]; diskon: number; kodeTransaksi: string; noInvoiceVendor: string; buktiPvDataUrl?: string; buktiPvFileName?: string }
+    input: { colorEntries: ColorEntry[]; addBuys: AddBuyItem[]; diskon: number; kodeTransaksi: string; noInvoiceVendor: string; downpayment?: number; buktiPvDataUrl?: string; buktiPvFileName?: string }
   ) => Promise<void>;
   /** Item revisi 2026-09-17 (owner: "action payment invoice tidak bisa dilakukan kalau tidak
    *  upload bukti pembayaran") -- `proof` WAJIB diisi kalau `paid` true (server menegakkan ulang,

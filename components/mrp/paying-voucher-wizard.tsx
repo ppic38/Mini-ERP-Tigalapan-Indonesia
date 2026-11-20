@@ -102,6 +102,8 @@ export function PayingVoucherWizard({
     diskon: number;
     kodeTransaksi: string;
     noInvoiceVendor: string;
+    /** Uang muka (DP) yang sudah dibayar lebih dulu; dicatat sebagai kredit deposit yang langsung diterapkan ke PV ini (Finance hanya membayar sisanya). */
+    downpayment?: number;
     buktiPvDataUrl?: string;
     buktiPvFileName?: string;
   }) => Promise<void>;
@@ -139,6 +141,8 @@ export function PayingVoucherWizard({
   const [draftLots, setDraftLots] = useState<string[] | null>(null);
   const [addBuys, setAddBuys] = useState<AddBuyItem[]>([]);
   const [diskon, setDiskon] = useState(0);
+  // Downpayment (uang muka) dari invoice supplier template baru (FABRIKU): TOTAL tetap nilai PV (dasar HPP per roll), Finance hanya membayar sisanya.
+  const [downpayment, setDownpayment] = useState(0);
   // Dulu auto-generate "TRX-xxxx" acak dan langsung dipakai sebagai isi field -- sekarang kosong,
   // cuma format 4-digit-nya yang ditampilkan sebagai placeholder (lihat <input> di bawah), user
   // wajib isi sendiri.
@@ -336,6 +340,7 @@ export function PayingVoucherWizard({
     }
     setAddBuys(ab);
     setDiskon(p.diskon);
+    setDownpayment(p.downpayment ?? 0);
     setNoInvoiceVendor(p.noInvoiceVendor);
     setKodeTransaksi(p.kodeTransaksi);
     setApplied(p.info);
@@ -385,13 +390,15 @@ export function PayingVoucherWizard({
         .filter((r) => Math.abs(r.planned - r.actual) > 0.05)
     : [];
 
-  const canSubmit = (entries.length > 0 || addBuys.length > 0) && kodeTransaksi.trim() && !!buktiPvDataUrl && !submitting && (!appliedMismatch || ackDiff);
+  // DP harus positif dan lebih kecil dari total PV (server menegakkan lagi); 0 = PV biasa tanpa uang muka.
+  const downpaymentInvalid = downpayment > 0 && downpayment >= total;
+  const canSubmit = (entries.length > 0 || addBuys.length > 0) && kodeTransaksi.trim() && !!buktiPvDataUrl && !submitting && (!appliedMismatch || ackDiff) && !downpaymentInvalid;
 
   async function handleSubmit() {
     setSubmitError("");
     setSubmitting(true);
     try {
-      await onSubmit({ colorEntries: entries, addBuys, diskon, kodeTransaksi, noInvoiceVendor, buktiPvDataUrl, buktiPvFileName });
+      await onSubmit({ colorEntries: entries, addBuys, diskon, kodeTransaksi, noInvoiceVendor, downpayment: downpayment > 0 ? downpayment : undefined, buktiPvDataUrl, buktiPvFileName });
       // PV tersimpan -> ingat pemetaan warna invoice yang tadi dikonfirmasi (best-effort, tidak menggagalkan PV).
       if (applied && applied.aliases.length > 0) void saveSupplierColorAliasesAction(po.supplier, applied.aliases).catch(() => {});
     } catch (err) {
@@ -787,6 +794,26 @@ export function PayingVoucherWizard({
           <div className="input mt-1 flex items-center bg-white font-mono font-semibold">{formatRupiah(total)}</div>
         </div>
       </div>
+
+      {(downpayment > 0 || invoiceAdapter?.id === "fabriku") && (
+        <div className="mt-3 grid grid-cols-4 gap-3">
+          <div>
+            <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Downpayment (sudah dibayar)</div>
+            <NumberInput value={downpayment} onChange={(v) => setDownpayment(Math.max(0, v))} currency startEmptyIfZero placeholder="Rp 0" className="input mt-1" />
+          </div>
+          <div>
+            <div className="font-sans text-[10.5px] font-medium uppercase tracking-wider text-text-muted">Dibayar di PV (sisa)</div>
+            <div className="input mt-1 flex items-center bg-white font-mono font-semibold">{formatRupiah(Math.max(0, total - downpayment))}</div>
+          </div>
+          <div className="col-span-2 self-end pb-1 font-sans text-[11px] text-text-muted">
+            {downpaymentInvalid ? (
+              <span className="font-medium text-danger-fg">Downpayment harus lebih kecil dari total pembelian.</span>
+            ) : (
+              "Total pembelian tetap nilai PV (harga per roll dan HPP tidak berubah). DP dicatat sebagai kredit deposit supplier yang langsung diterapkan ke PV ini, jadi Finance hanya membayar sisanya."
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="mt-3">
         {/* Wajib diisi sebelum PV bisa diajukan (lihat canSubmit) — Finance nanti bisa lihat
