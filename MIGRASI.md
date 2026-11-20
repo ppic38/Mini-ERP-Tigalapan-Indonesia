@@ -15,6 +15,12 @@ Owner: status harus mencerminkan posisi qty (filter Status hanya menampilkan qty
 
 
 
+## Tracking Item (PPIC dan SCM): kolom No. Koli dan No. Resi (2026-11-20, tanpa migration)
+Owner: tabel Tracking Item belum punya kolom resi dan nomor koli.
+- `lib/mrp/itemTracking.ts`: `AduanTrackRow.koliRefs` (nomor koli, nomor resi, dan posisi koli: belum dikirim / sudah dikirim belum diterima DC / sudah diterima DC) diisi dari item koli yang roll asalnya roll itu; `TrackLine.noKoli` dan `noResi` dihitung per baris status (`koliFor`): status **Packing** = koli yang belum dikirim, **Delivery FG** = koli yang sudah dikirim belum diterima DC, **GR DC** = koli yang sudah diterima; status lain kosong. Lebih dari satu koli / resi dipisah koma. Baris sisa / rework tanpa penelusuran per koli menampilkan semua koli selnya tanpa resi.
+- `components/mrp/item-tracking-view.tsx`: kolom "No. Koli" dan "No. Resi" (tampil bawaan, tepat sesudah Status). `lib/mrp/exportTrackLinesExcel.ts`: dua kolom yang sama di Excel (setelah Status).
+- Diuji: tsc bersih. Belum dilihat di layar atau dicocokkan dengan data koli sungguhan.
+
 ## Status "Delivery" dibedakan: tahap barang jadi menjadi "Delivery FG"; Material Tracking menampilkan rincian roll per tahap (2026-11-20, tanpa migration)
 Owner (Material Tracking, invoice berstatus "Delivery" padahal vendor sudah Receiving dan sudah kirim ke warehouse): tidak jelas "Delivery" itu kirim kain ke vendor atau kirim barang jadi ke warehouse; minta dibedakan, dan bisa dilacak apakah sudah Good Receive, Produksi, atau dikirim ke warehouse.
 - Tahap standar `Delivery` (barang jadi semua sudah dikirim vendor, belum dibongkar gudang) berganti nama **`Delivery FG`** di `lib/mrp/flowStatus.ts` (`FLOW_STAGES`, `batchFlowStage`) dan semua pemakainya: Tracking Item (`ADUAN_STAGES`, `TRACK_STAGES`, kartu Delivery FG, ETD/ETA), Raw Material / Posisi Stok per roll (`RM_ROLL_STATUSES`), PPIC MRP dan SCM Monitoring (kartu "Delivery FG & GR DC"), Procurement Material Tracking (kartu Produksi s/d GR DC), Dashboard (peta gate, kartu Progres PO, kolom "Delivery FG" di tabel progres MRP), dan label status PO Material (`DELIVERED_FROM_VENDOR`, `SELESAI`). "Delivery Material" (Set Delivery, supplier ke vendor) tidak berubah. Perhitungan tahap tidak berubah, hanya namanya. Filter / favorit tersimpan yang memuat nilai lama "Delivery" tidak cocok lagi dan perlu dipilih ulang.

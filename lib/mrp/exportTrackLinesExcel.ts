@@ -3,7 +3,7 @@ import { TRACK_STATUSES, type TrackLine } from "./itemTracking";
 
 // Export Tracking Item (owner 2026-11-19): kolom tetap, satu baris = roll x size x status (sama dengan tabel di layar):
 //   Item (SKU), No. MRP, Vendor, Kategori, Warna, Size, Code Roll, Target, satu kolom per status (Wait PV .. GR DC, Reject),
-//   Status, Est. Delivery, Est. Tiba. Mengikuti baris yang tampil (filter tabel dan filter tanggal). Total memakai SUBTOTAL(109)
+//   Status, No Koli, No Resi, Est. Delivery, Est. Tiba. Mengikuti baris yang tampil (filter tabel dan filter tanggal). Total memakai SUBTOTAL(109)
 //   sehingga ikut berubah saat difilter di Excel. Menggantikan template WIP lama (lib/mrp/exportTrackingExcel.ts, tidak dipakai lagi).
 
 const INK = "FF1A1A1F";
@@ -45,6 +45,8 @@ export async function exportTrackLinesExcel(rows: TrackExportRow[], fileName: st
     { text: "Target", width: 9, kind: "int" },
     ...TRACK_STATUSES.map((s) => ({ text: s, width: 10, kind: "int" as const })),
     { text: "Status", width: 12, kind: "text" },
+    { text: "No Koli", width: 14, kind: "text" },
+    { text: "No Resi", width: 22, kind: "text" },
     { text: "ETD", width: 13, kind: "date" },
     { text: "ETA", width: 13, kind: "date" },
   ];
@@ -88,6 +90,8 @@ export async function exportTrackLinesExcel(rows: TrackExportRow[], fileName: st
       r.target || null,
       ...TRACK_STATUSES.map((s) => (r.stage === s && r.qty ? r.qty : null)),
       r.stage,
+      r.noKoli || "",
+      r.noResi || "",
       asDate(r.estKirim),
       asDate(r.estTibaDc),
     ];

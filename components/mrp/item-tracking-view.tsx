@@ -164,6 +164,21 @@ export function ItemTrackingView() {
       render: (r) => <StageBadge stages={FLOW} current={r.stage} tone={r.stage === "Reject" ? "danger" : r.stage === "GR DC" ? "done" : undefined} />,
     },
     {
+      key: "noKoli",
+      aggregate: sameText((r) => r.noKoli),
+      label: "No. Koli",
+      default: true,
+      info: { title: "No. Koli", body: "Nomor koli yang memuat qty baris ini: status Packing = koli belum dikirim, Delivery FG = sudah dikirim belum diterima DC, GR DC = sudah diterima. Status lain kosong." },
+      render: (r) => (r.noKoli ? <span className="font-mono">{r.noKoli}</span> : <span className="text-text-muted">-</span>),
+    },
+    {
+      key: "noResi",
+      aggregate: sameText((r) => r.noResi),
+      label: "No. Resi",
+      default: true,
+      render: (r) => (r.noResi ? <span className="font-mono">{r.noResi}</span> : <span className="text-text-muted">-</span>),
+    },
+    {
       key: "estKirim",
       label: "ETD",
       default: true,
