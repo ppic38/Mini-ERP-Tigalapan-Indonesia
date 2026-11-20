@@ -2,7 +2,7 @@
 
 > Dibaca otomatis setiap sesi (lewat CLAUDE.md). Sesi yang menyelesaikan atau mengubah rencana di sini WAJIB
 > memperbaruinya sebelum selesai. Riwayat fitur yang SUDAH jadi tetap dicatat di MIGRASI.md.
-> Terakhir diperbarui: 2026-11-19.
+> Terakhir diperbarui: 2026-11-20.
 
 ## Yang ingin dikerjakan owner (dikonfirmasi 2026-11-13)
 Hanya DUA hal:
@@ -19,7 +19,23 @@ Semua dikerjakan di lokal dulu, baru dinaikkan ke live bertahap.
 
 ## TITIK LANJUT BERIKUTNYA (baca ini dulu)
 
-### STATUS TERKINI 2026-11-19 (paling penting, baca sebelum yang lain)
+### STATUS TERKINI 2026-11-20 (paling penting, baca sebelum yang lain)
+**PR #3 SUDAH TAYANG di live** (`redesign-lanjutan` -> `main`, merge commit `9a220fd`, di-merge akun `ppic38` 2026-11-20 07.42 WIB).
+Titik mundur sebelum merge: `f52dce6`. Tidak ada migration. Isinya (rincian di MIGRASI.md entri 2026-11-19):
+- Tracking Item (PPIC dan SCM) = satu baris per roll x size x STATUS (`buildTrackLines`, `lib/mrp/itemTracking.ts`); filter Status
+  = posisi qty. Kolom tetap: Item SKU, No MRP, Vendor, Kategori, Warna, Size, Code Roll, Target, Wait PV .. GR DC, Reject, Status,
+  ETD, ETA. Export Excel baru `lib/mrp/exportTrackLinesExcel.ts` (kolom sama); template WIP lama tidak dipakai dari halaman ini.
+- Matriks 11 gate dashboard: label Del Mat / GR Mat; sel bisa diklik di dashboard PPIC dan SCM -> Tracking terfilter No MRP + status
+  yang BELUM lolos gate itu (aturan "belum lolos gate", dipilih sesi ini karena owner tidak menjawab A/B), kelompok Status > Vendor > Warna.
+- Lead time Del Mat -> GR Mat Konveksi Makassar 5 hari (`LT_DEL_MAT_BY_VENDOR`, `lib/mrp/itemEstimates.ts`), dipakai ETD dan Kendala SLA.
+- Material Tracking > Material per invoice: filter dan kelompok Warna dan Tgl Delivery.
+Sesudah merge, owner commit `56de9d3` langsung ke `main`: status pengiriman barang jadi diganti nama **"Delivery FG"** (bedakan dari
+Delivery Material) di flowStatus, Tracking Item, dan matriks dashboard; Material Tracking dapat Tgl Delivery Material dan rincian roll
+per tahap. Branch `redesign-lanjutan` sudah digabung dengan `main` `56de9d3` (2026-11-20) dan masih dipakai untuk pekerjaan berikutnya.
+**Tampilan PR #3 belum pernah dilihat sesi Claude** (panel browser sesi itu tidak bisa login lokal; owner yang melihat). Minta kabar
+owner soal: jumlah baris dan kecepatan Tracking Item, klik sel dashboard, Export Excel baru.
+
+### STATUS 2026-11-19 (riwayat)
 **Redesign SUDAH TAYANG di live.** PR #2 (`redesign-fondasi-tabel` -> `main`, 75 commit, 86 file) di-merge akun `ppic38`
 pada 2026-11-18 13.37 WIB (merge commit `9a1ff52`). Titik mundur sebelum merge: `a88eeb7`. Tidak ada migration di dalamnya.
 Sesudah merge, owner (lewat sesi Claude lain) MENGEMBALIKAN dua hal, commit langsung ke `main`:
@@ -47,7 +63,10 @@ Ritual tetap: `git fetch` lalu `git merge origin/main` sebelum mulai; tim IT/own
    posisi); kartu atas ikut menjumlah hanya qty posisi terpilih. Kolom Status dan data tidak berubah. Owner baru bertanya
    "apa itu filter posisi", belum memutuskan.
 2. SLA: owner mengisi spreadsheet usulan SLA (tautan di `docs/usulan-sla-leadtime.md`), lalu tim IT membuat tabel `sla_settings`.
-   Sampai itu, angka SLA ada di kode (`SLA_DEFAULTS`, `lib/mrp/opsMonitor.ts`).
+   Sampai itu, angka SLA ada di kode (`SLA_DEFAULTS`, `lib/mrp/opsMonitor.ts`; Del Mat Makassar `LT_DEL_MAT_BY_VENDOR`).
+   Lead time ETD yang MASIH USULAN dan perlu ditetapkan owner: Paid -> Del Mat 1 hari, GR Mat -> Resting 3, Resting -> Cutting 2
+   (`LT_STEP` di `lib/mrp/itemTracking.ts`). Juga belum dijawab: PV -> Paid dihitung berurutan (2 + 2 hari sejak PO disetujui, yang
+   dipakai sekarang) atau keduanya selesai 2 hari sejak PO disetujui.
 3. Fase 0b (Supabase UJI + env Preview Vercel). Preview Vercel PR #2 build sukses tetapi kemungkinan tanpa data karena env
    Supabase hanya untuk Production.
 
@@ -63,6 +82,11 @@ Set Delivery, Bongkar Koli), Mode Sysadmin, tampilan HP modul internal, kecepata
 - `main` TIDAK punya branch protection: siapa pun yang punya akses bisa merge tanpa approval. Push/merge ke `main` = langsung
   tayang lewat Vercel. Jangan lakukan tanpa persetujuan owner yang eksplisit.
 - Deskripsi PR #2 (berguna sebagai ringkasan isi redesign): `docs/PR-REDESIGN-DESKRIPSI.md`.
+
+**Supabase lokal macet setelah laptop sleep (2026-11-19):** gejala app lokal tertahan "Memuat data..." dan log server
+`fetch failed ... other side closed`; gateway Kong di port 54321 berhenti meneruskan permintaan (container masih "healthy").
+Perbaikan: `docker restart supabase_kong_ERP_38`, lalu login ulang. Catatan: server dev Next 16 mencetak argumen Server Action,
+termasuk password login, ke log terminal; jangan bagikan log itu.
 
 **Lingkungan lokal setelah sinkron 2026-11-17:** database lokal ditimpa salinan live terbaru, jadi akun uji vendor CECEP
 (`VENDOR_TEST_PASSWORD_CE`) HILANG; buat ulang (hash bcrypt di `vendors_produksi.password_hash` LOKAL) kalau perlu
@@ -419,7 +443,8 @@ Kalau sedang di tengah branch modul, tambahkan `git merge main` SETIAP HARI. Kon
 - Fase 1-5: SELESAI dan TAYANG lewat PR #2 (2026-11-18) untuk modul internal; menu atas dan halaman login dikembalikan owner
   ke versi lama (`d0485c7`). Rincian per modul di MIGRASI.md (entri bertanda `[redesign-...]`).
 - Portal Vendor Produksi: TIDAK diubah (keputusan owner 2026-11-17).
-- Modul yang sedang dirombak saat ini: Tracking Item + matriks dashboard (branch `redesign-lanjutan`, PR 2026-11-19, menunggu review/merge owner). Yang belum: lead time Paid -> Del Mat, GR Mat -> Resting, Resting -> Cutting masih usulan.
+- PR #3 (Tracking Item per status, ETD/ETA, klik matriks dashboard, Material Tracking Warna/Tgl Delivery): TAYANG 2026-11-20 (`9a220fd`).
+- Modul yang sedang dirombak saat ini: (tidak ada). Yang belum: lead time Paid -> Del Mat, GR Mat -> Resting, Resting -> Cutting masih usulan.
 
 ## 3. Sederhanakan alur login -- DIBATALKAN OWNER (2026-11-13), JANGAN DIKERJAKAN
 > **Owner memutuskan tidak mengubah metode login.** Bagian ini disimpan sebagai hasil analisis saja, kalau
