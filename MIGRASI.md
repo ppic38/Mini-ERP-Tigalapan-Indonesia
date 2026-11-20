@@ -1,5 +1,11 @@
 # Migrasi Project — Status & Riwayat
 
+## Form Rasio PO Produksi: warna urut abjad, size urut kecil ke besar (2026-11-20, tanpa migration)
+Permintaan owner: pada Form Rasio, size dalam satu warna diurutkan dari paling kecil ke paling besar, dan warna diurutkan berdasarkan abjad.
+- `lib/mrp/exportPoExcel.ts`: `sizeRank` / `compareSize` (XXS, XS, S, M, L, XL, 2XL, 3XL, 4XL, ...; XXL dibaca 2XL; size tak dikenal paling akhir) dan `compareWarna` (abjad A-Z tanpa membedakan huruf besar/kecil). Sheet Rasio: `warnaOrder` diurutkan abjad (dulu mengikuti urutan baris MRP) dan baris size tiap warna·lengan diurutkan kecil ke besar (dulu mengikuti urutan baris Excel MRP/aduan). Di dalam warna tetap Pendek dulu lalu Panjang. Total/roll/rib per grup dan total per warna tidak berubah (rumus SUM sama, hanya urutan baris).
+- Sheet Aduan Pola (satu file yang sama): urutan kolom size juga memakai `compareSize` (dulu XS dan 4XL jatuh paling akhir karena tidak ada di `SIZE_ORDER`), dan baris diurutkan warna abjad dengan `compareWarna`.
+- `rasioSheet` kini diekspor supaya bisa diuji. Diuji: data tiruan acak (TOSCA/BEIGE/AVOCADO, size XL/S/3XL/M/XS/2XL/L) menghasilkan AVOCADO > BEIGE > TOSCA, BEIGE Pendek lalu Panjang, size XS-S-M-L-XL-2XL-3XL; tsc bersih; eslint bersih. Belum dilihat di Excel dengan data produksi.
+
 
 
 ## Tracking Item per roll x size x status, ETD/ETA, klik matriks dashboard (2026-11-19, tanpa migration) [redesign-ppic]

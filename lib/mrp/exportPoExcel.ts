@@ -1,5 +1,5 @@
 import type { Workbook, Worksheet } from "exceljs";
-import { formatDate, localDateString, materialKgPerRollForGroup, mrpDetailFor, SIZE_ORDER, type AduanMaterialKind } from "./derive";
+import { formatDate, localDateString, materialKgPerRollForGroup, mrpDetailFor, type AduanMaterialKind } from "./derive";
 import { ROLL_KG_ESTIMATE, VENDOR_PRODUKSI } from "./seed";
 import type { MrpDetail } from "./store";
 import type { AduanPolaRow, MaklonPO, MaterialPO } from "./types";
@@ -612,7 +612,28 @@ function poPartsNote(parts: MaklonPO[]): string {
   return "Gabungan " + parts.length + " PO: " + parts.map((p, i) => p.id + (i === 0 ? " (awal)" : " (susulan)")).join(" + ") + ". Baris biru = warna PO susulan.";
 }
 
-function rasioSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[], parts: MaklonPO[] = [po]) {
+/** Urutan size dari kecil ke besar: XXS, XS, S, M, L, XL, 2XL, 3XL, 4XL, ... (XXL dibaca 2XL). Size yang tidak dikenal ditaruh paling akhir. */
+export function sizeRank(size: string): number {
+  const s = size.trim().toUpperCase();
+  const base = ["XXS", "XS", "S", "M", "L", "XL"].indexOf(s);
+  if (base >= 0) return base;
+  const n = /^(\d+)XL$/.exec(s);
+  if (n) return 4 + Number(n[1]);
+  const xs = /^(X{2,})L$/.exec(s);
+  if (xs) return 4 + xs[1].length;
+  return 99;
+}
+
+export function compareSize(a: string, b: string): number {
+  return sizeRank(a) - sizeRank(b) || a.localeCompare(b, "id", { numeric: true });
+}
+
+/** Urutan warna di Form Rasio: abjad (A-Z), tanpa membedakan huruf besar/kecil. */
+export function compareWarna(a: string, b: string): number {
+  return a.localeCompare(b, "id", { numeric: true, sensitivity: "base" });
+}
+
+export function rasioSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[], parts: MaklonPO[] = [po]) {
   const multi = parts.length > 1;
   // Header (baris 4) dibekukan: topLeftCell/activeCell eksplisit supaya Excel menggambar baris header dengan benar saat digulir.
   ws.views = [{ showGridLines: false, state: "frozen", xSplit: 0, ySplit: 4, topLeftCell: "A5", activeCell: "A5" }];
@@ -653,6 +674,8 @@ function rasioSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[], parts:
   );
   const warnaOrder: string[] = [];
   for (const g of groups) if (!warnaOrder.includes(g.warna)) warnaOrder.push(g.warna);
+  // Warna diurutkan abjad (permintaan owner 2026-11-20); di dalam warna: Pendek dulu lalu Panjang, tiap lengan size dari kecil ke besar.
+  warnaOrder.sort(compareWarna);
 
   let r = hr + 1;
   const put = (row: number, col: number, v: string | number | { formula: string; result: number }, o: { align?: "left" | "right" | "center"; fmt?: string; bold?: boolean; fill?: string } = {}) => {
@@ -688,7 +711,7 @@ function rasioSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[], parts:
       if (aduan.length === 0) for (const x of g.sizes) vendorQtyBySize.set(x.size, (vendorQtyBySize.get(x.size) ?? 0) + x.qty);
       const sizeOrder: string[] = [];
       for (const x of [...g.sizes, ...aduan.flatMap((a) => a.sizes)]) if (!sizeOrder.includes(x.size)) sizeOrder.push(x.size);
-      const rows = sizeOrder.map((size) => ({ size, qty: vendorQtyBySize.get(size) ?? 0 })).filter((x) => x.qty > 0);
+      const rows = sizeOrder.map((size) => ({ size, qty: vendorQtyBySize.get(size) ?? 0 })).filter((x) => x.qty > 0).sort((x, y) => compareSize(x.size, y.size));
       let sumRoll = 0;
       let sumRib = 0;
       for (const sz of rows) {
@@ -759,11 +782,8 @@ function aduanSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[], parts:
   const rows = (detail?.aduanRows ?? []).filter((a) => a.vendor === po.vendorProduksi);
   const sizeSet = new Set<string>();
   for (const a of rows) for (const x of a.sizes) if (x.qty > 0) sizeSet.add(x.size);
-  const sizes = [...sizeSet].sort((a, b) => {
-    const ia = SIZE_ORDER.indexOf(a);
-    const ib = SIZE_ORDER.indexOf(b);
-    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
-  });
+  // Kecil ke besar, termasuk XS (dulu XS dan 4XL jatuh ke paling akhir karena tidak ada di SIZE_ORDER).
+  const sizes = [...sizeSet].sort(compareSize);
   const nSize = sizes.length;
   // Kolom: No, Warna, Lengan, Kode Aduan Pola, Roll, [PO kalau gabungan], [size...] Total Qty, [size per roll...], Pcs/Roll
   const fixed = multi ? 6 : 5;
@@ -821,7 +841,7 @@ function aduanSheet(ws: Worksheet, po: MaklonPO, mrpDetails: MrpDetail[], parts:
     return c;
   };
 
-  const ordered = [...rows].sort((a, b) => (a.warna === b.warna ? (a.lengan === b.lengan ? a.kode.localeCompare(b.kode) : a.lengan === "PENDEK" ? -1 : 1) : a.warna.localeCompare(b.warna)));
+  const ordered = [...rows].sort((a, b) => (a.warna === b.warna ? (a.lengan === b.lengan ? a.kode.localeCompare(b.kode) : a.lengan === "PENDEK" ? -1 : 1) : compareWarna(a.warna, b.warna)));
   let r = 6;
   ordered.forEach((a, idx) => {
     put(r, 1, idx + 1, { align: "center" });
