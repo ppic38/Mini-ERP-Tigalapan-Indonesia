@@ -30,11 +30,11 @@ Owner: status harus mencerminkan posisi qty (filter Status hanya menampilkan qty
 
 
 
-## Tracking Item (PPIC dan SCM): kolom No. Koli dan No. Resi (2026-11-20, tanpa migration)
-Owner: tabel Tracking Item belum punya kolom resi dan nomor koli.
-- `lib/mrp/itemTracking.ts`: `AduanTrackRow.koliRefs` (nomor koli, nomor resi, dan posisi koli: belum dikirim / sudah dikirim belum diterima DC / sudah diterima DC) diisi dari item koli yang roll asalnya roll itu; `TrackLine.noKoli` dan `noResi` dihitung per baris status (`koliFor`): status **Packing** = koli yang belum dikirim, **Delivery FG** = koli yang sudah dikirim belum diterima DC, **GR DC** = koli yang sudah diterima; status lain kosong. Lebih dari satu koli / resi dipisah koma. Baris sisa / rework tanpa penelusuran per koli menampilkan semua koli selnya tanpa resi.
-- `components/mrp/item-tracking-view.tsx`: kolom "No. Koli" dan "No. Resi" (tampil bawaan, tepat sesudah Status). `lib/mrp/exportTrackLinesExcel.ts`: dua kolom yang sama di Excel (setelah Status).
-- Diuji: tsc bersih. Belum dilihat di layar atau dicocokkan dengan data koli sungguhan.
+## Export Excel Tracking Item: satu baris per koli, dengan No. Koli, No. Resi, dan Qty FG di Koli (2026-11-20, tanpa migration)
+Owner: permintaan kolom resi dan nomor koli hanya untuk **export Excel** Tracking Item, bukan tabel di layar; dan satu baris per koli supaya terlihat FG tiap koli (sebelumnya satu baris memuat beberapa koli, mis. "1, 19, 26"). Kolom No. Koli / No. Resi yang sempat ditambahkan ke tabel di layar (commit 5d6cdd9) DIHAPUS lagi; tabel kembali seperti semula.
+- `lib/mrp/itemTracking.ts`: `AduanTrackRow.koliRefs` kini berisi id koli, nomor koli, resi, posisi (belum dikirim / sudah dikirim belum diterima DC / sudah diterima DC), qty, dan tanggal kirim. `expandLinesByKoli(lines)` memecah baris status **Packing, Delivery FG, GR DC** menjadi satu baris per koli (qty = FG koli itu, urut nomor koli; ETD / ETA baris Delivery FG = tanggal kirim koli itu + lead time DC; Target hanya di baris pertama roll x size). Baris status lain (Resting, Cutting, FG, Done FG, Reject, material) dan baris tanpa penelusuran per koli (sisa / rework) tidak dipecah. Kalau jumlah qty koli tidak sama dengan qty baris, baris tidak dipecah supaya total tetap benar.
+- `components/mrp/item-tracking-view.tsx`: tombol Export memakai `expandLinesByKoli`. `lib/mrp/exportTrackLinesExcel.ts`: kolom No Koli, No Resi, dan **Qty FG di Koli** (setelah Status); total Qty FG di Koli ikut SUBTOTAL; jumlah baris di judul = baris setelah dipecah.
+- Diuji: tsc bersih; uji fungsi pemecahan pada data contoh (3 koli terkirim urut nomor, target di baris pertama, baris Cutting tidak dipecah, qty tidak cocok tidak dipecah). Belum dicoba mengunduh dan membuka file Excel sungguhan.
 
 ## Status "Delivery" dibedakan: tahap barang jadi menjadi "Delivery FG"; Material Tracking menampilkan rincian roll per tahap (2026-11-20, tanpa migration)
 Owner (Material Tracking, invoice berstatus "Delivery" padahal vendor sudah Receiving dan sudah kirim ke warehouse): tidak jelas "Delivery" itu kirim kain ke vendor atau kirim barang jadi ke warehouse; minta dibedakan, dan bisa dilacak apakah sudah Good Receive, Produksi, atau dikirim ke warehouse.

@@ -9,7 +9,7 @@ import { useMrpStore } from "@/lib/mrp/store";
 import { formatDate, formatPcs, localDateString, skuItemNameLookup } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { getWosKoliStatusAction, type WosKoliStatusResult } from "@/lib/mrp/wosStatusActions";
-import { TRACK_STAGES, TRACK_STATUSES, buildAduanTracking, buildItemTracking, buildTrackLines, type TrackLine, type TrackStage } from "@/lib/mrp/itemTracking";
+import { TRACK_STAGES, TRACK_STATUSES, buildAduanTracking, buildItemTracking, buildTrackLines, expandLinesByKoli, type TrackLine, type TrackStage } from "@/lib/mrp/itemTracking";
 import { returnedRollKeys } from "@/lib/mrp/flowStatus";
 import { exportTrackLinesExcel } from "@/lib/mrp/exportTrackLinesExcel";
 import { cn } from "@/lib/utils";
@@ -164,21 +164,6 @@ export function ItemTrackingView() {
       render: (r) => <StageBadge stages={FLOW} current={r.stage} tone={r.stage === "Reject" ? "danger" : r.stage === "GR DC" ? "done" : undefined} />,
     },
     {
-      key: "noKoli",
-      aggregate: sameText((r) => r.noKoli),
-      label: "No. Koli",
-      default: true,
-      info: { title: "No. Koli", body: "Nomor koli yang memuat qty baris ini: status Packing = koli belum dikirim, Delivery FG = sudah dikirim belum diterima DC, GR DC = sudah diterima. Status lain kosong." },
-      render: (r) => (r.noKoli ? <span className="font-mono">{r.noKoli}</span> : <span className="text-text-muted">-</span>),
-    },
-    {
-      key: "noResi",
-      aggregate: sameText((r) => r.noResi),
-      label: "No. Resi",
-      default: true,
-      render: (r) => (r.noResi ? <span className="font-mono">{r.noResi}</span> : <span className="text-text-muted">-</span>),
-    },
-    {
       key: "estKirim",
       label: "ETD",
       default: true,
@@ -201,7 +186,8 @@ export function ItemTrackingView() {
     if (dateFrom || dateTo) parts.push(`tanggal kirim ${dateFrom ? formatDate(dateFrom) : "…"} s/d ${dateTo ? formatDate(dateTo) : "…"}`);
     try {
       await exportTrackLinesExcel(
-        shown.map((r) => ({ ...r, itemSku: itemSkuOf(r), vendorName: vendorLabel(r.vendorProduksi) })),
+        // Export: baris Packing / Delivery FG / GR DC dipecah satu baris per koli (qty = FG koli itu).
+        expandLinesByKoli(shown).map((r) => ({ ...r, itemSku: itemSkuOf(r), vendorName: vendorLabel(r.vendorProduksi) })),
         `Tracking-Item-${today}.xlsx`,
         parts.length > 0 ? "Filter: " + parts.join(" · ") : undefined
       );

@@ -481,7 +481,7 @@ export type AduanTrackRow = {
   shipDates: string[];
   koliNos: string[];
   /** Koli roll x size ini dengan nomor resinya dan posisinya: packing = belum dikirim, kirim = sudah dikirim belum diterima DC, terima = sudah diterima DC. */
-  koliRefs: { no: string; resi: string; state: "packing" | "kirim" | "terima" }[];
+  koliRefs: { id: string; no: string; resi: string; state: "packing" | "kirim" | "terima"; qty: number; sentAt?: string }[];
 };
 
 const SUM_FIELDS = ["target", "cutting", "fg", "reject", "diKoli", "dikirim", "tibaDc", "diterima"] as const;
@@ -620,7 +620,9 @@ export function buildAduanTracking(
       r.koliFirstAt = minDay(r.koliFirstAt, dayKey(k.createdAt));
       if (!r.koliNos.includes(koliNo)) r.koliNos.push(koliNo);
       const refState: "packing" | "kirim" | "terima" = !k.deliveredAt ? "packing" : received ? "terima" : "kirim";
-      if (!r.koliRefs.some((x) => x.no === koliNo && x.state === refState)) r.koliRefs.push({ no: koliNo, resi: (k.noResi ?? "").trim(), state: refState });
+      const ref = r.koliRefs.find((x) => x.id === k.id && x.state === refState);
+      if (ref) ref.qty += it.qty;
+      else r.koliRefs.push({ id: k.id, no: koliNo, resi: (k.noResi ?? "").trim(), state: refState, qty: it.qty, sentAt: sentDay });
       if (!k.deliveredAt) {
         r.diKoli += it.qty;
         continue;
@@ -790,6 +792,36 @@ function koliFor(r: AduanTrackRow, stage: TrackStage): { noKoli: string; noResi:
   return { noKoli: nos.join(", "), noResi: resis.join(", ") };
 }
 
+/** Untuk export Excel (owner 2026-11-20): baris status Packing / Delivery FG / GR DC dipecah SATU BARIS PER KOLI (qty = FG di koli itu, nomor koli dan resi
+ *  per baris; ETD / ETA baris Delivery FG memakai tanggal kirim koli itu). Baris status lain dan baris tanpa penelusuran per koli tidak dipecah. Kalau jumlah
+ *  qty koli tidak sama dengan qty baris, baris tidak dipecah supaya total tetap benar. Target hanya di baris pertama. */
+export function expandLinesByKoli(lines: TrackLine[]): TrackLine[] {
+  const out: TrackLine[] = [];
+  for (const l of lines) {
+    const want = l.stage === "Packing" ? "packing" : l.stage === "Delivery FG" ? "kirim" : l.stage === "GR DC" ? "terima" : null;
+    const refs = want ? l.koliRefs.filter((x) => x.state === want) : [];
+    if (refs.length === 0 || refs.reduce((s, x) => s + x.qty, 0) !== l.qty) {
+      out.push(l);
+      continue;
+    }
+    [...refs]
+      .sort((a, b) => compareNoKoli(a.no, b.no) || a.resi.localeCompare(b.resi) || a.id.localeCompare(b.id))
+      .forEach((x, i) => {
+        out.push({
+          ...l,
+          key: `${l.key}|${x.id}`,
+          qty: x.qty,
+          qtyKoli: x.qty,
+          target: i === 0 ? l.target : 0,
+          noKoli: x.no,
+          noResi: x.resi,
+          ...(want === "kirim" && x.sentAt ? { estKirim: x.sentAt, estTibaDc: plusDays(x.sentAt, ltTiba(l.vendorProduksi)) } : {}),
+        });
+      });
+  }
+  return out;
+}
+
 const MAT_STAGES: TrackStage[] = ["Wait PV", "PV", "Paid", "Del Mat", "GR Mat"];
 
 export type TrackLine = AduanTrackRow & {
@@ -800,6 +832,8 @@ export type TrackLine = AduanTrackRow & {
   /** Nomor koli dan nomor resi untuk qty baris ini (hanya status Packing, Delivery FG, dan GR DC; selain itu kosong). Lebih dari satu dipisah koma. */
   noKoli: string;
   noResi: string;
+  /** Hanya pada hasil `expandLinesByKoli`: qty (FG) di koli pada baris itu. */
+  qtyKoli?: number;
   /** Estimasi qty baris ini dikirim vendor (status Delivery FG: tanggal kirim aktual) dan estimasi tiba di DC. Kosong untuk GR DC dan Reject. */
   estKirim?: string;
   estTibaDc?: string;

@@ -47,6 +47,7 @@ export async function exportTrackLinesExcel(rows: TrackExportRow[], fileName: st
     { text: "Status", width: 12, kind: "text" },
     { text: "No Koli", width: 14, kind: "text" },
     { text: "No Resi", width: 22, kind: "text" },
+    { text: "Qty FG di Koli", width: 14, kind: "int" },
     { text: "ETD", width: 13, kind: "date" },
     { text: "ETA", width: 13, kind: "date" },
   ];
@@ -62,7 +63,7 @@ export async function exportTrackLinesExcel(rows: TrackExportRow[], fileName: st
   ws.getCell(2, 1).value =
     `Diunduh ${new Date().toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })} · ${rows.length} baris` +
     (filterLabel ? ` · ${filterLabel}` : "") +
-    " · Qty hanya di kolom statusnya; Target hanya di baris pertama roll x size. Estimasi = tanggal masuk status + lead time sisa tahap.";
+    " · Qty hanya di kolom statusnya; Target hanya di baris pertama roll x size. Status Packing, Delivery FG, dan GR DC: satu baris per koli (Qty FG di Koli = isi koli itu). Estimasi = tanggal masuk status + lead time sisa tahap.";
   ws.getCell(2, 1).font = { name: FONT, size: 9, italic: true, color: { argb: MUTED } };
   ws.getCell(2, 1).alignment = { wrapText: true, vertical: "top" };
   ws.getRow(2).height = 28;
@@ -92,6 +93,7 @@ export async function exportTrackLinesExcel(rows: TrackExportRow[], fileName: st
       r.stage,
       r.noKoli || "",
       r.noResi || "",
+      r.qtyKoli ?? null,
       asDate(r.estKirim),
       asDate(r.estTibaDc),
     ];
@@ -120,7 +122,12 @@ export async function exportTrackLinesExcel(rows: TrackExportRow[], fileName: st
       cell.border = BORDER;
       if (head[c - 1].kind === "int") {
         const L = colLetter(c);
-        const result = c === 8 ? rows.reduce((s, r) => s + (r.target || 0), 0) : rows.reduce((s, r) => s + (r.stage === head[c - 1].text ? r.qty : 0), 0);
+        const result =
+          c === 8
+            ? rows.reduce((s, r) => s + (r.target || 0), 0)
+            : head[c - 1].text === "Qty FG di Koli"
+              ? rows.reduce((s, r) => s + (r.qtyKoli || 0), 0)
+              : rows.reduce((s, r) => s + (r.stage === head[c - 1].text ? r.qty : 0), 0);
         cell.value = { formula: `SUBTOTAL(109,${L}${first}:${L}${last})`, result };
         cell.numFmt = FMT_INT;
         cell.alignment = { horizontal: "right" };
