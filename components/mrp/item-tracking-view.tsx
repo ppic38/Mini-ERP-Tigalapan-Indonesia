@@ -6,7 +6,7 @@ import { alertDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, aggSame, aggSum, type ColumnDef, type FilterDef } from "@/components/mrp/data-table";
 import { StageBadge } from "@/components/ui/stage-badge";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatDate, formatPcs, localDateString, skuItemNameLookup } from "@/lib/mrp/derive";
+import { SEGMEN_PRODUK, formatDate, formatPcs, localDateString, segmenProdukOf, skuItemNameLookup } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { getWosKoliStatusAction, type WosKoliStatusResult } from "@/lib/mrp/wosStatusActions";
 import { TRACK_STAGES, TRACK_STATUSES, buildAduanTracking, buildItemTracking, buildTrackLines, expandLinesByKoli, type TrackLine, type TrackStage } from "@/lib/mrp/itemTracking";
@@ -105,6 +105,8 @@ export function ItemTrackingView() {
   const shown = shownKeys ? rows.filter((r) => shownKeys.has(r.key)) : rows;
 
   const lenganLabel = (r: TrackLine) => (r.lengan === "PENDEK" ? "Pendek" : "Panjang");
+  /** Segmen produk Dewasa / Kids / Tunik (owner 2026-11-20) dari kategori grup warna MRP (segmenProdukOf, derive.ts). */
+  const segOf = (r: TrackLine) => segmenProdukOf(r.kategori, r.warna);
   const filterDefs: FilterDef<TrackLine>[] = [
     { label: "Status", options: TRACK_STATUSES.filter((s) => rows.some((r) => r.stage === s)), test: (r, v) => r.stage === v },
     { label: "No MRP", options: uniq(rows.map((r) => r.mrpId)).reverse(), test: (r, v) => r.mrpId === v },
@@ -114,6 +116,7 @@ export function ItemTrackingView() {
     { label: "Lengan", options: ["Pendek", "Panjang"], test: (r, v) => lenganLabel(r) === v },
     { label: "Size", options: Array.from(new Set(rows.map((r) => r.size))), test: (r, v) => r.size === v },
     { label: "Kategori", options: uniq(rows.map((r) => r.kategori)), test: (r, v) => r.kategori === v },
+    { label: "Segmen", options: SEGMEN_PRODUK.filter((s) => rows.some((r) => segOf(r) === s)), test: (r, v) => segOf(r) === v },
     { label: "Aduan", options: uniq(rows.map((r) => r.kode)), test: (r, v) => r.kode === v },
   ];
 
@@ -129,6 +132,7 @@ export function ItemTrackingView() {
     { key: "mrp", aggregate: sameText((r) => r.mrpId), label: "No MRP", default: true, render: (r) => <span className="font-mono">{r.mrpId}</span> },
     { key: "vendor", aggregate: sameText((r) => vendorLabel(r.vendorProduksi)), label: "Vendor", default: true, render: (r) => vendorLabel(r.vendorProduksi) },
     { key: "kategori", aggregate: sameText((r) => r.kategori), label: "Kategori", default: true, render: (r) => r.kategori || "-" },
+    { key: "segmen", aggregate: sameText((r) => segOf(r)), label: "Segmen", default: true, render: (r) => segOf(r) },
     { key: "warna", aggregate: sameText((r) => r.warna), label: "Warna", default: true, render: (r) => r.warna },
     { key: "size", aggregate: sameText((r) => r.size), label: "Size", default: true, render: (r) => r.size },
     {

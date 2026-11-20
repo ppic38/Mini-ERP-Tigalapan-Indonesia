@@ -11,7 +11,7 @@ import { DataTable, aggSame, aggSum, type ColumnDef, type FilterDef } from "@/co
 import { HppTambahanDialog } from "@/components/mrp/hpp-tambahan-dialog";
 import { StatusPill } from "@/components/ui/status-pill";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatDate, formatPcs, formatRupiah, hppRowsForInvoicePerRoll, type HppRow } from "@/lib/mrp/derive";
+import { SEGMEN_PRODUK, formatDate, formatPcs, formatRupiah, hppRowsForInvoicePerRoll, segmenProdukLookup, type HppRow } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { DeliveryKoli } from "@/lib/mrp/types";
 
@@ -145,6 +145,7 @@ export function LaporanHppView({ role, activeHref }: { role: "finance" | "scm"; 
 
   const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
+  const segmenLookup = useMemo(() => segmenProdukLookup(mrpDetails), [mrpDetails]);
   const staticMrps = useMrpStore((s) => s.staticMrps);
   const productionBatches = useMrpStore((s) => s.productionBatches);
   const productionResults = useMrpStore((s) => s.productionResults);
@@ -187,6 +188,9 @@ export function LaporanHppView({ role, activeHref }: { role: "finance" | "scm"; 
   const hppPercentAgg = hppPercentOf(cardRows);
 
   const uniq = (xs: string[]) => Array.from(new Set(xs.filter(Boolean))).sort(byText);
+  // Segmen produk (owner 2026-11-20): Dewasa / Kids / Tunik dari kategori grup warna MRP (segmenProdukLookup, derive.ts).
+  const segmenOf = segmenLookup;
+  const segOf = (r: HppTableRow) => segmenOf(r.mrpId, r.warna, r.lengan, r.usia);
   const fgSum = (list: HppTableRow[]) => list.reduce((s, r) => s + r.fg, 0);
   // Rata-rata tertimbang Qty FG untuk kolom per pcs di baris kelompok (sama dengan sheet HPP unduhan).
   // eslint-disable-next-line react/display-name
@@ -200,6 +204,7 @@ export function LaporanHppView({ role, activeHref }: { role: "finance" | "scm"; 
     { label: "Vendor", options: uniq(tableRows.map((r) => vendorName(r.vendorProduksi))), test: (r, v) => vendorName(r.vendorProduksi) === v },
     { label: "Status", options: ["On Going", "Final"], test: (r, v) => statusOf(r) === v },
     { label: "Warna", options: uniq(tableRows.map((r) => r.warna)), test: (r, v) => r.warna === v },
+    { label: "Segmen", options: SEGMEN_PRODUK.filter((s) => tableRows.some((r) => segOf(r) === s)), test: (r, v) => segOf(r) === v },
     { label: "Lengan", options: ["Pendek", "Panjang"], test: (r, v) => lenganLabel(r.lengan) === v },
     { label: "Size", options: uniq(tableRows.map((r) => r.size ?? "")), test: (r, v) => (r.size ?? "") === v },
     { label: "Bulan kirim", options: uniq(tableRows.map((r) => r.tanggalKirim?.slice(0, 7) ?? "")).reverse(), test: (r, v) => r.tanggalKirim?.slice(0, 7) === v },
@@ -208,6 +213,7 @@ export function LaporanHppView({ role, activeHref }: { role: "finance" | "scm"; 
   const columns: ColumnDef<HppTableRow>[] = [
     { key: "mrp", label: "No. MRP", default: false, aggregate: aggSame((r) => r.mrpId), render: (r) => <span className="font-mono">{r.mrpId}</span> },
     { key: "vendor", label: "Vendor", default: false, aggregate: aggSame((r) => vendorName(r.vendorProduksi)), render: (r) => vendorName(r.vendorProduksi) },
+    { key: "segmen", label: "Segmen", default: true, aggregate: aggSame((r) => segOf(r)), render: (r) => segOf(r) },
     { key: "lengan", label: "Lengan", default: true, aggregate: aggSame((r) => lenganLabel(r.lengan)), render: (r) => lenganLabel(r.lengan) },
     { key: "size", label: "Size", default: true, aggregate: aggSame((r) => r.size ?? ""), render: (r) => r.size },
     { key: "roll", label: "Code Roll", default: false, render: (r) => <span className="font-mono">{r.rollCode || "—"}</span> },

@@ -3797,6 +3797,26 @@ export function kategoriProdukLabel(tipe: string): string {
 }
 const KATEGORI_PRODUK_ORDER = ["Reguler", "Kids", "Rib", "Tunik", "Wangky"];
 
+/** Segmen produk (owner 2026-11-20): Dewasa, Kids, atau Tunik, untuk filter dan urut di Laporan HPP, Tracking Item, Material Tracking.
+ *  Sumber: kategori grup warna x lengan di MRP (KIDS 24S, TUNIK 24S, COMBED 24S, PANJANG + RIB, WANGKI MYNO, ...); kategori kosong memakai
+ *  akhiran nama warna ("... KID", "... TUNIK"). Usia item koli (rework / sisa kain) menang: KIDS = Kids, DEWASA dari grup Kids = Dewasa.
+ *  Rib dan Wangki dihitung Dewasa. */
+export type SegmenProduk = "Dewasa" | "Kids" | "Tunik";
+export const SEGMEN_PRODUK: SegmenProduk[] = ["Dewasa", "Kids", "Tunik"];
+export function segmenProdukOf(kategori: string | undefined, warna: string, usia?: Usia): SegmenProduk {
+  const k = (kategori ?? "").toUpperCase();
+  if (usia === "KIDS") return "Kids";
+  if (usia !== "DEWASA" && (/KID/.test(k) || /\sKIDS?$/i.test(warna.trim()))) return "Kids";
+  if (/TUNIK/.test(k) || /\sTUNIK$/i.test(warna.trim())) return "Tunik";
+  return "Dewasa";
+}
+/** Pencari segmen per MRP x warna x lengan (kategori grup, cadangan kategori MRP), diindeks sekali per daftar MRP. */
+export function segmenProdukLookup(mrpDetails: MrpDetail[]): (mrpId: string, warna: string, lengan: Lengan, usia?: Usia) => SegmenProduk {
+  const kat = new Map<string, string>();
+  for (const d of mrpDetails) for (const g of d.lenganGroups) kat.set(`${d.mrp.id}|${g.warna}|${g.lengan}`, g.kategori || d.mrp.kategori || "");
+  return (mrpId, warna, lengan, usia) => segmenProdukOf(kat.get(`${mrpId}|${warna}|${lengan}`), warna, usia);
+}
+
 export type InvoiceKategoriRow = {
   kategori: string;
   qtyPendek: number;
@@ -4367,6 +4387,8 @@ export type HppRow = {
   /** % HPP = hppPerItem / sellingPricePerItem x 100 -- `null` kalau sellingPricePerItem tidak
    *  ketemu atau <= 0 (supaya tidak dibagi nol/negatif). */
   hppPercentage: number | null;
+  /** Usia barang (KIDS/DEWASA) kalau diketahui dari item koli (baris rework). Dipakai `segmenProdukOf`. */
+  usia?: Usia;
 };
 
 /** Ongkir 1 invoice vendor — dihitung OTOMATIS dari koli pengiriman (deliveryKolis) milik
@@ -5056,6 +5078,7 @@ export function hppRowsForInvoicePerRoll(
         mrpLabel: line.mrpId,
         warna: line.warna,
         lengan: line.lengan,
+        usia: c.usia,
         item: `${line.warna} ${HPP_LENGAN_ABBR[line.lengan]} ${c.size} · Rework${usiaLabel ? " (" + usiaLabel + ")" : ""} · koli ${c.koli.noKoli}`,
         jenis: `${line.lengan} ${c.size}`,
         qtyPo: takeQty,
