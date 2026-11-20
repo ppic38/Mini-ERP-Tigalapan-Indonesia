@@ -9,7 +9,7 @@ import { DataTable, aggSame, aggSum, type ColumnDef, type FilterDef } from "@/co
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Tabs } from "@/components/ui/tabs";
 import { MATERIAL_ROLL_STAGES, buildMaterialRolls, type MaterialRollRow } from "@/lib/mrp/materialRolls";
-import { FLOW_STAGES, batchShippingMap, flowTone, invoiceFlowStage, returnedRollKeys, rollsByStageText, type FlowStage } from "@/lib/mrp/flowStatus";
+import { FLOW_STAGES, batchShippingMap, flowTone, invoiceColorFlowBreakdown, invoiceFlowStage, returnedRollKeys, rollsByStageText, type FlowStage } from "@/lib/mrp/flowStatus";
 import { TransferMaterialModal, type TransferCandidate } from "@/components/mrp/transfer-material-modal";
 import { SetDeliveryModal } from "@/components/mrp/set-delivery-modal";
 import { SuratJalanModal } from "@/components/procurement/surat-jalan-modal";
@@ -369,6 +369,8 @@ export default function MaterialTrackingPage() {
     if (!r.invoice) return null;
     const inv = r.invoice;
     const d = shipmentDates(inv);
+    // Status per warna x lengan (owner 2026-11-20): jumlah roll per tahap, supaya terlihat warna mana yang sudah Delivery FG dan mana yang masih tertahan.
+    const colorFlow = invoiceColorFlowBreakdown(inv, flowBatchByCode, flowShipping, flowReturned);
     const box = (label: string, value: string, hint?: string) => (
       <div className="rounded-md border border-[#E4E8EE] bg-[#FAFBFC] px-3 py-2">
         <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">{label}</div>
@@ -385,19 +387,27 @@ export default function MaterialTrackingPage() {
           {box("Lengkap diterima", d.lastReceived ? formatDate(d.lastReceived) : "Belum lengkap", d.lastReceived ? undefined : d.total > 0 ? `Sisa ${d.total - d.arrived} roll` : undefined)}
         </div>
         <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
-          <div className="grid grid-cols-4 gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
+          <div className="grid grid-cols-[1.3fr_0.5fr_0.8fr_2fr_0.9fr] gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
             <span>Warna / Lengan</span>
             <span className="text-right">Roll</span>
             <span className="text-right">Diterima vendor</span>
+            <span>Status roll</span>
             <span className="text-right">Harga/Roll</span>
           </div>
           {inv.colorEntries.map((c, i) => (
-            <div key={i} className="grid grid-cols-4 gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
+            <div key={i} className="grid grid-cols-[1.3fr_0.5fr_0.8fr_2fr_0.9fr] gap-x-2 border-t border-[#F1F4F7] px-3 py-1.5 font-sans text-[11.5px] text-[#31414F]">
               <span>
                 {c.warna} · {c.lengan}
               </span>
               <span className="text-right font-mono">{c.rolls.length}</span>
               <span className="text-right font-mono text-[11px]">{colorArrivalText(inv, c.warna, c.lengan, c.rolls.length)}</span>
+              <span className="font-sans text-[11px]">
+                {(() => {
+                  const by = colorFlow.get(c.warna + "|" + c.lengan) ?? {};
+                  const parts = (FLOW_STAGES as readonly string[]).map((st) => [st, by[st as FlowStage] ?? 0] as const).filter(([, n]) => n > 0);
+                  return parts.length === 0 ? "—" : parts.map(([st, n]) => st + " " + n).join(" · ");
+                })()}
+              </span>
               <span className="text-right font-mono">{formatRupiah(c.hargaPerRoll)}</span>
             </div>
           ))}

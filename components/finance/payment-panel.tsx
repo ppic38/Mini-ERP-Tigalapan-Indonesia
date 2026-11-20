@@ -327,7 +327,18 @@ export function PaymentPanel() {
       default: false, // Revisi 2026-11-06 (owner): kolom khusus PV pengganti klaim, disembunyikan secara bawaan (tetap ada di toggle "Kolom").
       render: (i) => (i.sourceClaimId ? <span className="font-mono">{claimKeySourceInvoiceId(i.sourceClaimId)}</span> : <span className="font-sans text-[11px] text-text-muted">—</span>),
     },
-    { key: "nilai", aggregate: aggSum((i) => i.totalBiaya, (n) => <span className="font-semibold">{formatRupiah(n)}</span>), label: "Harga", default: true, align: "right", render: (i) => formatRupiah(i.totalBiaya) },
+    { key: "nilai", aggregate: aggSum((i) => i.totalBiaya, (n) => <span className="font-semibold">{formatRupiah(n)}</span>), label: "Harga", default: true, align: "right", render: (i) => {
+      // Invoice dengan downpayment/kredit deposit yang sudah diterapkan: Harga = nilai PV penuh, yang dibayar hanya sisanya.
+      const sisa = outstandingAmountForInvoice(i, vendorDeposits);
+      return sisa < i.totalBiaya && invoiceAwaitingPayment(i) ? (
+        <span>
+          {formatRupiah(i.totalBiaya)}
+          <span className="block font-sans text-[10px] font-semibold text-warning-fg">bayar sisa {formatRupiah(sisa)}</span>
+        </span>
+      ) : (
+        formatRupiah(i.totalBiaya)
+      );
+    } },
     {
       key: "pembayaranSebelumnya",
       label: "Pembayaran Sebelumnya",

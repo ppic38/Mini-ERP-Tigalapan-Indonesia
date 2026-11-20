@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { InvoiceBatchReview, type BatchReadFailure, type BatchReviewItem, type PvBookInput } from "@/components/mrp/invoice-batch-review";
 import { assessBatch } from "@/lib/invoice-import/batch";
 import { checkInvoiceFileName, isValidKodeTransaksi } from "@/lib/invoice-import/filename";
-import { aliasesToSave, autoMap, buildPvDraft, evaluateMapping, findDuplicateInvoices, findFileNameVendorMismatch, poColorsFromPo, type AliasMap, type GroupMapping, aliasKey } from "@/lib/invoice-import/mapping";
+import { aliasesToSave, autoMap, buildPvDraft, downpaymentOf, evaluateMapping, findDuplicateInvoices, findFileNameVendorMismatch, poColorsFromPo, type AliasMap, type GroupMapping, aliasKey } from "@/lib/invoice-import/mapping";
 import { lineOk, parseMoney, parseWeight, round2 } from "@/lib/invoice-import/parser-knitto";
 import { pdfToText, terminateOcr } from "@/lib/invoice-import/pdf-text";
 import type { AppliedImport, InvoiceAdapter, ParsedInvoice } from "@/lib/invoice-import/types";
@@ -20,6 +20,8 @@ export type UploadApplyPayload = {
   diskon: number;
   noInvoiceVendor: string;
   kodeTransaksi: string;
+  /** Uang muka (DP) yang tercetak di invoice (0 = tidak ada). Dicatat sebagai kredit deposit yang langsung diterapkan ke PV ini: Finance hanya membayar sisanya. */
+  downpayment: number;
   file: File;
   info: AppliedImport;
 };
@@ -308,6 +310,7 @@ export function InvoiceUploadPanel({
       totalBayar: parsed.totals.totalBayar,
       subtotal: parsed.totals.subtotal,
       diskon: draft.diskon,
+      downpayment: downpaymentOf(parsed),
       rollCount: evalResult.invoiceRolls,
       rollKg,
       ribKg: evalResult.invoiceRibKg,
@@ -319,6 +322,7 @@ export function InvoiceUploadPanel({
       diskon: draft.diskon,
       noInvoiceVendor: parsed.noPenjualan,
       kodeTransaksi: isValidKodeTransaksi(parsed.kodeTransfer, parsed.noPenjualan, adapter.fileNameRule.kodeAlsoInvoiceNo) ? parsed.kodeTransfer : "",
+      downpayment: downpaymentOf(parsed),
       file,
       info,
     });
@@ -611,11 +615,14 @@ export function InvoiceUploadPanel({
             Ganti file
           </button>
         </div>
-        <div className="grid grid-cols-2 gap-px px-4 py-3 md:grid-cols-4">
+        <div className={"grid grid-cols-2 gap-px px-4 py-3 " + (downpaymentOf(parsed) > 0 ? "md:grid-cols-5" : "md:grid-cols-4")}>
           {[
             { k: "Roll", v: `${evalResult.allocatedRolls}/${evalResult.invoiceRolls}`, s: `${fmt(evalResult.invoiceRollKg)} kg` },
             { k: "Rib", v: `${fmt(evalResult.invoiceRibKg)} kg`, s: "" },
             { k: "Total Bayar invoice", v: formatRupiah(evalResult.invoiceTotalBayar), s: evalResult.totalDiff === 0 ? "= total PV ✓" : "≠ total PV" },
+            ...(downpaymentOf(parsed) > 0
+              ? [{ k: "Dibayar di PV (sisa)", v: formatRupiah(parsed.totals.totalBayar - downpaymentOf(parsed)), s: `setelah downpayment ${formatRupiah(downpaymentOf(parsed))}` }]
+              : []),
             { k: "Sisa PO setelah ini", v: `${sisaRoll} roll`, s: untouchedCount > 0 ? `${untouchedCount} warna menunggu invoice lain` : "lunas ditagih" },
           ].map((x) => (
             <div key={x.k} className="pr-3">

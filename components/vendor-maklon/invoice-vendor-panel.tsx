@@ -381,33 +381,6 @@ export function InvoiceVendorPanel({ vendorId }: { vendorId: string }) {
                           )}
                         </div>
                       </div>
-                      <div className="mb-3 grid grid-cols-4 gap-3 rounded-md max-md:hidden border border-[#E4E9EE] bg-white p-3">
-                        <div>
-                          <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Total tagihan</div>
-                          <div className="mt-0.5 font-mono text-[12.5px] font-semibold text-[#31414F]">{formatRupiah(inv.totalTagihan)}</div>
-                        </div>
-                        <div>
-                          <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Yield</div>
-                          <div className="mt-0.5 font-mono text-[12.5px] font-semibold text-[#31414F]">{yieldSummary.yieldPct.toFixed(1)}%</div>
-                        </div>
-                        <div>
-                          <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Status produksi</div>
-                          <div className="mt-1">
-                            {prodStatus ? (
-                              <StatusPill tone={prodStatus.label === "DELAY" ? "danger" : prodStatus.label === "ONTIME" ? "success" : "info"}>
-                                {prodStatus.label}
-                                {prodStatus.days > 0 ? ` ${prodStatus.days}H` : ""}
-                              </StatusPill>
-                            ) : (
-                              <span className="font-sans text-[11.5px] text-text-muted">—</span>
-                            )}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">Due date</div>
-                          <div className="mt-0.5 font-mono text-[12.5px] font-semibold text-[#31414F]">{inv.dueDate ? formatDate(inv.dueDate) : "—"}</div>
-                        </div>
-                      </div>
                       {(inv.adjustments?.length ?? 0) > 0 && (
                     <div className="vp-inv-adj mb-3 rounded-md border border-[#E4E9EE] bg-white p-3 max-md:hidden">
                       <div className="font-sans text-[11px] font-medium uppercase tracking-wider text-text-muted">

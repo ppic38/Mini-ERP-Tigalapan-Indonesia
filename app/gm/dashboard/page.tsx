@@ -6,7 +6,7 @@ import Link from "next/link";
 import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatRupiah, invoiceAwaitingPayment, isSyntheticSupplier, vendorInvoiceFinalAmount } from "@/lib/mrp/derive";
+import { formatRupiah, invoiceAwaitingPayment, isSyntheticSupplier, outstandingAmountForInvoice, vendorInvoiceFinalAmount } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { APPROVAL_LEVEL_TABLE, poApprovalState } from "@/lib/mrp/poApproval";
 
@@ -19,6 +19,7 @@ export default function GmDashboardPage() {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const invoices = useMrpStore((s) => s.invoices);
   const vendorInvoices = useMrpStore((s) => s.vendorInvoices);
+  const vendorDeposits = useMrpStore((s) => s.vendorDeposits);
 
   const stats = useMemo(() => {
     const all = [
@@ -48,9 +49,10 @@ export default function GmDashboardPage() {
       approvedAmount: approved.reduce((s, p) => s + p.amount, 0),
       byLevel,
       awaitingPayCount: awaitingInvoices.length + awaitingVendorInv.length,
-      awaitingPayAmount: awaitingInvoices.reduce((s, i) => s + i.totalBiaya, 0) + awaitingVendorInv.reduce((s, i) => s + vendorInvoiceFinalAmount(i), 0),
+      // Sisa tagihan riil (nilai PV dikurangi downpayment/kredit deposit yang sudah diterapkan ke invoice itu).
+      awaitingPayAmount: awaitingInvoices.reduce((s, i) => s + outstandingAmountForInvoice(i, vendorDeposits), 0) + awaitingVendorInv.reduce((s, i) => s + vendorInvoiceFinalAmount(i), 0),
     };
-  }, [materialPOs, maklonPOs, invoices, vendorInvoices]);
+  }, [materialPOs, maklonPOs, invoices, vendorInvoices, vendorDeposits]);
 
   return (
     <AppShell role="gm" activeHref="/gm/dashboard" breadcrumb={["Dashboard", "General Manager"]} title="Ringkasan untuk General Manager">

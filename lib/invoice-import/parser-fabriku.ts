@@ -60,6 +60,19 @@ export function parseFabrikuInvoice(text: string, fileName = ""): ParsedInvoice 
     inv.warnings.push(fn.message);
   }
 
+  // Template dengan uang muka (2026-11-20): "TOTAL Rp. X", "DOWNPAYMENT Rp. Y", "SISA Rp Z". Dibaca dari seluruh teks (bukan per baris) karena
+  // SISA bisa tercetak sebaris dengan "Total Qty : 708.65" (pengelompokan baris menurut y), dan baris "Total Qty" dilewati di loop di bawah.
+  const dp = text.match(/DOWN\s*PAYMENT\s*[:;]?\s*(?:Rp\.?)?\s*([\d.,]+)/i);
+  const sisa = text.match(/(?:^|[\s:;])SISA\s*[:;]?\s*(?:Rp\.?)?\s*([\d.,]+)/i);
+  if (dp) {
+    const v = money(dp[1]);
+    if (Number.isFinite(v)) inv.totals.downpayment = v;
+  }
+  if (sisa) {
+    const v = money(sisa[1]);
+    if (Number.isFinite(v)) inv.totals.sisa = v;
+  }
+
   const groups = new Map<string, ParsedInvoiceGroup>();
   const unknown: string[] = [];
   const unread: string[] = [];
@@ -157,6 +170,21 @@ export function validateFabrikuInvoice(inv: ParsedInvoice): InvoiceCheck[] {
     add("bayar", "Jumlah baris − Diskon = TOTAL invoice", t.subtotal - t.diskon === t.totalBayar, `${fmtNum(t.subtotal - t.diskon)} vs ${fmtNum(t.totalBayar)}`);
   } else {
     add("bayar", "TOTAL invoice terbaca", false, "TOTAL / baris barang tidak terbaca");
+  }
+
+  // Uang muka (DP): TOTAL - DOWNPAYMENT harus sama dengan SISA tercetak, dan DP harus lebih kecil dari TOTAL. PV mencatat total invoice utuh
+  // (dasar HPP per roll tidak berubah); Finance hanya membayar SISA karena DP dicatat sebagai kredit deposit yang langsung diterapkan.
+  if (t.downpayment != null && t.downpayment > 0) {
+    if (Number.isFinite(t.totalBayar)) {
+      add("dp-range", "Downpayment lebih kecil dari TOTAL invoice", t.downpayment < t.totalBayar, `${fmtNum(t.downpayment)} vs ${fmtNum(t.totalBayar)}`);
+      if (t.sisa != null && Number.isFinite(t.sisa)) {
+        add("dp-sisa", "TOTAL − Downpayment = SISA invoice", t.totalBayar - t.downpayment === t.sisa, `${fmtNum(t.totalBayar - t.downpayment)} vs ${fmtNum(t.sisa)}`);
+      } else {
+        add("dp-sisa", "SISA invoice terbaca", false, `Baris "SISA" tidak terbaca — sisa yang dibayar dihitung ${fmtNum(t.totalBayar - t.downpayment)}`, false);
+      }
+    } else {
+      add("dp-range", "TOTAL invoice terbaca (untuk memeriksa downpayment)", false, "TOTAL tidak terbaca");
+    }
   }
 
   const kgSum = round2(lines.reduce((a, l) => a + (Number.isFinite(l.w) ? l.w : 0), 0));

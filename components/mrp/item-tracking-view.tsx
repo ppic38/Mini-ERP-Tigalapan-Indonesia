@@ -9,7 +9,7 @@ import { useMrpStore } from "@/lib/mrp/store";
 import { formatDate, formatPcs, localDateString, skuItemNameLookup } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { getWosKoliStatusAction, type WosKoliStatusResult } from "@/lib/mrp/wosStatusActions";
-import { TRACK_STAGES, TRACK_STATUSES, buildAduanTracking, buildItemTracking, buildTrackLines, type TrackLine, type TrackStage } from "@/lib/mrp/itemTracking";
+import { TRACK_STAGES, TRACK_STATUSES, buildAduanTracking, buildItemTracking, buildTrackLines, expandLinesByKoli, type TrackLine, type TrackStage } from "@/lib/mrp/itemTracking";
 import { returnedRollKeys } from "@/lib/mrp/flowStatus";
 import { exportTrackLinesExcel } from "@/lib/mrp/exportTrackLinesExcel";
 import { cn } from "@/lib/utils";
@@ -186,7 +186,8 @@ export function ItemTrackingView() {
     if (dateFrom || dateTo) parts.push(`tanggal kirim ${dateFrom ? formatDate(dateFrom) : "…"} s/d ${dateTo ? formatDate(dateTo) : "…"}`);
     try {
       await exportTrackLinesExcel(
-        shown.map((r) => ({ ...r, itemSku: itemSkuOf(r), vendorName: vendorLabel(r.vendorProduksi) })),
+        // Export: baris Packing / Delivery FG / GR DC dipecah satu baris per koli (qty = FG koli itu).
+        expandLinesByKoli(shown).map((r) => ({ ...r, itemSku: itemSkuOf(r), vendorName: vendorLabel(r.vendorProduksi) })),
         `Tracking-Item-${today}.xlsx`,
         parts.length > 0 ? "Filter: " + parts.join(" · ") : undefined
       );
