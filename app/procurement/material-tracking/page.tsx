@@ -30,6 +30,8 @@ import {
   poDisplayNo,
   rollArrivalProgress,
   rollArrivalStatus,
+  SEGMEN_PRODUK,
+  segmenProdukLookup,
   type MaterialPoFullStatus,
 } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -263,6 +265,11 @@ export default function MaterialTrackingPage() {
 
   // Warna (owner 2026-11-19): satu invoice bisa memuat beberapa warna. Filter = invoice yang memuat warna itu; kelompok = warna pertama
   // (urut abjad) yang dimuat invoice. Untuk rincian per warna yang tepat, pakai tab Per Roll.
+  // Segmen produk (owner 2026-11-20): Dewasa / Kids / Tunik per warna x lengan invoice, dari kategori grup warna MRP.
+  // Satu invoice bisa memuat beberapa segmen; filter = invoice yang memuat segmen itu.
+  const segOf = segmenProdukLookup(mrpDetails);
+  const segList = (r: TrackingRow) =>
+    r.invoice ? SEGMEN_PRODUK.filter((s) => r.invoice!.colorEntries.some((c) => segOf(r.mrpId, c.warna, c.lengan) === s)) : [];
   const warnaList = (r: TrackingRow) => (r.invoice ? r.invoice.colorEntries.map((c) => c.warna) : r.warna.split(", ").filter((w) => w && w !== "—"));
   // Tanggal delivery (owner 2026-11-19): label sama dengan kolom Tgl Delivery; urutan terbaru dulu, invoice belum delivery di akhir.
   const delivLabel = (r: TrackingRow) => (r.tglDelivery ? formatDate(r.tglDelivery) : "Belum dikirim");
@@ -279,6 +286,7 @@ export default function MaterialTrackingPage() {
     { label: "No. Invoice", options: uniqSorted(rows.map((r) => r.invoice?.noInvoiceVendor ?? "")), test: (r, v) => r.invoice?.noInvoiceVendor === v },
     { label: "No. PO", options: uniqSorted(rows.map((r) => r.poId)), test: (r, v) => r.poId === v },
     { label: "Warna", options: uniqSorted(rows.flatMap(warnaList)), test: (r, v) => warnaList(r).includes(v) },
+    { label: "Segmen", options: SEGMEN_PRODUK.filter((s) => rows.some((r) => segList(r).includes(s))), test: (r, v) => (segList(r) as string[]).includes(v) },
     { label: "Entitas", options: uniqSorted(rows.map((r) => r.entitas)), test: (r, v) => r.entitas === v },
     { label: "Status", options: uniqSorted(rows.map((r) => trackingStatusBadge(r).label)), test: (r, v) => trackingStatusBadge(r).label === v },
     { label: "Delivery Material", options: ["Belum delivery", "Sudah delivery"], test: (r, v) => deliveryLabel(r) === v },
@@ -362,6 +370,7 @@ export default function MaterialTrackingPage() {
     { key: "tglDelivery", label: "Tgl Delivery Material", default: true, render: (r) => formatDate(r.tglDelivery) },
     { key: "tglTerima", label: "Tgl Terima", default: false, render: (r) => formatDate(r.tglReceiving) },
     { key: "warna", label: "Warna", default: false, aggregate: aggSame((r) => r.warna), render: (r) => r.warna },
+    { key: "segmen", label: "Segmen", default: true, aggregate: aggSame((r) => segList(r).join(", ")), render: (r) => segList(r).join(", ") || "—" },
     { key: "entitas", label: "Entitas", default: false, aggregate: aggSame((r) => r.entitas), render: (r) => r.entitas || "—" },
   ];
 
@@ -459,6 +468,7 @@ export default function MaterialTrackingPage() {
     { label: "Supplier", options: uniqSorted(allRolls.map((r) => r.supplier)), test: (r, v) => r.supplier === v },
     { label: "Vendor", options: uniqSorted(allRolls.map((r) => vendorName(r.vendorProduksi))), test: (r, v) => vendorName(r.vendorProduksi) === v },
     { label: "Warna", options: uniqSorted(allRolls.map((r) => r.warna)), test: (r, v) => r.warna === v },
+    { label: "Segmen", options: SEGMEN_PRODUK.filter((s) => allRolls.some((r) => segOf(r.mrpId, r.warna, r.lengan) === s)), test: (r, v) => segOf(r.mrpId, r.warna, r.lengan) === v },
     { label: "Lengan", options: ["PENDEK", "PANJANG"], test: (r, v) => r.lengan === v },
     { label: "Invoice", options: uniqSorted(allRolls.map((r) => r.noInvoice)), test: (r, v) => r.noInvoice === v },
   ];
@@ -467,6 +477,7 @@ export default function MaterialTrackingPage() {
     { key: "supplier", label: "Supplier", default: true, aggregate: aggSame((r) => r.supplier), render: (r) => r.supplier },
     { key: "vendor", label: "Vendor", default: true, aggregate: aggSame((r) => vendorName(r.vendorProduksi)), render: (r) => vendorName(r.vendorProduksi) },
     { key: "warna", label: "Warna", default: true, aggregate: aggSame((r) => r.warna), render: (r) => r.warna },
+    { key: "segmen", label: "Segmen", default: true, aggregate: aggSame((r) => segOf(r.mrpId, r.warna, r.lengan)), render: (r) => segOf(r.mrpId, r.warna, r.lengan) },
     { key: "lengan", label: "Lengan", default: true, aggregate: aggSame((r) => r.lengan), render: (r) => (r.lengan === "PENDEK" ? "PDK" : "PJG") },
     { key: "invoice", label: "Invoice", default: false, aggregate: aggSame((r) => r.noInvoice), render: (r) => <span className="font-mono">{r.noInvoice || "—"}</span> },
     { key: "po", label: "No PO", default: false, render: (r) => <span className="font-mono" title={r.poId}>{poDisplayNo(r.poId, r.entitas)}</span> },

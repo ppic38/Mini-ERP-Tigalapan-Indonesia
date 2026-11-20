@@ -17,6 +17,12 @@ Permintaan owner: pada Form Rasio, size dalam satu warna diurutkan dari paling k
 
 
 
+## Kolom dan filter "Segmen" (Dewasa / Kids / Tunik) di Laporan HPP, Tracking Item, Material Tracking (2026-11-20, tanpa migration) [redesign-segmen]
+Owner: field Kids, Dewasa, atau Tunik di HPP, Tracking Item, dan Material Tracking, bisa difilter dan diurutkan.
+- `lib/mrp/derive.ts`: `segmenProdukOf(kategori, warna, usia?)` dan `segmenProdukLookup(mrpDetails)` (diindeks sekali). Sumber = kategori grup warna x lengan di MRP (kosong = kategori MRP, lalu akhiran nama warna "KID"/"TUNIK"): KIDS 24S = Kids, TUNIK 24S = Tunik, COMBED 24S/30S, PANJANG + RIB, WANGKI MYNO = Dewasa. Usia item koli menang (rework/sisa kain KIDS = Kids; DEWASA dari grup Kids = Dewasa). `HppRow.usia` baru diisi untuk baris rework.
+- Laporan HPP (Finance dan SCM), Tracking Item (PPIC dan SCM), Material Tracking tab Per Roll: kolom "Segmen" (tampil bawaan) + filter Segmen; urut lewat klik judul kolom, bisa dipakai Kelompokkan. Material Tracking per invoice: satu invoice bisa memuat beberapa segmen (kolom menampilkan semuanya, filter = invoice yang memuat segmen itu).
+- Tidak diubah: isi Export Excel (HPP, Tracking Item) dan data. Diuji: tsc bersih, pemetaan dicek pada salinan data lokal (Dewasa 454 grup, Kids 213, Tunik 34). Belum dilihat di layar (login lokal dilakukan owner).
+
 ## Tracking Item per roll x size x status, ETD/ETA, klik matriks dashboard (2026-11-19, tanpa migration) [redesign-ppic]
 Owner: status harus mencerminkan posisi qty (filter Status hanya menampilkan qty yang MASIH di status itu), tahap sama dengan matriks 11 gate dashboard + Wait PV, kolom tetap, dan klik sel dashboard membuka Tracking yang sudah terfilter.
 - `lib/mrp/itemTracking.ts` `buildTrackLines`: baris roll x size dipecah jadi satu baris per status yang masih memegang qty (qty 0 tidak tampil). Status: Wait PV (roll Aduan Pola yang belum ada di invoice bahan mana pun), PV (belum dibayar), Paid, Del Mat (Set Delivery, belum Good Receive), GR Mat (diterima vendor, belum resting), Resting, Cutting (cutting - FG, roll terbuka), FG / Done FG (FG belum di koli; roll terbuka / ditutup), Packing, Delivery, GR DC, Reject (roll ditutup, cutting - FG). Roll yang belum di-resting dibagi ke tahap material menurut invoice bahan grup MRP x vendor x warna x lengan (roll paling maju lebih dulu); target dibagi sebanding jumlah roll. Target hanya di baris pertama roll x size.
