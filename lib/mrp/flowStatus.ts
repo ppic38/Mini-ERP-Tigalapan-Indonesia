@@ -182,6 +182,31 @@ export function invoiceFlowStage(
   return { stage: first ?? invoiceRollFlowStage(inv, false, undefined, undefined), rollsByStage };
 }
 
+/** Jumlah roll per tahap untuk SETIAP warna x lengan di satu invoice (kunci `warna|lengan`), aturan sama dengan `invoiceFlowStage`. Dipakai rincian baris Material Tracking. */
+export function invoiceColorFlowBreakdown(
+  inv: RawMaterialInvoice,
+  batchByCode: Map<string, ProductionBatch>,
+  shipping: Map<string, BatchShipping>,
+  returned: Set<string> = new Set()
+): Map<string, Partial<Record<FlowStage, number>>> {
+  const out = new Map<string, Partial<Record<FlowStage, number>>>();
+  for (const c of inv.colorEntries) {
+    const key = `${c.warna}|${c.lengan}`;
+    const arrivals = inv.rollArrivals[key] ?? [];
+    const receipts = inv.rollReceipts[key] ?? [];
+    const by: Partial<Record<FlowStage, number>> = out.get(key) ?? {};
+    c.rolls.forEach((_, idx) => {
+      if (returned.has(`${inv.id}|${c.warna}|${c.lengan}|${idx}`)) return;
+      const code = arrivals[idx]?.codeRoll || receipts[idx]?.codeRoll || c.codeRolls?.[idx] || "";
+      const batch = code ? batchByCode.get(code) : undefined;
+      const st = invoiceRollFlowStage(inv, !!arrivals[idx], batch, batch ? shipping.get(batch.id) : undefined);
+      by[st] = (by[st] ?? 0) + 1;
+    });
+    out.set(key, by);
+  }
+  return out;
+}
+
 /** "Receiving Material: 9 roll / Cutting: 45 roll" -- teks tooltip rincian roll per tahap. */
 export function rollsByStageText(by: Partial<Record<FlowStage, number>>): string {
   return (FLOW_STAGES as readonly FlowStage[])
