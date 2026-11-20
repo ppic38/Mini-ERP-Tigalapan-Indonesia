@@ -4766,7 +4766,7 @@ async function logFgProgressDelta(
 
   if (allDeltas.length > 0) {
     const groupKey = `${batch.mrp_id}|${batch.warna}|${batch.lengan}`;
-    const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", batch.mrp_id).eq("vendor_produksi", batch.vendor_produksi).maybeSingle();
+    const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", batch.mrp_id).eq("vendor_produksi", batch.vendor_produksi).order("id").limit(1).maybeSingle();
     const rollNote = `Roll ${batch.code_roll ?? batch.id}`;
     // Kenaikan dicatat sebagai baris "Roll X"; koreksi TURUN (2026-10-24) dicatat sebagai baris "Roll X (koreksi)" ber-qty negatif --
     // pola sama editRollFgAction. Dulu koreksi turun tidak dicatat sama sekali, jadi FG yang naik-turun-naik terhitung dua kali di riwayat.
@@ -4920,7 +4920,7 @@ async function editRollFgImpl(batchId: string, sizeQty: Record<string, number>):
   const sizes = Array.from(new Set([...Object.keys(baseline), ...Object.keys(clean)]));
   const deltaRows = sizes.map((sz) => [sz, (clean[sz] ?? 0) - (baseline[sz] ?? 0)] as const).filter(([, d]) => d !== 0);
   if (deltaRows.length > 0) {
-    const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", batch.mrp_id).eq("vendor_produksi", batch.vendor_produksi).maybeSingle();
+    const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", batch.mrp_id).eq("vendor_produksi", batch.vendor_produksi).order("id").limit(1).maybeSingle();
     const resultId = await nextReadableId("PR");
     const { error: resErr } = await db.from("production_results").insert({
       id: resultId,
@@ -5100,7 +5100,7 @@ export async function submitProductionResultAction(input: { mrpId: string; vendo
   const { data: meta } = await db.from("production_group_meta").select("done_at").eq("group_key", groupKey).eq("vendor_produksi", input.vendorProduksi).maybeSingle();
   if (meta?.done_at) return;
 
-  const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", input.mrpId).eq("vendor_produksi", input.vendorProduksi).maybeSingle();
+  const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", input.mrpId).eq("vendor_produksi", input.vendorProduksi).order("id").limit(1).maybeSingle();
   const id = await nextReadableId("PR");
   const { error } = await db.from("production_results").insert({
     id,
@@ -5343,7 +5343,7 @@ async function reworkRejectSizeImpl(input: ReworkRejectSizeInput): Promise<void>
       );
     }
   }
-  const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", input.mrpId).eq("vendor_produksi", input.vendorProduksi).maybeSingle();
+  const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", input.mrpId).eq("vendor_produksi", input.vendorProduksi).order("id").limit(1).maybeSingle();
   const rejectId = await nextReadableId("PR");
   const fgId = await nextReadableId("PR");
   const recordedAt = nowIso();
@@ -5418,7 +5418,7 @@ async function recomputeAutoRejectForGroup(
   }
 
   if (Object.keys(rejectSizeQty).length > 0) {
-    const { data: maklonRow } = await db.from("maklon_pos").select("id").eq("mrp_id", mrpId).eq("vendor_produksi", vendorProduksi).maybeSingle();
+    const { data: maklonRow } = await db.from("maklon_pos").select("id").eq("mrp_id", mrpId).eq("vendor_produksi", vendorProduksi).order("id").limit(1).maybeSingle();
     const id = await nextReadableId("PR");
     await db.from("production_results").insert({ id, group_key: groupKey, mrp_id: mrpId, vendor_produksi: vendorProduksi, po_id: maklonRow?.id ?? "", warna, lengan, kind: "REJECT", recorded_at: nowIso() });
     await db.from("production_result_sizes").insert(Object.entries(rejectSizeQty).map(([size, qty]) => ({ production_result_id: id, size, qty })));
