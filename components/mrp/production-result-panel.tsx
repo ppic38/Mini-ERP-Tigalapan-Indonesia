@@ -26,6 +26,8 @@ import {
   groupCloseWarningLines,
   formatDate,
   formatDateTimeShort,
+  localDateString,
+  EXTRA_FG_NOTE_PREFIX,
   productionGroupMetaFor,
   rejectGrossForGroup,
   rejectShippedBySize,
@@ -132,6 +134,155 @@ function FgProgressHistory({ poId, results }: { poId: string; results: Productio
           </div>
         );
       })}
+    </div>
+  );
+}
+
+const HARI_SINGKAT = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+
+/** Output Finish Good PER HARI untuk satu PO Produksi (owner 2026-11-21, vendor): jumlah semua catatan FG (progres roll, rework, sisa kain;
+ *  koreksi turun = negatif) per tanggal. Tanggal = tanggal catatan tersimpan (jam sistem, tidak bisa diubah), BUKAN tanggal barang selesai
+ *  dijahit: kalau vendor menyimpan FG dua hari sekaligus, angkanya masuk ke hari penyimpanan. Hari tanpa catatan tidak ditampilkan dan tidak
+ *  dihitung dalam rata-rata. Baris hari bisa dibuka untuk rincian per warna·lengan dan size. */
+function FgDailyOutput({ poId, results }: { poId: string; results: ProductionResult[] }) {
+  const [openDay, setOpenDay] = useState<string | null>(null);
+  const entries = results.filter((r) => r.poId === poId && r.kind === "FG");
+  if (entries.length === 0) return null;
+  type Line = { warna: string; lengan: string; qty: number; sizes: Record<string, number>; rework: number; sisa: number };
+  const byDay = new Map<string, { qty: number; count: number; lines: Map<string, Line> }>();
+  for (const r of entries) {
+    const d = new Date(r.recordedAt);
+    if (Number.isNaN(d.getTime())) continue;
+    const dayKey = localDateString(d);
+    const day = byDay.get(dayKey) ?? { qty: 0, count: 0, lines: new Map<string, Line>() };
+    byDay.set(dayKey, day);
+    const qty = Object.values(r.sizeQty).reduce((a, b) => a + b, 0);
+    day.qty += qty;
+    day.count += 1;
+    const lk = r.warna + "|" + r.lengan;
+    const line = day.lines.get(lk) ?? { warna: r.warna, lengan: r.lengan, qty: 0, sizes: {}, rework: 0, sisa: 0 };
+    day.lines.set(lk, line);
+    line.qty += qty;
+    for (const [size, q] of Object.entries(r.sizeQty)) line.sizes[size] = (line.sizes[size] ?? 0) + q;
+    if (r.note?.startsWith("Rework dari")) line.rework += qty;
+    else if (r.note?.startsWith(EXTRA_FG_NOTE_PREFIX)) line.sisa += qty;
+  }
+  const days = Array.from(byDay.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1)); // terbaru di atas
+  const total = days.reduce((sum, [, d]) => sum + d.qty, 0);
+  const activeDays = days.filter(([, d]) => d.qty > 0);
+  const avg = activeDays.length > 0 ? Math.round(activeDays.reduce((sum, [, d]) => sum + d.qty, 0) / activeDays.length) : 0;
+  const best = activeDays.reduce<[string, number] | null>((b, [k, d]) => (b === null || d.qty > b[1] ? [k, d.qty] : b), null);
+  const maxAbs = Math.max(1, ...days.map(([, d]) => Math.abs(d.qty)));
+  const dayLabel = (key: string) => {
+    const dt = new Date(key + "T00:00:00");
+    return `${HARI_SINGKAT[dt.getDay()]}, ${formatDate(key)}`;
+  };
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+        {[
+          ["Total FG PO ini", `${total.toLocaleString("id-ID")} pcs`],
+          ["Hari ada output", `${activeDays.length} hari`],
+          ["Rata-rata / hari", `${avg.toLocaleString("id-ID")} pcs`],
+          ["Hari terbaik", best ? `${best[1].toLocaleString("id-ID")} pcs · ${formatDate(best[0])}` : "—"],
+        ].map(([k, v]) => (
+          <div key={k} className="rounded-md border border-[#E4E9EE] bg-white px-3 py-2">
+            <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">{k}</div>
+            <div className="mt-0.5 font-mono text-[12.5px] font-semibold text-text-primary">{v}</div>
+          </div>
+        ))}
+      </div>
+      <div className="overflow-hidden rounded-md border border-[#E4E9EE] bg-white">
+        {days.map(([key, d]) => {
+          const isOpen = openDay === key;
+          const pct = Math.max(2, Math.round((Math.abs(d.qty) / maxAbs) * 100));
+          return (
+            <div key={key} className="border-b border-[#F1F4F7] last:border-b-0">
+              <button
+                type="button"
+                onClick={() => setOpenDay(isOpen ? null : key)}
+                className="flex w-full items-center gap-3 px-3 py-2 text-left font-sans text-[11.5px] hover:bg-[#F7F9FB] max-md:flex-wrap max-md:gap-y-1"
+              >
+                <span className="w-[120px] flex-none whitespace-nowrap font-mono text-[11px] text-[#31414F]">
+                  <span className="mr-1.5 text-text-muted">{isOpen ? "▾" : "▸"}</span>
+                  {dayLabel(key)}
+                </span>
+                <span className="h-3 min-w-[60px] flex-1 overflow-hidden rounded-sm bg-[#EEF2F6] max-md:order-3 max-md:basis-full">
+                  <span className={"block h-full rounded-sm " + (d.qty < 0 ? "bg-danger-fg" : "bg-success-fg")} style={{ width: pct + "%" }} />
+                </span>
+                <span className={"w-[110px] flex-none text-right font-mono font-semibold " + (d.qty < 0 ? "text-danger-fg" : "text-success-fg")}>
+                  {d.qty > 0 ? "+" : ""}
+                  {d.qty.toLocaleString("id-ID")} pcs
+                </span>
+                <span className="w-[70px] flex-none text-right font-sans text-[10px] text-text-muted">{d.count} catatan</span>
+              </button>
+              {isOpen && (
+                <div className="flex flex-col gap-1 border-t border-[#F1F4F7] bg-[#FAFBFC] px-3 py-2">
+                  {Array.from(d.lines.values())
+                    .sort((x, y) => x.warna.localeCompare(y.warna) || (x.lengan === y.lengan ? 0 : x.lengan === "PENDEK" ? -1 : 1))
+                    .map((l) => (
+                      <div key={l.warna + "|" + l.lengan} className="flex items-baseline justify-between gap-3 font-sans text-[11.5px] text-[#31414F] max-md:flex-wrap">
+                        <span className="min-w-0 flex-1">
+                          <span className="font-medium">
+                            {l.warna} · {l.lengan}
+                          </span>
+                          {l.rework !== 0 && (
+                            <span className="ml-1.5 rounded bg-[#EEF2F6] px-1.5 py-0.5 text-[10px] text-text-muted">
+                              rework {l.rework > 0 ? "+" : ""}
+                              {l.rework}
+                            </span>
+                          )}
+                          {l.sisa !== 0 && (
+                            <span className="ml-1.5 rounded bg-[#EEF2F6] px-1.5 py-0.5 text-[10px] text-text-muted">
+                              sisa kain {l.sisa > 0 ? "+" : ""}
+                              {l.sisa}
+                            </span>
+                          )}
+                          <span className="ml-2 font-mono text-[10px] text-text-muted">
+                            {Object.entries(l.sizes)
+                              .filter(([, q]) => q !== 0)
+                              .map(([size, q]) => `${size} ${q > 0 ? "+" : ""}${q}`)
+                              .join(", ")}
+                          </span>
+                        </span>
+                        <span className={"flex-none font-mono font-semibold " + (l.qty < 0 ? "text-danger-fg" : "text-success-fg")}>
+                          {l.qty > 0 ? "+" : ""}
+                          {l.qty} pcs
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="font-sans text-[10.5px] leading-snug text-text-muted">
+        Tanggal = saat catatan FG tersimpan di sistem. Koreksi turun (Edit FG) tercatat negatif di hari koreksi. Hari tanpa catatan tidak ditampilkan dan tidak masuk rata-rata.
+      </div>
+    </div>
+  );
+}
+
+/** Pilihan tampilan riwayat FG satu PO: per warna (catatan satu per satu) atau per hari (output harian). */
+function FgHistoryTabs({ poId, results }: { poId: string; results: ProductionResult[] }) {
+  const [view, setView] = useState<"WARNA" | "HARI">("WARNA");
+  const tab = (v: "WARNA" | "HARI", label: string) => (
+    <button
+      type="button"
+      onClick={() => setView(v)}
+      className={"rounded-full border px-3 py-1 font-sans text-[11px] font-semibold " + (view === v ? "border-action-primary bg-action-primary text-white" : "border-[#CBD5DF] bg-white text-action-primary")}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex gap-1.5">
+        {tab("WARNA", "Per warna")}
+        {tab("HARI", "Per hari")}
+      </div>
+      {view === "WARNA" ? <FgProgressHistory poId={poId} results={results} /> : <FgDailyOutput poId={poId} results={results} />}
     </div>
   );
 }
@@ -1596,7 +1747,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                       <div className="mb-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted max-md:hidden">
                         Tanggal &amp; jam tercatat otomatis oleh sistem, tidak bisa diubah/backdate
                       </div>
-                      <FgProgressHistory poId={poId} results={productionResults} />
+                      <FgHistoryTabs poId={poId} results={productionResults} />
                     </div>
                   )}
                 </div>
