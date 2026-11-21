@@ -51,6 +51,8 @@ import type { DeliveryKoli, Lengan, ProductionBatch, ProductionResult } from "@/
 // kunci input FG, tapi BELUM mengunci Rework/Waste (itu tahap 2, tab Final Produksi, lihat
 // production-final-tab.tsx). Dua tahap terpisah supaya reject yang baru dihitung masih sempat
 // dirework sebelum benar-benar final.
+/** Kotak "Klasifikasi reject" (material vs produksi/proses) di tab Reject vendor DISEMBUNYIKAN sementara (owner 2026-11-21). Ubah ke true untuk mengaktifkan lagi; data, aksi server, dan tampilan internal tidak berubah. */
+const SHOW_REJECT_CLASSIFICATION = false;
 const FG_COLUMNS = "minmax(170px,1.2fr) minmax(300px,2.2fr) minmax(130px,0.9fr) minmax(170px,1fr)";
 // REJECT: tiap angka (target/awal/sisa) tetap bermakna terpisah, jadi tetap kolom angka
 // masing-masing. Kolom "Sisa/Waste" DIHAPUS (item 19 -- "Buang ke Sisa" dihapus dari flow).
@@ -949,7 +951,7 @@ export function ProductionResultPanel({ vendorId, kind, title, canRework = false
                             );
                           })()}
                         </div>
-                        {grossReject > 0 && <GroupRejectSplitBox groupKey={groupKey} vendorProduksi={vendorId} total={grossReject} locked={isFinalDone || sysadmin} />}
+                        {SHOW_REJECT_CLASSIFICATION && grossReject > 0 && <GroupRejectSplitBox groupKey={groupKey} vendorProduksi={vendorId} total={grossReject} locked={isFinalDone || sysadmin} />}
                         <GroupRemarkBox
                           groupKey={groupKey}
                           vendorProduksi={vendorId}
