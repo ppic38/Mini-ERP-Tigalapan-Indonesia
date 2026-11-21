@@ -56,9 +56,16 @@ function itemTitle(item: Item): string {
   return item.type === "MATERIAL" ? `${item.mrpId} · ${item.supplier}` : `${item.mrpId} · ${item.vendor}`;
 }
 
+/** Vendor dalam satu PO Material gabungan: roll terbanyak di atas (owner 2026-11-21); roll sama = urut nama. */
+function membersByRoll(item: Item): Item[] {
+  const members = item.members ?? [item];
+  if (item.type !== "MATERIAL") return members;
+  return [...members].sort((x, y) => (y.po as MaterialPO).rollCount - (x.po as MaterialPO).rollCount || x.vendor.localeCompare(y.vendor, "id"));
+}
+
 function itemSubtitle(item: Item): string {
   if (item.type === "MAKLON") return item.id;
-  const members = item.members ?? [item];
+  const members = membersByRoll(item);
   return members.length > 1 ? `${members.length} vendor: ${members.map((m) => m.vendor).join(", ")}` : `${item.vendor} · ${item.id}`;
 }
 
@@ -192,7 +199,7 @@ function DetailModal({ item, onClose }: { item: Item; onClose: () => void }) {
   const detail = mrpDetailFor(item.mrpId, mrpDetails);
   const st = item.state;
   const boxes = approvalBoxes(item.po, st);
-  const members = item.members ?? [item];
+  const members = membersByRoll(item);
   const totalRoll = item.type === "MATERIAL" ? members.reduce((sum, m) => sum + (m.po as MaterialPO).rollCount, 0) : 0;
   const totalPcs = item.type === "MATERIAL" ? members.reduce((sum, m) => sum + materialPoPcs(m.po as MaterialPO, detail?.aduanRows ?? []), 0) : 0;
   return (
