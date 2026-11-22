@@ -12,7 +12,7 @@ export const supplierUsesSuratJalan = (supplier: string | null | undefined) => /
 /** Alur code roll dari surat jalan berlaku mulai MRP W45 (owner 2026-11-19); MRP W44 ke bawah (dan MRP tanpa pola W<angka>) tetap memakai alur lama: vendor mengisi code roll di Good Receive. */
 export const SURAT_JALAN_FROM_WEEK = 45;
 export function suratJalanActiveForMrp(mrpId: string | null | undefined): boolean {
-  const m = String(mrpId ?? "").toUpperCase().match(/(?:^|[^A-Z0-9])W(d{1,3})(?![0-9])/);
+  const m = String(mrpId ?? "").toUpperCase().match(/(?:^|[^A-Z0-9])W(\d{1,3})(?![0-9])/);
   return !!m && parseInt(m[1], 10) >= SURAT_JALAN_FROM_WEEK;
 }
 /** Invoice ini memakai alur surat jalan: supplier KNITTO DAN MRP W45 ke atas. */
