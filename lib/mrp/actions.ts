@@ -1954,7 +1954,7 @@ export async function applySuratJalanVendorAction(input: SuratJalanApplyInput): 
     const db = supabaseServer();
     await assertInvoiceOwnedByVendor(db, input.invoiceId, actor.vendorId);
     const res = await applySuratJalanCore(db, input, { vendorOnly: true });
-    await logVendorAction(actor, `Scan surat jalan ${input.noOrder}: ${res.updated} code roll disimpan${res.unchanged > 0 ? `, ${res.unchanged} sudah sama` : ""} (foto kamera, dibaca di perangkat vendor)`, "raw_material_invoices", input.invoiceId);
+    await logVendorAction(actor, `Scan/unggah surat jalan invoice ${input.noOrder || "(No Order tidak terbaca; dicocokkan lewat bruto)"}: ${res.updated} code roll disimpan${res.unchanged > 0 ? `, ${res.unchanged} sudah sama` : ""} (${input.fileName}, dibaca di perangkat vendor)`, "raw_material_invoices", input.invoiceId);
     return res;
   });
 }
@@ -1971,7 +1971,9 @@ async function applySuratJalanCore(db: ReturnType<typeof supabaseServer>, input:
       if (!invoiceUsesSuratJalan(inv.supplier, inv.mrp_id)) throw new Error("Invoice ini tidak memakai alur surat jalan; code roll diisi langsung di Good Receive.");
     }
     const norm = (x: unknown) => String(x ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-    if (!norm(inv.no_invoice_vendor) || norm(inv.no_invoice_vendor) !== norm(input.noOrder)) {
+    // Vendor memindai HANYA daftar roll (owner 2026-11-23): No Order sering tidak ikut terpotret, dan vendor sendiri yang memilih invoice-nya. Kalau No Order tidak terbaca (kosong) pada jalur
+    // vendor, penjaganya = SETIAP bruto harus persis sama dengan roll invoice yang dipilih (dicek di bawah); kalau No Order terbaca, tetap harus sama dengan nomor invoice.
+    if (!(vendorMode && !norm(input.noOrder)) && (!norm(inv.no_invoice_vendor) || norm(inv.no_invoice_vendor) !== norm(input.noOrder))) {
       throw new Error(`Surat jalan ini untuk invoice ${input.noOrder}, bukan invoice ${inv.no_invoice_vendor || "(tanpa nomor)"}. Tidak disimpan.`);
     }
     const colorIds = Array.from(new Set(input.assignments.map((a) => `${input.invoiceId}-${a.warna}-${a.lengan}`)));
@@ -2043,8 +2045,14 @@ async function resolveReceiveCodes(
   return rolls.map((r) => {
     const have = existing.get(r.rollIndex) ?? "";
     if (have) return have;
-    if (viaSj) throw new Error(`Roll ${r.rollIndex + 1} ${warna} ${lengan}: code roll belum ada. Menunggu surat jalan ${inv?.supplier ?? "supplier"} diunggah Procurement (Material Tracking) -- vendor tidak mengisi code roll untuk supplier ini.`);
     const typed = r.codeRoll?.trim();
+    // Owner 2026-11-23: roll KNITTO W45+ tanpa code dari surat jalan TETAP bisa diterima lewat code roll yang diketik vendor (jalur cadangan: surat jalan belum ada / foto tidak terbaca), supaya Good
+    // Receive tidak tertahan. Jalur utama tetap scan/unggah surat jalan. Format dijaga (1 huruf + 8-12 angka) untuk mengurangi salah ketik; code yang sudah ada di roll tidak pernah diganti.
+    if (viaSj) {
+      if (!typed) throw new Error(`Roll ${r.rollIndex + 1} ${warna} ${lengan}: code roll belum ada. Scan/unggah surat jalan ${inv?.supplier ?? "supplier"} untuk invoice ini, atau isi code roll manual.`);
+      if (!/^[A-Z]\d{8,12}$/.test(typed.toUpperCase())) throw new Error(`Code roll "${typed}" (Roll ${r.rollIndex + 1} ${warna} ${lengan}) tidak berformat kode roll ${inv?.supplier ?? "supplier"} (1 huruf + 8-12 angka, mis. R2611101758). Periksa penulisannya.`);
+      return typed.toUpperCase();
+    }
     if (!typed) throw new Error("Code roll wajib diisi sebelum roll diterima.");
     return typed;
   });

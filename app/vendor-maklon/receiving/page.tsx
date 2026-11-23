@@ -500,10 +500,10 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
             {viaSj && sjRollsNoCode > 0 && !sysadminMode && (
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-[#F0DDB0] bg-[#FFF9EC] px-3 py-2 max-md:flex-col max-md:items-stretch">
                 <span className="font-sans text-[11.5px] text-warning-fg">
-                  {sjRollsNoCode} roll di invoice ini belum punya code roll (menunggu surat jalan dari Procurement). Punya surat jalan cetak dari supplier? Scan satu kali untuk semua warna.
+                  {sjRollsNoCode} roll di invoice {selectedInvoice.noInvoiceVendor || selectedInvoice.id} belum punya code roll. Punya surat jalan dari supplier? Foto daftar code roll-nya atau unggah PDF-nya sekali untuk semua warna. Kalau belum siap atau tidak terbaca, code roll bisa diisi manual di tiap roll.
                 </span>
                 <Button onClick={() => setScanOpen(true)} variant="primary" size="sm" className="max-md:min-h-11 max-md:rounded-full max-md:text-[13px]">
-                  Scan surat jalan invoice ini
+                  Scan / unggah surat jalan
                 </Button>
               </div>
             )}
@@ -762,10 +762,10 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                         </span>
                         {pendingRolls.length > 0 && (
                           <span className="flex items-center gap-3 max-md:w-full max-md:flex-wrap">
-                            {rollsMissingCode.length > 0 && <span className="font-sans text-[11px] text-warning-fg">{rollsMissingCode.length} roll {viaSj ? "menunggu surat jalan dari Procurement" : "belum diisi code roll"}</span>}
+                            {rollsMissingCode.length > 0 && <span className="font-sans text-[11px] text-warning-fg">{rollsMissingCode.length} roll belum diisi code roll{viaSj ? " (scan/unggah surat jalan, atau isi manual)" : ""}</span>}
                             {viaSj && rollsMissingCode.length > 0 && !sysadminMode && (
                               <Button onClick={() => setScanOpen(true)} variant="ghost" size="sm" className="max-md:min-h-11 max-md:flex-1 max-md:rounded-full max-md:text-[13px]">
-                                Scan surat jalan (kamera)
+                                Scan / unggah surat jalan
                               </Button>
                             )}
                             {rollsWithCodeConflict.length > 0 && <span className="font-sans text-[11px] text-danger-fg">{rollsWithCodeConflict.length} roll code roll-nya sudah terdaftar</span>}
@@ -830,15 +830,15 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                                 <span className="font-mono text-[11px]">{r.presetCode}</span>
                                 <span className="whitespace-nowrap text-[10px] font-semibold text-success-fg">{viaSj ? "dari surat jalan" : "dari invoice"}</span>
                               </span>
-                            ) : viaSj ? (
-                              <span data-label="Code roll" className="font-sans text-[11px] font-semibold text-warning-fg max-md:col-span-full">Menunggu surat jalan</span>
                             ) : (
+                              // Tanpa code dari invoice/surat jalan: vendor mengisi manual. Untuk KNITTO ini JALUR CADANGAN (owner 2026-11-23: Good Receive tetap jalan kalau surat jalan
+                              // belum ada / foto tidak terbaca); jalur utama = scan atau unggah surat jalan per invoice.
                               <span data-label="Code roll" className="flex items-center max-md:col-span-full">
                                 <input
                                   value={code.codeRoll}
                                   onChange={(e) => setDraftCode((prev) => ({ ...prev, [key]: { ...code, codeRoll: e.target.value } }))}
                                   className="input w-full max-w-[240px] !py-1.5 font-mono text-[11px]"
-                                  placeholder="Code roll"
+                                  placeholder={viaSj ? "Code roll (manual)" : "Code roll"}
                                 />
                               </span>
                             )}

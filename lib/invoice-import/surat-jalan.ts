@@ -59,6 +59,11 @@ export type ParsedSuratJalan = {
   total: { n: number; kg: number } | null;
   /** Masalah yang membuat berkas ini tidak boleh dipakai. */
   errors: string[];
+  /** Mode `listOnly` saja: jumlah baris/kg terbaca tidak sama dengan baris Total tercetak. Bukan galat pemblokir (baris RIB sering salah baca padahal tidak dicocokkan); pemanggil meminta vendor
+   *  memastikan ke surat jalan fisik. Mode biasa memasukkannya ke `errors`. */
+  totalIssues: string[];
+  /** Diparse dengan mode `listOnly` (judul warna per blok tidak dapat diandalkan; pencocokan boleh melintasi warna). */
+  listOnly?: boolean;
   warnings: string[];
 };
 
@@ -71,6 +76,8 @@ export const normInvoiceNo = (s: string | null | undefined) => String(s ?? "").t
 const ITEM_RE = /^\s*([A-Z]\d{8,12})\s+(\d{1,3}(?:[.,]\d{1,3})?)\s*$/;
 const HEADER_RE = /^\s*(RIB\s+)?([A-Z]+(?:\s+[A-Z]+)*?)\s+(\d{2}S)\s+([A-Z][A-Z0-9 ]*?)\s*$/;
 const TOTAL_RE = /Total\s*[:;]?\s*\(\s*(\d+)(?:\s*[.,]\s*0+)?\s*\)\s*([\d.,]+)\s*kg/i;
+/** Baris Total versi OCR: "Total. (1300) 25501 ky" -> "Total : (13) 255.01 kg" (titik desimal hilang, "kg" salah baca). */
+const OCR_TOTAL_RE = /^\W*T[o0]tal\W{0,3}\(\s*([0-9OQDIlSB]+)\s*(?:[.,]\s*([0-9OQDIlSB]+))?\s*\)\s*([0-9OQDIlSB.,]+)\s*\S{0,3}\s*$/i;
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 // Foto kamera -> teks OCR yang dirapikan (owner 2026-11-23: vendor memotret surat jalan cetak saat KNITTO telat mengirim surat jalan ke Procurement)
@@ -79,23 +86,47 @@ const TOTAL_RE = /Total\s*[:;]?\s*\(\s*(\d+)(?:\s*[.,]\s*0+)?\s*\)\s*([\d.,]+)\s
 /** Salah baca OCR yang umum pada angka: O/Q/D -> 0, I/l/| -> 1, Z -> 2, S -> 5, B -> 8. Hanya dipakai di bagian yang SEHARUSNYA angka. */
 const OCR_DIGIT: Record<string, string> = { O: "0", Q: "0", D: "0", o: "0", I: "1", l: "1", "|": "1", i: "1", Z: "2", S: "5", s: "5", B: "8" };
 const fixDigits = (s: string) => s.replace(/[OQDoIl|iZSsB]/g, (c) => OCR_DIGIT[c] ?? c);
-/** Pola baris roll versi OCR: huruf kode + 8-12 karakter mirip-angka, lalu bruto (boleh ada spasi di sekitar tanda desimal). Boleh ada kolom lain di kiri/kanan (nomor urut, dll). */
-const OCR_ITEM_RE = /(?:^|\s)([A-Z])\s?([0-9OQDIl|ZSB]{8,12})\s+([0-9OQDIl|ZSB]{1,3})\s*[.,]\s*([0-9OQDIl|ZSB]{1,2})(?=\s|$)/;
+/** Pola baris roll versi OCR: huruf kode + 8-12 karakter mirip-angka, lalu sisa baris (bruto, centang tulisan tangan, dll). Boleh ada karakter sampah/kolom lain di kiri. */
+const OCR_CODE_RE = /(?:^|[\s|.,:;'"[\]])([A-Z])\s?([0-9OQDIl|ZSB]{8,12})(?![0-9OQDIl|ZSB])\s+(.*)$/;
+const D = "[0-9OQDIl|ZSB]";
+/** Bruto dari sisa baris. Foto struk termal sering menghilangkan titik desimal atau menjadikannya spasi: "24.60", "24,60", "24 60", "2460" (-> 24.60), "155" (-> 1.55). Bruto kain selalu dua angka di belakang koma. */
+function parseOcrBruto(rest: string): string | null {
+  const r = rest.trim();
+  let m = new RegExp(`^(${D}{1,3})\\s*[.,]\\s*(${D}{1,2})(?![0-9])`).exec(r);
+  if (m) return fixDigits(m[1]) + "." + fixDigits(m[2]);
+  m = new RegExp(`^(${D}{1,2})\\s+(${D}{2})(?![0-9])`).exec(r);
+  if (m) return fixDigits(m[1]) + "." + fixDigits(m[2]);
+  m = new RegExp(`^(${D}{3,4})(?![0-9])`).exec(r);
+  if (m) {
+    const t = fixDigits(m[1]);
+    return t.slice(0, -2) + "." + t.slice(-2);
+  }
+  return null;
+}
 
-/** Rapikan teks OCR foto surat jalan sebelum diparse: baris roll dikembalikan ke bentuk baku "CODE BRUTO" (salah baca O/0, I/1, S/5, B/8 pada bagian angka dibetulkan; kolom lain dibuang).
- *  Baris lain dibiarkan. Ini HANYA mempermudah pembacaan; keutuhan tetap dijaga baris Total (jumlah baris dan kg) dan pencocokan bruto persis ke invoice, jadi salah baca yang tidak
- *  terbetulkan akan ditolak, bukan diam-diam tersimpan. */
+/** Rapikan teks OCR foto surat jalan sebelum diparse: baris roll dikembalikan ke bentuk baku "CODE BRUTO" (salah baca O/0, I/1, S/5, B/8 pada bagian angka dibetulkan, titik desimal yang hilang
+ *  dipulihkan, kolom lain dan centang tulisan tangan dibuang). Baris lain dibiarkan. Ini HANYA mempermudah pembacaan; keutuhan tetap dijaga baris Total (jumlah baris dan kg) dan pencocokan bruto
+ *  persis ke invoice, jadi salah baca yang tidak terbetulkan akan ditolak, bukan diam-diam tersimpan. */
 export function normalizeOcrSuratJalan(text: string): string {
   return text
     .split(/\r?\n/)
     .map((raw) => {
-      const line = raw.replace(/[‘’`´]/g, "'").replace(/\s+$/, "");
+      const line = raw.replace(/[\u2018\u2019`´]/g, "'").replace(/\s+$/, "");
       if (TOTAL_RE.test(line)) return line;
-      const m = OCR_ITEM_RE.exec(line);
+      const tm = OCR_TOTAL_RE.exec(line);
+      if (tm) {
+        // "(1300)" = "(13.00)" kalau titik hilang dan berakhir 00; berat tanpa pemisah ("25501") = 255.01.
+        let n = fixDigits(tm[1]);
+        if (!tm[2] && n.length >= 3 && n.endsWith("00")) n = n.slice(0, -2);
+        let kg = fixDigits(tm[3]).replace(",", ".");
+        if (!kg.includes(".") && kg.length >= 4) kg = kg.slice(0, -2) + "." + kg.slice(-2);
+        return `Total : (${parseInt(n, 10)}) ${kg} kg`;
+      }
+      const m = OCR_CODE_RE.exec(line);
       if (!m) return line;
-      const code = m[1] + fixDigits(m[2]);
-      const bruto = fixDigits(m[3]) + "." + fixDigits(m[4]);
-      return `${code} ${bruto}`;
+      const bruto = parseOcrBruto(m[3]);
+      if (!bruto) return line;
+      return `${m[1]}${fixDigits(m[2])} ${bruto}`;
     })
     .join("\n");
 }
@@ -106,20 +137,22 @@ function stemOfFile(name: string): string {
   return /^[A-Z]{2}\d{6,}$/.test(base) ? base : "";
 }
 
-export function parseSuratJalanKnitto(text: string, fileName = ""): ParsedSuratJalan {
+/** `listOnly` = hanya daftar roll yang dibaca (foto/PDF yang memotret bagian daftar saja, tanpa judul "BUKTI KELUAR BARANG" dan tanpa No Order): vendor sendiri yang memilih invoice-nya, jadi
+ *  penjaganya adalah pencocokan bruto persis ke invoice itu. Judul/No Order yang kebetulan terbaca tetap dipakai. Baris tanpa judul warna digolongkan dari awalan code: "R" = roll kain, selain itu = RIB. */
+export function parseSuratJalanKnitto(text: string, fileName = "", opts: { listOnly?: boolean } = {}): ParsedSuratJalan {
   const lines = text
     .split(/\r?\n/)
     .map((l) => l.replace(/\s+$/, ""))
     .filter((l) => l.trim());
-  const out: ParsedSuratJalan = { fileName, noOrder: "", noPenjualan: "", tanggal: null, groups: [], total: null, errors: [], warnings: [] };
+  const out: ParsedSuratJalan = { fileName, noOrder: "", noPenjualan: "", tanggal: null, groups: [], total: null, errors: [], totalIssues: [], warnings: [], listOnly: !!opts.listOnly };
 
-  if (!/BUKTI\s*KELUAR\s*BARANG/i.test(text)) out.errors.push('Berkas ini bukan "Bukti Keluar Barang" (surat jalan) KNITTO.');
+  if (!opts.listOnly && !/BUKTI\s*KELUAR\s*BARANG/i.test(text)) out.errors.push('Berkas ini bukan "Bukti Keluar Barang" (surat jalan) KNITTO.');
   const mNo = text.match(/No\s*Order\s*[:;]?\s*([A-Z]{2}\d{6,})/i);
   if (mNo) out.noOrder = mNo[1].toUpperCase();
   const stem = stemOfFile(fileName);
   if (!out.noOrder) out.noOrder = stem;
   else if (stem && stem !== out.noOrder) out.warnings.push(`Nama file (${stem}) berbeda dengan No Order di surat jalan (${out.noOrder}); yang dipakai No Order di isi surat jalan.`);
-  if (!out.noOrder) out.errors.push("No Order tidak terbaca di surat jalan.");
+  if (!out.noOrder && !opts.listOnly) out.errors.push("No Order tidak terbaca di surat jalan.");
   const mPj = text.match(/No\s*Penjualan\s*[:;]?\s*([A-Z]{2}\d{6,})/i);
   if (mPj) out.noPenjualan = mPj[1].toUpperCase();
   const mTgl = text.match(/Tanggal\s*[:;]?\s*(\d{2})\s*[-/.]\s*(\d{2})\s*[-/.]\s*(\d{4})/i);
@@ -134,6 +167,18 @@ export function parseSuratJalanKnitto(text: string, fileName = ""): ParsedSuratJ
       continue;
     }
     const it = ITEM_RE.exec(line);
+    if (it && opts.listOnly) {
+      const code = it[1].toUpperCase();
+      const isRoll = code.startsWith("R");
+      // Roll kain mengikuti judul warna terakhir kalau ada; selain itu (atau RIB) masuk grup tanpa judul menurut awalan code.
+      let g: SjGroup | undefined = isRoll && current && current.kind === "roll" ? current : out.groups.find((x) => x.header === "(tanpa judul)" && x.kind === (isRoll ? "roll" : "rib"));
+      if (!g) {
+        g = { kind: isRoll ? "roll" : "rib", header: "(tanpa judul)", warna: "", benang: "", items: [] };
+        out.groups.push(g);
+      }
+      g.items.push({ code, bruto: round2(num(it[2])) });
+      continue;
+    }
     if (it && current) {
       current.items.push({ code: it[1].toUpperCase(), bruto: round2(num(it[2])) });
       continue;
@@ -151,8 +196,9 @@ export function parseSuratJalanKnitto(text: string, fileName = ""): ParsedSuratJ
   if (out.total) {
     const all = out.groups.flatMap((g) => g.items);
     const sum = round2(all.reduce((s, x) => s + x.bruto, 0));
-    if (all.length !== out.total.n) out.errors.push(`Jumlah baris terbaca (${all.length}) tidak sama dengan total di surat jalan (${out.total.n}); PDF mungkin tidak terbaca utuh.`);
-    else if (Math.abs(sum - out.total.kg) > 0.03) out.errors.push(`Jumlah berat terbaca (${sum} kg) tidak sama dengan total di surat jalan (${out.total.kg} kg); PDF mungkin tidak terbaca utuh.`);
+    const issue = (msg: string) => (opts.listOnly ? out.totalIssues : out.errors).push(msg);
+    if (all.length !== out.total.n) issue(`Jumlah baris terbaca (${all.length}) tidak sama dengan total di surat jalan (${out.total.n}); PDF mungkin tidak terbaca utuh.`);
+    else if (Math.abs(sum - out.total.kg) > 0.03) issue(`Jumlah berat terbaca (${sum} kg) tidak sama dengan total di surat jalan (${out.total.kg} kg); PDF mungkin tidak terbaca utuh.`);
   } else {
     out.warnings.push("Baris Total tidak terbaca, jadi kelengkapan isi surat jalan tidak bisa diperiksa.");
   }
@@ -219,38 +265,166 @@ export function matchSuratJalan(sj: ParsedSuratJalan, invoice: InvoiceForSj): Sj
   }
   const rollGroups = sj.groups.filter((g) => g.kind === "roll");
 
+  // Mode `listOnly` (foto/PDF yang hanya memuat daftar): judul warna sering tidak terbaca sehingga roll terkelompok ke warna yang salah. Warna hanya PREFERENSI: putaran pertama mencocokkan di warna
+  // yang sama saja (supaya bruto yang kembar di dua warna tidak tertukar), sisa yang tidak ketemu dicoba lagi di semua warna invoice pada putaran kedua.
+  const loose = !!sj.listOnly;
+  const pending: { it: SjItem; g: SjGroup }[] = [];
+
+  const matchOne = (it: SjItem, g: SjGroup, pool: typeof refs, final: boolean) => {
+    // Roll yang SUDAH punya code roll yang sama (unggah ulang surat jalan yang sama) dianggap cocok.
+    let ref = pool.find((r) => !r.used && r.code && r.code.toUpperCase() === it.code);
+    let already = !!ref;
+    if (ref && Math.abs(ref.gross - it.bruto) > BRUTO_TOLERANCE) {
+      errors.push(`Code roll ${it.code} sudah tercatat di invoice dengan bruto ${ref.gross} kg, tetapi surat jalan menulis ${it.bruto} kg.`);
+      return;
+    }
+    if (!ref) {
+      const cand = pool.filter((r) => !r.used && !r.code && Math.abs(r.gross - it.bruto) <= BRUTO_TOLERANCE).sort((a, b) => Math.abs(a.gross - it.bruto) - Math.abs(b.gross - it.bruto));
+      ref = cand[0];
+      already = false;
+    }
+    if (!ref) {
+      if (!final) {
+        pending.push({ it, g });
+        return;
+      }
+      const hasWeightButCoded = pool.some((r) => !r.used && r.code && Math.abs(r.gross - it.bruto) <= BRUTO_TOLERANCE);
+      errors.push(
+        hasWeightButCoded
+          ? `Roll ${it.code} (${it.bruto} kg): roll invoice dengan bruto itu sudah punya code roll lain. Surat jalan ini mungkin bukan untuk roll yang tersisa.`
+          : `Roll ${it.code} (${it.bruto} kg${g.warna ? ", " + g.warna : ""}) tidak ada pasangannya di invoice ${invoice.noInvoiceVendor} (tidak ada roll dengan bruto itu yang masih kosong). Mungkin surat jalan salah invoice atau bruto salah baca.`
+      );
+      return;
+    }
+    ref.used = true;
+    matches.push({ warna: ref.warna, lengan: ref.lengan, rollIndex: ref.rollIndex, code: it.code, bruto: it.bruto, gross: ref.gross, sjWarna: g.warna, alreadySet: already });
+  };
+
   for (const g of rollGroups) {
     const gBase = normName(g.warna);
     const sameColor = refs.filter((r) => r.base === gBase);
     const pool = sameColor.length > 0 ? sameColor : refs;
-    if (sameColor.length === 0) warnings.push(`Warna "${g.warna}" di surat jalan tidak persis sama dengan warna invoice; roll dicocokkan lewat berat bruto saja.`);
-    for (const it of g.items) {
-      // Roll yang SUDAH punya code roll yang sama (unggah ulang surat jalan yang sama) dianggap cocok.
-      let ref = pool.find((r) => !r.used && r.code && r.code.toUpperCase() === it.code);
-      let already = !!ref;
-      if (ref && Math.abs(ref.gross - it.bruto) > BRUTO_TOLERANCE) {
-        errors.push(`Code roll ${it.code} sudah tercatat di invoice dengan bruto ${ref.gross} kg, tetapi surat jalan menulis ${it.bruto} kg.`);
-        continue;
-      }
-      if (!ref) {
-        const cand = pool.filter((r) => !r.used && !r.code && Math.abs(r.gross - it.bruto) <= BRUTO_TOLERANCE).sort((a, b) => Math.abs(a.gross - it.bruto) - Math.abs(b.gross - it.bruto));
-        ref = cand[0];
-        already = false;
-      }
-      if (!ref) {
-        const hasWeightButCoded = pool.some((r) => !r.used && r.code && Math.abs(r.gross - it.bruto) <= BRUTO_TOLERANCE);
-        errors.push(
-          hasWeightButCoded
-            ? `Roll ${it.code} (${it.bruto} kg): roll invoice dengan bruto itu sudah punya code roll lain. Surat jalan ini mungkin bukan untuk roll yang tersisa.`
-            : `Roll ${it.code} (${it.bruto} kg, ${g.warna}) tidak ada pasangannya di invoice ${invoice.noInvoiceVendor} (tidak ada roll dengan bruto itu yang masih kosong). Mungkin surat jalan salah invoice.`
-        );
-        continue;
-      }
-      ref.used = true;
-      matches.push({ warna: ref.warna, lengan: ref.lengan, rollIndex: ref.rollIndex, code: it.code, bruto: it.bruto, gross: ref.gross, sjWarna: g.warna, alreadySet: already });
-    }
+    if (sameColor.length === 0 && g.warna && !loose) warnings.push(`Warna "${g.warna}" di surat jalan tidak persis sama dengan warna invoice; roll dicocokkan lewat berat bruto saja.`);
+    for (const it of g.items) matchOne(it, g, pool, !loose || pool === refs);
   }
+  for (const { it, g } of pending) matchOne(it, g, refs, true);
   const rollsStillWithoutCode = refs.filter((r) => !r.used && !r.code).length;
   if (errors.length === 0 && rollsStillWithoutCode > 0) warnings.push(`${rollsStillWithoutCode} roll invoice belum punya code roll setelah surat jalan ini (menunggu surat jalan berikutnya).`);
   return result({ rollsStillWithoutCode, ribIgnored });
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Saran koreksi bruto salah baca (foto struk termal: 24.84 terbaca 24.64)
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+export type BrutoFixSuggestion = { code: string; read: number; suggest: number; warna: string; lengan: string; rollIndex: number };
+
+/** Untuk roll surat jalan yang brutonya TIDAK punya pasangan di invoice: kalau ada roll invoice yang belum terpasang dan brutonya hanya beda SATU digit dari yang terbaca (dan pasangan itu satu-satunya
+ *  kandidat, tidak diperebutkan roll lain), sarankan brutonya. Hanya saran: vendor yang memutuskan lewat tombol. */
+export function suggestBrutoFixes(sj: ParsedSuratJalan, invoice: InvoiceForSj): BrutoFixSuggestion[] {
+  // Pencocokan dijalankan walau parser sudah melapor galat (mis. total kg tidak cocok karena salah baca) supaya roll yang bermasalah bisa ditunjuk.
+  const res = matchSuratJalan({ ...sj, errors: [] }, invoice);
+  const used = new Set(res.matches.map((m) => `${m.warna}|${m.lengan}|${m.rollIndex}`));
+  const matchedCodes = new Set(res.matches.map((m) => m.code));
+  const free: { warna: string; lengan: string; rollIndex: number; gross: number }[] = [];
+  for (const c of invoice.colorEntries) {
+    c.rolls.forEach((gross, i) => {
+      if (used.has(`${c.warna}|${c.lengan}|${i}`)) return;
+      if ((c.codeRolls?.[i] ?? "").trim()) return;
+      free.push({ warna: c.warna, lengan: c.lengan, rollIndex: i, gross: round2(gross) });
+    });
+  }
+  const oneDigitApart = (a: number, b: number) => {
+    const x = a.toFixed(2);
+    const y = b.toFixed(2);
+    if (x.length !== y.length) return false;
+    let d = 0;
+    for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) d++;
+    return d === 1;
+  };
+  // Kandidat dibatasi ke warna yang sama dengan judul grup baris itu (kalau judulnya terbaca dan warnanya ada di invoice): bruto yang mirip di warna lain bukan saran yang masuk akal.
+  const unmatched = sj.groups.filter((g) => g.kind === "roll").flatMap((g) => g.items.filter((it) => !matchedCodes.has(it.code)).map((it) => ({ it, warna: g.warna })));
+  const baseOf = (w: string) => normName(parseMrpWarna(w).base);
+  const cands = unmatched.map(({ it, warna }) => {
+    const sameColor = warna ? free.filter((f) => baseOf(f.warna) === normName(warna)) : [];
+    const pool = sameColor.length > 0 ? sameColor : free;
+    return { it, c: pool.filter((f) => oneDigitApart(f.gross, it.bruto)) };
+  });
+  const out: BrutoFixSuggestion[] = [];
+  for (const { it, c } of cands) {
+    if (c.length !== 1) continue;
+    const f = c[0];
+    // Kandidat yang sama diperebutkan roll lain = ambigu, tidak disarankan.
+    if (cands.some((o) => o.it !== it && o.c.some((x) => x === f))) continue;
+    out.push({ code: it.code, read: it.bruto, suggest: f.gross, warna: f.warna, lengan: f.lengan, rollIndex: f.rollIndex });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Gabungan beberapa percobaan baca OCR (tiap percobaan gagal di baris yang berbeda)
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+const MERGE_ROLL_RE = /^\s*([A-Z]\d{8,12})\s+(\d{1,3}\.\d{1,2})\s*$/;
+
+/** Gabungkan hasil beberapa percobaan OCR (sudah lewat `normalizeOcrSuratJalan`, yang TERBAIK lebih dulu) menjadi satu teks. Dasarnya teks terbaik. Bruto sebuah code yang tidak punya pasangan di
+ *  roll invoice yang masih kosong diganti bruto dari percobaan lain untuk code yang sama kalau yang itu cocok persis. Baris roll yang hanya ada di percobaan lain ikut ditambahkan HANYA kalau
+ *  brutonya persis sama dengan roll invoice yang masih kosong (bruto invoice jadi kamus, jadi baris sampah tidak ikut). Hasilnya tetap diperiksa pengaman biasa (total, pencocokan) dan boleh dikoreksi vendor. */
+export function mergeOcrTexts(texts: string[], invoice: InvoiceForSj): string {
+  if (texts.length === 0) return "";
+  const base = texts[0];
+  if (texts.length === 1) return base;
+  const free = new Map<string, number>();
+  for (const c of invoice.colorEntries) {
+    c.rolls.forEach((g, i) => {
+      if ((c.codeRolls?.[i] ?? "").trim()) return;
+      const k = round2(g).toFixed(2);
+      free.set(k, (free.get(k) ?? 0) + 1);
+    });
+  }
+  const norm2 = (b: string) => round2(Number(b)).toFixed(2);
+  const cand = new Map<string, string[]>();
+  for (const t of texts) {
+    for (const line of t.split(/\r?\n/)) {
+      const m = MERGE_ROLL_RE.exec(line);
+      if (!m) continue;
+      const arr = cand.get(m[1]) ?? [];
+      if (!arr.includes(norm2(m[2]))) arr.push(norm2(m[2]));
+      cand.set(m[1], arr);
+    }
+  }
+  const take = (k: string) => {
+    const n = free.get(k) ?? 0;
+    if (n <= 0) return false;
+    free.set(k, n - 1);
+    return true;
+  };
+  const seen = new Set<string>();
+  const outLines = base.split(/\r?\n/).map((line) => {
+    const m = MERGE_ROLL_RE.exec(line);
+    if (!m) return line;
+    seen.add(m[1]);
+    const own = norm2(m[2]);
+    if (take(own)) return `${m[1]} ${own}`;
+    const alt = (cand.get(m[1]) ?? []).find((b) => b !== own && take(b));
+    return alt ? `${m[1]} ${alt}` : line;
+  });
+  const extra: string[] = [];
+  for (const [code, brutos] of cand) {
+    if (seen.has(code)) continue;
+    const hit = brutos.find((b) => take(b));
+    if (hit) extra.push(`${code} ${hit}`);
+  }
+  // Total: kalau teks terbaik tidak punya baris Total yang terbaca, ambil dari percobaan lain.
+  let totalLine = "";
+  if (!outLines.some((l) => TOTAL_RE.test(l))) {
+    for (const t of texts.slice(1)) {
+      const l = t.split(/\r?\n/).find((x) => TOTAL_RE.test(x));
+      if (l) {
+        totalLine = l;
+        break;
+      }
+    }
+  }
+  return [...outLines, ...extra, ...(totalLine ? [totalLine] : [])].join("\n");
 }
