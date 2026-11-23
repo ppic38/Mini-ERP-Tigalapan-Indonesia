@@ -1927,20 +1927,49 @@ export async function setInvoicesDeliveryAction(invoiceIds: string[], deliveryDa
  *  (lib/invoice-import/surat-jalan.ts) dan hasilnya disimpan di sini sebagai code roll, supaya vendor tidak mengetik code roll di Good Receive. Server MEMVALIDASI ULANG semuanya (klien tidak
  *  dipercaya): nomor invoice supplier harus sama dengan No Order surat jalan, tiap roll harus ada dan brutonya persis sama dengan bruto di database, roll yang sudah diterima dengan code
  *  lain tidak diubah, dan code roll tidak boleh dipakai roll lain. Idempoten: unggah ulang surat jalan yang sama hanya mengembalikan jumlah "sudah sama". */
-export async function applySuratJalanAction(input: {
+type SuratJalanApplyInput = {
   invoiceId: string;
   noOrder: string;
   fileName: string;
   assignments: { warna: string; lengan: Lengan; rollIndex: number; codeRoll: string; bruto: number }[];
-}): Promise<ActionResult<{ updated: number; unchanged: number }>> {
+};
+
+export async function applySuratJalanAction(input: SuratJalanApplyInput): Promise<ActionResult<{ updated: number; unchanged: number }>> {
   return toActionResultKeepAuth(async () => {
     const actor = await requireInternalRoleWithActor("procurement");
     const db = supabaseServer();
+    const res = await applySuratJalanCore(db, input, null);
+    await logInternalAction(actor, `Surat jalan ${input.noOrder}: ${res.updated} code roll disimpan${res.unchanged > 0 ? `, ${res.unchanged} sudah sama` : ""} (${input.fileName})`, "raw_material_invoices", input.invoiceId);
+    return res;
+  });
+}
+
+/** Scan kamera surat jalan cetak oleh VENDOR di Good Receive (owner 2026-11-23): KNITTO bisa telat mengirim surat jalan ke Procurement, padahal roll sudah tiba di konveksi dengan surat jalan cetak.
+ *  Foto dibaca (OCR) di browser vendor; di sini server memvalidasi ulang dengan aturan yang SAMA dengan unggahan Procurement (No Order = nomor invoice, bruto persis, code roll unik, tidak menimpa),
+ *  ditambah: invoice harus milik vendor yang login, sudah dikirim (DELIVERY/RECEIVING), memakai alur surat jalan, dan code roll berformat kode KNITTO. Roll yang sudah punya code roll TIDAK pernah
+ *  ditimpa; kalau surat jalan Procurement datang belakangan dengan code berbeda, unggahan itu ditolak dengan alasan roll sudah berkode (jejak asal ada di log aksi vendor). */
+export async function applySuratJalanVendorAction(input: SuratJalanApplyInput): Promise<ActionResult<{ updated: number; unchanged: number }>> {
+  return toActionResultKeepAuth(async () => {
+    const actor = await requireVendorSessionWithActor();
+    const db = supabaseServer();
+    await assertInvoiceOwnedByVendor(db, input.invoiceId, actor.vendorId);
+    const res = await applySuratJalanCore(db, input, { vendorOnly: true });
+    await logVendorAction(actor, `Scan surat jalan ${input.noOrder}: ${res.updated} code roll disimpan${res.unchanged > 0 ? `, ${res.unchanged} sudah sama` : ""} (foto kamera, dibaca di perangkat vendor)`, "raw_material_invoices", input.invoiceId);
+    return res;
+  });
+}
+
+async function applySuratJalanCore(db: ReturnType<typeof supabaseServer>, input: SuratJalanApplyInput, vendorMode: { vendorOnly: true } | null): Promise<{ updated: number; unchanged: number }> {
+  {
     if (input.assignments.length === 0) throw new Error("Tidak ada roll yang dicocokkan dari surat jalan.");
     const { data: inv, error: invErr } = await db.from("raw_material_invoices").select("id,status,supplier,no_invoice_vendor,mrp_id").eq("id", input.invoiceId).maybeSingle();
     if (invErr) throw new Error(invErr.message);
     if (!inv) throw new Error("Invoice tidak ditemukan.");
     if (inv.status === "INVOICED" || inv.status === "WAITING_INVOICE") throw new Error("Surat jalan hanya bisa dipasang pada invoice yang sudah dibayar.");
+    if (vendorMode) {
+      if (inv.status !== "DELIVERY" && inv.status !== "RECEIVING") throw new Error("Scan surat jalan hanya untuk invoice yang sudah dikirim supplier (status Delivery / Receiving).");
+      if (!invoiceUsesSuratJalan(inv.supplier, inv.mrp_id)) throw new Error("Invoice ini tidak memakai alur surat jalan; code roll diisi langsung di Good Receive.");
+    }
     const norm = (x: unknown) => String(x ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
     if (!norm(inv.no_invoice_vendor) || norm(inv.no_invoice_vendor) !== norm(input.noOrder)) {
       throw new Error(`Surat jalan ini untuk invoice ${input.noOrder}, bukan invoice ${inv.no_invoice_vendor || "(tanpa nomor)"}. Tidak disimpan.`);
@@ -1954,6 +1983,7 @@ export async function applySuratJalanAction(input: {
     for (const a of input.assignments) {
       const code = a.codeRoll.trim();
       if (!code) throw new Error("Ada code roll kosong di hasil pencocokan.");
+      if (vendorMode && !/^[A-Z]\d{8,12}$/.test(code.toUpperCase())) throw new Error(`Code roll "${code}" tidak berformat kode roll KNITTO (1 huruf + 8-12 angka). Periksa hasil baca foto.`);
       const row = byKey.get(`${input.invoiceId}-${a.warna}-${a.lengan}|${a.rollIndex}`);
       if (!row) throw new Error(`Roll ${a.rollIndex + 1} ${a.warna} ${a.lengan} tidak ada di invoice ${input.invoiceId}.`);
       if (Math.abs(Number(row.gross_kg) - a.bruto) > 0.004) throw new Error(`Roll ${code}: bruto surat jalan ${a.bruto} kg tidak sama dengan bruto invoice ${Number(row.gross_kg)} kg (${a.warna} ${a.lengan}, roll ${a.rollIndex + 1}). Tidak disimpan.`);
@@ -1972,9 +2002,8 @@ export async function applySuratJalanAction(input: {
         if (error) throw new Error(error.message);
       }
     }
-    await logInternalAction(actor, `Surat jalan ${input.noOrder}: ${toSet.length} code roll disimpan${unchanged > 0 ? `, ${unchanged} sudah sama` : ""} (${input.fileName})`, "raw_material_invoices", input.invoiceId);
     return { updated: toSet.length, unchanged };
-  });
+  }
 }
 
 /** Tandai 1 roll FISIK DITERIMA di Good Receive — TIDAK menimbang (lihat

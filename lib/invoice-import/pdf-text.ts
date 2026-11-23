@@ -100,6 +100,94 @@ async function textLayer(page: any): Promise<string | null> {
     .join("\n");
 }
 
+/** Foto kamera -> kanvas siap OCR: skala disesuaikan (sisi panjang ~2400 px; terlalu kecil dibesarkan, terlalu besar dikecilkan supaya HP murah tidak kehabisan memori), lalu abu-abu dengan kontras
+ *  diregangkan (1% tergelap -> hitam, 1% terterang -> putih) supaya cetakan termal yang pudar lebih terbaca. */
+function prepareImageForOcr(src: CanvasImageSource, w: number, h: number): HTMLCanvasElement {
+  const long = Math.max(w, h);
+  const scale = Math.min(2.5, 2400 / long);
+  const cw = Math.max(1, Math.round(w * scale));
+  const ch = Math.max(1, Math.round(h * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = cw;
+  canvas.height = ch;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, cw, ch);
+  ctx.drawImage(src, 0, 0, cw, ch);
+  const img = ctx.getImageData(0, 0, cw, ch);
+  const d = img.data;
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < d.length; i += 4) {
+    const g = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+    d[i] = d[i + 1] = d[i + 2] = g;
+    hist[g]++;
+  }
+  const total = cw * ch;
+  let lo = 0;
+  let hi = 255;
+  for (let acc = 0; lo < 255; lo++) {
+    acc += hist[lo];
+    if (acc >= total * 0.01) break;
+  }
+  for (let acc = 0; hi > 0; hi--) {
+    acc += hist[hi];
+    if (acc >= total * 0.01) break;
+  }
+  if (hi - lo > 20) {
+    const k = 255 / (hi - lo);
+    for (let i = 0; i < d.length; i += 4) {
+      const g = Math.max(0, Math.min(255, Math.round((d[i] - lo) * k)));
+      d[i] = d[i + 1] = d[i + 2] = g;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
+/** Foto (kanvas dari kamera, atau berkas gambar) -> teks lewat OCR di browser. Gambar tidak dikirim ke server mana pun dan tidak disimpan. */
+export async function imageToText(
+  source: HTMLCanvasElement | HTMLVideoElement | Blob,
+  onProgress: (message: string, fraction: number | null) => void,
+  /** Menilai hasil baca: 0 = bagus, makin besar makin buruk. Kalau mode baca pertama (PSM 6) belum bagus, dicoba mode PSM 4 (lebih tahan foto berisik/buram) dan dipakai yang nilainya lebih kecil. */
+  evaluate?: (text: string) => number
+): Promise<string> {
+  onProgress("Menyiapkan gambar…", 0.01);
+  let canvas: HTMLCanvasElement;
+  if (source instanceof Blob) {
+    const bmp = await createImageBitmap(source);
+    canvas = prepareImageForOcr(bmp, bmp.width, bmp.height);
+    bmp.close();
+  } else if (source instanceof HTMLVideoElement) {
+    canvas = prepareImageForOcr(source, source.videoWidth, source.videoHeight);
+  } else {
+    canvas = prepareImageForOcr(source, source.width, source.height);
+  }
+  onProgress("Menyiapkan mesin OCR (pertama kali agak lama)…", 0.02);
+  const w = await getWorker();
+  onOcrProgress = (f) => onProgress(`Membaca foto… ${Math.round(f * 100)}%`, f);
+  const { data } = await w.recognize(canvas);
+  let best = String(data.text ?? "");
+  if (evaluate) {
+    let bestScore = evaluate(best);
+    if (bestScore > 0) {
+      onProgress("Mencoba mode baca lain…", null);
+      try {
+        await w.setParameters({ tessedit_pageseg_mode: "4" });
+        const second = await w.recognize(canvas);
+        const t2 = String(second.data.text ?? "");
+        const s2 = evaluate(t2);
+        if (s2 < bestScore) {
+          best = t2;
+          bestScore = s2;
+        }
+      } finally {
+        await w.setParameters({ tessedit_pageseg_mode: "6" });
+      }
+    }
+  }
+  return best;
+}
+
 export type PdfTextResult = { text: string; usedOcr: boolean; pages: number };
 
 /** @param onProgress dipanggil dengan pesan status & progres 0..1 (null = tak tentu). */

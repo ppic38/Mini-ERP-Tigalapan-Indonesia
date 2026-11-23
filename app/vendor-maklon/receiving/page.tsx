@@ -27,6 +27,7 @@ import {
 import { countGoodReceiveEligibleForMrp, pendingMarker } from "@/lib/shell/badges";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { invoiceUsesSuratJalan, suratJalanActiveForMrp } from "@/lib/invoice-import/surat-jalan";
+import { SuratJalanScanModal } from "@/components/vendor-maklon/surat-jalan-scan-modal";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { RollCodeEditor } from "@/components/sysadmin/roll-code-editor";
 import { rollArrivalCorrections } from "@/components/sysadmin/vendor-corrections";
@@ -90,6 +91,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   // banyak) tidak menenggelamkan yang masih DELIVERY dan justru butuh dipantau/ditindaklanjuti.
   const [statusFilter, setStatusFilter] = useState<"ALL" | "DELIVERY" | "RECEIVING" | "PARSIAL">("ALL");
   const [selectedInvoiceId, setSelectedInvoiceId] = useState("");
+  const [scanOpen, setScanOpen] = useState(false);
   // Revisi 2026-09-23 (owner: "tidak usah dibagi jadi sub tab tipe lengan ... buat ada halaman-
   // halaman tabel"): dulu selectedColorKey = SATU lengan aktif (tab Pendek/Panjang, ganti-ganti).
   // Sekarang Pendek & Panjang tampil sekaligus sebagai 1 list roll gabungan (tidak ada tab lagi),
@@ -748,6 +750,11 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                         {pendingRolls.length > 0 && (
                           <span className="flex items-center gap-3 max-md:w-full max-md:flex-wrap">
                             {rollsMissingCode.length > 0 && <span className="font-sans text-[11px] text-warning-fg">{rollsMissingCode.length} roll {viaSj ? "menunggu surat jalan dari Procurement" : "belum diisi code roll"}</span>}
+                            {viaSj && rollsMissingCode.length > 0 && !sysadminMode && (
+                              <Button onClick={() => setScanOpen(true)} variant="ghost" size="sm" className="max-md:min-h-11 max-md:flex-1 max-md:rounded-full max-md:text-[13px]">
+                                Scan surat jalan (kamera)
+                              </Button>
+                            )}
                             {rollsWithCodeConflict.length > 0 && <span className="font-sans text-[11px] text-danger-fg">{rollsWithCodeConflict.length} roll code roll-nya sudah terdaftar</span>}
                             <Button onClick={receiveAllRolls} disabled={rollsMissingCode.length > 0 || rollsWithCodeConflict.length > 0} variant="primary" size="sm" className="min-w-[170px] max-md:min-h-11 max-md:w-full max-md:rounded-full max-md:text-[13px]">
                               Terima semua roll ({pendingRolls.length})
@@ -1072,6 +1079,8 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
           </div>
         </div>
       )}
+      {/* Scan surat jalan dengan kamera (owner 2026-11-23): dirender di luar overlay "Terima Material" supaya klik di dalamnya tidak ikut menutup panel itu. */}
+      {scanOpen && selectedInvoice && <SuratJalanScanModal invoice={selectedInvoice} onClose={() => setScanOpen(false)} />}
     </AppShell>
   );
 }

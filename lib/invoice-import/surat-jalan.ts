@@ -18,6 +18,24 @@ export function suratJalanActiveForMrp(mrpId: string | null | undefined): boolea
 /** Invoice ini memakai alur surat jalan: supplier KNITTO DAN MRP W45 ke atas. */
 export const invoiceUsesSuratJalan = (supplier: string | null | undefined, mrpId: string | null | undefined) => supplierUsesSuratJalan(supplier) && suratJalanActiveForMrp(mrpId);
 
+/** Bentuk invoice yang dibutuhkan `matchSuratJalan`, dari invoice di store. Code roll yang sudah tercatat (dari invoice supplier atau surat jalan sebelumnya) ikut menjadi dasar pencocokan,
+ *  jadi pemindaian ulang tidak menimpa apa pun. */
+export function invoiceForSuratJalan(invoice: {
+  noInvoiceVendor: string;
+  colorEntries: { warna: string; lengan: string; rolls: number[]; codeRolls?: string[] }[];
+  rollArrivals?: Record<string, ({ codeRoll?: string } | null)[] | undefined>;
+}): InvoiceForSj {
+  return {
+    noInvoiceVendor: invoice.noInvoiceVendor,
+    colorEntries: invoice.colorEntries.map((c) => ({
+      warna: c.warna,
+      lengan: c.lengan,
+      rolls: c.rolls,
+      codeRolls: c.rolls.map((_, i) => (c.codeRolls?.[i] ?? invoice.rollArrivals?.[c.warna + "|" + c.lengan]?.[i]?.codeRoll ?? "").trim()),
+    })),
+  };
+}
+
 export type SjItem = { code: string; bruto: number };
 export type SjGroup = {
   /** "roll" = kain roll; "rib" = bagian RIB (kode berawalan lain, berat kecil) -- TIDAK dicocokkan ke roll invoice. */
@@ -52,7 +70,35 @@ export const normInvoiceNo = (s: string | null | undefined) => String(s ?? "").t
 
 const ITEM_RE = /^\s*([A-Z]\d{8,12})\s+(\d{1,3}(?:[.,]\d{1,3})?)\s*$/;
 const HEADER_RE = /^\s*(RIB\s+)?([A-Z]+(?:\s+[A-Z]+)*?)\s+(\d{2}S)\s+([A-Z][A-Z0-9 ]*?)\s*$/;
-const TOTAL_RE = /Total\s*[:;]?\s*\(\s*(\d+)\s*\)\s*([\d.,]+)\s*kg/i;
+const TOTAL_RE = /Total\s*[:;]?\s*\(\s*(\d+)(?:\s*[.,]\s*0+)?\s*\)\s*([\d.,]+)\s*kg/i;
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Foto kamera -> teks OCR yang dirapikan (owner 2026-11-23: vendor memotret surat jalan cetak saat KNITTO telat mengirim surat jalan ke Procurement)
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+/** Salah baca OCR yang umum pada angka: O/Q/D -> 0, I/l/| -> 1, Z -> 2, S -> 5, B -> 8. Hanya dipakai di bagian yang SEHARUSNYA angka. */
+const OCR_DIGIT: Record<string, string> = { O: "0", Q: "0", D: "0", o: "0", I: "1", l: "1", "|": "1", i: "1", Z: "2", S: "5", s: "5", B: "8" };
+const fixDigits = (s: string) => s.replace(/[OQDoIl|iZSsB]/g, (c) => OCR_DIGIT[c] ?? c);
+/** Pola baris roll versi OCR: huruf kode + 8-12 karakter mirip-angka, lalu bruto (boleh ada spasi di sekitar tanda desimal). Boleh ada kolom lain di kiri/kanan (nomor urut, dll). */
+const OCR_ITEM_RE = /(?:^|\s)([A-Z])\s?([0-9OQDIl|ZSB]{8,12})\s+([0-9OQDIl|ZSB]{1,3})\s*[.,]\s*([0-9OQDIl|ZSB]{1,2})(?=\s|$)/;
+
+/** Rapikan teks OCR foto surat jalan sebelum diparse: baris roll dikembalikan ke bentuk baku "CODE BRUTO" (salah baca O/0, I/1, S/5, B/8 pada bagian angka dibetulkan; kolom lain dibuang).
+ *  Baris lain dibiarkan. Ini HANYA mempermudah pembacaan; keutuhan tetap dijaga baris Total (jumlah baris dan kg) dan pencocokan bruto persis ke invoice, jadi salah baca yang tidak
+ *  terbetulkan akan ditolak, bukan diam-diam tersimpan. */
+export function normalizeOcrSuratJalan(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((raw) => {
+      const line = raw.replace(/[‘’`´]/g, "'").replace(/\s+$/, "");
+      if (TOTAL_RE.test(line)) return line;
+      const m = OCR_ITEM_RE.exec(line);
+      if (!m) return line;
+      const code = m[1] + fixDigits(m[2]);
+      const bruto = fixDigits(m[3]) + "." + fixDigits(m[4]);
+      return `${code} ${bruto}`;
+    })
+    .join("\n");
+}
 
 /** Nama file "OH161126049.pdf" -> "OH161126049" (cadangan kalau No Order tidak terbaca). */
 function stemOfFile(name: string): string {
