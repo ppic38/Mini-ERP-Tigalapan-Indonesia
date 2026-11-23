@@ -26,7 +26,7 @@ import {
 } from "@/lib/mrp/derive";
 import { countGoodReceiveEligibleForMrp, pendingMarker } from "@/lib/shell/badges";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
-import { invoiceUsesSuratJalan, suratJalanActiveForMrp } from "@/lib/invoice-import/surat-jalan";
+import { invoiceForSuratJalan, invoiceUsesSuratJalan, suratJalanActiveForMrp } from "@/lib/invoice-import/surat-jalan";
 import { SuratJalanScanModal } from "@/components/vendor-maklon/surat-jalan-scan-modal";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { RollCodeEditor } from "@/components/sysadmin/roll-code-editor";
@@ -337,6 +337,8 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   // Mulai MRP W45 saja (owner 2026-11-19); W44 ke bawah tetap alur lama (vendor mengisi/mengubah code roll).
   const sjFlow = !!selectedInvoice && suratJalanActiveForMrp(selectedInvoice.mrpId);
   const viaSj = !!selectedInvoice && invoiceUsesSuratJalan(selectedInvoice.supplier, selectedInvoice.mrpId);
+  // Roll di SELURUH invoice (semua warna) yang belum punya code roll: dasar tombol scan surat jalan per invoice.
+  const sjRollsNoCode = selectedInvoice && viaSj ? invoiceForSuratJalan(selectedInvoice).colorEntries.reduce((s, c) => s + (c.codeRolls ?? []).filter((x) => !x).length, 0) : 0;
   const rollsWithCodeConflict = pendingRolls.filter((r) => codeConflictFor(r.lengan, r.idx, draftOf(r.lengan, r.idx).codeRoll));
   function receiveAllRolls() {
     if (!selectedInvoice || pendingRolls.length === 0 || rollsMissingCode.length > 0 || rollsWithCodeConflict.length > 0) return;
@@ -494,6 +496,17 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
             <div className="mt-1 font-sans text-xs text-text-muted max-md:hidden">
               {selectedInvoice.supplier} · No. invoice supplier: {selectedInvoice.noInvoiceVendor || "—"}
             </div>
+            {/* Scan surat jalan per INVOICE (owner 2026-11-23): surat jalan cetak KNITTO satu lembar per invoice dan mencakup semua warna, jadi tombolnya di level invoice, bukan per warna. */}
+            {viaSj && sjRollsNoCode > 0 && !sysadminMode && (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-[#F0DDB0] bg-[#FFF9EC] px-3 py-2 max-md:flex-col max-md:items-stretch">
+                <span className="font-sans text-[11.5px] text-warning-fg">
+                  {sjRollsNoCode} roll di invoice ini belum punya code roll (menunggu surat jalan dari Procurement). Punya surat jalan cetak dari supplier? Scan satu kali untuk semua warna.
+                </span>
+                <Button onClick={() => setScanOpen(true)} variant="primary" size="sm" className="max-md:min-h-11 max-md:rounded-full max-md:text-[13px]">
+                  Scan surat jalan invoice ini
+                </Button>
+              </div>
+            )}
             {colorGroups.length === 0 ? null : (
               <div className="mt-3 overflow-hidden rounded-md border border-[#E4E8EE] max-md:rounded-xl max-md:bg-white">
                 <div className="m-hide grid grid-cols-5 gap-x-2 border-b border-[#E4E8EE] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
