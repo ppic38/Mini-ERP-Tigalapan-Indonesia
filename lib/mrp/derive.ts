@@ -101,7 +101,10 @@ export function materialGroupsByWarna(materialRows: MaterialRow[]): MaterialGrou
   // stelah UPDATE (mis. assignMaterialSupplierAction) -- bikin daftar warna kelihatan "acak
   // ulang" urutannya cuma karena user pilih vendor untuk satu warna. Sort di sini menjamin
   // urutan selalu sama terlepas dari urutan fetch.
-  return Array.from(map.values()).sort((a, b) => a.warna.localeCompare(b.warna));
+  // Roll boleh pecahan (template KID 0,5 + 0,5, owner 2026-11-26): jumlah dirapikan ke 3 desimal supaya tidak tampil 0.30000000000000004.
+  return Array.from(map.values())
+    .map((g) => ({ ...g, totalRoll: Math.round(g.totalRoll * 1000) / 1000 }))
+    .sort((a, b) => a.warna.localeCompare(b.warna));
 }
 
 /** Fitur "Bulatkan Roll" (owner 2026-09-18) -- dipakai tombol di halaman Purchase Order untuk

@@ -93,6 +93,7 @@ import {
 } from "./derive";
 import { ENTITAS_LIST, RESTING_TARGET_MINUTES, VENDOR_PRODUKSI } from "./seed";
 import {
+import { planRollRoundingByWarna } from "./rollRounding";
   APPROVAL_ROLE_LABEL,
   APPROVAL_STEP_LABEL,
   APPROVAL_STEP_SLA_DAYS,
@@ -922,20 +923,26 @@ export async function roundMaterialPoRollCountsAction(): Promise<{ affectedPoIds
   const pos = await fetchUnapprovedMaterialPos(db, undefined);
   const affectedPoIds: string[] = [];
   for (const po of pos) {
-    const toRound = po.colorBreakdown.filter((c) => c.originalRollCount == null && !Number.isInteger(c.rollCount));
-    if (toRound.length === 0) continue;
+    if (!po.colorBreakdown.some((c) => c.originalRollCount == null && !Number.isInteger(c.rollCount))) continue;
+    // Revisi 2026-11-26 (owner, template KID 0,5 + 0,5 roll per warna): dibulatkan per WARNA (total warna dibulatkan, roll utuh dibagi ke lengan
+    // dengan pecahan/qty terbesar), bukan per baris warna·lengan yang membuat 0,5 + 0,5 menjadi 1 + 1. Seri pecahan dipecahkan lewat qty Aduan Pola.
+    const { data: aduanQty } = await db.from("aduan_pola_rows").select("warna,lengan,qty").eq("mrp_id", po.mrpId).eq("vendor", po.vendorProduksi);
+    const qtyByKey = new Map<string, number>();
+    for (const a of aduanQty ?? []) qtyByKey.set(`${a.warna}|${a.lengan}`, (qtyByKey.get(`${a.warna}|${a.lengan}`) ?? 0) + Number(a.qty ?? 0));
+    const plan = planRollRoundingByWarna(po.colorBreakdown, (c) => qtyByKey.get(`${c.warna}|${c.lengan}`) ?? 0);
+    if (plan.size === 0) continue;
     affectedPoIds.push(po.id);
     await Promise.all(
-      toRound.map((c) =>
+      Array.from(plan.entries()).map(([c, rolled]) =>
         db
           .from("material_po_color_breakdown")
-          .update({ roll_count: Math.round(c.rollCount), original_roll_count: c.rollCount })
+          .update({ roll_count: rolled, original_roll_count: c.rollCount })
           .eq("material_po_id", po.id)
           .eq("warna", c.warna)
           .eq("lengan", c.lengan)
       )
     );
-    const newRollCount = po.colorBreakdown.reduce((sum, c) => sum + (toRound.includes(c) ? Math.round(c.rollCount) : c.rollCount), 0);
+    const newRollCount = po.colorBreakdown.reduce((sum, c) => sum + (plan.get(c) ?? c.rollCount), 0);
     const { error } = await db.from("material_pos").update({ roll_count: newRollCount, available_rolls: newRollCount - po.invoicedRolls }).eq("id", po.id);
     if (error) throw new Error(error.message);
   }
