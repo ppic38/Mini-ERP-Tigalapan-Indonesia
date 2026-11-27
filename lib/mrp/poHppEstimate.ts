@@ -26,8 +26,9 @@ import {
   koliOngkirShare,
   maklonTipeForWarna,
   mrpDetailFor,
+  pickBaseWarna,
   segmenProdukLookup,
-  sellingPriceFor,
+  sellingPriceInfoFor,
   vendorCumulativeQtyByTipe,
   type SegmenProduk,
 } from "./derive";
@@ -70,6 +71,8 @@ export type PoHppContext = HppSourceData & {
   /** mrp|vendor|warna|lengan -> estimasi terkunci saat PO Material diajukan. */
   frozenIdx: Map<string, PoHppLine>;
   cumulative: Map<string, Record<string, number>>;
+  /** Jenis kain (kategori grup, mis. COMBED 24S / TUNIK 24S / KIDS 24S) -> baris Master Data Harga Kain dan Harga Kain PKS jenis itu. */
+  kainByJenis: Map<string, { kain: HargaKainRow[]; pks: HargaKainPksRow[] }>;
 };
 
 export type PoHppLine = {
@@ -96,6 +99,10 @@ export type PoHppLine = {
   kainTanpaHarga: boolean;
   /** Harga kain tidak ada di supplier itu: memakai harga KNITTO. */
   kainViaKnitto?: boolean;
+  /** Warna belum punya harga kain: memakai harga warna dasarnya di jenis yang sama (mis. HITAM MLS 24S -> HITAM 24S, COMBED 24S). */
+  kainViaWarna?: string;
+  /** Warna belum punya harga jual: memakai harga jual warna dasarnya di jenis, lengan, size yang sama. */
+  jualViaWarna?: string;
   /** Angka dari estimasi yang dikunci saat PO diajukan. */
   frozen?: boolean;
   frozenAt?: string;
@@ -212,6 +219,8 @@ export function toFrozenLine(l: PoHppLine): FrozenHppLine {
     nt: l.pcsTanpaHarga || undefined,
     kt: l.kainTanpaHarga ? 1 : undefined,
     kk: l.kainViaKnitto ? 1 : undefined,
+    kw: l.kainViaWarna || undefined,
+    jw: l.jualViaWarna || undefined,
   };
 }
 
@@ -238,6 +247,8 @@ function fromFrozenLine(f: FrozenHppLine, mrpId: string, vendor: string, at: str
     pcsTanpaHarga: f.nt ?? 0,
     kainTanpaHarga: !!f.kt,
     kainViaKnitto: !!f.kk,
+    kainViaWarna: f.kw,
+    jualViaWarna: f.jw,
     frozen: true,
     frozenAt: at,
   };
@@ -281,8 +292,17 @@ export function buildHppContext(d: HppSourceData): PoHppContext {
     else poIdx.set(key, [p]);
     for (const l of frozenLinesOfPo(p)) frozenIdx.set(k4(l.mrpId, l.vendor, l.warna, l.lengan), l);
   }
+  const kainByJenis = new Map<string, { kain: HargaKainRow[]; pks: HargaKainPksRow[] }>();
+  const jenisBucket = (j: string) => {
+    let b = kainByJenis.get(j);
+    if (!b) kainByJenis.set(j, (b = { kain: [], pks: [] }));
+    return b;
+  };
+  for (const h of d.hargaKain) jenisBucket(up(h.kategori)).kain.push(h);
+  for (const h of d.hargaKainPks) jenisBucket(up(h.kategori)).pks.push(h);
   return {
     ...d,
+    kainByJenis,
     ongkir: ongkirPerPcsBySegmen(d.deliveryKolis, d.ekspedisiRates, d.mrpDetails),
     diskonRatio: diskonRatioBySupplier(d.invoices),
     segmenOf: (m, w, l) => seg(m, w, l),
@@ -316,7 +336,8 @@ function supplierFor(ctx: PoHppContext, mrpId: string, vendor: string, warna: st
 }
 
 /** Nilai jual per size dari baris Aduan Pola (size tanpa harga memakai rata-rata size lain baris ini). */
-function sellingValue(ctx: PoHppContext, warna: string, lengan: Lengan, aduan: AduanPolaRow[], pcs: number): { hargaJual: number; pcsTanpaHarga: number } {
+function sellingValue(ctx: PoHppContext, warna: string, lengan: Lengan, aduan: AduanPolaRow[], pcs: number): { hargaJual: number; pcsTanpaHarga: number; jualViaWarna?: string } {
+  let jualViaWarna: string | undefined;
   let hargaJual = 0;
   let pcsTanpaHarga = 0;
   let sized = 0;
@@ -324,7 +345,8 @@ function sellingValue(ctx: PoHppContext, warna: string, lengan: Lengan, aduan: A
     for (const sz of a.sizes) {
       if (!(sz.qty > 0)) continue;
       sized += sz.qty;
-      const price = sellingPriceFor(warna, lengan, sz.size, ctx.itemSellingPrices);
+      const { price, viaWarna } = sellingPriceInfoFor(warna, lengan, sz.size, ctx.itemSellingPrices);
+      if (viaWarna && price != null && price > 0) jualViaWarna = viaWarna;
       if (price == null || price <= 0) pcsTanpaHarga += sz.qty;
       else hargaJual += price * sz.qty;
     }
@@ -332,7 +354,50 @@ function sellingValue(ctx: PoHppContext, warna: string, lengan: Lengan, aduan: A
   if (sized < pcs) pcsTanpaHarga += pcs - sized;
   const priced = pcs - pcsTanpaHarga;
   if (priced > 0 && pcsTanpaHarga > 0) hargaJual += (hargaJual / priced) * pcsTanpaHarga;
-  return { hargaJual, pcsTanpaHarga };
+  return { hargaJual, pcsTanpaHarga, jualViaWarna };
+}
+
+/** Jenis kain baris: kategori grup warna x lengan (mis. COMBED 24S, TUNIK 24S, KIDS 24S), kosong = kategori MRP. */
+function jenisOf(ctx: PoHppContext, mrpId: string, warna: string, lengan: Lengan): string {
+  const g = ctx.groupIdx.get(`${mrpId}|${warna}|${lengan}`);
+  return up(g?.kategori) || up(mrpDetailFor(mrpId, ctx.mrpDetails)?.mrp.kategori);
+}
+
+/** Harga kain per kg mengikuti warna dan jenis (owner 2026-11-27):
+ *  1. supplier itu, warna itu (jenis itu dulu, lalu jenis lain);
+ *  2. supplier itu, warna dasar di jenis yang sama (mis. HITAM MLS 24S -> HITAM 24S di COMBED 24S);
+ *  3. KNITTO dengan urutan yang sama;
+ *  4. tidak ada juga = harga estimasi flat lama (ditandai). Varian KID/RIB/TUNIK tetap memakai warna dasarnya (hargaKainRateInfo). */
+function kainRateFor(ctx: PoHppContext, supplier: string, warna: string, jenis: string, tierKg: number): { rate: number; viaKnitto: boolean; viaWarna?: string; tanpaHarga: boolean } {
+  const byJenis = jenis ? ctx.kainByJenis.get(jenis) : undefined;
+  const exact = (sup: string, w: string) => {
+    if (byJenis) {
+      const info = hargaKainRateInfo(byJenis.kain, byJenis.pks, sup, w, tierKg);
+      if (info.source !== "Estimasi") return info.rate;
+    }
+    const info = hargaKainRateInfo(ctx.hargaKain, ctx.hargaKainPks, sup, w, tierKg);
+    return info.source !== "Estimasi" ? info.rate : null;
+  };
+  const viaBase = (sup: string) => {
+    if (!byJenis) return null;
+    const base = pickBaseWarna(warna, byJenis.kain.filter((h) => up(h.namaSupplier) === up(sup) && h.hargaPerKg > 0));
+    if (!base) return null;
+    const rate = exact(sup, base.warna);
+    return rate != null ? { rate, warna: base.warna } : null;
+  };
+  const tryOne = (sup: string): { rate: number; viaWarna?: string } | null => {
+    const own = exact(sup, warna);
+    if (own != null) return { rate: own };
+    const base = viaBase(sup);
+    return base ? { rate: base.rate, viaWarna: base.warna } : null;
+  };
+  const own = tryOne(supplier);
+  if (own) return { ...own, viaKnitto: false, tanpaHarga: false };
+  if (up(supplier) !== SUPPLIER_ACUAN) {
+    const knitto = tryOne(SUPPLIER_ACUAN);
+    if (knitto) return { ...knitto, viaKnitto: true, tanpaHarga: false };
+  }
+  return { rate: hargaKainRateInfo(ctx.hargaKain, ctx.hargaKainPks, supplier, warna, tierKg).rate, viaKnitto: false, tanpaHarga: true };
 }
 
 /** Hitung satu baris (tanpa angka terkunci). `roll` = roll yang dipesan PO (bisa sudah dibulatkan); tanpa itu roll Aduan Pola. */
@@ -350,17 +415,8 @@ export function liveLine(ctx: PoHppContext, mrpId: string, vendor: string, warna
     (ctx.poIdx.get(mrpId + "|" + vendor) ?? [])
       .filter((p) => p.supplier === supplier)
       .reduce((s, p) => s + p.colorBreakdown.filter((c) => c.warna === warna).reduce((t, c) => t + c.rollCount * ROLL_KG_ESTIMATE, 0), 0) || kg;
-  // Warna yang belum punya harga kain di supplier itu memakai harga KNITTO (owner 2026-11-27); tidak ada di KNITTO juga = harga estimasi flat, ditandai.
-  let kainInfo = hargaKainRateInfo(ctx.hargaKain, ctx.hargaKainPks, supplier, warna, tierKg);
-  let kainViaKnitto = false;
-  if (kainInfo.source === "Estimasi" && up(supplier) !== SUPPLIER_ACUAN) {
-    const knitto = hargaKainRateInfo(ctx.hargaKain, ctx.hargaKainPks, SUPPLIER_ACUAN, warna, tierKg);
-    if (knitto.source !== "Estimasi") {
-      kainInfo = knitto;
-      kainViaKnitto = true;
-    }
-  }
-  const kainRate = kainInfo.rate;
+  const kain = kainRateFor(ctx, supplier, warna, jenisOf(ctx, mrpId, warna, lengan), tierKg);
+  const kainRate = kain.rate;
   const bahan = kg * kainRate;
 
   const share = group && group.totalQty > 0 ? pcs / group.totalQty : 0;
@@ -374,11 +430,11 @@ export function liveLine(ctx: PoHppContext, mrpId: string, vendor: string, warna
   const maklon = pcs * maklonRate;
   const segmen = ctx.segmenOf(mrpId, warna, lengan);
   const ongkir = pcs * (ctx.ongkir.bySegmen.get(segmen) ?? ctx.ongkir.overall);
-  const { hargaJual, pcsTanpaHarga } = sellingValue(ctx, warna, lengan, aduan, pcs);
+  const { hargaJual, pcsTanpaHarga, jualViaWarna } = sellingValue(ctx, warna, lengan, aduan, pcs);
   const hpp = bahan + rib - diskon + maklon + ongkir;
   return {
     mrpId, vendor, supplier, supplierAsumsi: sup.asumsi, warna, lengan, segmen, roll, pcs, bahan, rib, diskon, maklon, maklonRate, ongkir, hpp, hargaJual, pcsTanpaHarga,
-    kainTanpaHarga: roll > 0 && kainInfo.source === "Estimasi", kainViaKnitto,
+    kainTanpaHarga: roll > 0 && kain.tanpaHarga, kainViaKnitto: kain.viaKnitto, kainViaWarna: roll > 0 ? kain.viaWarna : undefined, jualViaWarna,
   };
 }
 

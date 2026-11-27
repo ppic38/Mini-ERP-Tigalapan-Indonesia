@@ -4416,13 +4416,78 @@ export function autoOngkirForInvoice(inv: VendorInvoice, deliveryKolis: Delivery
  *  matching sama persis seperti `ekspedisiPrice` di atas. `null` kalau tidak ketemu (BUKAN 0,
  *  supaya kolom "% HPP" di UI tampil "—" alih-alih 0% yang menyesatkan). */
 export function sellingPriceFor(warna: string, lengan: Lengan, size: string, rates: ItemSellingPriceRow[]): number | null {
+  return sellingPriceInfoFor(warna, lengan, size, rates).price;
+}
+
+/** Sama dengan `sellingPriceFor`, ditambah warna acuan kalau harga diambil dari warna dasar (owner 2026-11-27):
+ *  warna yang harga jualnya kosong / Rp 0 memakai harga warna dasarnya di jenis (kategori Master SKU) yang sama, lengan dan size yang sama.
+ *  Contoh: HITAM MLS 24S PDK L (COMBED 24S) memakai HITAM 24S PDK L (COMBED 24S); HITAM MLS KID 24S (KIDS 24S) memakai HITAM KID 24S.
+ *  Warna dasar = warna lain di jenis itu yang semua katanya ada di nama warna ini (yang paling banyak katanya menang). */
+export function sellingPriceInfoFor(warna: string, lengan: Lengan, size: string, rates: ItemSellingPriceRow[]): { price: number | null; viaWarna?: string } {
   const index = sellingPriceIndex(rates);
-  const direct = index.get(warna + "|" + lengan + "|" + size);
-  if (direct !== undefined) return direct;
+  let skuWarna = warna;
+  let price = index.get(warna + "|" + lengan + "|" + size);
   // Nama warna di MRP beda dari Master Data SKU (mis. ELECTRIC LIME 24S vs ELECTRIC LM 24S): pakai Master Data Mapping Warna (owner 2026-11-02).
-  const skuWarna = pricingWarnaAliases.get(warna);
-  if (!skuWarna) return null;
-  return index.get(skuWarna + "|" + lengan + "|" + size) ?? null;
+  if (price === undefined) {
+    const alias = pricingWarnaAliases.get(warna);
+    if (alias) {
+      skuWarna = alias;
+      price = index.get(alias + "|" + lengan + "|" + size);
+    }
+  }
+  if (price != null && price > 0) return { price };
+  const base = baseSellingPrice(skuWarna, lengan, size, rates) ?? (skuWarna !== warna ? baseSellingPrice(warna, lengan, size, rates) : null);
+  if (base) return { price: base.price, viaWarna: base.warna };
+  return { price: price ?? null };
+}
+
+const BASE_WARNA_KEEP = new Set(["KID", "KIDS", "TUNIK", "RIB", "+"]);
+const wordsOf = (w: string) => w.trim().toUpperCase().split(/\s+/).filter(Boolean);
+
+/** Warna dasar dalam satu jenis: semua kata calon ada di nama warna, dan calon lebih pendek. Yang paling banyak katanya menang (urut nama kalau sama). */
+export function pickBaseWarna<T extends { warna: string }>(warna: string, candidates: T[]): T | null {
+  const own = new Set(wordsOf(warna));
+  const ownLen = own.size;
+  let best: T | null = null;
+  let bestLen = 0;
+  for (const c of candidates) {
+    const ws = wordsOf(c.warna);
+    if (ws.length === 0 || ws.length >= ownLen || !ws.every((x) => own.has(x))) continue;
+    // Kata penanda jenis/usia tidak boleh dibuang: barang Kids tidak memakai harga dewasa, Tunik/RIB tidak memakai harga biasa.
+    const cs = new Set(ws);
+    if ([...own].some((x) => BASE_WARNA_KEEP.has(x) && !cs.has(x))) continue;
+    if (ws.length > bestLen || (ws.length === bestLen && best && c.warna < best.warna)) {
+      best = c;
+      bestLen = ws.length;
+    }
+  }
+  return best;
+}
+
+type SellingJenisIndex = { kategoriByWarna: Map<string, string>; byKey: Map<string, { warna: string; price: number }[]>; memo: Map<string, { warna: string; price: number } | null> };
+const sellingJenisCache = new WeakMap<ItemSellingPriceRow[], SellingJenisIndex>();
+function baseSellingPrice(warna: string, lengan: Lengan, size: string, rates: ItemSellingPriceRow[]): { warna: string; price: number } | null {
+  let ix = sellingJenisCache.get(rates);
+  if (!ix) {
+    ix = { kategoriByWarna: new Map(), byKey: new Map(), memo: new Map() };
+    for (const r of rates) {
+      const kat = (r.kategori ?? "").trim().toUpperCase();
+      if (!ix.kategoriByWarna.has(r.warna)) ix.kategoriByWarna.set(r.warna, kat);
+      if (!(r.price > 0)) continue;
+      const key = kat + "|" + r.lengan + "|" + r.size;
+      const list = ix.byKey.get(key);
+      if (list) list.push({ warna: r.warna, price: r.price });
+      else ix.byKey.set(key, [{ warna: r.warna, price: r.price }]);
+    }
+    sellingJenisCache.set(rates, ix);
+  }
+  const kat = ix.kategoriByWarna.get(warna);
+  if (!kat) return null;
+  const memoKey = warna + "|" + lengan + "|" + size;
+  if (ix.memo.has(memoKey)) return ix.memo.get(memoKey) ?? null;
+  const hit = pickBaseWarna(warna, ix.byKey.get(kat + "|" + lengan + "|" + size) ?? []);
+  ix.memo.set(memoKey, hit);
+  return hit;
 }
 
 /** Indeks harga jual per warna|lengan|size (baris pertama menang, sama seperti pencarian linear sebelumnya), dibuat sekali per larik `rates` -- Master Data

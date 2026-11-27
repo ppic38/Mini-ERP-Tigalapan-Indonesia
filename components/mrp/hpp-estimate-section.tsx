@@ -79,8 +79,19 @@ export function HppEstimateSection({ est, className = "mt-5" }: { est: PoHppEsti
                 <tr key={l.mrpId + l.vendor + l.warna + l.lengan} className="border-t border-[#F1F4F7]">
                   <td className="px-3 py-1">
                     {VENDOR_PRODUKSI[l.vendor]?.name ?? l.vendor} · {l.warna} · {l.lengan}
+                    {l.jualViaWarna && (
+                      <span className="ml-1 text-[10px] text-warning-fg" title="Warna ini belum punya harga jual; memakai harga jual warna dasarnya di jenis, lengan, size yang sama">
+                        harga jual {l.jualViaWarna}
+                      </span>
+                    )}
                     {l.kainTanpaHarga && <span className="ml-1 text-[10px] font-semibold text-danger-fg">harga kain tidak ada</span>}
-                    {l.kainViaKnitto && <span className="ml-1 text-[10px] text-warning-fg" title="Warna ini belum punya harga kain di supplier tersebut">harga kain KNITTO</span>}
+                    {l.kainViaWarna ? (
+                      <span className="ml-1 text-[10px] text-warning-fg" title="Warna ini belum punya harga kain; memakai harga kain warna dasarnya di jenis yang sama">
+                        harga kain {l.kainViaWarna}{l.kainViaKnitto ? " KNITTO" : ""}
+                      </span>
+                    ) : (
+                      l.kainViaKnitto && <span className="ml-1 text-[10px] text-warning-fg" title="Warna ini belum punya harga kain di supplier tersebut">harga kain KNITTO</span>
+                    )}
                     {l.supplierAsumsi && <span className="ml-1 text-[10px] text-warning-fg" title="Supplier belum dipilih: memakai supplier terakhir yang membeli warna ini">asumsi {l.supplier}</span>}
                     {l.fob && <span className="ml-1 text-[10px] text-text-muted">FOB</span>}
                   </td>
