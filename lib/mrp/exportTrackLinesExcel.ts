@@ -18,7 +18,8 @@ const BORDER = { top: thin, left: thin, bottom: thin, right: thin };
 const FMT_INT = "#,##0";
 const FMT_DATE = "dd/mm/yyyy";
 
-export type TrackExportRow = TrackLine & { itemSku: string; vendorName: string };
+/** estHppPcs / estHppPct: estimasi HPP per pcs dan rasio HPP warna x lengan x vendor baris ini (lib/mrp/poHppEstimate.ts, owner 2026-11-27). */
+export type TrackExportRow = TrackLine & { itemSku: string; vendorName: string; estHppPcs?: number | null; estHppPct?: number | null };
 
 const colLetter = (n: number) => {
   let s = "";
@@ -34,7 +35,7 @@ export async function exportTrackLinesExcel(rows: TrackExportRow[], fileName: st
   wb.created = new Date();
   wb.calcProperties.fullCalcOnLoad = true;
 
-  const head: { text: string; width: number; kind: "text" | "int" | "date" }[] = [
+  const head: { text: string; width: number; kind: "text" | "int" | "date" | "rp" | "pct" }[] = [
     { text: "Item SKU", width: 30, kind: "text" },
     { text: "No MRP", width: 12, kind: "text" },
     { text: "Vendor", width: 18, kind: "text" },
@@ -50,6 +51,8 @@ export async function exportTrackLinesExcel(rows: TrackExportRow[], fileName: st
     { text: "Qty FG di Koli", width: 14, kind: "int" },
     { text: "ETD", width: 13, kind: "date" },
     { text: "ETA", width: 13, kind: "date" },
+    { text: "Est. HPP/pcs", width: 13, kind: "rp" },
+    { text: "Est. % HPP", width: 11, kind: "pct" },
   ];
   const COLS = head.length;
 
@@ -96,6 +99,8 @@ export async function exportTrackLinesExcel(rows: TrackExportRow[], fileName: st
       r.qtyKoli ?? null,
       asDate(r.estKirim),
       asDate(r.estTibaDc),
+      r.estHppPcs != null ? Math.round(r.estHppPcs) : null,
+      r.estHppPct != null ? r.estHppPct / 100 : null,
     ];
     const rowNo = HEAD + 1 + i;
     vals.forEach((v, c) => {
@@ -106,7 +111,9 @@ export async function exportTrackLinesExcel(rows: TrackExportRow[], fileName: st
       const kind = head[c].kind;
       if (kind === "int") cell.numFmt = FMT_INT;
       if (kind === "date") cell.numFmt = FMT_DATE;
-      cell.alignment = { vertical: "middle", horizontal: kind === "int" ? "right" : "left" };
+      if (kind === "rp") cell.numFmt = FMT_INT;
+      if (kind === "pct") cell.numFmt = "0.0%";
+      cell.alignment = { vertical: "middle", horizontal: kind === "int" || kind === "rp" || kind === "pct" ? "right" : "left" };
       if (i % 2 === 1) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ZEBRA } };
     });
   });

@@ -5,6 +5,7 @@ import { AppShell } from "@/components/shell/app-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { DataTable, type ColumnDef } from "@/components/mrp/data-table";
 import { MrpWarnaBreakdownTable } from "@/components/mrp/mrp-warna-breakdown-table";
+import { HppEstimateSection } from "@/components/mrp/hpp-estimate-section";
 import { mrpProgressColumns, mrpProgressFilters, useMrpProgressRows, type MrpProgressRow } from "@/components/mrp/mrp-progress";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { mrpApprovalCorrections } from "@/components/sysadmin/ppic-corrections";
@@ -47,7 +48,8 @@ export default function ScmApprovalMrpPage() {
 
   const base = mrpProgressColumns<Row>(maklonPOs);
   const pendingColumns: ColumnDef<Row>[] = [
-    ...base.filter((c) => ["kategori", "qty", "roll", "vendor"].includes(c.key)),
+    // Estimasi HPP dan rasio tampil sebelum diputuskan (owner 2026-11-27); rincian di panel baris.
+    ...base.filter((c) => ["kategori", "qty", "roll", "vendor", "estHppTotal", "estHpp"].includes(c.key)),
     { key: "tglSubmit", label: "Tgl Diajukan", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates.ppicSubmitted)}</span> },
   ];
   const historyColumns: ColumnDef<Row>[] = [
@@ -81,6 +83,7 @@ export default function ScmApprovalMrpPage() {
         firstColumnRender={(r) => <span className="font-mono font-medium">{r.mrp.id}</span>}
         renderExpanded={(r) => (
           <div className="flex flex-col gap-3">
+            {r.hppEst.pcs > 0 && <HppEstimateSection est={r.hppEst} className="" />}
             <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(r.detail, { includeZeroQty: false })} />
             <div className="flex flex-wrap items-center gap-2">
               <input
@@ -120,7 +123,12 @@ export default function ScmApprovalMrpPage() {
         firstColumnRender={(r) => <span className="font-mono font-medium">{r.mrp.id}</span>}
         filterDefs={mrpProgressFilters(history)}
         search={{ placeholder: "Cari MRP, kategori, vendor…", getText: (r) => `${r.mrp.id} ${r.mrp.kategori} ${r.vendors.join(" ")} ${r.stage}` }}
-        renderExpanded={(r) => <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(r.detail)} />}
+        renderExpanded={(r) => (
+          <div className="flex flex-col gap-3">
+            {r.hppEst.pcs > 0 && <HppEstimateSection est={r.hppEst} className="" />}
+            <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(r.detail)} />
+          </div>
+        )}
         emptyText="Belum ada MRP yang diputuskan."
       />
     </AppShell>

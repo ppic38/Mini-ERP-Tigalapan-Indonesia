@@ -6,7 +6,9 @@ import { alertDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, aggSame, aggSum, type ColumnDef, type FilterDef } from "@/components/mrp/data-table";
 import { StageBadge } from "@/components/ui/stage-badge";
 import { useMrpStore } from "@/lib/mrp/store";
-import { formatDate, formatPcs, localDateString, skuItemNameLookup } from "@/lib/mrp/derive";
+import { SEGMEN_PRODUK, formatDate, formatPcs, formatRupiah, localDateString, segmenProdukOf, skuItemNameLookup } from "@/lib/mrp/derive";
+import { estimateMrpHpp } from "@/lib/mrp/poHppEstimate";
+import { useHppContext } from "@/components/mrp/use-hpp-context";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import { getWosKoliStatusAction, type WosKoliStatusResult } from "@/lib/mrp/wosStatusActions";
 import { TRACK_STAGES, TRACK_STATUSES, buildAduanTracking, buildItemTracking, buildTrackLines, expandLinesByKoli, type TrackLine, type TrackStage } from "@/lib/mrp/itemTracking";
@@ -105,6 +107,22 @@ export function ItemTrackingView() {
   const shown = shownKeys ? rows.filter((r) => shownKeys.has(r.key)) : rows;
 
   const lenganLabel = (r: TrackLine) => (r.lengan === "PENDEK" ? "Pendek" : "Panjang");
+  // Estimasi HPP per MRP x vendor x warna x lengan (owner 2026-11-27): rumus bersama lib/mrp/poHppEstimate.ts, dihitung sekali per MRP lalu dipakai per baris.
+  const hppCtx = useHppContext();
+  const hppMap = useMemo(() => {
+    const m = new Map<string, { perPcs: number; pct: number | null }>();
+    for (const mrpId of new Set(all.map((r) => r.mrpId))) {
+      for (const l of estimateMrpHpp(mrpId, hppCtx).lines) {
+        if (l.pcs <= 0) continue;
+        m.set(`${l.mrpId}|${l.vendor}|${l.warna}|${l.lengan}`, { perPcs: l.hpp / l.pcs, pct: l.hargaJual > 0 ? (l.hpp / l.hargaJual) * 100 : null });
+      }
+    }
+    return m;
+  }, [all, hppCtx]);
+  const hppOf = (r: TrackLine) => hppMap.get(`${r.mrpId}|${r.vendorProduksi}|${r.warna}|${r.lengan}`);
+  const pctLabelOf = (p: number | null) => (p == null ? "" : `${p.toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`);
+  /** Segmen produk Dewasa / Kids / Tunik (owner 2026-11-20) dari kategori grup warna MRP (segmenProdukOf, derive.ts). */
+  const segOf = (r: TrackLine) => segmenProdukOf(r.kategori, r.warna);
   const filterDefs: FilterDef<TrackLine>[] = [
     { label: "Status", options: TRACK_STATUSES.filter((s) => rows.some((r) => r.stage === s)), test: (r, v) => r.stage === v },
     { label: "No MRP", options: uniq(rows.map((r) => r.mrpId)).reverse(), test: (r, v) => r.mrpId === v },
@@ -114,6 +132,7 @@ export function ItemTrackingView() {
     { label: "Lengan", options: ["Pendek", "Panjang"], test: (r, v) => lenganLabel(r) === v },
     { label: "Size", options: Array.from(new Set(rows.map((r) => r.size))), test: (r, v) => r.size === v },
     { label: "Kategori", options: uniq(rows.map((r) => r.kategori)), test: (r, v) => r.kategori === v },
+    { label: "Segmen", options: SEGMEN_PRODUK.filter((s) => rows.some((r) => segOf(r) === s)), test: (r, v) => segOf(r) === v },
     { label: "Aduan", options: uniq(rows.map((r) => r.kode)), test: (r, v) => r.kode === v },
   ];
 
@@ -129,6 +148,7 @@ export function ItemTrackingView() {
     { key: "mrp", aggregate: sameText((r) => r.mrpId), label: "No MRP", default: true, render: (r) => <span className="font-mono">{r.mrpId}</span> },
     { key: "vendor", aggregate: sameText((r) => vendorLabel(r.vendorProduksi)), label: "Vendor", default: true, render: (r) => vendorLabel(r.vendorProduksi) },
     { key: "kategori", aggregate: sameText((r) => r.kategori), label: "Kategori", default: true, render: (r) => r.kategori || "-" },
+    { key: "segmen", aggregate: sameText((r) => segOf(r)), label: "Segmen", default: true, render: (r) => segOf(r) },
     { key: "warna", aggregate: sameText((r) => r.warna), label: "Warna", default: true, render: (r) => r.warna },
     { key: "size", aggregate: sameText((r) => r.size), label: "Size", default: true, render: (r) => r.size },
     {
@@ -164,6 +184,27 @@ export function ItemTrackingView() {
       render: (r) => <StageBadge stages={FLOW} current={r.stage} tone={r.stage === "Reject" ? "danger" : r.stage === "GR DC" ? "done" : undefined} />,
     },
     {
+      key: "estHpp",
+      label: "Est. HPP/pcs",
+      default: true,
+      align: "right",
+      info: {
+        title: "Estimasi HPP per pcs",
+        body: "Estimasi HPP warna x lengan x vendor baris ini (bahan + rib - diskon + maklon matriks + ongkir rata-rata kategori), rumus yang sama dengan MRP PPIC dan Approval PO. Terkunci sejak PO Material diajukan.",
+      },
+      aggregate: aggSame<TrackLine>((r) => { const e = hppOf(r); return e ? formatRupiah(Math.round(e.perPcs)) : ""; }),
+      render: (r) => { const e = hppOf(r); return e ? <span className="font-mono">{formatRupiah(Math.round(e.perPcs))}</span> : <span className="text-text-muted">-</span>; },
+    },
+    {
+      key: "estHppPct",
+      label: "Est. % HPP",
+      default: true,
+      align: "right",
+      info: { title: "Estimasi rasio HPP", body: "Estimasi HPP / nilai jual Master SKU untuk warna x lengan x vendor baris ini. Kosong kalau warna itu belum punya harga jual." },
+      aggregate: aggSame<TrackLine>((r) => pctLabelOf(hppOf(r)?.pct ?? null)),
+      render: (r) => <span className="font-mono">{pctLabelOf(hppOf(r)?.pct ?? null) || "-"}</span>,
+    },
+    {
       key: "estKirim",
       label: "ETD",
       default: true,
@@ -187,7 +228,7 @@ export function ItemTrackingView() {
     try {
       await exportTrackLinesExcel(
         // Export: baris Packing / Delivery FG / GR DC dipecah satu baris per koli (qty = FG koli itu).
-        expandLinesByKoli(shown).map((r) => ({ ...r, itemSku: itemSkuOf(r), vendorName: vendorLabel(r.vendorProduksi) })),
+        expandLinesByKoli(shown).map((r) => ({ ...r, itemSku: itemSkuOf(r), vendorName: vendorLabel(r.vendorProduksi), estHppPcs: hppOf(r)?.perPcs ?? null, estHppPct: hppOf(r)?.pct ?? null })),
         `Tracking-Item-${today}.xlsx`,
         parts.length > 0 ? "Filter: " + parts.join(" · ") : undefined
       );

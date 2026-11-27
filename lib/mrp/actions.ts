@@ -90,10 +90,12 @@ import {
   vendorCumulativeQtyByTipe,
   isSyntheticSupplier,
   DEFAULT_WEIGHT_TOLERANCE_PCT,
+  setWarnaAliasesForPricing,
 } from "./derive";
+import { buildHppContext, liveMaterialPoLines, toFrozenLine } from "./poHppEstimate";
 import { ENTITAS_LIST, RESTING_TARGET_MINUTES, VENDOR_PRODUKSI } from "./seed";
-import {
 import { planRollRoundingByWarna } from "./rollRounding";
+import {
   APPROVAL_ROLE_LABEL,
   APPROVAL_STEP_LABEL,
   APPROVAL_STEP_SLA_DAYS,
@@ -828,6 +830,9 @@ export async function sendPoToFinanceAction(mrpId: string): Promise<{ materialPO
     insertNotification(notif(notifFull, ["procurement"])),
   ]);
 
+  // Kunci estimasi HPP PO Material yang baru diajukan (sesudah respons, tidak menahan Procurement).
+  if (materialPOs.length > 0) after(() => freezeMaterialPoHpp([mrpId]));
+
   return { materialPOs, maklonPOs, mrpFullySent: !outstandingAfter };
 }
 
@@ -946,6 +951,11 @@ export async function roundMaterialPoRollCountsAction(): Promise<{ affectedPoIds
     const { error } = await db.from("material_pos").update({ roll_count: newRollCount, available_rolls: newRollCount - po.invoicedRolls }).eq("id", po.id);
     if (error) throw new Error(error.message);
   }
+  // Roll berubah: estimasi HPP terkunci PO itu dihitung ulang.
+  if (affectedPoIds.length > 0) {
+    const mrps = Array.from(new Set(pos.filter((p) => affectedPoIds.includes(p.id)).map((p) => p.mrpId)));
+    after(() => freezeMaterialPoHpp(mrps, affectedPoIds));
+  }
   return { affectedPoIds };
 }
 
@@ -973,6 +983,10 @@ export async function revertMaterialPoRollRoundingAction(): Promise<{ affectedPo
     const newRollCount = po.colorBreakdown.reduce((sum, c) => sum + (toRevert.includes(c) ? c.originalRollCount! : c.rollCount), 0);
     const { error } = await db.from("material_pos").update({ roll_count: newRollCount, available_rolls: newRollCount - po.invoicedRolls }).eq("id", po.id);
     if (error) throw new Error(error.message);
+  }
+  if (affectedPoIds.length > 0) {
+    const mrps = Array.from(new Set(pos.filter((p) => affectedPoIds.includes(p.id)).map((p) => p.mrpId)));
+    after(() => freezeMaterialPoHpp(mrps, affectedPoIds));
   }
   return { affectedPoIds };
 }
@@ -8466,6 +8480,42 @@ function initialApprovalFields(amount: number, at: string, actorName?: string, l
   };
 }
 
+/** Mengunci estimasi HPP PO Material (owner 2026-11-27, lib/mrp/poHppEstimate.ts): estimasi per warna x lengan disimpan di entri pengajuan TERAKHIR
+ *  (langkah 1) kolom approval_log yang sudah ada, tanpa kolom baru. Dipanggil sesudah PO diajukan, diajukan ulang, atau rollnya dibulatkan / dikembalikan.
+ *  Hanya PO yang entri pengajuan terakhirnya belum berisi estimasi, kecuali id di `force` (roll berubah = hitung ulang). Best-effort: galat dicatat di log
+ *  server, tidak pernah menggagalkan aksi pemanggil. Membaca snapshot penuh sekali (dijalankan lewat after(), tidak menahan pengguna). */
+async function freezeMaterialPoHpp(mrpIds: string[], force: string[] = []): Promise<void> {
+  try {
+    const snap = await getFlowSnapshot();
+    setWarnaAliasesForPricing(snap.warnaAliases ?? []);
+    const ctx = buildHppContext(snap);
+    const db = supabaseServer();
+    const forceSet = new Set(force);
+    const mrpSet = new Set(mrpIds);
+    for (const p of snap.materialPOs) {
+      if (!mrpSet.has(p.mrpId) || p.status === "CANCELLED") continue;
+      const log = p.approvalLog ?? [];
+      let idx = -1;
+      for (let i = 0; i < log.length; i++) if (log[i].step === 1) idx = i;
+      if (idx < 0) continue;
+      if ((log[idx].hpp?.length ?? 0) > 0 && !forceSet.has(p.id)) continue;
+      const lines = liveMaterialPoLines(p, ctx).map(toFrozenLine);
+      // Baca ulang approval_log tepat sebelum menulis supaya persetujuan yang baru masuk tidak tertimpa.
+      const { data: fresh, error: readErr } = await db.from("material_pos").select("approval_log").eq("id", p.id).maybeSingle();
+      if (readErr || !fresh) continue;
+      const cur = (fresh.approval_log ?? []) as PoApprovalEntry[];
+      let j = -1;
+      for (let i = 0; i < cur.length; i++) if (cur[i].step === 1) j = i;
+      if (j < 0) continue;
+      const next = cur.map((e, i) => (i === j ? { ...e, hpp: lines } : e));
+      const { error } = await db.from("material_pos").update({ approval_log: next }).eq("id", p.id);
+      if (error) console.error("[freezeMaterialPoHpp]", p.id, error.message);
+    }
+  } catch (e) {
+    console.error("[freezeMaterialPoHpp]", e instanceof Error ? e.message : e);
+  }
+}
+
 /** Total nilai semua PO Material (belum dibatalkan) satu supplier dalam satu MRP -- dasar LEVEL approval PO Material. */
 async function materialSupplierTotal(db: SupabaseClient, mrpId: string, supplier: string): Promise<number> {
   const { data, error } = await db.from("material_pos").select("amount").eq("mrp_id", mrpId).eq("supplier", supplier).neq("status", "CANCELLED");
@@ -8780,6 +8830,8 @@ export async function resubmitPoAction(type: PoType, id: string): Promise<Action
         await notifyNextApprovers(t, next);
       }
     }
+    // PO Material yang diajukan ulang dapat estimasi HPP terkunci baru (entri pengajuan baru belum berisi estimasi).
+    if (type === "MATERIAL") after(() => freezeMaterialPoHpp([subject.mrpId]));
   });
 }
 // =========================================================================================================================================================

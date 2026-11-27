@@ -15,12 +15,15 @@ import { mrpCorrections } from "@/components/sysadmin/ppic-corrections";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { useMrpStore } from "@/lib/mrp/store";
 import { mrpStatusBadges, mrpStatusBadgeTone, mrpWarnaBreakdown, effectiveMrpQty, formatPcs, formatDate, ppicApprovalBadge, vendorsForMrp } from "@/lib/mrp/derive";
-import { FLOW_STAGES, batchShippingMap, returnedRollKeys, mrpFlowStage, mrpHppEstimate, ongkirPerPcsByVendor, type FlowStage, type FlowSideStatus } from "@/lib/mrp/flowStatus";
+import { FLOW_STAGES, batchShippingMap, returnedRollKeys, mrpFlowStage, type FlowStage, type FlowSideStatus } from "@/lib/mrp/flowStatus";
 import { StageBadge } from "@/components/ui/stage-badge";
 import type { ParsedMrpImport } from "@/lib/mrp/parseImport";
 import { exportMaklonPoRasioExcel } from "@/lib/mrp/exportPoExcel";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { MaklonPO } from "@/lib/mrp/types";
+import { estimateMrpHpp, toMrpHppEstimate } from "@/lib/mrp/poHppEstimate";
+import { useHppContext } from "@/components/mrp/use-hpp-context";
+import { HppEstimateSection, hppPctTone } from "@/components/mrp/hpp-estimate-section";
 
 const badgeTone = mrpStatusBadgeTone;
 
@@ -108,8 +111,6 @@ export default function MrpListPage() {
   const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
   const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
   const materialClaimHistory = useMrpStore((s) => s.materialClaimHistory);
-  const ekspedisiRates = useMrpStore((s) => s.ekspedisiRates);
-  const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
   const sysadmin = useSysadminMode();
   const importMrp = useMrpStore((s) => s.importMrp);
   const resetMrp = useMrpStore((s) => s.resetMrp);
@@ -186,13 +187,14 @@ export default function MrpListPage() {
   const [preset, setPreset] = useState<{ nonce: number; filters: Record<string, string[]>; card: string }>({ nonce: 0, filters: {}, card: "" });
   // Kartu angka mengikuti filter tabel (owner 2026-11-16): dihitung dari baris yang sedang lolos filter dan pencarian.
   const [shownIds, setShownIds] = useState<Set<string> | null>(null);
+  // Estimasi HPP: satu rumus bersama dengan Approval PO dan Tracking Item (lib/mrp/poHppEstimate.ts, owner 2026-11-27).
+  const hppCtx = useHppContext();
 
   const rows = useMemo(() => {
     // Status staging standar (lib/mrp/flowStatus.ts) dan estimasi HPP % per MRP.
     const batchByCode = new Map(productionBatches.filter((b) => b.codeRoll).map((b) => [b.codeRoll as string, b]));
     const shipping = batchShippingMap(deliveryKolis, warehouseReceipts);
     const returned = returnedRollKeys(materialClaimHistory);
-    const ongkir = ongkirPerPcsByVendor(deliveryKolis, ekspedisiRates);
     const all: { mrp: (typeof mrpDetails)[number]["mrp"]; detail?: (typeof mrpDetails)[number] }[] = [
       ...mrpDetails.map((d) => ({ mrp: d.mrp, detail: d })),
       ...staticMrps.map((m) => ({ mrp: m })),
@@ -202,7 +204,9 @@ export default function MrpListPage() {
       .map((row, idx) => ({ row, idx, created: row.detail?.dates?.created ?? "" }))
       .sort((x, y) => (x.created < y.created ? 1 : x.created > y.created ? -1 : y.idx - x.idx))
       .map((x) => x.row);
-    return ordered.map(({ mrp, detail }) => ({
+    return ordered.map(({ mrp, detail }) => {
+      const hppEst = estimateMrpHpp(mrp.id, hppCtx);
+      return {
       mrp,
       detail,
       // MRP bisa punya lebih dari 1 warna sekaligus (tiap warna = 1 lenganGroup dari file
@@ -214,9 +218,11 @@ export default function MrpListPage() {
       scm: detail ? ppicApprovalBadge(detail.ppicApproval) : null,
       roll: mrpWarnaBreakdown(detail).reduce((sum, w) => sum + w.rollTotal, 0),
       flow: mrpFlowStage(detail, mrp.id, materialPOs, invoices, batchByCode, shipping, returned),
-      hpp: mrpHppEstimate(detail, mrp.id, materialPOs, maklonPOs, ongkir, itemSellingPrices),
-    })).map((r) => ({ ...r, stage: r.flow.stage as FlowStage | FlowSideStatus }));
-  }, [mrpDetails, staticMrps, materialPOs, maklonPOs, invoices, vendorInvoices, productionBatches, deliveryKolis, warehouseReceipts, ekspedisiRates, itemSellingPrices, materialClaimHistory]);
+      hpp: toMrpHppEstimate(hppEst),
+      hppEst,
+    };
+    }).map((r) => ({ ...r, stage: r.flow.stage as FlowStage | FlowSideStatus }));
+  }, [mrpDetails, staticMrps, materialPOs, maklonPOs, invoices, vendorInvoices, productionBatches, deliveryKolis, warehouseReceipts, materialClaimHistory, hppCtx]);
   type Row = (typeof rows)[number];
 
   if (!mounted) return null;
@@ -271,6 +277,23 @@ export default function MrpListPage() {
       ),
     },
     {
+      key: "estHppTotal",
+      label: "Est. HPP",
+      default: true,
+      align: "right",
+      sortValue: (r) => r.hppEst.hpp,
+      aggregate: aggSum<Row>((r) => r.hppEst.hpp, (n) => <span className="font-semibold">{formatRp(n)}</span>),
+      render: (r) =>
+        r.hppEst.pcs > 0 ? (
+          <span className="block text-right font-mono">
+            {formatRp(r.hppEst.hpp)}
+            <span className="block text-[10px] text-text-muted">{formatRp(r.hppEst.hppPerPcs)}/pcs</span>
+          </span>
+        ) : (
+          <span className="text-text-muted">—</span>
+        ),
+    },
+    {
       key: "estHpp",
       label: "Est. HPP %",
       default: true,
@@ -279,8 +302,10 @@ export default function MrpListPage() {
         title: "Estimasi HPP %",
         body: (
           <>
-            <p>(Nilai PO Material + nilai PO Produksi + estimasi ongkir) ÷ nilai jual qty MRP.</p>
-            <p className="mt-1.5 text-text-muted">Ongkir = qty × rata-rata ongkir per pcs vendor dari pengiriman yang sudah ada. Harga jual dari Master SKU (lewat Mapping Warna). Tersedia mulai Approval PO.</p>
+            <p>(Bahan + rib - diskon + maklon + ongkir) ÷ nilai jual qty MRP.</p>
+            <p className="mt-1.5 text-text-muted">
+              Bahan = roll × 25 kg × harga kain supplier (belum ada supplier = supplier terakhir warna itu, lalu KNITTO). Maklon = matriks vendor, jenis, lengan. Ongkir = rata-rata per pcs kategori (Dewasa, Kids, Tunik). Warna tanpa harga memakai warna dasarnya di jenis yang sama. Rincian: buka baris MRP.
+            </p>
           </>
         ),
       },
@@ -289,8 +314,8 @@ export default function MrpListPage() {
           <span className="text-text-muted">—</span>
         ) : (
           <span
-            className={"font-mono font-semibold " + (r.hpp.pct > 100 ? "text-danger-fg" : r.hpp.pct > 80 ? "text-warning-fg" : "text-success-fg")}
-            title={`Material ${formatRp(r.hpp.material)} + Maklon ${formatRp(r.hpp.maklon)} + Est. ongkir ${formatRp(r.hpp.delivery)} = ${formatRp(r.hpp.total)}\nNilai jual ${formatRp(r.hpp.hargaJual)}${r.hpp.pcsTanpaHarga > 0 ? `\n${formatPcs(r.hpp.pcsTanpaHarga)} pcs belum punya harga jual (memakai rata-rata harga size lain)` : ""}`}
+            className={"font-mono font-semibold " + hppPctTone(r.hpp.pct)}
+            title={`Bahan + rib - diskon ${formatRp(r.hpp.material)} + Maklon ${formatRp(r.hpp.maklon)} + Est. ongkir ${formatRp(r.hpp.delivery)} = ${formatRp(r.hpp.total)}\nNilai jual ${formatRp(r.hpp.hargaJual)}${r.hpp.pcsTanpaHarga > 0 ? `\n${formatPcs(r.hpp.pcsTanpaHarga)} pcs belum punya harga jual (size kosong memakai rata-rata size lain; warna tanpa harga jual tidak dihitung di rasio)` : ""}`}
           >
             {r.hpp.pct.toLocaleString("id-ID", { maximumFractionDigits: 1 })}%
           </span>
@@ -428,6 +453,7 @@ export default function MrpListPage() {
                 {openRow.detail.ppicRejectionNote ? ` — ${openRow.detail.ppicRejectionNote}` : ""} — impor ulang dengan data yang sudah dibetulkan kalau perlu diajukan lagi.
               </div>
             )}
+            {openRow.hppEst.pcs > 0 && <HppEstimateSection est={openRow.hppEst} className="" />}
             <div>
               <div className="mb-2 font-sans text-[13px] font-semibold text-text-primary">Rincian warna</div>
               <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(openRow.detail)} vendorQty={false} />

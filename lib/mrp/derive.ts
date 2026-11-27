@@ -3800,6 +3800,26 @@ export function kategoriProdukLabel(tipe: string): string {
 }
 const KATEGORI_PRODUK_ORDER = ["Reguler", "Kids", "Rib", "Tunik", "Wangky"];
 
+/** Segmen produk (owner 2026-11-20): Dewasa, Kids, atau Tunik, untuk filter dan urut di Laporan HPP, Tracking Item, Material Tracking.
+ *  Sumber: kategori grup warna x lengan di MRP (KIDS 24S, TUNIK 24S, COMBED 24S, PANJANG + RIB, WANGKI MYNO, ...); kategori kosong memakai
+ *  akhiran nama warna ("... KID", "... TUNIK"). Usia item koli (rework / sisa kain) menang: KIDS = Kids, DEWASA dari grup Kids = Dewasa.
+ *  Rib dan Wangki dihitung Dewasa. */
+export type SegmenProduk = "Dewasa" | "Kids" | "Tunik";
+export const SEGMEN_PRODUK: SegmenProduk[] = ["Dewasa", "Kids", "Tunik"];
+export function segmenProdukOf(kategori: string | undefined, warna: string, usia?: Usia): SegmenProduk {
+  const k = (kategori ?? "").toUpperCase();
+  if (usia === "KIDS") return "Kids";
+  if (usia !== "DEWASA" && (/KID/.test(k) || /\sKIDS?$/i.test(warna.trim()))) return "Kids";
+  if (/TUNIK/.test(k) || /\sTUNIK$/i.test(warna.trim())) return "Tunik";
+  return "Dewasa";
+}
+/** Pencari segmen per MRP x warna x lengan (kategori grup, cadangan kategori MRP), diindeks sekali per daftar MRP. */
+export function segmenProdukLookup(mrpDetails: MrpDetail[]): (mrpId: string, warna: string, lengan: Lengan, usia?: Usia) => SegmenProduk {
+  const kat = new Map<string, string>();
+  for (const d of mrpDetails) for (const g of d.lenganGroups) kat.set(`${d.mrp.id}|${g.warna}|${g.lengan}`, g.kategori || d.mrp.kategori || "");
+  return (mrpId, warna, lengan, usia) => segmenProdukOf(kat.get(`${mrpId}|${warna}|${lengan}`), warna, usia);
+}
+
 export type InvoiceKategoriRow = {
   kategori: string;
   qtyPendek: number;
@@ -4370,6 +4390,8 @@ export type HppRow = {
   /** % HPP = hppPerItem / sellingPricePerItem x 100 -- `null` kalau sellingPricePerItem tidak
    *  ketemu atau <= 0 (supaya tidak dibagi nol/negatif). */
   hppPercentage: number | null;
+  /** Usia barang (KIDS/DEWASA) kalau diketahui dari item koli (baris rework). Dipakai `segmenProdukOf`. */
+  usia?: Usia;
 };
 
 /** Ongkir 1 invoice vendor — dihitung OTOMATIS dari koli pengiriman (deliveryKolis) milik
@@ -4394,13 +4416,78 @@ export function autoOngkirForInvoice(inv: VendorInvoice, deliveryKolis: Delivery
  *  matching sama persis seperti `ekspedisiPrice` di atas. `null` kalau tidak ketemu (BUKAN 0,
  *  supaya kolom "% HPP" di UI tampil "—" alih-alih 0% yang menyesatkan). */
 export function sellingPriceFor(warna: string, lengan: Lengan, size: string, rates: ItemSellingPriceRow[]): number | null {
+  return sellingPriceInfoFor(warna, lengan, size, rates).price;
+}
+
+/** Sama dengan `sellingPriceFor`, ditambah warna acuan kalau harga diambil dari warna dasar (owner 2026-11-27):
+ *  warna yang harga jualnya kosong / Rp 0 memakai harga warna dasarnya di jenis (kategori Master SKU) yang sama, lengan dan size yang sama.
+ *  Contoh: HITAM MLS 24S PDK L (COMBED 24S) memakai HITAM 24S PDK L (COMBED 24S); HITAM MLS KID 24S (KIDS 24S) memakai HITAM KID 24S.
+ *  Warna dasar = warna lain di jenis itu yang semua katanya ada di nama warna ini (yang paling banyak katanya menang). */
+export function sellingPriceInfoFor(warna: string, lengan: Lengan, size: string, rates: ItemSellingPriceRow[]): { price: number | null; viaWarna?: string } {
   const index = sellingPriceIndex(rates);
-  const direct = index.get(warna + "|" + lengan + "|" + size);
-  if (direct !== undefined) return direct;
+  let skuWarna = warna;
+  let price = index.get(warna + "|" + lengan + "|" + size);
   // Nama warna di MRP beda dari Master Data SKU (mis. ELECTRIC LIME 24S vs ELECTRIC LM 24S): pakai Master Data Mapping Warna (owner 2026-11-02).
-  const skuWarna = pricingWarnaAliases.get(warna);
-  if (!skuWarna) return null;
-  return index.get(skuWarna + "|" + lengan + "|" + size) ?? null;
+  if (price === undefined) {
+    const alias = pricingWarnaAliases.get(warna);
+    if (alias) {
+      skuWarna = alias;
+      price = index.get(alias + "|" + lengan + "|" + size);
+    }
+  }
+  if (price != null && price > 0) return { price };
+  const base = baseSellingPrice(skuWarna, lengan, size, rates) ?? (skuWarna !== warna ? baseSellingPrice(warna, lengan, size, rates) : null);
+  if (base) return { price: base.price, viaWarna: base.warna };
+  return { price: price ?? null };
+}
+
+const BASE_WARNA_KEEP = new Set(["KID", "KIDS", "TUNIK", "RIB", "+"]);
+const wordsOf = (w: string) => w.trim().toUpperCase().split(/\s+/).filter(Boolean);
+
+/** Warna dasar dalam satu jenis: semua kata calon ada di nama warna, dan calon lebih pendek. Yang paling banyak katanya menang (urut nama kalau sama). */
+export function pickBaseWarna<T extends { warna: string }>(warna: string, candidates: T[]): T | null {
+  const own = new Set(wordsOf(warna));
+  const ownLen = own.size;
+  let best: T | null = null;
+  let bestLen = 0;
+  for (const c of candidates) {
+    const ws = wordsOf(c.warna);
+    if (ws.length === 0 || ws.length >= ownLen || !ws.every((x) => own.has(x))) continue;
+    // Kata penanda jenis/usia tidak boleh dibuang: barang Kids tidak memakai harga dewasa, Tunik/RIB tidak memakai harga biasa.
+    const cs = new Set(ws);
+    if ([...own].some((x) => BASE_WARNA_KEEP.has(x) && !cs.has(x))) continue;
+    if (ws.length > bestLen || (ws.length === bestLen && best && c.warna < best.warna)) {
+      best = c;
+      bestLen = ws.length;
+    }
+  }
+  return best;
+}
+
+type SellingJenisIndex = { kategoriByWarna: Map<string, string>; byKey: Map<string, { warna: string; price: number }[]>; memo: Map<string, { warna: string; price: number } | null> };
+const sellingJenisCache = new WeakMap<ItemSellingPriceRow[], SellingJenisIndex>();
+function baseSellingPrice(warna: string, lengan: Lengan, size: string, rates: ItemSellingPriceRow[]): { warna: string; price: number } | null {
+  let ix = sellingJenisCache.get(rates);
+  if (!ix) {
+    ix = { kategoriByWarna: new Map(), byKey: new Map(), memo: new Map() };
+    for (const r of rates) {
+      const kat = (r.kategori ?? "").trim().toUpperCase();
+      if (!ix.kategoriByWarna.has(r.warna)) ix.kategoriByWarna.set(r.warna, kat);
+      if (!(r.price > 0)) continue;
+      const key = kat + "|" + r.lengan + "|" + r.size;
+      const list = ix.byKey.get(key);
+      if (list) list.push({ warna: r.warna, price: r.price });
+      else ix.byKey.set(key, [{ warna: r.warna, price: r.price }]);
+    }
+    sellingJenisCache.set(rates, ix);
+  }
+  const kat = ix.kategoriByWarna.get(warna);
+  if (!kat) return null;
+  const memoKey = warna + "|" + lengan + "|" + size;
+  if (ix.memo.has(memoKey)) return ix.memo.get(memoKey) ?? null;
+  const hit = pickBaseWarna(warna, ix.byKey.get(kat + "|" + lengan + "|" + size) ?? []);
+  ix.memo.set(memoKey, hit);
+  return hit;
 }
 
 /** Indeks harga jual per warna|lengan|size (baris pertama menang, sama seperti pencarian linear sebelumnya), dibuat sekali per larik `rates` -- Master Data
@@ -5059,6 +5146,7 @@ export function hppRowsForInvoicePerRoll(
         mrpLabel: line.mrpId,
         warna: line.warna,
         lengan: line.lengan,
+        usia: c.usia,
         item: `${line.warna} ${HPP_LENGAN_ABBR[line.lengan]} ${c.size} · Rework${usiaLabel ? " (" + usiaLabel + ")" : ""} · koli ${c.koli.noKoli}`,
         jenis: `${line.lengan} ${c.size}`,
         qtyPo: takeQty,
