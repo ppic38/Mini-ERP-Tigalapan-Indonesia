@@ -1,14 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { DataTable, aggSum, type ColumnDef } from "@/components/mrp/data-table";
 import Link from "next/link";
 import { StatusPill } from "@/components/ui/status-pill";
 import { poApprovalState, poApprovalSummary } from "@/lib/mrp/poApproval";
 import { ApprovalChain } from "@/components/mrp/po-approval-queue";
-import { HppEstimateSection, hppPctText, hppPctTone } from "@/components/mrp/hpp-estimate-section";
-import { useHppContext } from "@/components/mrp/use-hpp-context";
-import { estimateMaterialPosHpp, mergeHppEstimates, type PoHppEstimate } from "@/lib/mrp/poHppEstimate";
 import { useMrpStore } from "@/lib/mrp/store";
 import {
   compareNewestFirst,
@@ -114,20 +111,6 @@ export function PoMaterialPanel() {
   // Item 3: sumber harga/kg per warna (rib dari mrpDetails.materialRows di atas).
   const hargaKain = useMrpStore((s) => s.hargaKain);
   const hargaKainPks = useMrpStore((s) => s.hargaKainPks);
-  // Estimasi HPP per PO (rumus bersama lib/mrp/poHppEstimate.ts, sama dengan antrean Approval PO dan MRP PPIC; owner 2026-11-27).
-  const hppCtx = useHppContext();
-  const hppByPo = useMemo(() => {
-    const m = new Map<string, PoHppEstimate>();
-    for (const p of materialPOs) if (p.status !== "CANCELLED") m.set(p.id, estimateMaterialPosHpp([p], hppCtx));
-    return m;
-  }, [materialPOs, hppCtx]);
-  const hppOfPos = (pos: MaterialPO[]) => mergeHppEstimates(pos.map((p) => hppByPo.get(p.id)).filter((e): e is PoHppEstimate => !!e));
-  const hppBadge = (e: PoHppEstimate, light = false) =>
-    e.pcs > 0 ? (
-      <span className={"font-mono text-[11px] " + (light ? "font-normal normal-case tracking-normal" : "")} title="Estimasi HPP (bahan + rib - diskon + maklon + ongkir) dan rasio terhadap nilai jual">
-        Est. HPP {formatRupiah(e.hpp)} · <span className={"font-semibold " + hppPctTone(e.pct)}>{hppPctText(e.pct)}</span>
-      </span>
-    ) : null;
 
   const [selectedMrpId, setSelectedMrpId] = useState<string>("");
   // `colorBreakdown[].entitas` di database SELALU sudah terisi default (entitas pertama secara
@@ -292,34 +275,6 @@ export function PoMaterialPanel() {
     { key: "roll", label: "Roll", default: true, align: "right", aggregate: aggSum((p) => p.rollCount, (n) => <span className="font-semibold">{n.toLocaleString("id-ID")}</span>), render: (p) => <span className="font-mono">{p.rollCount}</span> },
     { key: "nilai", label: "Nilai", default: true, align: "right", aggregate: aggSum((p) => p.amount, (n) => <span className="font-semibold">{formatRupiah(n)}</span>), render: (p) => <span className="font-mono">{formatRupiah(p.amount)}</span> },
     {
-      key: "estHpp",
-      label: "Est. HPP",
-      default: true,
-      align: "right",
-      aggregate: aggSum((p) => hppByPo.get(p.id)?.hpp ?? 0, (n) => <span className="font-semibold">{formatRupiah(n)}</span>),
-      render: (p) => {
-        const e = hppByPo.get(p.id);
-        return e && e.pcs > 0 ? (
-          <span className="block text-right font-mono">
-            {formatRupiah(e.hpp)}
-            <span className="block text-[10px] text-text-muted">{formatRupiah(e.hppPerPcs)}/pcs</span>
-          </span>
-        ) : (
-          <span className="text-text-muted">—</span>
-        );
-      },
-    },
-    {
-      key: "estHppPct",
-      label: "% HPP",
-      default: true,
-      align: "right",
-      render: (p) => {
-        const e = hppByPo.get(p.id);
-        return e && e.pcs > 0 ? <span className={"font-mono font-semibold " + hppPctTone(e.pct)}>{hppPctText(e.pct)}</span> : <span className="text-text-muted">—</span>;
-      },
-    },
-    {
       key: "status",
       label: "Status",
       default: true,
@@ -334,10 +289,7 @@ export function PoMaterialPanel() {
   const renderHistoryDetail = (p: MaterialPO) => {
     const showKerahManset = poHasKerahManset(p, mrpDetails);
     const gridColsClass = showKerahManset ? "grid-cols-9" : "grid-cols-7";
-    const est = hppByPo.get(p.id);
     return (
-      <div className="flex flex-col gap-3">
-      {est && est.pcs > 0 && <HppEstimateSection est={est} className="" />}
       <div className="overflow-hidden rounded-md border border-[#E4E8EE] bg-white">
         <div className={`grid ${gridColsClass} gap-x-2 bg-[#F2F4F7] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted`}>
           <span>Warna / lengan</span>
@@ -379,7 +331,6 @@ export function PoMaterialPanel() {
           <span className="text-right font-mono">{formatRupiah(p.colorBreakdown.reduce((a, c) => a + maklonFeeForColorLine(p, c, maklonPOs, mrpDetails), 0))}</span>
           <span />
         </div>
-      </div>
       </div>
     );
   };
@@ -486,7 +437,6 @@ export function PoMaterialPanel() {
                   <span className="font-sans text-[10.5px] font-normal normal-case tracking-normal text-info-fg/70">
                     {vendorGroups.size} vendor · {pos.length} PO
                   </span>
-                  {hppBadge(hppOfPos(pos), true)}
                   <div className="ml-auto flex items-center gap-2 normal-case tracking-normal">
                     {/* Level supplier: set entitas semua PO supplier ini sekaligus, lalu approve
                        HANYA PO milik supplier ini (approve per ID, bukan per vendor produksi). */}
@@ -545,7 +495,6 @@ export function PoMaterialPanel() {
                           <span className="font-mono text-[10.5px] text-text-muted">{vendorPos.map((p) => p.id).join(", ")}</span>
                           <span className="ml-auto font-mono text-xs">{vendorRoll} roll</span>
                           <span className="font-mono text-xs font-medium">{formatRupiah(vendorNilai)}</span>
-                          {hppBadge(hppOfPos(vendorPos))}
                           {vendorNeedsEntity && <StatusPill tone="warning">Entitas belum lengkap</StatusPill>}
                           {/* Level vendor produksi (di dalam 1 supplier): approve PO vendor ini saja. */}
                           <button
@@ -563,14 +512,6 @@ export function PoMaterialPanel() {
                         </div>
                         {vendorOpen && (
                 <div className="flex flex-col gap-2.5 border-t border-[#CFE0EF] bg-[#F8FBFF] px-3.5 py-3">
-                  {(() => {
-                    const est = hppOfPos(vendorPos);
-                    return est.pcs > 0 ? (
-                      <div className="rounded-md border border-[#CFE0EF] bg-white px-4 py-3">
-                        <HppEstimateSection est={est} className="" />
-                      </div>
-                    ) : null;
-                  })()}
                   {vendorPos.map((po) => {
                     const poMaklonTotal = po.colorBreakdown.reduce((a, c) => a + maklonFeeForColorLine(po, c, maklonPOs, mrpDetails), 0);
                     const hasEntity = poHasAllEntitas(po);
@@ -684,14 +625,6 @@ export function PoMaterialPanel() {
                   <span>Material: {formatRupiah(supplierMaterialTotal)}</span>
                   <span>Maklon: {formatRupiah(supplierMaklonTotal)}</span>
                   <span>Total: {formatRupiah(supplierMaterialTotal + supplierMaklonTotal)}</span>
-                  {(() => {
-                    const est = hppOfPos(pos);
-                    return est.pcs > 0 ? (
-                      <span>
-                        Est. HPP: {formatRupiah(est.hpp)} ({formatRupiah(est.hppPerPcs)}/pcs) · Rasio <span className={hppPctTone(est.pct)}>{hppPctText(est.pct)}</span>
-                      </span>
-                    ) : null;
-                  })()}
                 </div>
               </div>
             );

@@ -1,15 +1,12 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Button } from "@/components/ui/button";
 import { MaklonPoWarnaLenganTable } from "@/components/mrp/maklon-po-warna-lengan-table";
 import { aduanRowsOfPo } from "@/lib/mrp/exportPoExcel";
 import { poApprovalState } from "@/lib/mrp/poApproval";
 import { ApprovalChain } from "@/components/mrp/po-approval-queue";
-import { HppEstimateSection, hppPctText, hppPctTone } from "@/components/mrp/hpp-estimate-section";
-import { useHppContext } from "@/components/mrp/use-hpp-context";
-import { estimateMaklonPoHpp, mergeHppEstimates, type PoHppEstimate } from "@/lib/mrp/poHppEstimate";
 import { useMrpStore } from "@/lib/mrp/store";
 import { compareNewestFirst, formatPcs, formatRupiah, maklonPoBadgeWithApproval } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
@@ -28,28 +25,6 @@ export function PoMaklonPanel() {
   // MaklonPoWarnaLenganTable (components/mrp/).
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
-  // Estimasi HPP per PO Produksi (rumus bersama lib/mrp/poHppEstimate.ts, sama dengan antrean Approval PO dan MRP PPIC; owner 2026-11-27). PO FOB tidak dihitung.
-  const hppCtx = useHppContext();
-  const hppByPo = useMemo(() => {
-    const m = new Map<string, PoHppEstimate>();
-    for (const po of maklonPOs) {
-      if (po.isFob) continue;
-      m.set(po.id, estimateMaklonPoHpp(po.mrpId, po.vendorProduksi, aduanRowsOfPo(mrpDetails.find((d) => d.mrp.id === po.mrpId), po, maklonPOs), hppCtx));
-    }
-    return m;
-  }, [maklonPOs, mrpDetails, hppCtx]);
-  const hppOfPos = (pos: MaklonPO[]) => mergeHppEstimates(pos.map((p) => hppByPo.get(p.id)).filter((e): e is PoHppEstimate => !!e));
-  const hppCell = (e: PoHppEstimate) =>
-    e.pcs > 0 ? (
-      <span className="block text-right font-mono tabular-nums">
-        {formatRupiah(e.hpp)}
-        <span className="block text-[10px] text-text-muted">
-          {formatRupiah(e.hppPerPcs)}/pcs · <span className={"font-semibold " + hppPctTone(e.pct)}>{hppPctText(e.pct)}</span>
-        </span>
-      </span>
-    ) : (
-      <span className="text-text-muted">—</span>
-    );
 
   // Item revisi 2026-09-17 (owner: "PO Approval Finance -- Material & Maklon -- hierarkis per
   // No. MRP"): sama pola dengan PoMaterialPanel di atas -- pilih MRP dulu, baru dikelompokkan per
@@ -236,7 +211,6 @@ export function PoMaklonPanel() {
                   <th className="px-5 py-[9px] text-left">Vendor Produksi / No PO</th>
                   <th className="px-3 py-[9px] text-right">Qty</th>
                   <th className="px-3 py-[9px] text-right">Nilai</th>
-                  <th className="px-3 py-[9px] text-right" title="Estimasi HPP (bahan + rib - diskon + maklon + ongkir), HPP/pcs, dan rasio terhadap nilai jual">Est. HPP · Rasio</th>
                   <th className="px-3 py-[9px] text-right">Aksi</th>
                 </tr>
               </thead>
@@ -259,7 +233,6 @@ export function PoMaklonPanel() {
                         </td>
                         <td className="px-3 py-[11px] text-right font-mono tabular-nums">{formatPcs(vendorQtyTotal)} pcs</td>
                         <td className="px-3 py-[11px] text-right font-mono font-medium tabular-nums">{formatRupiah(vendorAmountTotal)}</td>
-                        <td className="px-3 py-[11px]">{hppCell(hppOfPos(pos))}</td>
                         <td className="px-3 py-[11px] text-right">
                           <Button
                             onClick={(e) => {
@@ -288,7 +261,6 @@ export function PoMaklonPanel() {
                                 </td>
                                 <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatPcs(po.qty)} pcs</td>
                                 <td className="px-3 py-[10px] text-right font-mono font-medium tabular-nums">{formatRupiah(po.amount)}</td>
-                                <td className="px-3 py-[10px]">{hppCell(hppOfPos([po]))}</td>
                                 <td className="px-3 py-[10px] text-right">
                                   <Button
                                     onClick={(e) => {
@@ -304,8 +276,7 @@ export function PoMaklonPanel() {
                               </tr>
                               {poOpen && (
                                 <tr>
-                                  <td colSpan={5} className="border-b border-[#E4EEF8] bg-white px-4 py-3 pl-12">
-                                    {(hppByPo.get(po.id)?.pcs ?? 0) > 0 && <HppEstimateSection est={hppByPo.get(po.id)!} className="mb-3" />}
+                                  <td colSpan={4} className="border-b border-[#E4EEF8] bg-white px-4 py-3 pl-12">
                                     <MaklonPoWarnaLenganTable
                                       vendorProduksi={po.vendorProduksi}
                                       amount={po.amount}
@@ -327,7 +298,6 @@ export function PoMaklonPanel() {
                   <td className="px-5 py-[10px]">Total MRP {effectiveMrpId}</td>
                   <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatPcs(scopedPending.reduce((a, p) => a + p.qty, 0))} pcs</td>
                   <td className="px-3 py-[10px] text-right font-mono tabular-nums">{formatRupiah(scopedPending.reduce((a, p) => a + p.amount, 0))}</td>
-                  <td className="px-3 py-[10px]">{hppCell(hppOfPos(scopedPending))}</td>
                   <td />
                 </tr>
               </tfoot>
@@ -484,7 +454,6 @@ export function PoMaklonPanel() {
                                                untuk qty-nya (panjang pendek) serta estimasi harga per warna dan tipe
                                                lengan") -- MaklonPoWarnaLenganTable, komponen yang sama dengan yang dipakai
                                                Procurement > PO Approval untuk PO Maklon yang sama. */}
-                                            {(hppByPo.get(p.id)?.pcs ?? 0) > 0 && <HppEstimateSection est={hppByPo.get(p.id)!} className="mb-3" />}
                                             <MaklonPoWarnaLenganTable
                                               vendorProduksi={p.vendorProduksi}
                                               amount={p.amount}

@@ -1,5 +1,12 @@
 # Migrasi Project — Status & Riwayat
 
+## Estimasi HPP hanya di MRP (pengajuan dan approval) dan Tracking Item (2026-11-27, tanpa migration) [po-hpp-est]
+Owner: estimasi HPP cukup ada di pengajuan MRP dan approvalnya, serta di data tracking; PO Material, PO Produksi, dan approvalnya TIDAK menampilkan estimasi. Menggantikan bagian tampilan di entri-entri [po-hpp-est] di bawah.
+- Dikembalikan ke tampilan sebelum fitur ini: antrean Approval PO (`components/mrp/po-approval-queue.tsx`, dipakai Procurement, SCM, GM) dan Finance > PO Approval (`po-material-panel.tsx`, `po-maklon-panel.tsx`). Kolom Est. HPP, % HPP, dan rincian estimasi di sana dihapus.
+- Tetap tampil: PPIC > MRP (kolom baru Est. HPP total + HPP/pcs, Est. HPP %, rincian estimasi di panel baris MRP; keterangan kolom diperbarui), SCM > Approval MRP (kolom dan rincian di panel Setujui/Tolak), Tracking Item PPIC dan SCM (Est. HPP/pcs, Est. % HPP, Excel). Kolom Est. HPP % di SCM Monitoring dan Dashboard (dari `useMrpProgressRows`) dibiarkan seperti sebelumnya.
+- Tidak diubah: rumus (`lib/mrp/poHppEstimate.ts`), aturan harga warna dasar di jenis yang sama, dan penguncian angka saat PO Material diajukan (tetap disimpan supaya angka di MRP dan Tracking tidak berubah-ubah sesudah PO berjalan).
+- Diuji: tsc bersih; eslint hanya galat lama (`setMounted`). Belum dilihat di layar.
+
 ## Harga ikut warna dasar di jenis yang sama; estimasi HPP di approval Finance (2026-11-27, tanpa migration) [po-hpp-est]
 Owner: harga memakai warna dan kategori jenisnya, mis. HITAM MLS 24S PDK L memakai harga HITAM 24S (COMBED 24S) PDK L, bukan aturan "MLS = HITAM"; approval GM dan Finance juga harus ada estimasi HPP.
 - **Harga jual** (`sellingPriceInfoFor` / `sellingPriceFor`, derive.ts, berlaku di SEMUA pemakai harga jual: Laporan HPP, estimasi HPP, dashboard): kalau warna tidak punya harga jual atau Rp 0, dipakai harga **warna dasarnya** di jenis (kategori Master SKU) yang sama, lengan dan size yang sama. Warna dasar = warna lain di jenis itu yang semua katanya ada di nama warna ini (yang paling banyak katanya menang; `pickBaseWarna`). Kata penanda KID/KIDS/TUNIK/RIB/+ tidak boleh dibuang (barang Kids tidak memakai harga dewasa). Di salinan data hanya kena: HITAM MLS 24S -> HITAM 24S (COMBED 24S, 20 SKU) dan HITAM MLS KID 24S -> HITAM KID 24S (KIDS 24S, 12 SKU). Rasio estimasi W42_HITAM_MLS kini 73,7% (dulu "—"). Data Master SKU tidak diubah (SQL perbaikan harga 0 yang sempat diberikan tidak perlu dijalankan).

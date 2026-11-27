@@ -28,11 +28,6 @@ import {
   type PoApprovalState,
 } from "@/lib/mrp/poApproval";
 import type { MaklonPO, MaterialPO } from "@/lib/mrp/types";
-import { aduanRowsOfPo } from "@/lib/mrp/exportPoExcel";
-
-import { estimateMaklonPoHpp, estimateMaterialPosHpp, mergeHppEstimates, type PoHppEstimate } from "@/lib/mrp/poHppEstimate";
-import { HppEstimateSection, hppPctText as pctText, hppPctTone as pctTone } from "@/components/mrp/hpp-estimate-section";
-import { useHppContext } from "@/components/mrp/use-hpp-context";
 
 /** `members`: PO Material satu supplier dalam satu MRP digabung jadi SATU baris (approval PO Material berlaku per supplier,
  *  levelnya dari total supplier); `id` = PO pertama (target aksi -- server menerapkannya ke semua PO satu supplier). */
@@ -199,7 +194,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 /** Jendela "Lihat detail": ringkasan, alur approval (siapa/kapan), dan rincian PO. */
-function DetailModal({ item, est, onClose }: { item: Item; est?: PoHppEstimate; onClose: () => void }) {
+function DetailModal({ item, onClose }: { item: Item; onClose: () => void }) {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const detail = mrpDetailFor(item.mrpId, mrpDetails);
   const st = item.state;
@@ -249,8 +244,6 @@ function DetailModal({ item, est, onClose }: { item: Item; est?: PoHppEstimate; 
               Ditolak {st.rejectedBy ? APPROVAL_ROLE_LABEL[st.rejectedBy] : ""}: {st.rejectNote}
             </div>
           )}
-
-          {est && est.pcs > 0 && <HppEstimateSection est={est} />}
 
           <div className="mt-5">
             <SectionLabel>Alur approval</SectionLabel>
@@ -390,23 +383,6 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
     return out;
   }, [materialPOs, maklonPOs]);
 
-  // Estimasi HPP & rasio per baris (owner 2026-11-27), dihitung sekali per perubahan data (lib/mrp/poHppEstimate.ts).
-  const hppCtx = useHppContext();
-  const hppById = useMemo(() => {
-    const m = new Map<string, PoHppEstimate>();
-    for (const it of items) {
-      if (it.type === "MATERIAL") m.set(it.id, estimateMaterialPosHpp((it.members ?? [it]).map((x) => x.po as MaterialPO), hppCtx));
-      else {
-        const po = it.po as MaklonPO;
-        if (po.isFob) continue;
-        m.set(it.id, estimateMaklonPoHpp(po.mrpId, po.vendorProduksi, aduanRowsOfPo(mrpDetailFor(po.mrpId, mrpDetails), po, maklonPOs), hppCtx));
-      }
-    }
-    return m;
-  }, [items, hppCtx, mrpDetails, maklonPOs]);
-  const hppOf = (i: Item) => hppById.get(i.id);
-  const hppGroup = (list: Item[]) => mergeHppEstimates(list.map(hppOf).filter((e): e is PoHppEstimate => !!e));
-
   // Portal SCM dibedakan per username (scm02 = Asisten Manager L2, scm01 = SCM Manager L3); akun utama SCM tidak bisa menyetujui.
   const scmUsername = useInternalAuthStore((s) => s.actors.scm?.username);
   const scmPosition = scmPositionOf(scmUsername);
@@ -534,50 +510,6 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
         ]
       : []),
     { key: "nilai", label: "Nilai", default: true, align: "right", aggregate: aggSum((i) => i.amount, (n) => <span className="font-semibold">{formatRupiah(n)}</span>), render: (i) => <span className="font-mono font-medium">{formatRupiah(i.amount)}</span> },
-    {
-      key: "hpp",
-      label: "Est. HPP",
-      default: true,
-      align: "right",
-      info: {
-        title: "Estimasi HPP",
-        body: (
-          <p>
-            Bahan + rib - diskon supplier + maklon (matriks) + ongkir rata-rata per kategori, untuk pcs yang dicakup PO ini. Angka kecil = HPP per pcs. Rincian di
-            Lihat detail.
-          </p>
-        ),
-      },
-      aggregate: (list: Item[]) => {
-        const e = hppGroup(list);
-        return <span className="font-semibold">{e.pcs > 0 ? formatRupiah(Math.round(e.hpp)) : "—"}</span>;
-      },
-      render: (i: Item) => {
-        const e = hppOf(i);
-        if (!e || e.pcs <= 0) return <span className="text-text-muted">—</span>;
-        return (
-          <span className="block text-right font-mono">
-            {formatRupiah(Math.round(e.hpp))}
-            <span className="block text-[10px] text-text-muted">{formatRupiah(Math.round(e.hppPerPcs))}/pcs</span>
-          </span>
-        );
-      },
-    },
-    {
-      key: "hppPct",
-      label: "% HPP",
-      default: true,
-      align: "right",
-      info: { title: "Rasio HPP", body: <p>Estimasi HPP / nilai jual (harga jual Master SKU x qty per size). Hijau sampai 70%, kuning sampai 80%, merah di atasnya.</p> },
-      aggregate: (list: Item[]) => {
-        const e = hppGroup(list);
-        return <span className={"font-semibold " + pctTone(e.pct)}>{pctText(e.pct)}</span>;
-      },
-      render: (i: Item) => {
-        const e = hppOf(i);
-        return <span className={"font-mono font-semibold " + pctTone(e?.pct ?? null)}>{e && e.pcs > 0 ? pctText(e.pct) : "—"}</span>;
-      },
-    },
     {
       key: "status",
       label: "Status Approval",
@@ -715,7 +647,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
         emptyText={`Tidak ada ${noun} untuk filter ini.`}
       />
 
-      {detailItem && <DetailModal item={detailItem} est={hppOf(detailItem)} onClose={() => setDetailItem(null)} />}
+      {detailItem && <DetailModal item={detailItem} onClose={() => setDetailItem(null)} />}
 
       {rejecting && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={() => setRejecting(null)}>

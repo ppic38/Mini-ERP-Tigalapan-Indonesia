@@ -23,7 +23,7 @@ import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { MaklonPO } from "@/lib/mrp/types";
 import { estimateMrpHpp, toMrpHppEstimate } from "@/lib/mrp/poHppEstimate";
 import { useHppContext } from "@/components/mrp/use-hpp-context";
-import { hppPctTone } from "@/components/mrp/hpp-estimate-section";
+import { HppEstimateSection, hppPctTone } from "@/components/mrp/hpp-estimate-section";
 
 const badgeTone = mrpStatusBadgeTone;
 
@@ -204,7 +204,9 @@ export default function MrpListPage() {
       .map((row, idx) => ({ row, idx, created: row.detail?.dates?.created ?? "" }))
       .sort((x, y) => (x.created < y.created ? 1 : x.created > y.created ? -1 : y.idx - x.idx))
       .map((x) => x.row);
-    return ordered.map(({ mrp, detail }) => ({
+    return ordered.map(({ mrp, detail }) => {
+      const hppEst = estimateMrpHpp(mrp.id, hppCtx);
+      return {
       mrp,
       detail,
       // MRP bisa punya lebih dari 1 warna sekaligus (tiap warna = 1 lenganGroup dari file
@@ -216,8 +218,10 @@ export default function MrpListPage() {
       scm: detail ? ppicApprovalBadge(detail.ppicApproval) : null,
       roll: mrpWarnaBreakdown(detail).reduce((sum, w) => sum + w.rollTotal, 0),
       flow: mrpFlowStage(detail, mrp.id, materialPOs, invoices, batchByCode, shipping, returned),
-      hpp: toMrpHppEstimate(estimateMrpHpp(mrp.id, hppCtx)),
-    })).map((r) => ({ ...r, stage: r.flow.stage as FlowStage | FlowSideStatus }));
+      hpp: toMrpHppEstimate(hppEst),
+      hppEst,
+    };
+    }).map((r) => ({ ...r, stage: r.flow.stage as FlowStage | FlowSideStatus }));
   }, [mrpDetails, staticMrps, materialPOs, maklonPOs, invoices, vendorInvoices, productionBatches, deliveryKolis, warehouseReceipts, materialClaimHistory, hppCtx]);
   type Row = (typeof rows)[number];
 
@@ -273,6 +277,23 @@ export default function MrpListPage() {
       ),
     },
     {
+      key: "estHppTotal",
+      label: "Est. HPP",
+      default: true,
+      align: "right",
+      sortValue: (r) => r.hppEst.hpp,
+      aggregate: aggSum<Row>((r) => r.hppEst.hpp, (n) => <span className="font-semibold">{formatRp(n)}</span>),
+      render: (r) =>
+        r.hppEst.pcs > 0 ? (
+          <span className="block text-right font-mono">
+            {formatRp(r.hppEst.hpp)}
+            <span className="block text-[10px] text-text-muted">{formatRp(r.hppEst.hppPerPcs)}/pcs</span>
+          </span>
+        ) : (
+          <span className="text-text-muted">—</span>
+        ),
+    },
+    {
       key: "estHpp",
       label: "Est. HPP %",
       default: true,
@@ -281,8 +302,10 @@ export default function MrpListPage() {
         title: "Estimasi HPP %",
         body: (
           <>
-            <p>(Nilai PO Material + nilai PO Produksi + estimasi ongkir) ÷ nilai jual qty MRP.</p>
-            <p className="mt-1.5 text-text-muted">Ongkir = qty × rata-rata ongkir per pcs vendor dari pengiriman yang sudah ada. Harga jual dari Master SKU (lewat Mapping Warna). Tersedia mulai Approval PO.</p>
+            <p>(Bahan + rib - diskon + maklon + ongkir) ÷ nilai jual qty MRP.</p>
+            <p className="mt-1.5 text-text-muted">
+              Bahan = roll × 25 kg × harga kain supplier (belum ada supplier = supplier terakhir warna itu, lalu KNITTO). Maklon = matriks vendor, jenis, lengan. Ongkir = rata-rata per pcs kategori (Dewasa, Kids, Tunik). Warna tanpa harga memakai warna dasarnya di jenis yang sama. Rincian: buka baris MRP.
+            </p>
           </>
         ),
       },
@@ -430,6 +453,7 @@ export default function MrpListPage() {
                 {openRow.detail.ppicRejectionNote ? ` — ${openRow.detail.ppicRejectionNote}` : ""} — impor ulang dengan data yang sudah dibetulkan kalau perlu diajukan lagi.
               </div>
             )}
+            {openRow.hppEst.pcs > 0 && <HppEstimateSection est={openRow.hppEst} className="" />}
             <div>
               <div className="mb-2 font-sans text-[13px] font-semibold text-text-primary">Rincian warna</div>
               <MrpWarnaBreakdownTable breakdown={mrpWarnaBreakdown(openRow.detail)} vendorQty={false} />
