@@ -15,12 +15,14 @@ import { mrpCorrections } from "@/components/sysadmin/ppic-corrections";
 import { useSysadminMode } from "@/lib/shell/use-sysadmin-mode";
 import { useMrpStore } from "@/lib/mrp/store";
 import { mrpStatusBadges, mrpStatusBadgeTone, mrpWarnaBreakdown, effectiveMrpQty, formatPcs, formatDate, ppicApprovalBadge, vendorsForMrp } from "@/lib/mrp/derive";
-import { FLOW_STAGES, batchShippingMap, returnedRollKeys, mrpFlowStage, mrpHppEstimate, ongkirPerPcsByVendor, type FlowStage, type FlowSideStatus } from "@/lib/mrp/flowStatus";
+import { FLOW_STAGES, batchShippingMap, returnedRollKeys, mrpFlowStage, type FlowStage, type FlowSideStatus } from "@/lib/mrp/flowStatus";
 import { StageBadge } from "@/components/ui/stage-badge";
 import type { ParsedMrpImport } from "@/lib/mrp/parseImport";
 import { exportMaklonPoRasioExcel } from "@/lib/mrp/exportPoExcel";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { MaklonPO } from "@/lib/mrp/types";
+import { estimateMrpHpp, toMrpHppEstimate } from "@/lib/mrp/poHppEstimate";
+import { useHppContext } from "@/components/mrp/use-hpp-context";
 
 const badgeTone = mrpStatusBadgeTone;
 
@@ -108,8 +110,6 @@ export default function MrpListPage() {
   const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
   const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
   const materialClaimHistory = useMrpStore((s) => s.materialClaimHistory);
-  const ekspedisiRates = useMrpStore((s) => s.ekspedisiRates);
-  const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
   const sysadmin = useSysadminMode();
   const importMrp = useMrpStore((s) => s.importMrp);
   const resetMrp = useMrpStore((s) => s.resetMrp);
@@ -186,13 +186,14 @@ export default function MrpListPage() {
   const [preset, setPreset] = useState<{ nonce: number; filters: Record<string, string[]>; card: string }>({ nonce: 0, filters: {}, card: "" });
   // Kartu angka mengikuti filter tabel (owner 2026-11-16): dihitung dari baris yang sedang lolos filter dan pencarian.
   const [shownIds, setShownIds] = useState<Set<string> | null>(null);
+  // Estimasi HPP: satu rumus bersama dengan Approval PO dan Tracking Item (lib/mrp/poHppEstimate.ts, owner 2026-11-27).
+  const hppCtx = useHppContext();
 
   const rows = useMemo(() => {
     // Status staging standar (lib/mrp/flowStatus.ts) dan estimasi HPP % per MRP.
     const batchByCode = new Map(productionBatches.filter((b) => b.codeRoll).map((b) => [b.codeRoll as string, b]));
     const shipping = batchShippingMap(deliveryKolis, warehouseReceipts);
     const returned = returnedRollKeys(materialClaimHistory);
-    const ongkir = ongkirPerPcsByVendor(deliveryKolis, ekspedisiRates);
     const all: { mrp: (typeof mrpDetails)[number]["mrp"]; detail?: (typeof mrpDetails)[number] }[] = [
       ...mrpDetails.map((d) => ({ mrp: d.mrp, detail: d })),
       ...staticMrps.map((m) => ({ mrp: m })),
@@ -214,9 +215,9 @@ export default function MrpListPage() {
       scm: detail ? ppicApprovalBadge(detail.ppicApproval) : null,
       roll: mrpWarnaBreakdown(detail).reduce((sum, w) => sum + w.rollTotal, 0),
       flow: mrpFlowStage(detail, mrp.id, materialPOs, invoices, batchByCode, shipping, returned),
-      hpp: mrpHppEstimate(detail, mrp.id, materialPOs, maklonPOs, ongkir, itemSellingPrices),
+      hpp: toMrpHppEstimate(estimateMrpHpp(mrp.id, hppCtx)),
     })).map((r) => ({ ...r, stage: r.flow.stage as FlowStage | FlowSideStatus }));
-  }, [mrpDetails, staticMrps, materialPOs, maklonPOs, invoices, vendorInvoices, productionBatches, deliveryKolis, warehouseReceipts, ekspedisiRates, itemSellingPrices, materialClaimHistory]);
+  }, [mrpDetails, staticMrps, materialPOs, maklonPOs, invoices, vendorInvoices, productionBatches, deliveryKolis, warehouseReceipts, materialClaimHistory, hppCtx]);
   type Row = (typeof rows)[number];
 
   if (!mounted) return null;

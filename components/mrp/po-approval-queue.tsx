@@ -11,7 +11,7 @@ import { SysadminPanel } from "@/components/sysadmin/correction-dialog";
 import { maklonPoCorrections, materialPoCorrections } from "@/components/sysadmin/procurement-corrections";
 import { useMrpStore } from "@/lib/mrp/store";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
-import { compareNewestFirst, formatPcs, formatRupiah, formatDate, materialPoColorPcs, materialPoPcs, mrpDetailFor, segmenProdukLookup } from "@/lib/mrp/derive";
+import { compareNewestFirst, formatPcs, formatRupiah, formatDate, materialPoColorPcs, materialPoPcs, mrpDetailFor } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI, ROLL_KG_ESTIMATE } from "@/lib/mrp/seed";
 import {
   APPROVAL_LEVEL_TABLE,
@@ -30,15 +30,8 @@ import {
 import type { MaklonPO, MaterialPO } from "@/lib/mrp/types";
 import { aduanRowsOfPo } from "@/lib/mrp/exportPoExcel";
 
-import {
-  diskonRatioBySupplier,
-  estimateMaklonPoHpp,
-  estimateMaterialPosHpp,
-  mergeHppEstimates,
-  ongkirPerPcsBySegmen,
-  type PoHppContext,
-  type PoHppEstimate,
-} from "@/lib/mrp/poHppEstimate";
+import { estimateMaklonPoHpp, estimateMaterialPosHpp, mergeHppEstimates, type PoHppEstimate } from "@/lib/mrp/poHppEstimate";
+import { useHppContext } from "@/components/mrp/use-hpp-context";
 
 const pctText = (p: number | null) => (p == null ? "—" : `${p.toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`);
 /** Warna rasio HPP: <= 70% hijau, <= 80% kuning, di atas itu merah. */
@@ -57,6 +50,13 @@ function HppEstimateSection({ est }: { est: PoHppEstimate }) {
   return (
     <div className="mt-5">
       <SectionLabel>Estimasi HPP</SectionLabel>
+      <div className="mb-2 font-sans text-[11px] text-text-muted">
+        {est.frozenLines === est.lines.length && est.lines.length > 0
+          ? `Terkunci saat PO diajukan${est.lines[0].frozenAt ? " (" + formatDate(est.lines[0].frozenAt) + ")" : ""}: tidak berubah walau harga atau rata-rata berubah.`
+          : est.frozenLines > 0
+            ? `${est.frozenLines} dari ${est.lines.length} baris terkunci saat PO diajukan; sisanya dihitung dari data terkini.`
+            : "Dihitung dari data terkini (PO ini diajukan sebelum fitur penguncian, atau belum diajukan)."}
+      </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {[
           ["Est. HPP", rp(est.hpp), ""],
@@ -107,6 +107,8 @@ function HppEstimateSection({ est }: { est: PoHppEstimate }) {
                   <td className="px-3 py-1">
                     {VENDOR_PRODUKSI[l.vendor]?.name ?? l.vendor} · {l.warna} · {l.lengan}
                     {l.kainTanpaHarga && <span className="ml-1 text-[10px] font-semibold text-danger-fg">harga kain tidak ada</span>}
+                    {l.supplierAsumsi && <span className="ml-1 text-[10px] text-warning-fg" title="Supplier belum dipilih: memakai supplier terakhir yang membeli warna ini">asumsi {l.supplier}</span>}
+                    {l.fob && <span className="ml-1 text-[10px] text-text-muted">FOB</span>}
                   </td>
                   <td className="px-3 py-1">{l.segmen}</td>
                   <td className="px-3 py-1 text-right font-mono">{formatPcs(l.pcs)}</td>
@@ -437,18 +439,6 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
   const approvePoStep = useMrpStore((s) => s.approvePoStep);
   const rejectPoStep = useMrpStore((s) => s.rejectPoStep);
   const resubmitPo = useMrpStore((s) => s.resubmitPo);
-  const hargaKain = useMrpStore((s) => s.hargaKain);
-  const hargaKainPks = useMrpStore((s) => s.hargaKainPks);
-  const hargaRib = useMrpStore((s) => s.hargaRib);
-  const hargaKerahManset = useMrpStore((s) => s.hargaKerahManset);
-  const kerahMansetSettings = useMrpStore((s) => s.kerahMansetSettings);
-  const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
-  const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
-  const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
-  const ekspedisiRates = useMrpStore((s) => s.ekspedisiRates);
-  const rawInvoices = useMrpStore((s) => s.invoices);
-  // Penanda perubahan saja: Mapping Warna dibaca sellingPriceFor lewat variabel modul yang diisi store.
-  const warnaAliases = useMrpStore((s) => s.warnaAliases);
 
   const [tab, setTab] = useState<"MATERIAL" | "MAKLON">("MATERIAL");
   const [detailItem, setDetailItem] = useState<Item | null>(null);
@@ -499,24 +489,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
   }, [materialPOs, maklonPOs]);
 
   // Estimasi HPP & rasio per baris (owner 2026-11-27), dihitung sekali per perubahan data (lib/mrp/poHppEstimate.ts).
-  const hppCtx = useMemo<PoHppContext>(() => {
-    const seg = segmenProdukLookup(mrpDetails);
-    return {
-      mrpDetails,
-      materialPOs,
-      hargaKain,
-      hargaKainPks,
-      hargaRib,
-      hargaKerahManset,
-      kerahMansetSettings,
-      hargaMaklon,
-      sellingPrices: itemSellingPrices,
-      ongkir: ongkirPerPcsBySegmen(deliveryKolis, ekspedisiRates, mrpDetails),
-      diskonRatio: diskonRatioBySupplier(rawInvoices),
-      segmenOf: (m, w, l) => seg(m, w, l),
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mrpDetails, materialPOs, hargaKain, hargaKainPks, hargaRib, hargaKerahManset, kerahMansetSettings, hargaMaklon, itemSellingPrices, deliveryKolis, ekspedisiRates, rawInvoices, warnaAliases]);
+  const hppCtx = useHppContext();
   const hppById = useMemo(() => {
     const m = new Map<string, PoHppEstimate>();
     for (const it of items) {

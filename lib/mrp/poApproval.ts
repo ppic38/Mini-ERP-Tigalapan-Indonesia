@@ -27,6 +27,31 @@ export type PoApprovalEntry = {
    *  lewat akun sub-user. Opsional -- entri lama (sebelum revisi ini) tidak punya field ini sama
    *  sekali, jsonb jadi tidak perlu migrasi data. */
   actorName?: string;
+  /** Estimasi HPP yang DIKUNCI saat PO Material diajukan (owner 2026-11-27, lib/mrp/poHppEstimate.ts). Hanya di entri pengajuan
+   *  (langkah 1). Opsional: entri lama tidak punya; tersimpan di kolom jsonb approval_log yang sudah ada, tanpa kolom baru. */
+  hpp?: FrozenHppLine[];
+};
+
+/** Satu baris estimasi HPP terkunci (warna x lengan PO itu). Nama field dipendekkan supaya data yang dimuat tetap kecil.
+ *  b bahan, r rib/kerah/manset, d diskon, m maklon, mr maklon per pcs, o ongkir, j nilai jual (Rp, dibulatkan). */
+export type FrozenHppLine = {
+  w: string;
+  l: "PENDEK" | "PANJANG";
+  s: string;
+  /** 1 = supplier asumsi (supplier terakhir warna itu). */
+  sa?: 1;
+  seg: "Dewasa" | "Kids" | "Tunik";
+  roll: number;
+  pcs: number;
+  b: number;
+  r: number;
+  d: number;
+  m: number;
+  mr: number;
+  o: number;
+  j: number;
+  nt?: number;
+  kt?: 1;
 };
 
 export const APPROVAL_LEVEL_TABLE = [

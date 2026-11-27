@@ -9,8 +9,6 @@ import {
   FLOW_STAGES,
   batchShippingMap,
   mrpFlowStage,
-  mrpHppEstimate,
-  ongkirPerPcsByVendor,
   returnedRollKeys,
   rollsByStageText,
   type FlowSideStatus,
@@ -18,6 +16,8 @@ import {
   type MrpHppEstimate,
 } from "@/lib/mrp/flowStatus";
 import type { MaklonPO, Mrp } from "@/lib/mrp/types";
+import { estimateMrpHpp, toMrpHppEstimate } from "@/lib/mrp/poHppEstimate";
+import { useHppContext } from "@/components/mrp/use-hpp-context";
 
 /** Satu baris MRP dengan status staging standar dan estimasi HPP -- dipakai bersama SCM (Monitoring, riwayat Approval MRP) supaya tampilan
  *  dan angkanya sama dengan tabel MRP di PPIC (owner 2026-11-16: "tampilan history MRP sama dengan PPIC"). */
@@ -35,19 +35,17 @@ export function useMrpProgressRows(): MrpProgressRow[] {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const staticMrps = useMrpStore((s) => s.staticMrps);
   const materialPOs = useMrpStore((s) => s.materialPOs);
-  const maklonPOs = useMrpStore((s) => s.maklonPOs);
   const invoices = useMrpStore((s) => s.invoices);
   const productionBatches = useMrpStore((s) => s.productionBatches);
   const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
   const warehouseReceipts = useMrpStore((s) => s.warehouseReceipts);
   const materialClaimHistory = useMrpStore((s) => s.materialClaimHistory);
-  const ekspedisiRates = useMrpStore((s) => s.ekspedisiRates);
-  const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
+  // Estimasi HPP: satu rumus bersama (lib/mrp/poHppEstimate.ts), sama dengan Approval PO dan Tracking Item (owner 2026-11-27).
+  const hppCtx = useHppContext();
   return useMemo(() => {
     const batchByCode = new Map(productionBatches.filter((b) => b.codeRoll).map((b) => [b.codeRoll as string, b]));
     const shipping = batchShippingMap(deliveryKolis, warehouseReceipts);
     const returned = returnedRollKeys(materialClaimHistory);
-    const ongkir = ongkirPerPcsByVendor(deliveryKolis, ekspedisiRates);
     const all: { mrp: Mrp; detail?: MrpDetail }[] = [...mrpDetails.map((d) => ({ mrp: d.mrp, detail: d })), ...staticMrps.map((m) => ({ mrp: m }))];
     return all
       .map((x, idx) => ({ ...x, idx, created: x.detail?.dates?.created ?? "" }))
@@ -61,10 +59,10 @@ export function useMrpProgressRows(): MrpProgressRow[] {
           roll: mrpWarnaBreakdown(detail).reduce((s, w) => s + w.rollTotal, 0),
           stage: flow.stage,
           rollsByStage: flow.rollsByStage,
-          hpp: mrpHppEstimate(detail, mrp.id, materialPOs, maklonPOs, ongkir, itemSellingPrices),
+          hpp: toMrpHppEstimate(estimateMrpHpp(mrp.id, hppCtx)),
         };
       });
-  }, [mrpDetails, staticMrps, materialPOs, maklonPOs, invoices, productionBatches, deliveryKolis, warehouseReceipts, materialClaimHistory, ekspedisiRates, itemSellingPrices]);
+  }, [mrpDetails, staticMrps, materialPOs, invoices, productionBatches, deliveryKolis, warehouseReceipts, materialClaimHistory, hppCtx]);
 }
 
 const formatRp = (n: number) => "Rp " + Math.round(n).toLocaleString("id-ID");
@@ -74,7 +72,7 @@ export function EstHppCell({ hpp }: { hpp: MrpHppEstimate }) {
   return (
     <span
       className={"font-mono font-semibold " + (hpp.pct > 100 ? "text-danger-fg" : hpp.pct > 80 ? "text-warning-fg" : "text-success-fg")}
-      title={`Material ${formatRp(hpp.material)} + Maklon ${formatRp(hpp.maklon)} + Est. ongkir ${formatRp(hpp.delivery)} = ${formatRp(hpp.total)}\nNilai jual ${formatRp(hpp.hargaJual)}`}
+      title={`Bahan + rib - diskon ${formatRp(hpp.material)} + Maklon ${formatRp(hpp.maklon)} + Est. ongkir ${formatRp(hpp.delivery)} = ${formatRp(hpp.total)}\nNilai jual ${formatRp(hpp.hargaJual)}`}
     >
       {hpp.pct.toLocaleString("id-ID", { maximumFractionDigits: 1 })}%
     </span>
