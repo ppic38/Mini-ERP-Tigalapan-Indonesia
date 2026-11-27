@@ -105,12 +105,13 @@ export function StoreHydrator() {
       }, delay);
     }
     // Mengembalikan durasi (ms) pemanggilan -- dipakai pengaman polling di bawah.
-    function fetchNow(force = false, checkOnly = false): Promise<number> {
+    // `full`: abaikan penanda bagian dan ambil SEMUA bagian penuh (dipakai poll berkala 1 jam sebagai jaring pengaman refresh per bagian).
+    function fetchNow(force = false, checkOnly = false, full = false): Promise<number> {
       const now = Date.now();
       if (!force && now - lastFetchAt.current < MIN_REFETCH_INTERVAL_MS) return Promise.resolve(0);
       lastFetchAt.current = now;
       const startedAt = performance.now();
-      return (checkOnly ? refreshIfChangedRef.current() : refreshRef.current())
+      return (checkOnly ? refreshIfChangedRef.current() : refreshRef.current({ full }))
         .then(() => {
           authFailed = false;
         })
@@ -132,7 +133,7 @@ export function StoreHydrator() {
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);
     const interval = setInterval(() => {
-      if (document.visibilityState === "visible") fetchNow();
+      if (document.visibilityState === "visible") fetchNow(false, false, true);
     }, POLL_INTERVAL_MS);
     let versionTimer: ReturnType<typeof setTimeout> | undefined;
     function scheduleVersionCheck(delay: number) {

@@ -15,6 +15,10 @@ export type BatchRef = { id: string; mrp_id: string; vendor_produksi: string; wa
 
 export const EXTRA_NOTE_PREFIX = "Sisa kain";
 
+/** Size Dewasa yang sah untuk hasil tambahan. `SIZE_ORDER` (derive.ts) hanya S-3XL; size besar yang memang ada di MRP (mis. 4XL, 5XL pada Burgundy W44 CECEP)
+ *  ikut diterima, karena dropdown di layar vendor sudah menawarkannya (diambil dari size Aduan Pola) -- dulu server menolak "size 5XL tidak valid untuk Dewasa". */
+const DEWASA_EXTRA_SIZES = new Set<string>(["XS", ...SIZE_ORDER, "4XL", "5XL"]);
+
 const sameKey = (a: CuttingExtra, b: CuttingExtra) => a.lengan === b.lengan && a.usia === b.usia && a.size === b.size;
 
 /** Rapikan dan validasi isian dari klien; melempar Error berpesan jelas kalau ada yang tidak sah. Baris sama (lengan+usia+size) digabung. */
@@ -27,7 +31,7 @@ export function normalizeExtras(raw: CuttingExtra[] | undefined, label: string):
     if (x.usia !== "KIDS" && x.usia !== "DEWASA") throw new Error(`Roll ${label}: usia hasil tambahan harus Dewasa atau Kids.`);
     const size = String(x.size ?? "").trim().toUpperCase();
     if (!size) throw new Error(`Roll ${label}: size hasil tambahan wajib diisi.`);
-    if (x.usia === "KIDS" ? !KIDS_SIZES.includes(size) : !(SIZE_ORDER.includes(size) || size === "XS")) {
+    if (x.usia === "KIDS" ? !KIDS_SIZES.includes(size) : !DEWASA_EXTRA_SIZES.has(size)) {
       throw new Error(`Roll ${label}: size ${size} tidak valid untuk ${x.usia === "KIDS" ? "Kids" : "Dewasa"}.`);
     }
     const next = { lengan: x.lengan, usia: x.usia, size, qty: x.qty };

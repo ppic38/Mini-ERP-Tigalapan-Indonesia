@@ -13,6 +13,8 @@ import { FLOW_STAGES, batchShippingMap, flowTone, invoiceColorFlowBreakdown, inv
 import { TransferMaterialModal, type TransferCandidate } from "@/components/mrp/transfer-material-modal";
 import { SetDeliveryModal } from "@/components/mrp/set-delivery-modal";
 import { SuratJalanModal } from "@/components/procurement/surat-jalan-modal";
+import { MaterialTrackingDownloadDialog, type MtDownloadMrpOption, type MtDownloadScope } from "@/components/procurement/material-tracking-download-dialog";
+import { exportMaterialTrackingExcel, type MaterialTrackingExportInvoice, type MaterialTrackingExportRoll } from "@/lib/mrp/exportMaterialTrackingExcel";
 import { invoiceUsesSuratJalan } from "@/lib/invoice-import/surat-jalan";
 import { WithdrawVendorModal } from "@/components/mrp/withdraw-vendor-modal";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
@@ -148,6 +150,8 @@ export default function MaterialTrackingPage() {
   // dipertahankan (tetap berguna untuk lompat langsung ke 1 MRP tanpa scroll cari di tree).
   const [shownIds, setShownIds] = useState<Set<string> | null>(null);
   const [preset, setPreset] = useState<{ nonce: number; filters: Record<string, string[]>; card: string }>({ nonce: 0, filters: {}, card: "" });
+  // Download Excel (owner 2026-11-26): popup pilih MRP / yang belum di-set delivery / sesuai filter tabel.
+  const [downloadOpen, setDownloadOpen] = useState(false);
 
   if (!mounted) return null;
 
@@ -502,6 +506,115 @@ export default function MaterialTrackingPage() {
     { key: "tglCutting", label: "Tgl Cutting", default: false, render: (r) => formatDate(r.cuttingAt) },
   ];
 
+  // ---- Download Excel (owner 2026-11-26) ----
+  const suratJalanStatus = (inv: RawMaterialInvoice): string => {
+    if (!invoiceUsesSuratJalan(inv.supplier, inv.mrpId)) return "—";
+    const total = inv.colorEntries.reduce((n, c) => n + c.rolls.length, 0);
+    const coded = inv.colorEntries.reduce((n, c) => n + c.rolls.filter((_, i) => !!(c.codeRolls?.[i] ?? inv.rollArrivals?.[c.warna + "|" + c.lengan]?.[i]?.codeRoll ?? "").trim()).length, 0);
+    return total > 0 && coded >= total ? "Lengkap" : coded > 0 ? "Sebagian" : "Belum ada";
+  };
+  // "Sesuai filter tabel": di tab Per Roll yang diikuti adalah filter tabel roll itu (hanya roll yang tampil), di tab lain filter tabel Material.
+  const rollTabFilter = (scope: MtDownloadScope) => scope.mode === "filter" && tab === "roll";
+  const exportRowsFor = (scope: MtDownloadScope): TrackingRow[] => {
+    if (rollTabFilter(scope)) {
+      const ids = new Set(shownRolls.map((r) => r.invoiceId));
+      return sortedRows.filter((r) => ids.has(r.id));
+    }
+    if (scope.mode === "filter") return shownRows;
+    if (scope.mode === "belum") return sortedRows.filter((r) => deliveryLabel(r) === "Belum delivery");
+    const mrps = new Set(scope.mrpIds);
+    return sortedRows.filter((r) => mrps.has(r.mrpId) && (!scope.onlyBelumDelivery || deliveryLabel(r) === "Belum delivery"));
+  };
+  const rollsOfRows = (list: TrackingRow[], scope: MtDownloadScope) => {
+    if (rollTabFilter(scope)) return shownRolls;
+    const ids = new Set(list.map((r) => r.id));
+    return allRolls.filter((r) => ids.has(r.invoiceId));
+  };
+  const downloadPreview = (scope: MtDownloadScope) => {
+    const list = exportRowsFor(scope);
+    if (rollTabFilter(scope)) return { invoices: list.length, rolls: shownRolls.length };
+    return { invoices: list.length, rolls: list.reduce((s, r) => s + r.roll, 0) };
+  };
+  const downloadMrpOptions: MtDownloadMrpOption[] = (() => {
+    const by = new Map<string, MtDownloadMrpOption>();
+    for (const r of sortedRows) {
+      const cur = by.get(r.mrpId) ?? { mrpId: r.mrpId, invoices: 0, rolls: 0, belumDelivery: 0 };
+      cur.invoices += 1;
+      cur.rolls += r.roll;
+      if (deliveryLabel(r) === "Belum delivery") cur.belumDelivery += 1;
+      by.set(r.mrpId, cur);
+    }
+    return Array.from(by.values()).sort((a, b) => b.mrpId.localeCompare(a.mrpId, "id-ID", { numeric: true }));
+  })();
+  async function runDownload(scope: MtDownloadScope) {
+    const list = exportRowsFor(scope);
+    const scopeLabel =
+      scope.mode === "filter"
+        ? "Sesuai filter tabel"
+        : scope.mode === "belum"
+          ? "Belum di-set delivery (semua MRP)"
+          : `MRP ${scope.mrpIds.slice().sort((a, b) => a.localeCompare(b, "id-ID", { numeric: true })).join(", ")}${scope.onlyBelumDelivery ? " · hanya belum di-set delivery" : ""}`;
+    const invoiceExport: MaterialTrackingExportInvoice[] = list
+      .filter((r) => r.invoice)
+      .map((r) => {
+        const inv = r.invoice!;
+        const progress = rollArrivalProgress(inv);
+        const d = shipmentDates(inv);
+        const parts = (FLOW_STAGES as readonly string[]).map((st) => [st, r.flowRolls[st as FlowStage] ?? 0] as const).filter(([, n]) => n > 0);
+        return {
+          mrpId: r.mrpId,
+          supplier: r.supplier,
+          vendorProduksi: r.vendorProduksi,
+          noInvoice: inv.noInvoiceVendor || "",
+          noPo: poDisplayNo(r.poId, r.entitas),
+          entitas: r.entitas,
+          kodeTransaksi: r.kodeTransaksi ?? "",
+          warna: r.warna,
+          roll: r.roll,
+          rollDiterima: progress.arrived,
+          rollTotal: progress.total,
+          nilai: r.nilai ?? 0,
+          status: trackingStatusBadge(r).label,
+          statusRoll: parts.map(([st, n]) => st + " " + n).join(" · "),
+          sudahDelivery: deliveryLabel(r) === "Sudah delivery",
+          tglInvoice: r.tglInvoice,
+          tglBayar: r.tglPayment,
+          tglDelivery: r.tglDelivery,
+          tglTerimaPertama: d.firstReceived,
+          tglLengkapDiterima: d.lastReceived,
+          suratJalan: suratJalanStatus(inv),
+          invoiceId: inv.id,
+        };
+      });
+    const rollExport: MaterialTrackingExportRoll[] = rollsOfRows(list, scope).map((r) => ({
+      mrpId: r.mrpId,
+      supplier: r.supplier,
+      vendorProduksi: r.vendorProduksi,
+      warna: r.warna,
+      lengan: r.lengan,
+      noInvoice: r.noInvoice,
+      noPo: poDisplayNo(r.poId, r.entitas),
+      codeRoll: r.codeRoll,
+      noRoll: r.no,
+      beratKotor: r.beratKotor,
+      beratBersih: r.beratBersih,
+      status: r.status,
+      tahapProduksi: r.tahapProduksi,
+      tglBayar: r.paidAt,
+      tglDelivery: r.deliveryAt,
+      tglGr: r.grAt,
+      tglResting: r.restingAt,
+      tglCutting: r.cuttingAt,
+      invoiceId: r.invoiceId,
+    }));
+    await exportMaterialTrackingExcel(invoiceExport, rollExport, scopeLabel, vendorName);
+  }
+  const downloadButton = (
+    <Button onClick={() => setDownloadOpen(true)} variant="muted" size="xs" title="Download Material Tracking ke Excel: pilih MRP, yang belum di-set delivery, atau sesuai filter">
+      Download Excel
+    </Button>
+  );
+
   const belumDelivery = shownRows.filter((r) => deliveryLabel(r) === "Belum delivery");
   const arrivedTotals = shownRows.reduce(
     (acc, r) => {
@@ -578,6 +691,7 @@ export default function MaterialTrackingPage() {
       {tab === "material" && (
         <DataTable<TrackingRow>
           title="Material per invoice"
+          headerActions={downloadButton}
           columns={trackingColumns}
           rows={sortedRows}
           keyOf={(r) => r.id}
@@ -638,6 +752,7 @@ export default function MaterialTrackingPage() {
         <DataTable<MaterialRollRow>
           title="Material per roll"
           subtitle="Satu baris per roll kain, dari dibayar sampai dipakai produksi"
+          headerActions={downloadButton}
           columns={rollColumns}
           rows={allRolls}
           keyOf={(r) => r.key}
@@ -684,6 +799,8 @@ export default function MaterialTrackingPage() {
       )}
 
       {sjInvoice && <SuratJalanModal invoice={sjInvoice} onClose={() => setSjInvoice(null)} />}
+
+      {downloadOpen && <MaterialTrackingDownloadDialog mrpOptions={downloadMrpOptions} previewFor={downloadPreview} onDownload={runDownload} onClose={() => setDownloadOpen(false)} />}
 
       {deliveryOpen && (
         <SetDeliveryModal

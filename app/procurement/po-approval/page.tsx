@@ -874,7 +874,7 @@ export default function PoApprovalPage() {
             <>
               {/* Item 2026-09-18 (owner): Bulatkan Roll / Kembalikan ke Pecahan selama PO belum di-approve Finance. */}
               {hasUnroundedFractionalRoll(allMaterialPOs) && (
-                <Button onClick={() => roundMaterialPoRollCounts()} variant="muted" size="xs" title="Bulatkan roll_count yang masih pecahan pada PO Material yang belum di-approve Finance">
+                <Button onClick={() => roundMaterialPoRollCounts()} variant="muted" size="xs" title="Bulatkan roll yang masih pecahan pada PO Material yang belum di-approve Finance. Dibulatkan per WARNA (mis. 0,5 PENDEK + 0,5 PANJANG = 1 roll), bukan per baris lengan.">
                   Bulatkan Roll
                 </Button>
               )}

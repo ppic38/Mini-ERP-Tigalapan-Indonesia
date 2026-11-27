@@ -1,6 +1,7 @@
 import * as XLSX from "xlsx";
 import type { AduanPolaRow, CatProd, Lengan, LenganGroup, MaterialRow, SizeQty } from "./types";
 import { VENDOR_PRODUKSI } from "./seed";
+import { snapRoll } from "./rollRounding";
 
 /** Alias kode vendor lama/spreadsheet -> id resmi di sistem ini. "BY" adalah kode Bayu di
  *  spreadsheet Procurement asli, tapi id internal SENGAJA dipertahankan "BAYU" (lihat komentar di
@@ -204,8 +205,10 @@ export async function parseMrpImportFile(
     if (!g.totalQty) g.totalQty = g.sizes.reduce((a, s) => a + s.qty, 0);
     if (newTemplate) {
       const sm = sums.get(g.warna + "|" + g.lengan) ?? { roll: 0, rib: 0, kerah: 0, manset: 0 };
-      // Roll fisik utuh: pecahan dari jumlah ROLL (SIZE) dibulatkan ke atas (Excel Anda sudah menjumlah ke bilangan bulat per grup).
-      g.rollEstimate = Math.ceil(sm.roll - 1e-9);
+      // Revisi 2026-11-26 (owner, template KID: tiap warna 0,5 roll PENDEK + 0,5 roll PANJANG = 1 roll nyata): pecahan asli DISIMPAN (3 desimal),
+      // tidak lagi dibulatkan ke atas per grup (0,5 + 0,5 menjadi 1 + 1 = dua kali kebutuhan nyata). Selisih desimal komputer (mis. 2,0000000001)
+      // tetap disnap ke bilangan bulat, jadi Excel lama yang totalnya bulat tidak berubah. Pembulatan roll utuh dilakukan di tombol "Bulatkan Roll" per WARNA.
+      g.rollEstimate = snapRoll(sm.roll);
       g.ribKg = round3(sm.rib);
       g.kerahKg = round3(sm.kerah);
       g.mansetKg = round3(sm.manset);

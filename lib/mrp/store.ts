@@ -100,6 +100,33 @@ let lastDataVersion: number | null = null;
 // [hemat-egress] Versi tabel master harga (migration 0050) yang datanya SUDAH dipegang store. Dikirim ke
 // server supaya 6 tabel master harga tidak ditarik ulang kalau tidak berubah. null = belum diketahui.
 let lastMasterVersion: number | null = null;
+// [refresh-per-bagian 2026-11-20] Penanda isi (hash) tiap bagian snapshot yang sudah dipegang store, dan objek bagian itu SAAT diterima dari server.
+// refresh() hanya mengirim penanda untuk bagian yang objeknya MASIH sama dengan yang diterima (berarti belum diubah lokal, mis. oleh patch optimistic);
+// server membalas hanya bagian yang isinya beda, jadi bagian lain tetap objek yang sama (turunan yang bergantung padanya tidak dihitung ulang).
+// Bagian yang pernah diubah lokal selalu diminta ulang penuh -- patch sementara tidak mungkin tertinggal. Lihat lib/mrp/sliceSync.ts.
+let lastSliceTokens: Record<string, string> = {};
+let appliedSliceRefs: Record<string, unknown> = {};
+// Naik setiap penanda/state hasil server diterapkan atau dilupakan. Dua refresh() yang berjalan bersamaan (poll + refresh setelah aksi) bisa selesai terbalik urutan:
+// balasan yang menghilangkan bagian "sama dengan penanda" itu dihitung terhadap penanda LAMA, padahal refresh lain sudah mengganti bagian itu. refresh() membuang balasan
+// yang penandanya sudah kedaluwarsa (generasi berubah selagi balasan di perjalanan) dan mengulang dengan penanda baru.
+let sliceGeneration = 0;
+function trustedSliceTokens(state: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, token] of Object.entries(lastSliceTokens)) {
+    if (key in state && state[key] === appliedSliceRefs[key]) out[key] = token;
+  }
+  return out;
+}
+function rememberAppliedSlices(tokens: Record<string, string>, state: Record<string, unknown>) {
+  lastSliceTokens = { ...lastSliceTokens, ...tokens };
+  for (const key of Object.keys(tokens)) appliedSliceRefs[key] = state[key];
+  sliceGeneration++;
+}
+function forgetAppliedSlices() {
+  lastSliceTokens = {};
+  appliedSliceRefs = {};
+  sliceGeneration++;
+}
 // Fix (feedback batch 2026-09-10, item 6/10 "tombol ngeflick"): dipakai oleh refresh() di bawah
 // supaya SEMUA pemanggilnya (bukan cuma scheduleRefresh/backgroundRefresh) menunggu semua tulisan
 // yang sedang berlangsung selesai dulu sebelum fetch snapshot -- lihat catatan panjang di refresh().
@@ -325,7 +352,8 @@ export type FlowState = {
 //      tidak crash sambil menunggu porting lanjutan. JANGAN anggap action-action itu berfungsi.
 type FlowActions = {
   hydrate: (snapshot: FlowState) => void;
-  refresh: () => Promise<void>;
+  /** `full: true` = abaikan penanda bagian dan minta SEMUA bagian penuh (jaring pengaman berkala dan muat pertama). */
+  refresh: (opts?: { full?: boolean }) => Promise<void>;
   /** [hemat-egress] Sama seperti refresh(), tapi dilewati kalau angka versi data di server tidak berubah
    *  sejak snapshot terakhir. Dipakai pemicu pasif saja (fokus tab) -- aksi user tetap pakai refresh(). */
   refreshIfChanged: () => Promise<void>;
@@ -886,7 +914,10 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   return withBusyTracking(set, {
   ...emptyState,
 
-  hydrate: (snapshot) => set({ ...snapshot, hydrated: true }),
+  hydrate: (snapshot) => {
+    forgetAppliedSlices();
+    set({ ...snapshot, hydrated: true });
+  },
   // Fix (feedback batch 2026-09-10, item 6/10 "tombol ngeflick" di Good Receive & Cutting): dulu
   // cuma jalur backgroundRefresh/scheduleRefresh (dipanggil dari action DI DALAM store ini) yang
   // menunggu `inFlightWriteCount` balik ke 0 sebelum fetch -- StoreHydrator (components/shell/
@@ -900,7 +931,7 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
   // berlangsung selesai dulu -- melindungi SEMUA pemanggil (StoreHydrator, login flow di
   // internal-auth-store.ts/vendor-auth-store.ts, DAN scheduleRefresh), bukan cuma jalur
   // backgroundRefresh yang sudah ter-guard.
-  refresh: async () => {
+  refresh: async (opts) => {
     for (let attempt = 0; attempt < 4; attempt++) {
       await waitForNoInFlightWrites();
       const epochAtStart = writeEpoch;
@@ -908,12 +939,17 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       // minta penuh) -- server membuang field master dari hasil kalau versinya sama.
       const st = get();
       const holdsMaster = st.hargaKain.length > 0 || st.hargaMaklon.length > 0 || st.itemSellingPrices.length > 0;
-      const { busy: _snapshotBusy, dataVersion, masterVersion, weightTolerancePct, ...snapshot } = await actions.getFlowSnapshotAction(holdsMaster ? lastMasterVersion : null);
+      // Muat pertama / paksa penuh = tanpa penanda (semua bagian dikirim). Selain itu hanya bagian yang belum diubah lokal yang dipercaya.
+      const sendTokens = !opts?.full && st.hydrated ? trustedSliceTokens(st as unknown as Record<string, unknown>) : null;
+      const generationAtStart = sliceGeneration;
+      const { busy: _snapshotBusy, dataVersion, masterVersion, weightTolerancePct, sliceTokens, ...snapshot } = await actions.getFlowSnapshotAction(holdsMaster ? lastMasterVersion : null, sendTokens);
       // Ada tulisan baru yang mulai selama snapshot di perjalanan -> snapshot ini bisa basi &
       // akan menimpa patch optimistic tulisan itu. Buang, ulangi (maks 4x; kalau tetap ada
       // tulisan terus-menerus, refresh milik tulisan terakhir yang akan menyegarkan).
       const stale = epochAtStart !== writeEpoch || inFlightWriteCount > 0;
       if (stale && (attempt < 3 || get().hydrated)) continue;
+      // Balasan ini menghilangkan bagian berdasarkan penanda yang sudah kedaluwarsa (refresh lain menerapkan data lebih dulu): buang dan ulangi dengan penanda baru.
+      if (sendTokens !== null && generationAtStart !== sliceGeneration) continue;
       // `busy` SENGAJA tidak ikut di-spread -- ini flag UI lokal punya store.ts (lihat
       // withBusyTracking), bukan bagian data server; overwrite balik pakai kosong/false dari sini
       // akan salah kalau ada action LAIN yang kebetulan masih berjalan bersamaan.
@@ -922,6 +958,8 @@ export const useMrpStore = create<FlowState & FlowActions>()((set, get) => {
       setWeightTolerancePct(weightTolerancePct);
       setWarnaAliasesForPricing(snapshot.warnaAliases ?? get().warnaAliases);
       set({ ...snapshot, weightTolerancePct, hydrated: true });
+      // Penanda dicatat SETELAH set() supaya referensi yang dicatat = objek yang kini ada di store.
+      rememberAppliedSlices(sliceTokens, get() as unknown as Record<string, unknown>);
       lastDataVersion = dataVersion;
       lastMasterVersion = masterVersion;
       return;

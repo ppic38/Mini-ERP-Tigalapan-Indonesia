@@ -26,7 +26,8 @@ import {
 } from "@/lib/mrp/derive";
 import { countGoodReceiveEligibleForMrp, pendingMarker } from "@/lib/shell/badges";
 import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
-import { invoiceUsesSuratJalan, suratJalanActiveForMrp } from "@/lib/invoice-import/surat-jalan";
+import { invoiceForSuratJalan, invoiceUsesSuratJalan, suratJalanActiveForMrp } from "@/lib/invoice-import/surat-jalan";
+import { SuratJalanScanModal } from "@/components/vendor-maklon/surat-jalan-scan-modal";
 import { SysadminActionsBar } from "@/components/sysadmin/correction-dialog";
 import { RollCodeEditor } from "@/components/sysadmin/roll-code-editor";
 import { rollArrivalCorrections } from "@/components/sysadmin/vendor-corrections";
@@ -90,6 +91,7 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   // banyak) tidak menenggelamkan yang masih DELIVERY dan justru butuh dipantau/ditindaklanjuti.
   const [statusFilter, setStatusFilter] = useState<"ALL" | "DELIVERY" | "RECEIVING" | "PARSIAL">("ALL");
   const [selectedInvoiceId, setSelectedInvoiceId] = useState("");
+  const [scanOpen, setScanOpen] = useState(false);
   // Revisi 2026-09-23 (owner: "tidak usah dibagi jadi sub tab tipe lengan ... buat ada halaman-
   // halaman tabel"): dulu selectedColorKey = SATU lengan aktif (tab Pendek/Panjang, ganti-ganti).
   // Sekarang Pendek & Panjang tampil sekaligus sebagai 1 list roll gabungan (tidak ada tab lagi),
@@ -335,6 +337,8 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
   // Mulai MRP W45 saja (owner 2026-11-19); W44 ke bawah tetap alur lama (vendor mengisi/mengubah code roll).
   const sjFlow = !!selectedInvoice && suratJalanActiveForMrp(selectedInvoice.mrpId);
   const viaSj = !!selectedInvoice && invoiceUsesSuratJalan(selectedInvoice.supplier, selectedInvoice.mrpId);
+  // Roll di SELURUH invoice (semua warna) yang belum punya code roll: dasar tombol scan surat jalan per invoice.
+  const sjRollsNoCode = selectedInvoice && viaSj ? invoiceForSuratJalan(selectedInvoice).colorEntries.reduce((s, c) => s + (c.codeRolls ?? []).filter((x) => !x).length, 0) : 0;
   const rollsWithCodeConflict = pendingRolls.filter((r) => codeConflictFor(r.lengan, r.idx, draftOf(r.lengan, r.idx).codeRoll));
   function receiveAllRolls() {
     if (!selectedInvoice || pendingRolls.length === 0 || rollsMissingCode.length > 0 || rollsWithCodeConflict.length > 0) return;
@@ -492,6 +496,17 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
             <div className="mt-1 font-sans text-xs text-text-muted max-md:hidden">
               {selectedInvoice.supplier} · No. invoice supplier: {selectedInvoice.noInvoiceVendor || "—"}
             </div>
+            {/* Scan surat jalan per INVOICE (owner 2026-11-23): surat jalan cetak KNITTO satu lembar per invoice dan mencakup semua warna, jadi tombolnya di level invoice, bukan per warna. */}
+            {viaSj && sjRollsNoCode > 0 && !sysadminMode && (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-[#F0DDB0] bg-[#FFF9EC] px-3 py-2 max-md:flex-col max-md:items-stretch">
+                <span className="font-sans text-[11.5px] text-warning-fg">
+                  {sjRollsNoCode} roll di invoice {selectedInvoice.noInvoiceVendor || selectedInvoice.id} belum punya code roll. Punya surat jalan dari supplier? Foto daftar code roll-nya atau unggah PDF-nya sekali untuk semua warna. Kalau belum siap atau tidak terbaca, code roll bisa diisi manual di tiap roll.
+                </span>
+                <Button onClick={() => setScanOpen(true)} variant="primary" size="sm" className="max-md:min-h-11 max-md:rounded-full max-md:text-[13px]">
+                  Scan / unggah surat jalan
+                </Button>
+              </div>
+            )}
             {colorGroups.length === 0 ? null : (
               <div className="mt-3 overflow-hidden rounded-md border border-[#E4E8EE] max-md:rounded-xl max-md:bg-white">
                 <div className="m-hide grid grid-cols-5 gap-x-2 border-b border-[#E4E8EE] bg-[#F7F9FB] px-3 py-1.5 font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">
@@ -747,7 +762,12 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                         </span>
                         {pendingRolls.length > 0 && (
                           <span className="flex items-center gap-3 max-md:w-full max-md:flex-wrap">
-                            {rollsMissingCode.length > 0 && <span className="font-sans text-[11px] text-warning-fg">{rollsMissingCode.length} roll {viaSj ? "menunggu surat jalan dari Procurement" : "belum diisi code roll"}</span>}
+                            {rollsMissingCode.length > 0 && <span className="font-sans text-[11px] text-warning-fg">{rollsMissingCode.length} roll belum diisi code roll{viaSj ? " (scan/unggah surat jalan, atau isi manual)" : ""}</span>}
+                            {viaSj && rollsMissingCode.length > 0 && !sysadminMode && (
+                              <Button onClick={() => setScanOpen(true)} variant="ghost" size="sm" className="max-md:min-h-11 max-md:flex-1 max-md:rounded-full max-md:text-[13px]">
+                                Scan / unggah surat jalan
+                              </Button>
+                            )}
                             {rollsWithCodeConflict.length > 0 && <span className="font-sans text-[11px] text-danger-fg">{rollsWithCodeConflict.length} roll code roll-nya sudah terdaftar</span>}
                             <Button onClick={receiveAllRolls} disabled={rollsMissingCode.length > 0 || rollsWithCodeConflict.length > 0} variant="primary" size="sm" className="min-w-[170px] max-md:min-h-11 max-md:w-full max-md:rounded-full max-md:text-[13px]">
                               Terima semua roll ({pendingRolls.length})
@@ -810,15 +830,15 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
                                 <span className="font-mono text-[11px]">{r.presetCode}</span>
                                 <span className="whitespace-nowrap text-[10px] font-semibold text-success-fg">{viaSj ? "dari surat jalan" : "dari invoice"}</span>
                               </span>
-                            ) : viaSj ? (
-                              <span data-label="Code roll" className="font-sans text-[11px] font-semibold text-warning-fg max-md:col-span-full">Menunggu surat jalan</span>
                             ) : (
+                              // Tanpa code dari invoice/surat jalan: vendor mengisi manual. Untuk KNITTO ini JALUR CADANGAN (owner 2026-11-23: Good Receive tetap jalan kalau surat jalan
+                              // belum ada / foto tidak terbaca); jalur utama = scan atau unggah surat jalan per invoice.
                               <span data-label="Code roll" className="flex items-center max-md:col-span-full">
                                 <input
                                   value={code.codeRoll}
                                   onChange={(e) => setDraftCode((prev) => ({ ...prev, [key]: { ...code, codeRoll: e.target.value } }))}
                                   className="input w-full max-w-[240px] !py-1.5 font-mono text-[11px]"
-                                  placeholder="Code roll"
+                                  placeholder={viaSj ? "Code roll (manual)" : "Code roll"}
                                 />
                               </span>
                             )}
@@ -1072,6 +1092,8 @@ function ReceivingContent({ vendorId }: { vendorId: string }) {
           </div>
         </div>
       )}
+      {/* Scan surat jalan dengan kamera (owner 2026-11-23): dirender di luar overlay "Terima Material" supaya klik di dalamnya tidak ikut menutup panel itu. */}
+      {scanOpen && selectedInvoice && <SuratJalanScanModal invoice={selectedInvoice} onClose={() => setScanOpen(false)} />}
     </AppShell>
   );
 }

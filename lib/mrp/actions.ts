@@ -93,6 +93,7 @@ import {
 } from "./derive";
 import { ENTITAS_LIST, RESTING_TARGET_MINUTES, VENDOR_PRODUKSI } from "./seed";
 import {
+import { planRollRoundingByWarna } from "./rollRounding";
   APPROVAL_ROLE_LABEL,
   APPROVAL_STEP_LABEL,
   APPROVAL_STEP_SLA_DAYS,
@@ -108,7 +109,8 @@ import {
 } from "./poApproval";
 import { MIGRASI_SUPPLIER, MIGRASI_VENDOR_ID, type MigrationImportSummary, type MigrationLine, type MigrationMrp, type MigrationRoll } from "./migrationTypes";
 import type { ParsedMrpImport } from "./parseImport";
-import type { MrpDetail } from "./store";
+import type { FlowState, MrpDetail } from "./store";
+import { diffSlices, type SliceTokens } from "./sliceSync";
 import type {
   AddBuyItem,
   AduanPolaRow,
@@ -921,20 +923,26 @@ export async function roundMaterialPoRollCountsAction(): Promise<{ affectedPoIds
   const pos = await fetchUnapprovedMaterialPos(db, undefined);
   const affectedPoIds: string[] = [];
   for (const po of pos) {
-    const toRound = po.colorBreakdown.filter((c) => c.originalRollCount == null && !Number.isInteger(c.rollCount));
-    if (toRound.length === 0) continue;
+    if (!po.colorBreakdown.some((c) => c.originalRollCount == null && !Number.isInteger(c.rollCount))) continue;
+    // Revisi 2026-11-26 (owner, template KID 0,5 + 0,5 roll per warna): dibulatkan per WARNA (total warna dibulatkan, roll utuh dibagi ke lengan
+    // dengan pecahan/qty terbesar), bukan per baris warna·lengan yang membuat 0,5 + 0,5 menjadi 1 + 1. Seri pecahan dipecahkan lewat qty Aduan Pola.
+    const { data: aduanQty } = await db.from("aduan_pola_rows").select("warna,lengan,qty").eq("mrp_id", po.mrpId).eq("vendor", po.vendorProduksi);
+    const qtyByKey = new Map<string, number>();
+    for (const a of aduanQty ?? []) qtyByKey.set(`${a.warna}|${a.lengan}`, (qtyByKey.get(`${a.warna}|${a.lengan}`) ?? 0) + Number(a.qty ?? 0));
+    const plan = planRollRoundingByWarna(po.colorBreakdown, (c) => qtyByKey.get(`${c.warna}|${c.lengan}`) ?? 0);
+    if (plan.size === 0) continue;
     affectedPoIds.push(po.id);
     await Promise.all(
-      toRound.map((c) =>
+      Array.from(plan.entries()).map(([c, rolled]) =>
         db
           .from("material_po_color_breakdown")
-          .update({ roll_count: Math.round(c.rollCount), original_roll_count: c.rollCount })
+          .update({ roll_count: rolled, original_roll_count: c.rollCount })
           .eq("material_po_id", po.id)
           .eq("warna", c.warna)
           .eq("lengan", c.lengan)
       )
     );
-    const newRollCount = po.colorBreakdown.reduce((sum, c) => sum + (toRound.includes(c) ? Math.round(c.rollCount) : c.rollCount), 0);
+    const newRollCount = po.colorBreakdown.reduce((sum, c) => sum + (plan.get(c) ?? c.rollCount), 0);
     const { error } = await db.from("material_pos").update({ roll_count: newRollCount, available_rolls: newRollCount - po.invoicedRolls }).eq("id", po.id);
     if (error) throw new Error(error.message);
   }
@@ -1926,22 +1934,53 @@ export async function setInvoicesDeliveryAction(invoiceIds: string[], deliveryDa
  *  (lib/invoice-import/surat-jalan.ts) dan hasilnya disimpan di sini sebagai code roll, supaya vendor tidak mengetik code roll di Good Receive. Server MEMVALIDASI ULANG semuanya (klien tidak
  *  dipercaya): nomor invoice supplier harus sama dengan No Order surat jalan, tiap roll harus ada dan brutonya persis sama dengan bruto di database, roll yang sudah diterima dengan code
  *  lain tidak diubah, dan code roll tidak boleh dipakai roll lain. Idempoten: unggah ulang surat jalan yang sama hanya mengembalikan jumlah "sudah sama". */
-export async function applySuratJalanAction(input: {
+type SuratJalanApplyInput = {
   invoiceId: string;
   noOrder: string;
   fileName: string;
   assignments: { warna: string; lengan: Lengan; rollIndex: number; codeRoll: string; bruto: number }[];
-}): Promise<ActionResult<{ updated: number; unchanged: number }>> {
+};
+
+export async function applySuratJalanAction(input: SuratJalanApplyInput): Promise<ActionResult<{ updated: number; unchanged: number }>> {
   return toActionResultKeepAuth(async () => {
     const actor = await requireInternalRoleWithActor("procurement");
     const db = supabaseServer();
+    const res = await applySuratJalanCore(db, input, null);
+    await logInternalAction(actor, `Surat jalan ${input.noOrder}: ${res.updated} code roll disimpan${res.unchanged > 0 ? `, ${res.unchanged} sudah sama` : ""} (${input.fileName})`, "raw_material_invoices", input.invoiceId);
+    return res;
+  });
+}
+
+/** Scan kamera surat jalan cetak oleh VENDOR di Good Receive (owner 2026-11-23): KNITTO bisa telat mengirim surat jalan ke Procurement, padahal roll sudah tiba di konveksi dengan surat jalan cetak.
+ *  Foto dibaca (OCR) di browser vendor; di sini server memvalidasi ulang dengan aturan yang SAMA dengan unggahan Procurement (No Order = nomor invoice, bruto persis, code roll unik, tidak menimpa),
+ *  ditambah: invoice harus milik vendor yang login, sudah dikirim (DELIVERY/RECEIVING), memakai alur surat jalan, dan code roll berformat kode KNITTO. Roll yang sudah punya code roll TIDAK pernah
+ *  ditimpa; kalau surat jalan Procurement datang belakangan dengan code berbeda, unggahan itu ditolak dengan alasan roll sudah berkode (jejak asal ada di log aksi vendor). */
+export async function applySuratJalanVendorAction(input: SuratJalanApplyInput): Promise<ActionResult<{ updated: number; unchanged: number }>> {
+  return toActionResultKeepAuth(async () => {
+    const actor = await requireVendorSessionWithActor();
+    const db = supabaseServer();
+    await assertInvoiceOwnedByVendor(db, input.invoiceId, actor.vendorId);
+    const res = await applySuratJalanCore(db, input, { vendorOnly: true });
+    await logVendorAction(actor, `Scan/unggah surat jalan invoice ${input.noOrder || "(No Order tidak terbaca; dicocokkan lewat bruto)"}: ${res.updated} code roll disimpan${res.unchanged > 0 ? `, ${res.unchanged} sudah sama` : ""} (${input.fileName}, dibaca di perangkat vendor)`, "raw_material_invoices", input.invoiceId);
+    return res;
+  });
+}
+
+async function applySuratJalanCore(db: ReturnType<typeof supabaseServer>, input: SuratJalanApplyInput, vendorMode: { vendorOnly: true } | null): Promise<{ updated: number; unchanged: number }> {
+  {
     if (input.assignments.length === 0) throw new Error("Tidak ada roll yang dicocokkan dari surat jalan.");
     const { data: inv, error: invErr } = await db.from("raw_material_invoices").select("id,status,supplier,no_invoice_vendor,mrp_id").eq("id", input.invoiceId).maybeSingle();
     if (invErr) throw new Error(invErr.message);
     if (!inv) throw new Error("Invoice tidak ditemukan.");
     if (inv.status === "INVOICED" || inv.status === "WAITING_INVOICE") throw new Error("Surat jalan hanya bisa dipasang pada invoice yang sudah dibayar.");
+    if (vendorMode) {
+      if (inv.status !== "DELIVERY" && inv.status !== "RECEIVING") throw new Error("Scan surat jalan hanya untuk invoice yang sudah dikirim supplier (status Delivery / Receiving).");
+      if (!invoiceUsesSuratJalan(inv.supplier, inv.mrp_id)) throw new Error("Invoice ini tidak memakai alur surat jalan; code roll diisi langsung di Good Receive.");
+    }
     const norm = (x: unknown) => String(x ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-    if (!norm(inv.no_invoice_vendor) || norm(inv.no_invoice_vendor) !== norm(input.noOrder)) {
+    // Vendor memindai HANYA daftar roll (owner 2026-11-23): No Order sering tidak ikut terpotret, dan vendor sendiri yang memilih invoice-nya. Kalau No Order tidak terbaca (kosong) pada jalur
+    // vendor, penjaganya = SETIAP bruto harus persis sama dengan roll invoice yang dipilih (dicek di bawah); kalau No Order terbaca, tetap harus sama dengan nomor invoice.
+    if (!(vendorMode && !norm(input.noOrder)) && (!norm(inv.no_invoice_vendor) || norm(inv.no_invoice_vendor) !== norm(input.noOrder))) {
       throw new Error(`Surat jalan ini untuk invoice ${input.noOrder}, bukan invoice ${inv.no_invoice_vendor || "(tanpa nomor)"}. Tidak disimpan.`);
     }
     const colorIds = Array.from(new Set(input.assignments.map((a) => `${input.invoiceId}-${a.warna}-${a.lengan}`)));
@@ -1953,6 +1992,7 @@ export async function applySuratJalanAction(input: {
     for (const a of input.assignments) {
       const code = a.codeRoll.trim();
       if (!code) throw new Error("Ada code roll kosong di hasil pencocokan.");
+      if (vendorMode && !/^[A-Z]\d{8,12}$/.test(code.toUpperCase())) throw new Error(`Code roll "${code}" tidak berformat kode roll KNITTO (1 huruf + 8-12 angka). Periksa hasil baca foto.`);
       const row = byKey.get(`${input.invoiceId}-${a.warna}-${a.lengan}|${a.rollIndex}`);
       if (!row) throw new Error(`Roll ${a.rollIndex + 1} ${a.warna} ${a.lengan} tidak ada di invoice ${input.invoiceId}.`);
       if (Math.abs(Number(row.gross_kg) - a.bruto) > 0.004) throw new Error(`Roll ${code}: bruto surat jalan ${a.bruto} kg tidak sama dengan bruto invoice ${Number(row.gross_kg)} kg (${a.warna} ${a.lengan}, roll ${a.rollIndex + 1}). Tidak disimpan.`);
@@ -1971,9 +2011,8 @@ export async function applySuratJalanAction(input: {
         if (error) throw new Error(error.message);
       }
     }
-    await logInternalAction(actor, `Surat jalan ${input.noOrder}: ${toSet.length} code roll disimpan${unchanged > 0 ? `, ${unchanged} sudah sama` : ""} (${input.fileName})`, "raw_material_invoices", input.invoiceId);
     return { updated: toSet.length, unchanged };
-  });
+  }
 }
 
 /** Tandai 1 roll FISIK DITERIMA di Good Receive — TIDAK menimbang (lihat
@@ -2013,8 +2052,14 @@ async function resolveReceiveCodes(
   return rolls.map((r) => {
     const have = existing.get(r.rollIndex) ?? "";
     if (have) return have;
-    if (viaSj) throw new Error(`Roll ${r.rollIndex + 1} ${warna} ${lengan}: code roll belum ada. Menunggu surat jalan ${inv?.supplier ?? "supplier"} diunggah Procurement (Material Tracking) -- vendor tidak mengisi code roll untuk supplier ini.`);
     const typed = r.codeRoll?.trim();
+    // Owner 2026-11-23: roll KNITTO W45+ tanpa code dari surat jalan TETAP bisa diterima lewat code roll yang diketik vendor (jalur cadangan: surat jalan belum ada / foto tidak terbaca), supaya Good
+    // Receive tidak tertahan. Jalur utama tetap scan/unggah surat jalan. Format dijaga (1 huruf + 8-12 angka) untuk mengurangi salah ketik; code yang sudah ada di roll tidak pernah diganti.
+    if (viaSj) {
+      if (!typed) throw new Error(`Roll ${r.rollIndex + 1} ${warna} ${lengan}: code roll belum ada. Scan/unggah surat jalan ${inv?.supplier ?? "supplier"} untuk invoice ini, atau isi code roll manual.`);
+      if (!/^[A-Z]\d{8,12}$/.test(typed.toUpperCase())) throw new Error(`Code roll "${typed}" (Roll ${r.rollIndex + 1} ${warna} ${lengan}) tidak berformat kode roll ${inv?.supplier ?? "supplier"} (1 huruf + 8-12 angka, mis. R2611101758). Periksa penulisannya.`);
+      return typed.toUpperCase();
+    }
     if (!typed) throw new Error("Code roll wajib diisi sebelum roll diterima.");
     return typed;
   });
@@ -4765,7 +4810,7 @@ async function logFgProgressDelta(
 
   if (allDeltas.length > 0) {
     const groupKey = `${batch.mrp_id}|${batch.warna}|${batch.lengan}`;
-    const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", batch.mrp_id).eq("vendor_produksi", batch.vendor_produksi).maybeSingle();
+    const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", batch.mrp_id).eq("vendor_produksi", batch.vendor_produksi).order("id").limit(1).maybeSingle();
     const rollNote = `Roll ${batch.code_roll ?? batch.id}`;
     // Kenaikan dicatat sebagai baris "Roll X"; koreksi TURUN (2026-10-24) dicatat sebagai baris "Roll X (koreksi)" ber-qty negatif --
     // pola sama editRollFgAction. Dulu koreksi turun tidak dicatat sama sekali, jadi FG yang naik-turun-naik terhitung dua kali di riwayat.
@@ -4919,7 +4964,7 @@ async function editRollFgImpl(batchId: string, sizeQty: Record<string, number>):
   const sizes = Array.from(new Set([...Object.keys(baseline), ...Object.keys(clean)]));
   const deltaRows = sizes.map((sz) => [sz, (clean[sz] ?? 0) - (baseline[sz] ?? 0)] as const).filter(([, d]) => d !== 0);
   if (deltaRows.length > 0) {
-    const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", batch.mrp_id).eq("vendor_produksi", batch.vendor_produksi).maybeSingle();
+    const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", batch.mrp_id).eq("vendor_produksi", batch.vendor_produksi).order("id").limit(1).maybeSingle();
     const resultId = await nextReadableId("PR");
     const { error: resErr } = await db.from("production_results").insert({
       id: resultId,
@@ -5099,7 +5144,7 @@ export async function submitProductionResultAction(input: { mrpId: string; vendo
   const { data: meta } = await db.from("production_group_meta").select("done_at").eq("group_key", groupKey).eq("vendor_produksi", input.vendorProduksi).maybeSingle();
   if (meta?.done_at) return;
 
-  const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", input.mrpId).eq("vendor_produksi", input.vendorProduksi).maybeSingle();
+  const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", input.mrpId).eq("vendor_produksi", input.vendorProduksi).order("id").limit(1).maybeSingle();
   const id = await nextReadableId("PR");
   const { error } = await db.from("production_results").insert({
     id,
@@ -5342,7 +5387,7 @@ async function reworkRejectSizeImpl(input: ReworkRejectSizeInput): Promise<void>
       );
     }
   }
-  const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", input.mrpId).eq("vendor_produksi", input.vendorProduksi).maybeSingle();
+  const { data: maklon } = await db.from("maklon_pos").select("id").eq("mrp_id", input.mrpId).eq("vendor_produksi", input.vendorProduksi).order("id").limit(1).maybeSingle();
   const rejectId = await nextReadableId("PR");
   const fgId = await nextReadableId("PR");
   const recordedAt = nowIso();
@@ -5417,7 +5462,7 @@ async function recomputeAutoRejectForGroup(
   }
 
   if (Object.keys(rejectSizeQty).length > 0) {
-    const { data: maklonRow } = await db.from("maklon_pos").select("id").eq("mrp_id", mrpId).eq("vendor_produksi", vendorProduksi).maybeSingle();
+    const { data: maklonRow } = await db.from("maklon_pos").select("id").eq("mrp_id", mrpId).eq("vendor_produksi", vendorProduksi).order("id").limit(1).maybeSingle();
     const id = await nextReadableId("PR");
     await db.from("production_results").insert({ id, group_key: groupKey, mrp_id: mrpId, vendor_produksi: vendorProduksi, po_id: maklonRow?.id ?? "", warna, lengan, kind: "REJECT", recorded_at: nowIso() });
     await db.from("production_result_sizes").insert(Object.entries(rejectSizeQty).map(([size, qty]) => ({ production_result_id: id, size, qty })));
@@ -7271,7 +7316,25 @@ async function readMasterDataVersion(): Promise<number | null> {
  *  Kalau sama dengan versi di server, 6 tabel master harga (item_selling_prices dkk) tidak ditarik
  *  ulang dan field-nya dibuang dari hasil sehingga data master di browser tidak tertimpa. Perubahan
  *  harga menaikkan versi (trigger migration 0050) -> refresh berikutnya otomatis membawa harga baru. */
-export async function getFlowSnapshotAction(clientMasterVersion?: number | null) {
+/** Balasan snapshot: bagian data (FlowState) yang BERUBAH saja (lihat `lib/mrp/sliceSync.ts`) + penanda terbaru semua bagian. */
+export type FlowSnapshotPayload = Partial<FlowState> & {
+  dataVersion: number | null;
+  masterVersion: number | null;
+  weightTolerancePct: number;
+  /** Penanda isi terbaru tiap bagian yang ada di balasan ini DAN yang dilewati karena sama dengan yang dipegang browser. */
+  sliceTokens: SliceTokens;
+};
+
+/** `clientSliceTokens` = penanda isi bagian yang SUDAH dipegang browser dan belum diubah lokal (lihat store.refresh). Tanpa itu (muat pertama, login, muat ulang paksa)
+ *  semua bagian dikirim penuh. Bagian yang isinya sama dengan penanda browser tidak dikirim; browser mempertahankan objek lamanya. */
+export async function getFlowSnapshotAction(clientMasterVersion?: number | null, clientSliceTokens?: SliceTokens | null): Promise<FlowSnapshotPayload> {
+  const payload = await buildFlowSnapshotPayload(clientMasterVersion);
+  const { dataVersion, masterVersion, weightTolerancePct, ...state } = payload;
+  const { changed, tokens } = diffSlices(state as Record<string, unknown>, clientSliceTokens);
+  return { ...(changed as Partial<FlowState>), dataVersion, masterVersion, weightTolerancePct, sliceTokens: tokens };
+}
+
+async function buildFlowSnapshotPayload(clientMasterVersion?: number | null): Promise<Omit<FlowSnapshotPayload, "sliceTokens">> {
   const session = await requireSession();
   const vendorOnly = !!session.vendorId && session.internalRoles.length === 0;
   // Versi dibaca SEBELUM snapshot: kalau ada tulisan di sela-selanya, versi yang tersimpan di client

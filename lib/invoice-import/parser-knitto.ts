@@ -236,12 +236,28 @@ export function validateInvoice(inv: ParsedInvoice): InvoiceCheck[] {
   const rolls = inv.groups.filter((g) => g.kind === "roll").flatMap((g) => g.lines);
   const ribs = inv.groups.filter((g) => g.kind === "rib").flatMap((g) => g.lines);
   const kgSum = (a: InvoiceLine[]) => round2(a.reduce((x, l) => x + (Number.isFinite(l.w) ? l.w : 0), 0));
-  if (t.rollan)
-    add("roll", "Jumlah & berat roll = Total Roll-an", rolls.length === t.rollan.n && Math.abs(kgSum(rolls) - t.rollan.kg) < 0.011, `${rolls.length} roll / ${kgSum(rolls)} kg vs ${t.rollan.n} / ${t.rollan.kg} kg`);
-  else if (rolls.length) add("roll", "Total Roll-an terbaca", false, "Baris \"Total Roll-an\" tidak terbaca — jumlah roll tidak bisa diverifikasi");
-  if (t.kgan)
-    add("rib", "Jumlah & berat rib = Total KG-an", ribs.length === t.kgan.n && Math.abs(kgSum(ribs) - t.kgan.kg) < 0.011, `${ribs.length} baris / ${kgSum(ribs)} kg vs ${t.kgan.n} / ${t.kgan.kg} kg`);
-  else if (ribs.length) add("rib", "Total KG-an terbaca", false, "Baris \"Total KG-an\" tidak terbaca — jumlah rib tidak bisa diverifikasi");
+  // Kasus invoice KNITTO (2026-11-26, OH251126153): baris rib dihitung KNITTO di dalam "Total Roll-an" dan "Total KG-an" dicetak 0 (0). Kalau roll + rib
+  // cocok PERSIS dengan Total Roll-an (jumlah baris dan kg) dan Total KG-an memang 0, anggap sah (informasi, tidak memblokir); selain itu pemeriksaan
+  // tetap ketat terpisah per jenis (roll vs Total Roll-an, rib vs Total KG-an).
+  const ribInRollTotal =
+    !!t.rollan && !!t.kgan && t.kgan.n === 0 && Math.abs(t.kgan.kg) < 0.011 && ribs.length > 0 &&
+    rolls.length + ribs.length === t.rollan.n && Math.abs(kgSum(rolls) + kgSum(ribs) - t.rollan.kg) < 0.011;
+  if (ribInRollTotal && t.rollan) {
+    add(
+      "roll",
+      "Roll + rib = Total Roll-an (rib dihitung di Total Roll-an)",
+      true,
+      `${rolls.length} roll + ${ribs.length} rib / ${round2(kgSum(rolls) + kgSum(ribs))} kg = ${t.rollan.n} / ${t.rollan.kg} kg; Total KG-an tercetak 0`,
+      false
+    );
+  } else {
+    if (t.rollan)
+      add("roll", "Jumlah & berat roll = Total Roll-an", rolls.length === t.rollan.n && Math.abs(kgSum(rolls) - t.rollan.kg) < 0.011, `${rolls.length} roll / ${kgSum(rolls)} kg vs ${t.rollan.n} / ${t.rollan.kg} kg`);
+    else if (rolls.length) add("roll", "Total Roll-an terbaca", false, "Baris \"Total Roll-an\" tidak terbaca — jumlah roll tidak bisa diverifikasi");
+    if (t.kgan)
+      add("rib", "Jumlah & berat rib = Total KG-an", ribs.length === t.kgan.n && Math.abs(kgSum(ribs) - t.kgan.kg) < 0.011, `${ribs.length} baris / ${kgSum(ribs)} kg vs ${t.kgan.n} / ${t.kgan.kg} kg`);
+    else if (ribs.length) add("rib", "Total KG-an terbaca", false, "Baris \"Total KG-an\" tidak terbaca — jumlah rib tidak bisa diverifikasi");
+  }
 
   for (const w of inv.warnings) add("warn", w, false, "", /nama file|tidak ada baris|No Penjualan tidak/i.test(w));
   return checks;

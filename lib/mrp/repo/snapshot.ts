@@ -106,15 +106,31 @@ type RawTables = Record<
  *  hasil produksi 1.761, item koli 1.674, dst.) DIAM-DIAM terpotong -- gejalanya roll "0/0" dan data hilang di layar vendor setiap kali jalur
  *  ini terpakai. Sekarang dibaca per halaman 1.000 baris (urutan sudah stabil karena tiap query punya order by id/kunci). */
 const LEGACY_PAGE_SIZE = 1000;
+// [snapshot-tabel 2026-11-20] Halaman pertama dibaca sendiri; kalau penuh, halaman berikutnya diminta PARALEL per blok (bukan satu per satu seperti dulu),
+// supaya tabel besar (hasil produksi 4.870 baris, item koli 5.640, ukuran hasil 6.305) tidak menunggu 5-7 putaran jaringan berurutan.
+const PAGE_BLOCK = 3;
 async function paged(build: (from: number, to: number) => PromiseLike<TableResult>): Promise<TableResult> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const all: any[] = [];
-  for (let from = 0; ; from += LEGACY_PAGE_SIZE) {
-    const res = await build(from, from + LEGACY_PAGE_SIZE - 1);
-    if (res.error) return { data: null, error: res.error };
-    const rows = res.data ?? [];
-    for (const r of rows) all.push(r);
-    if (rows.length < LEGACY_PAGE_SIZE) return { data: all, error: null };
+  const first = await build(0, LEGACY_PAGE_SIZE - 1);
+  if (first.error) return { data: null, error: first.error };
+  const firstRows = first.data ?? [];
+  for (const r of firstRows) all.push(r);
+  if (firstRows.length < LEGACY_PAGE_SIZE) return { data: all, error: null };
+  for (let page = 1; ; page += PAGE_BLOCK) {
+    const block = await Promise.all(
+      Array.from({ length: PAGE_BLOCK }, (_, i) => {
+        const from = (page + i) * LEGACY_PAGE_SIZE;
+        return build(from, from + LEGACY_PAGE_SIZE - 1);
+      })
+    );
+    // Urutan halaman dijaga (blok dibaca berurutan dari halaman terkecil); berhenti di halaman pertama yang tidak penuh.
+    for (const res of block) {
+      if (res.error) return { data: null, error: res.error };
+      const rows = res.data ?? [];
+      for (const r of rows) all.push(r);
+      if (rows.length < LEGACY_PAGE_SIZE) return { data: all, error: null };
+    }
   }
 }
 
@@ -122,7 +138,11 @@ async function paged(build: (from: number, to: number) => PromiseLike<TableResul
  *  fallback (lihat fetchFlowRows) supaya app tidak pernah benar-benar berhenti bisa muat data
  *  cuma karena migration 0008 (RPC get_flow_snapshot_raw) belum sempat di-apply -- urutan deploy
  *  kode vs migration jadi tidak penting. */
-async function fetchFlowRowsLegacy(db: SupabaseClient): Promise<RawTables> {
+// Tujuh tabel master harga yang dibuang dari get_flow_snapshot_core (migration 0050/0058). Dengan `skipMaster` jalur per-tabel juga tidak membacanya
+// (hasil kosong; pemanggil WAJIB menghapus field harga dari state, sama seperti jalur RPC core).
+const noRows = (): Promise<TableResult> => Promise.resolve({ data: [], error: null });
+
+async function fetchFlowRowsLegacy(db: SupabaseClient, skipMaster = false): Promise<RawTables> {
   const [
     mrpRows,
     lenganGroupRows,
@@ -217,9 +237,9 @@ async function fetchFlowRowsLegacy(db: SupabaseClient): Promise<RawTables> {
     paged((a, b) => db.from("material_claim_history").select("*").order("id").range(a, b)),
     paged((a, b) => db.from("vendor_deposits").select("*").order("created_at").order("id").range(a, b)),
     paged((a, b) => db.from("notifications").select("*").order("time").order("id").range(a, b)),
-    paged((a, b) => db.from("harga_maklon").select("*").order("id").range(a, b)),
-    paged((a, b) => db.from("harga_kain").select("*").order("id").range(a, b)),
-    paged((a, b) => db.from("harga_kain_pks").select("*").order("id").range(a, b)),
+    skipMaster ? noRows() : paged((a, b) => db.from("harga_maklon").select("*").order("id").range(a, b)),
+    skipMaster ? noRows() : paged((a, b) => db.from("harga_kain").select("*").order("id").range(a, b)),
+    skipMaster ? noRows() : paged((a, b) => db.from("harga_kain_pks").select("*").order("id").range(a, b)),
     paged((a, b) => db.from("entitas").select("*").order("id").range(a, b)),
     paged((a, b) => db.from("suppliers").select("*").order("id").range(a, b)),
     // SENGAJA select kolom spesifik (bukan "*") -- tabel ini juga punya password_hash (bcrypt,
@@ -227,13 +247,13 @@ async function fetchFlowRowsLegacy(db: SupabaseClient): Promise<RawTables> {
     // sampai ke client/browser.
     paged((a, b) => db.from("vendors_produksi").select("id,name,kategori,base_capacity").order("id").range(a, b)),
     paged((a, b) => db.from("ekspedisi_rates").select("*").order("id").range(a, b)),
-    paged((a, b) => db.from("item_selling_prices").select("*").order("id").range(a, b)),
+    skipMaster ? noRows() : paged((a, b) => db.from("item_selling_prices").select("*").order("id").range(a, b)),
     paged((a, b) => db.from("kerah_manset_settings").select("*").order("kind").range(a, b)),
-    paged((a, b) => db.from("harga_rib").select("*").order("id").range(a, b)),
-    paged((a, b) => db.from("harga_kerah_manset").select("*").order("id").range(a, b)),
+    skipMaster ? noRows() : paged((a, b) => db.from("harga_rib").select("*").order("id").range(a, b)),
+    skipMaster ? noRows() : paged((a, b) => db.from("harga_kerah_manset").select("*").order("id").range(a, b)),
     paged((a, b) => db.from("material_suppliers").select("*").order("id").range(a, b)),
     paged((a, b) => db.from("warna_aliases").select("*").order("mrp_warna").range(a, b)),
-    paged((a, b) => db.from("harga_fob").select("*").order("id").range(a, b)),
+    skipMaster ? noRows() : paged((a, b) => db.from("harga_fob").select("*").order("id").range(a, b)),
   ]);
   return {
     mrpRows,
@@ -379,10 +399,84 @@ async function fetchFlowRowsFast(db: SupabaseClient, skipMaster: boolean): Promi
   return { tables, masterIncluded };
 }
 
-// Pemutus sirkuit (2026-11-10): data pg_stat_statements menunjukkan RPC snapshot hampir selalu kena batas waktu 8 dtk (fungsi dengan 32 tabel makin
-// berat seiring data bertambah): ~126 muat data berakhir di jalur per-tabel dan hanya 4 RPC yang selesai. Percobaan RPC + ulang tetap membuang
-// 8 + ~1 + 8 dtk SEBELUM jalur per-tabel (yang hanya ~1-3 dtk) dijalankan. Begitu RPC kena timeout, RPC dilewati sementara dan muat data
-// langsung memakai jalur per-tabel (dibaca per halaman, paralel; data tetap segar, bukan salinan lama). Setelah jeda, satu percobaan RPC lagi.
+// [snapshot-tabel 2026-11-20] JALUR UTAMA pembacaan snapshot = query PER TABEL, paralel (bukan RPC get_flow_snapshot_raw). Diukur baca-saja ke database live
+// (2026-11-20): RPC snapshot 5,1-6,4 dtk (10 MB JSON, fungsi menyusun 42 tabel jadi satu jsonb di dalam Postgres), sedangkan seluruh tabel inti dibaca
+// per tabel secara paralel hanya ~0,9-1,1 dtk. RPC tetap ada sebagai cadangan kalau pembacaan per tabel gagal. Dampak ke semua pemanggil
+// getFlowSnapshot()/getFlowSnapshotWithMeta(): tiap aksi tulis yang membaca snapshot di dalamnya juga ikut lebih cepat.
+const REQUIRED_TABLE_KEYS: (keyof RawTables)[] = [
+  "mrpRows",
+  "lenganGroupRows",
+  "aduanRows",
+  "materialRowRows",
+  "materialPoRows",
+  "maklonPoRows",
+  "invoiceRows",
+  "maklonInvoiceRows",
+  "productionBatchRows",
+  "productionResultRows",
+  "deliveryKoliRows",
+  "vendorInvoiceRows",
+  "notificationRows",
+  "hargaMaklonRows",
+  "hargaKainRows",
+  "hargaKainPksRows",
+  "entitasRows",
+  "supplierRows",
+  "ekspedisiRateRows",
+  "itemSellingPriceRows",
+  "kerahMansetSettingRows",
+  "hargaRibRows",
+  "hargaKerahMansetRows",
+  "materialSupplierRows",
+  "warnaAliasRows",
+  "hargaFobRows",
+];
+
+async function readFlowTablesOnce(db: SupabaseClient, skipMaster: boolean): Promise<{ tables: RawTables; masterIncluded: boolean }> {
+  const tables = await fetchFlowRowsLegacy(db, skipMaster);
+  // Galat di tabel wajib dilempar SEKARANG (bukan nanti di pemetaan) supaya hasil yang rusak tidak sempat tersimpan di cache per versi.
+  for (const key of REQUIRED_TABLE_KEYS) {
+    const err = tables[key].error;
+    if (err) throw new Error(`pembacaan tabel gagal (${key}): ${err.message}`);
+  }
+  return { tables, masterIncluded: !skipMaster };
+}
+
+async function readDataVersionDirect(db: SupabaseClient): Promise<number | null> {
+  try {
+    const { data, error } = await db.rpc("get_data_version");
+    if (error || data === null || data === undefined) return null;
+    const n = Number(data);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Pembacaan per tabel BUKAN satu potret atomik (RPC lama: satu pernyataan SQL = satu potret). Kalau ada tulisan masuk di tengah pembacaan, tabel yang berbeda bisa
+ *  dibaca di keadaan yang berbeda (mis. baris roll sudah ada tetapi ukurannya belum) atau satu tabel besar kehilangan/menggandakan baris di batas halaman.
+ *  Pengaman: angka versi data (naik tiap ada tulisan, migration 0049) dibaca SEBELUM dan SESUDAH; kalau berubah, bacaan diulang satu kali.
+ *  - `strict` (pembacaan di dalam aksi TULIS, yang memutuskan tulisan dari data ini): masih berubah sesudah ulang = lempar galat -> fetchFlowRows memakai RPC
+ *    (atomik), bukan data yang mungkin tidak konsisten.
+ *  - tidak strict (pemuatan layar): hasil tetap dipakai; versi yang dilaporkan ke browser adalah versi SEBELUM pembacaan, jadi browser mengambil ulang pada
+ *    pengecekan versi berikutnya (bukan menunggu perubahan lain).
+ *  Versi tidak bisa dibaca (migration 0049 belum jalan) = tidak ada yang bisa diperiksa, perilaku sama seperti sebelumnya. */
+async function fetchFlowRowsTables(db: SupabaseClient, skipMaster: boolean, strict: boolean): Promise<{ tables: RawTables; masterIncluded: boolean }> {
+  let result: { tables: RawTables; masterIncluded: boolean } | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const before = await readDataVersionDirect(db);
+    result = await readFlowTablesOnce(db, skipMaster);
+    if (before === null) return result;
+    const after = await readDataVersionDirect(db);
+    if (after === null || after === before) return result;
+    console.warn(`getFlowSnapshot: ada tulisan masuk selama pembacaan per-tabel (versi ${before} -> ${after})${attempt === 0 ? ", membaca ulang" : ""}`);
+  }
+  if (strict) throw new Error("Data sedang diperbarui pengguna lain, aksi ini dibatalkan supaya tidak memakai data yang setengah berubah. Mohon ulangi dalam beberapa detik.");
+  return result as { tables: RawTables; masterIncluded: boolean };
+}
+
+// Pemutus sirkuit RPC (2026-11-10): RPC snapshot sering kena batas waktu 8 dtk. Sejak jalur per-tabel menjadi jalur utama, RPC hanya dicoba kalau
+// pembacaan per tabel gagal; begitu RPC kena timeout ia dilewati 5 menit supaya tidak membuang 8 dtk lagi.
 const RPC_BREAKER_MS = 5 * 60_000;
 let rpcSlowUntil = 0;
 function rpcBreakerOpen(): boolean {
@@ -394,38 +488,23 @@ function isTimeoutError(err: unknown): boolean {
   return e.code === "57014" || /statement timeout|canceling statement|timed? ?out/i.test(e.message ?? "");
 }
 
-async function fetchFlowRows(db: SupabaseClient, skipMaster: boolean, opts?: { noLegacy?: boolean }): Promise<{ tables: RawTables; masterIncluded: boolean }> {
-  if (rpcBreakerOpen() && !opts?.noLegacy) return { tables: await fetchFlowRowsLegacy(db), masterIncluded: true };
-  let failure: unknown;
+async function fetchFlowRows(db: SupabaseClient, skipMaster: boolean, strict = false): Promise<{ tables: RawTables; masterIncluded: boolean }> {
+  let primaryFailure: unknown;
+  try {
+    return await fetchFlowRowsTables(db, skipMaster, strict);
+  } catch (err) {
+    primaryFailure = err;
+  }
+  console.warn("getFlowSnapshot: pembacaan per-tabel gagal, mencoba RPC snapshot —", primaryFailure instanceof Error ? primaryFailure.message : primaryFailure);
+  if (rpcBreakerOpen()) throw primaryFailure;
   try {
     return await fetchFlowRowsFast(db, skipMaster);
   } catch (err) {
-    failure = err;
+    if (isTimeoutError(err)) rpcSlowUntil = Date.now() + RPC_BREAKER_MS;
+    console.warn("getFlowSnapshot: RPC snapshot cadangan juga gagal —", err instanceof Error ? err.message : JSON.stringify(err));
+    // Yang dilaporkan adalah galat jalur utama (penyebab sebenarnya), bukan galat cadangan.
+    throw primaryFailure;
   }
-  // RPC kena timeout: jangan diulang (mengulang = 8 dtk lagi sia-sia); buka pemutus dan serahkan ke jalur per-tabel.
-  if (isTimeoutError(failure)) {
-    rpcSlowUntil = Date.now() + RPC_BREAKER_MS;
-    console.warn("getFlowSnapshot: RPC snapshot timeout, dilewati " + RPC_BREAKER_MS / 60_000 + " menit —", failure instanceof Error ? failure.message : failure);
-    if (opts?.noLegacy) throw failure;
-    return { tables: await fetchFlowRowsLegacy(db), masterIncluded: true };
-  }
-  // Database sibuk (bukan timeout, bukan "RPC belum ada"): coba SEKALI lagi setelah jeda acak yang pendek -- biasanya lonjakan sesaat dan percobaan kedua
-  // selesai dalam ~1 detik. Sebelumnya langsung jatuh ke ~35 query per tabel yang menambah beban saat database justru sedang lambat (2026-11-02:
-  // 181 dari ~1.400 muat data berakhir di jalur itu).
-  if (!isMissingFunctionError(failure)) {
-    await new Promise((resolve) => setTimeout(resolve, 600 + Math.random() * 600));
-    try {
-      return await fetchFlowRowsFast(db, skipMaster);
-    } catch (err) {
-      failure = err;
-    }
-  }
-  // Pemanggil yang masih punya salinan lama (cache server) memilih memakainya daripada menambah beban dengan ~35 query per tabel.
-  if (opts?.noLegacy) throw failure;
-  // Migration 0008 belum di-apply, atau RPC gagal berturut-turut -- diam-diam fallback ke
-  // cara lama (lebih lambat, tapi tetap benar) alih-alih bikin SELURUH app gagal muat data.
-  console.warn("getFlowSnapshot: get_flow_snapshot_raw gagal, fallback ke query per-tabel —", failure instanceof Error ? failure.message : failure);
-  return { tables: await fetchFlowRowsLegacy(db), masterIncluded: true };
 }
 
 export async function getFlowSnapshot(): Promise<FlowState> {
@@ -453,8 +532,7 @@ async function fetchFlowRowsCached(db: SupabaseClient, skipMaster: boolean, vers
   if (hit && hit.version === version && (skipMaster || hit.wantsMaster) && now - hit.at < FLOW_CACHE_MAX_AGE_MS) {
     return { ...(await hit.promise), servedVersion: version };
   }
-  // Pemutus RPC terbuka -> fetchFlowRows langsung ke jalur per-tabel (hasilnya segar dan ikut di-cache per versi di bawah).
-  const promise = fetchFlowRows(db, skipMaster, { noLegacy: !rpcBreakerOpen() });
+  const promise = fetchFlowRows(db, skipMaster);
   const entry: FlowCacheEntry = { version, wantsMaster: !skipMaster, at: now, promise };
   flowCache = entry;
   try {
@@ -463,30 +541,22 @@ async function fetchFlowRowsCached(db: SupabaseClient, skipMaster: boolean, vers
     return { ...fetched, servedVersion: version };
   } catch (err) {
     if (flowCache === entry) flowCache = null;
-    // RPC baru saja kena timeout (pemutus terbuka): baca segar lewat jalur per-tabel, JANGAN salinan lama -- salinan lama membuat
-    // perubahan milik pengguna sendiri tidak tampil sampai salinan itu kedaluwarsa.
-    if (isTimeoutError(err) && rpcBreakerOpen()) {
-      const fetched: FlowFetch = { tables: await fetchFlowRowsLegacy(db), masterIncluded: true };
-      flowLastGood = { version, masterIncluded: true, at: Date.now(), fetched };
-      flowCache = { version, wantsMaster: true, at: Date.now(), promise: Promise.resolve(fetched) };
-      return { ...fetched, servedVersion: version };
-    }
     // Database sedang kewalahan: pakai salinan terakhir yang berhasil (versi LAMA dilaporkan apa adanya supaya browser
-    // mengambil ulang pada pengecekan berikutnya), kalau tidak ada baru jatuh ke jalur per-tabel yang berat.
+    // mengambil ulang pada pengecekan berikutnya). Jalur per-tabel dan RPC sudah dicoba di fetchFlowRows, jadi kalau tidak ada salinan lama galat diteruskan.
     const good = flowLastGood;
     if (good && Date.now() - good.at < FLOW_STALE_MAX_AGE_MS && (skipMaster || good.masterIncluded)) {
       console.warn("getFlowSnapshot: pembacaan baru gagal, memakai salinan lama v" + good.version + " —", err instanceof Error ? err.message : err);
       return { ...good.fetched, servedVersion: good.version };
     }
-    console.warn("getFlowSnapshot: get_flow_snapshot gagal, fallback ke query per-tabel —", err instanceof Error ? err.message : err);
-    return { tables: await fetchFlowRowsLegacy(db), masterIncluded: true, servedVersion: version };
+    throw err;
   }
 }
 
 export async function getFlowSnapshotWithMeta(opts: { skipMaster?: boolean; version?: number | null }): Promise<{ state: FlowState; masterIncluded: boolean; servedVersion?: number }> {
   const db = supabaseServer();
   const cachedFetch = typeof opts.version === "number" ? await fetchFlowRowsCached(db, !!opts.skipMaster, opts.version) : null;
-  const fetched = cachedFetch ?? (await fetchFlowRows(db, !!opts.skipMaster));
+  // Tanpa `version` = pembacaan di dalam aksi tulis (keputusan tulis diambil dari data ini) -> strict. Dengan `version` = pemuatan layar.
+  const fetched = cachedFetch ?? (await fetchFlowRows(db, !!opts.skipMaster, true));
   const servedVersion = cachedFetch?.servedVersion;
   const masterIncluded = fetched.masterIncluded;
 
