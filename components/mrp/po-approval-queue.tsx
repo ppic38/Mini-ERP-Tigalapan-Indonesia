@@ -11,7 +11,7 @@ import { SysadminPanel } from "@/components/sysadmin/correction-dialog";
 import { maklonPoCorrections, materialPoCorrections } from "@/components/sysadmin/procurement-corrections";
 import { useMrpStore } from "@/lib/mrp/store";
 import { useInternalAuthStore } from "@/lib/internal-auth-store";
-import { compareNewestFirst, formatPcs, formatRupiah, formatDate, materialPoColorPcs, materialPoPcs, mrpDetailFor } from "@/lib/mrp/derive";
+import { compareNewestFirst, formatPcs, formatRupiah, formatDate, materialPoColorPcs, materialPoPcs, mrpDetailFor, segmenProdukLookup } from "@/lib/mrp/derive";
 import { VENDOR_PRODUKSI, ROLL_KG_ESTIMATE } from "@/lib/mrp/seed";
 import {
   APPROVAL_LEVEL_TABLE,
@@ -28,6 +28,107 @@ import {
   type PoApprovalState,
 } from "@/lib/mrp/poApproval";
 import type { MaklonPO, MaterialPO } from "@/lib/mrp/types";
+import { aduanRowsOfPo } from "@/lib/mrp/exportPoExcel";
+
+import {
+  diskonRatioBySupplier,
+  estimateMaklonPoHpp,
+  estimateMaterialPosHpp,
+  mergeHppEstimates,
+  ongkirPerPcsBySegmen,
+  type PoHppContext,
+  type PoHppEstimate,
+} from "@/lib/mrp/poHppEstimate";
+
+const pctText = (p: number | null) => (p == null ? "—" : `${p.toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`);
+/** Warna rasio HPP: <= 70% hijau, <= 80% kuning, di atas itu merah. */
+const pctTone = (p: number | null) => (p == null ? "text-text-muted" : p <= 70 ? "text-success-fg" : p <= 80 ? "text-warning-fg" : "text-danger-fg");
+
+/** Rincian estimasi HPP di jendela "Lihat detail" (owner 2026-11-27). */
+function HppEstimateSection({ est }: { est: PoHppEstimate }) {
+  const rp = (n: number) => formatRupiah(Math.round(n));
+  const rows: [string, number, string?][] = [
+    ["Bahan (roll x 25 kg x harga kain)", est.bahan],
+    ["Rib, kerah, manset", est.rib],
+    ["Diskon supplier (historis)", -est.diskon, "pengurang bahan"],
+    ["Maklon (matriks harga maklon)", est.maklon],
+    ["Ongkir (rata-rata per kategori)", est.ongkir],
+  ];
+  return (
+    <div className="mt-5">
+      <SectionLabel>Estimasi HPP</SectionLabel>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {[
+          ["Est. HPP", rp(est.hpp), ""],
+          ["HPP / pcs", rp(est.hppPerPcs), ""],
+          ["Nilai jual", rp(est.hargaJual), ""],
+          ["Rasio HPP", pctText(est.pct), pctTone(est.pct)],
+        ].map(([k, v, tone]) => (
+          <div key={k} className="rounded-md border border-[#E4E8EE] bg-[#FBFCFD] px-3 py-2">
+            <div className="font-sans text-[10px] font-medium uppercase tracking-wider text-text-muted">{k}</div>
+            <div className={"mt-0.5 font-mono text-[12.5px] font-semibold " + (tone || "text-text-primary")}>{v}</div>
+          </div>
+        ))}
+      </div>
+      <table className="mt-3 w-full border-collapse font-sans text-[11.5px]">
+        <tbody>
+          {rows.map(([k, v, note]) => (
+            <tr key={k} className="border-t border-[#F1F4F7]">
+              <td className="px-3 py-1 text-[#31414F]">
+                {k}
+                {note && <span className="ml-1 text-[10.5px] text-text-muted">({note})</span>}
+              </td>
+              <td className="px-3 py-1 text-right font-mono">{rp(v)}</td>
+            </tr>
+          ))}
+          <tr className="border-t border-[#E4E8EE] font-semibold">
+            <td className="px-3 py-1">Total HPP · {formatPcs(est.pcs)} pcs</td>
+            <td className="px-3 py-1 text-right font-mono">{rp(est.hpp)}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div className="mt-3 overflow-x-auto rounded-md border border-[#E4E8EE]">
+        <table className="w-full border-collapse font-sans text-[11.5px]">
+          <thead className="bg-[#F2F5F8]">
+            <tr className="text-left text-text-muted">
+              <th className="px-3 py-1 font-medium">Vendor · warna · lengan</th>
+              <th className="px-3 py-1 font-medium">Kategori</th>
+              <th className="px-3 py-1 text-right font-medium">Pcs</th>
+              <th className="px-3 py-1 text-right font-medium">Maklon/pcs</th>
+              <th className="px-3 py-1 text-right font-medium">HPP/pcs</th>
+              <th className="px-3 py-1 text-right font-medium">Rasio</th>
+            </tr>
+          </thead>
+          <tbody>
+            {est.lines.map((l) => {
+              const pct = l.hargaJual > 0 ? (l.hpp / l.hargaJual) * 100 : null;
+              return (
+                <tr key={l.mrpId + l.vendor + l.warna + l.lengan} className="border-t border-[#F1F4F7]">
+                  <td className="px-3 py-1">
+                    {VENDOR_PRODUKSI[l.vendor]?.name ?? l.vendor} · {l.warna} · {l.lengan}
+                    {l.kainTanpaHarga && <span className="ml-1 text-[10px] font-semibold text-danger-fg">harga kain tidak ada</span>}
+                  </td>
+                  <td className="px-3 py-1">{l.segmen}</td>
+                  <td className="px-3 py-1 text-right font-mono">{formatPcs(l.pcs)}</td>
+                  <td className="px-3 py-1 text-right font-mono">{rp(l.maklonRate)}</td>
+                  <td className="px-3 py-1 text-right font-mono">{rp(l.pcs > 0 ? l.hpp / l.pcs : 0)}</td>
+                  <td className={"px-3 py-1 text-right font-mono font-semibold " + pctTone(pct)}>{pctText(pct)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-2 font-sans text-[10.5px] leading-[1.5] text-text-muted">
+        Estimasi, bukan HPP aktual. Bahan dan rib dari Master Data harga, diskon = rata-rata diskon invoice supplier yang sama sebelumnya, maklon dari
+        matriks Master Data Harga Maklon per kategori, ongkir = rata-rata ongkir per pcs kategori (Dewasa/Combed, Kids, Tunik) dari pengiriman sebelumnya.
+        Rasio = HPP / nilai jual Master SKU.
+        {est.pcsTanpaHarga > 0 &&
+          ` ${formatPcs(est.pcsTanpaHarga)} pcs belum punya harga jual di Master SKU: size yang kosong memakai rata-rata size lain warna yang sama, warna yang sama sekali tidak punya harga jual tidak dihitung di rasio.`}
+      </div>
+    </div>
+  );
+}
 
 /** `members`: PO Material satu supplier dalam satu MRP digabung jadi SATU baris (approval PO Material berlaku per supplier,
  *  levelnya dari total supplier); `id` = PO pertama (target aksi -- server menerapkannya ke semua PO satu supplier). */
@@ -194,7 +295,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 /** Jendela "Lihat detail": ringkasan, alur approval (siapa/kapan), dan rincian PO. */
-function DetailModal({ item, onClose }: { item: Item; onClose: () => void }) {
+function DetailModal({ item, est, onClose }: { item: Item; est?: PoHppEstimate; onClose: () => void }) {
   const mrpDetails = useMrpStore((s) => s.mrpDetails);
   const detail = mrpDetailFor(item.mrpId, mrpDetails);
   const st = item.state;
@@ -244,6 +345,8 @@ function DetailModal({ item, onClose }: { item: Item; onClose: () => void }) {
               Ditolak {st.rejectedBy ? APPROVAL_ROLE_LABEL[st.rejectedBy] : ""}: {st.rejectNote}
             </div>
           )}
+
+          {est && est.pcs > 0 && <HppEstimateSection est={est} />}
 
           <div className="mt-5">
             <SectionLabel>Alur approval</SectionLabel>
@@ -334,6 +437,18 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
   const approvePoStep = useMrpStore((s) => s.approvePoStep);
   const rejectPoStep = useMrpStore((s) => s.rejectPoStep);
   const resubmitPo = useMrpStore((s) => s.resubmitPo);
+  const hargaKain = useMrpStore((s) => s.hargaKain);
+  const hargaKainPks = useMrpStore((s) => s.hargaKainPks);
+  const hargaRib = useMrpStore((s) => s.hargaRib);
+  const hargaKerahManset = useMrpStore((s) => s.hargaKerahManset);
+  const kerahMansetSettings = useMrpStore((s) => s.kerahMansetSettings);
+  const hargaMaklon = useMrpStore((s) => s.hargaMaklon);
+  const itemSellingPrices = useMrpStore((s) => s.itemSellingPrices);
+  const deliveryKolis = useMrpStore((s) => s.deliveryKolis);
+  const ekspedisiRates = useMrpStore((s) => s.ekspedisiRates);
+  const rawInvoices = useMrpStore((s) => s.invoices);
+  // Penanda perubahan saja: Mapping Warna dibaca sellingPriceFor lewat variabel modul yang diisi store.
+  const warnaAliases = useMrpStore((s) => s.warnaAliases);
 
   const [tab, setTab] = useState<"MATERIAL" | "MAKLON">("MATERIAL");
   const [detailItem, setDetailItem] = useState<Item | null>(null);
@@ -382,6 +497,40 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
     }
     return out;
   }, [materialPOs, maklonPOs]);
+
+  // Estimasi HPP & rasio per baris (owner 2026-11-27), dihitung sekali per perubahan data (lib/mrp/poHppEstimate.ts).
+  const hppCtx = useMemo<PoHppContext>(() => {
+    const seg = segmenProdukLookup(mrpDetails);
+    return {
+      mrpDetails,
+      materialPOs,
+      hargaKain,
+      hargaKainPks,
+      hargaRib,
+      hargaKerahManset,
+      kerahMansetSettings,
+      hargaMaklon,
+      sellingPrices: itemSellingPrices,
+      ongkir: ongkirPerPcsBySegmen(deliveryKolis, ekspedisiRates, mrpDetails),
+      diskonRatio: diskonRatioBySupplier(rawInvoices),
+      segmenOf: (m, w, l) => seg(m, w, l),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mrpDetails, materialPOs, hargaKain, hargaKainPks, hargaRib, hargaKerahManset, kerahMansetSettings, hargaMaklon, itemSellingPrices, deliveryKolis, ekspedisiRates, rawInvoices, warnaAliases]);
+  const hppById = useMemo(() => {
+    const m = new Map<string, PoHppEstimate>();
+    for (const it of items) {
+      if (it.type === "MATERIAL") m.set(it.id, estimateMaterialPosHpp((it.members ?? [it]).map((x) => x.po as MaterialPO), hppCtx));
+      else {
+        const po = it.po as MaklonPO;
+        if (po.isFob) continue;
+        m.set(it.id, estimateMaklonPoHpp(po.mrpId, po.vendorProduksi, aduanRowsOfPo(mrpDetailFor(po.mrpId, mrpDetails), po, maklonPOs), hppCtx));
+      }
+    }
+    return m;
+  }, [items, hppCtx, mrpDetails, maklonPOs]);
+  const hppOf = (i: Item) => hppById.get(i.id);
+  const hppGroup = (list: Item[]) => mergeHppEstimates(list.map(hppOf).filter((e): e is PoHppEstimate => !!e));
 
   // Portal SCM dibedakan per username (scm02 = Asisten Manager L2, scm01 = SCM Manager L3); akun utama SCM tidak bisa menyetujui.
   const scmUsername = useInternalAuthStore((s) => s.actors.scm?.username);
@@ -510,6 +659,50 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
         ]
       : []),
     { key: "nilai", label: "Nilai", default: true, align: "right", aggregate: aggSum((i) => i.amount, (n) => <span className="font-semibold">{formatRupiah(n)}</span>), render: (i) => <span className="font-mono font-medium">{formatRupiah(i.amount)}</span> },
+    {
+      key: "hpp",
+      label: "Est. HPP",
+      default: true,
+      align: "right",
+      info: {
+        title: "Estimasi HPP",
+        body: (
+          <p>
+            Bahan + rib - diskon supplier + maklon (matriks) + ongkir rata-rata per kategori, untuk pcs yang dicakup PO ini. Angka kecil = HPP per pcs. Rincian di
+            Lihat detail.
+          </p>
+        ),
+      },
+      aggregate: (list: Item[]) => {
+        const e = hppGroup(list);
+        return <span className="font-semibold">{e.pcs > 0 ? formatRupiah(Math.round(e.hpp)) : "—"}</span>;
+      },
+      render: (i: Item) => {
+        const e = hppOf(i);
+        if (!e || e.pcs <= 0) return <span className="text-text-muted">—</span>;
+        return (
+          <span className="block text-right font-mono">
+            {formatRupiah(Math.round(e.hpp))}
+            <span className="block text-[10px] text-text-muted">{formatRupiah(Math.round(e.hppPerPcs))}/pcs</span>
+          </span>
+        );
+      },
+    },
+    {
+      key: "hppPct",
+      label: "% HPP",
+      default: true,
+      align: "right",
+      info: { title: "Rasio HPP", body: <p>Estimasi HPP / nilai jual (harga jual Master SKU x qty per size). Hijau sampai 70%, kuning sampai 80%, merah di atasnya.</p> },
+      aggregate: (list: Item[]) => {
+        const e = hppGroup(list);
+        return <span className={"font-semibold " + pctTone(e.pct)}>{pctText(e.pct)}</span>;
+      },
+      render: (i: Item) => {
+        const e = hppOf(i);
+        return <span className={"font-mono font-semibold " + pctTone(e?.pct ?? null)}>{e && e.pcs > 0 ? pctText(e.pct) : "—"}</span>;
+      },
+    },
     {
       key: "status",
       label: "Status Approval",
@@ -647,7 +840,7 @@ export function PoApprovalQueue({ role }: { role: ApprovalRole }) {
         emptyText={`Tidak ada ${noun} untuk filter ini.`}
       />
 
-      {detailItem && <DetailModal item={detailItem} onClose={() => setDetailItem(null)} />}
+      {detailItem && <DetailModal item={detailItem} est={hppOf(detailItem)} onClose={() => setDetailItem(null)} />}
 
       {rejecting && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B131B]/45 p-4" onClick={() => setRejecting(null)}>
