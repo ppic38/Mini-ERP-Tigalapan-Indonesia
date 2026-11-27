@@ -18,7 +18,7 @@
 // (`PoApprovalEntry.hpp`, kolom jsonb approval_log yang sudah ada; tanpa kolom baru). Sesudah itu baris itu memakai angka terkunci, tidak dihitung ulang.
 
 import {
-  hargaKainRate,
+  hargaKainRateInfo,
   hargaKerahMansetRateInfo,
   hargaMaklonLineRate,
   hargaRibRateInfo,
@@ -92,7 +92,10 @@ export type PoHppLine = {
   hpp: number;
   hargaJual: number;
   pcsTanpaHarga: number;
+  /** Harga kain tidak ada di supplier itu maupun KNITTO: memakai harga estimasi flat. */
   kainTanpaHarga: boolean;
+  /** Harga kain tidak ada di supplier itu: memakai harga KNITTO. */
+  kainViaKnitto?: boolean;
   /** Angka dari estimasi yang dikunci saat PO diajukan. */
   frozen?: boolean;
   frozenAt?: string;
@@ -208,6 +211,7 @@ export function toFrozenLine(l: PoHppLine): FrozenHppLine {
     j: r0(l.hargaJual),
     nt: l.pcsTanpaHarga || undefined,
     kt: l.kainTanpaHarga ? 1 : undefined,
+    kk: l.kainViaKnitto ? 1 : undefined,
   };
 }
 
@@ -233,6 +237,7 @@ function fromFrozenLine(f: FrozenHppLine, mrpId: string, vendor: string, at: str
     hargaJual: f.j,
     pcsTanpaHarga: f.nt ?? 0,
     kainTanpaHarga: !!f.kt,
+    kainViaKnitto: !!f.kk,
     frozen: true,
     frozenAt: at,
   };
@@ -345,7 +350,17 @@ export function liveLine(ctx: PoHppContext, mrpId: string, vendor: string, warna
     (ctx.poIdx.get(mrpId + "|" + vendor) ?? [])
       .filter((p) => p.supplier === supplier)
       .reduce((s, p) => s + p.colorBreakdown.filter((c) => c.warna === warna).reduce((t, c) => t + c.rollCount * ROLL_KG_ESTIMATE, 0), 0) || kg;
-  const kainRate = hargaKainRate(ctx.hargaKain, ctx.hargaKainPks, supplier, warna, tierKg);
+  // Warna yang belum punya harga kain di supplier itu memakai harga KNITTO (owner 2026-11-27); tidak ada di KNITTO juga = harga estimasi flat, ditandai.
+  let kainInfo = hargaKainRateInfo(ctx.hargaKain, ctx.hargaKainPks, supplier, warna, tierKg);
+  let kainViaKnitto = false;
+  if (kainInfo.source === "Estimasi" && up(supplier) !== SUPPLIER_ACUAN) {
+    const knitto = hargaKainRateInfo(ctx.hargaKain, ctx.hargaKainPks, SUPPLIER_ACUAN, warna, tierKg);
+    if (knitto.source !== "Estimasi") {
+      kainInfo = knitto;
+      kainViaKnitto = true;
+    }
+  }
+  const kainRate = kainInfo.rate;
   const bahan = kg * kainRate;
 
   const share = group && group.totalQty > 0 ? pcs / group.totalQty : 0;
@@ -361,7 +376,10 @@ export function liveLine(ctx: PoHppContext, mrpId: string, vendor: string, warna
   const ongkir = pcs * (ctx.ongkir.bySegmen.get(segmen) ?? ctx.ongkir.overall);
   const { hargaJual, pcsTanpaHarga } = sellingValue(ctx, warna, lengan, aduan, pcs);
   const hpp = bahan + rib - diskon + maklon + ongkir;
-  return { mrpId, vendor, supplier, supplierAsumsi: sup.asumsi, warna, lengan, segmen, roll, pcs, bahan, rib, diskon, maklon, maklonRate, ongkir, hpp, hargaJual, pcsTanpaHarga, kainTanpaHarga: roll > 0 && !(kainRate > 0) };
+  return {
+    mrpId, vendor, supplier, supplierAsumsi: sup.asumsi, warna, lengan, segmen, roll, pcs, bahan, rib, diskon, maklon, maklonRate, ongkir, hpp, hargaJual, pcsTanpaHarga,
+    kainTanpaHarga: roll > 0 && kainInfo.source === "Estimasi", kainViaKnitto,
+  };
 }
 
 /** Baris: angka terkunci kalau ada, kalau tidak dihitung dari data terkini. */

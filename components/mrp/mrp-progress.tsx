@@ -16,7 +16,8 @@ import {
   type MrpHppEstimate,
 } from "@/lib/mrp/flowStatus";
 import type { MaklonPO, Mrp } from "@/lib/mrp/types";
-import { estimateMrpHpp, toMrpHppEstimate } from "@/lib/mrp/poHppEstimate";
+import { estimateMrpHpp, toMrpHppEstimate, type PoHppEstimate } from "@/lib/mrp/poHppEstimate";
+import { hppPctText, hppPctTone } from "@/components/mrp/hpp-estimate-section";
 import { useHppContext } from "@/components/mrp/use-hpp-context";
 
 /** Satu baris MRP dengan status staging standar dan estimasi HPP -- dipakai bersama SCM (Monitoring, riwayat Approval MRP) supaya tampilan
@@ -29,6 +30,8 @@ export type MrpProgressRow = {
   stage: FlowStage | FlowSideStatus;
   rollsByStage: Partial<Record<FlowStage, number>>;
   hpp: MrpHppEstimate;
+  /** Estimasi HPP lengkap (rincian per vendor x warna x lengan) untuk panel rincian, mis. Approval MRP. */
+  hppEst: PoHppEstimate;
 };
 
 export function useMrpProgressRows(): MrpProgressRow[] {
@@ -51,6 +54,7 @@ export function useMrpProgressRows(): MrpProgressRow[] {
       .map((x, idx) => ({ ...x, idx, created: x.detail?.dates?.created ?? "" }))
       .sort((a, b) => (a.created < b.created ? 1 : a.created > b.created ? -1 : b.idx - a.idx))
       .map(({ mrp, detail }) => {
+        const hppEst = estimateMrpHpp(mrp.id, hppCtx);
         const flow = mrpFlowStage(detail, mrp.id, materialPOs, invoices, batchByCode, shipping, returned);
         return {
           mrp,
@@ -59,7 +63,8 @@ export function useMrpProgressRows(): MrpProgressRow[] {
           roll: mrpWarnaBreakdown(detail).reduce((s, w) => s + w.rollTotal, 0),
           stage: flow.stage,
           rollsByStage: flow.rollsByStage,
-          hpp: toMrpHppEstimate(estimateMrpHpp(mrp.id, hppCtx)),
+          hpp: toMrpHppEstimate(hppEst),
+          hppEst,
         };
       });
   }, [mrpDetails, staticMrps, materialPOs, invoices, productionBatches, deliveryKolis, warehouseReceipts, materialClaimHistory, hppCtx]);
@@ -71,7 +76,7 @@ export function EstHppCell({ hpp }: { hpp: MrpHppEstimate }) {
   if (hpp.pct == null || hpp.material + hpp.maklon === 0) return <span className="text-text-muted">—</span>;
   return (
     <span
-      className={"font-mono font-semibold " + (hpp.pct > 100 ? "text-danger-fg" : hpp.pct > 80 ? "text-warning-fg" : "text-success-fg")}
+      className={"font-mono font-semibold " + hppPctTone(hpp.pct)}
       title={`Bahan + rib - diskon ${formatRp(hpp.material)} + Maklon ${formatRp(hpp.maklon)} + Est. ongkir ${formatRp(hpp.delivery)} = ${formatRp(hpp.total)}\nNilai jual ${formatRp(hpp.hargaJual)}`}
     >
       {hpp.pct.toLocaleString("id-ID", { maximumFractionDigits: 1 })}%
@@ -112,7 +117,32 @@ export function mrpProgressColumns<R extends MrpProgressRow>(maklonPOs: MaklonPO
         </span>
       ),
     },
-    { key: "estHpp", label: "Est. HPP %", default: true, align: "right", sortValue: (r) => r.hpp.pct ?? null, render: (r) => <EstHppCell hpp={r.hpp} /> },
+    {
+      key: "estHppTotal",
+      label: "Est. HPP",
+      default: true,
+      align: "right",
+      info: { title: "Estimasi HPP", body: "Bahan + rib - diskon + maklon (matriks vendor, jenis, lengan) + ongkir rata-rata per kategori untuk seluruh qty MRP. Angka kecil = HPP per pcs. Rincian: buka baris MRP." },
+      sortValue: (r) => r.hppEst.hpp,
+      aggregate: aggSum<R>((r) => r.hppEst.hpp, (n) => <span className="font-semibold">{formatRp(n)}</span>),
+      render: (r) =>
+        r.hppEst.pcs > 0 ? (
+          <span className="block text-right font-mono">
+            {formatRp(r.hppEst.hpp)}
+            <span className="block text-[10px] text-text-muted">{formatRp(r.hppEst.hppPerPcs)}/pcs</span>
+          </span>
+        ) : (
+          <span className="text-text-muted">—</span>
+        ),
+    },
+    {
+      key: "estHpp",
+      label: "Est. HPP %",
+      default: true,
+      align: "right",
+      sortValue: (r) => r.hpp.pct ?? null,
+      render: (r) => (r.hppEst.pcs > 0 ? <span className={"font-mono font-semibold " + hppPctTone(r.hppEst.pct)}>{hppPctText(r.hppEst.pct)}</span> : <EstHppCell hpp={r.hpp} />),
+    },
     { key: "tglMrp", label: "Tgl MRP", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.created)}</span> },
     { key: "tglPO", label: "Tgl PO", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.poSent)}</span> },
     { key: "tglApproved", label: "Tgl Approve PO", default: true, render: (r) => <span className="font-mono">{formatDate(r.detail?.dates?.poApproved)}</span> },

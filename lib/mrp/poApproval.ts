@@ -52,6 +52,8 @@ export type FrozenHppLine = {
   j: number;
   nt?: number;
   kt?: 1;
+  /** 1 = harga kain memakai harga KNITTO (warna belum punya harga di supplier itu). */
+  kk?: 1;
 };
 
 export const APPROVAL_LEVEL_TABLE = [

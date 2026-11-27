@@ -23,6 +23,7 @@ import { VENDOR_PRODUKSI } from "@/lib/mrp/seed";
 import type { MaklonPO } from "@/lib/mrp/types";
 import { estimateMrpHpp, toMrpHppEstimate } from "@/lib/mrp/poHppEstimate";
 import { useHppContext } from "@/components/mrp/use-hpp-context";
+import { hppPctTone } from "@/components/mrp/hpp-estimate-section";
 
 const badgeTone = mrpStatusBadgeTone;
 
@@ -290,8 +291,8 @@ export default function MrpListPage() {
           <span className="text-text-muted">—</span>
         ) : (
           <span
-            className={"font-mono font-semibold " + (r.hpp.pct > 100 ? "text-danger-fg" : r.hpp.pct > 80 ? "text-warning-fg" : "text-success-fg")}
-            title={`Material ${formatRp(r.hpp.material)} + Maklon ${formatRp(r.hpp.maklon)} + Est. ongkir ${formatRp(r.hpp.delivery)} = ${formatRp(r.hpp.total)}\nNilai jual ${formatRp(r.hpp.hargaJual)}${r.hpp.pcsTanpaHarga > 0 ? `\n${formatPcs(r.hpp.pcsTanpaHarga)} pcs belum punya harga jual (memakai rata-rata harga size lain)` : ""}`}
+            className={"font-mono font-semibold " + hppPctTone(r.hpp.pct)}
+            title={`Bahan + rib - diskon ${formatRp(r.hpp.material)} + Maklon ${formatRp(r.hpp.maklon)} + Est. ongkir ${formatRp(r.hpp.delivery)} = ${formatRp(r.hpp.total)}\nNilai jual ${formatRp(r.hpp.hargaJual)}${r.hpp.pcsTanpaHarga > 0 ? `\n${formatPcs(r.hpp.pcsTanpaHarga)} pcs belum punya harga jual (size kosong memakai rata-rata size lain; warna tanpa harga jual tidak dihitung di rasio)` : ""}`}
           >
             {r.hpp.pct.toLocaleString("id-ID", { maximumFractionDigits: 1 })}%
           </span>
