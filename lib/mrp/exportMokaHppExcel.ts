@@ -5,12 +5,11 @@ import { parseCsv, type MokaFilledItem } from "./exportMokaPo";
 //  - Sheet 1 "PO Moka": isi sama dengan CSV Moka (template Import - Items Purchase Order yang sudah terisi).
 //  - Sheet 2 "HPP": mengikuti template "HPP BY41 REG.xlsx": judul kolom di baris 4 (baris 1-3 kosong), data mulai baris 5,
 //    kolom KATEGORI | ITEM | JENIS LENGAN DAN UKURAN | QTY | COGS. Hanya baris template Moka yang terisi (punya Supplier Email), urut seperti template.
-//    ITEM = isi kolom Items Name template Moka, COGS = Unit Cost (HPP per item rata-rata tertimbang). KATEGORI dikosongkan seperti template contoh.
+//    HANYA ITEM dan COGS yang diisi (owner 2026-11-28, "benar-benar sama dengan template"): ITEM = isi kolom Items Name template Moka,
+//    COGS = Unit Cost (HPP per item rata-rata tertimbang). KATEGORI, JENIS LENGAN DAN UKURAN, QTY dikosongkan seperti template contoh.
 // CSV Moka tetap diunduh terpisah (format impor Moka); file Excel ini untuk dibaca / dipakai internal.
 const HPP_HEADERS = ["KATEGORI", "ITEM", "JENIS LENGAN DAN UKURAN", "QTY", "COGS"] as const;
 const NUMERIC_COLUMNS = ["in stock", "order", "unit cost"];
-
-export const lenganUkuranLabel = (lengan?: string, size?: string): string => (lengan && size ? `${lengan} ${size}` : "");
 
 function fillHppSheet(ws: Worksheet, items: MokaFilledItem[]) {
   const head = ws.getRow(4);
@@ -22,9 +21,8 @@ function fillHppSheet(ws: Worksheet, items: MokaFilledItem[]) {
   });
   items.forEach((it, i) => {
     const row = ws.getRow(5 + i);
+    // Hanya ITEM dan COGS yang diisi (sama dengan template contoh); KATEGORI, JENIS LENGAN DAN UKURAN, dan QTY dikosongkan.
     row.getCell(2).value = it.name;
-    row.getCell(3).value = lenganUkuranLabel(it.lengan, it.size);
-    row.getCell(4).value = it.qty;
     if (it.cost != null) row.getCell(5).value = it.cost;
   });
   ws.getColumn(1).width = 16;
