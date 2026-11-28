@@ -1,6 +1,6 @@
 import { alertDialog } from "@/components/ui/confirm-dialog";
 import { buildMokaPoCsv, downloadCsv, type MokaPoItem } from "@/lib/mrp/exportMokaPo";
-import { downloadMokaHppExcel } from "@/lib/mrp/exportMokaHppExcel";
+import { downloadMokaPoExcel } from "@/lib/mrp/exportMokaHppExcel";
 import { skuWarnaFor, warnaWithUsia, localDateString, type WarehouseReceivableGroup } from "@/lib/mrp/derive";
 import type { ItemSellingPriceRow } from "@/lib/mrp/masterData";
 
@@ -51,11 +51,11 @@ export async function runMokaPoDownload(
     }
     const tag = fileTag ? fileTag.replace(/[^A-Za-z0-9_-]+/g, "_") + "-" : "";
     downloadCsv(res.csv, `PO-Moka-${tag}${localDateString(new Date())}.csv`);
-    // File HPP (xlsx, format template "HPP BY41 REG"): hanya item yang terisi di CSV (punya Supplier Email). Gagal membuatnya tidak membatalkan CSV yang sudah terunduh.
+    // File Excel dua sheet (sheet 1 = isi CSV Moka, sheet 2 "HPP" format template "HPP BY41 REG", hanya item yang terisi). Gagal membuatnya tidak membatalkan CSV yang sudah terunduh.
     try {
-      await downloadMokaHppExcel(res.filledItems, `HPP-Moka-${tag}${localDateString(new Date())}.xlsx`);
+      await downloadMokaPoExcel(res.csv, res.filledItems, `PO-Moka-${tag}${localDateString(new Date())}.xlsx`);
     } catch (e) {
-      console.error("Gagal membuat file HPP xlsx", e);
+      console.error("Gagal membuat file Excel PO", e);
     }
     const list = (xs: MokaPoItem[]) => Array.from(new Set(xs.map((x) => x.itemMoka))).slice(0, 12).join(", ");
     const warnings: string[] = [];
