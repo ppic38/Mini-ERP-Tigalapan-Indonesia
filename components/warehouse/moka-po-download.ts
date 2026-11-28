@@ -50,12 +50,15 @@ export async function runMokaPoDownload(
       return;
     }
     const tag = fileTag ? fileTag.replace(/[^A-Za-z0-9_-]+/g, "_") + "-" : "";
-    downloadCsv(res.csv, `PO-Moka-${tag}${localDateString(new Date())}.csv`);
-    // File Excel dua sheet (sheet 1 = isi CSV Moka, sheet 2 "HPP" format template "HPP BY41 REG", hanya item yang terisi). Gagal membuatnya tidak membatalkan CSV yang sudah terunduh.
+    // SATU file Excel dua sheet (owner 2026-11-28): sheet 1 "PO Moka" = isi template Moka yang sudah terisi, sheet 2 "HPP" = format template "HPP BY41 REG"
+    // (hanya item yang terisi, kolom ITEM dan COGS). CSV tidak lagi diunduh terpisah; kalau Moka butuh CSV, simpan sheet 1 sebagai CSV dari Excel.
+    // Cadangan: kalau pembuatan xlsx gagal, CSV Moka tetap diunduh supaya pekerjaan tidak terhenti.
+    const baseName = `PO-Moka-${tag}${localDateString(new Date())}`;
     try {
-      await downloadMokaPoExcel(res.csv, res.filledItems, `PO-Moka-${tag}${localDateString(new Date())}.xlsx`);
+      await downloadMokaPoExcel(res.csv, res.filledItems, `${baseName}.xlsx`);
     } catch (e) {
-      console.error("Gagal membuat file Excel PO", e);
+      console.error("Gagal membuat file Excel PO, mengunduh CSV sebagai cadangan", e);
+      downloadCsv(res.csv, `${baseName}.csv`);
     }
     const list = (xs: MokaPoItem[]) => Array.from(new Set(xs.map((x) => x.itemMoka))).slice(0, 12).join(", ");
     const warnings: string[] = [];
