@@ -54,13 +54,21 @@ export type MokaPoItem = {
   qty: number;
   /** HPP per item (rata-rata tertimbang); null kalau belum ada. */
   hppPerItem: number | null;
+  /** Lengan dan size item (dipakai kolom "JENIS LENGAN DAN UKURAN" di file HPP xlsx). */
+  lengan?: "PENDEK" | "PANJANG";
+  size?: string;
 };
+
+/** Satu baris template Moka yang terisi (ada Supplier Email), dipakai file HPP xlsx. `name` = isi kolom Items Name template (urutan sama dengan template). */
+export type MokaFilledItem = { name: string; lengan?: string; size?: string; qty: number; cost: number | null };
 
 export type MokaPoResult = {
   csv: string;
   /** Jumlah baris template yang diisi dan jumlah pcs total. */
   filledRows: number;
   filledQty: number;
+  /** Baris template yang terisi (hanya yang punya Supplier Email), urut seperti template. */
+  filledItems: MokaFilledItem[];
   /** Item yang tidak ditemukan di template (tidak ikut file). */
   notFound: MokaPoItem[];
   /** Item yang ditemukan tetapi belum punya HPP (Unit Cost dikosongkan). */
@@ -117,7 +125,7 @@ const HEADER = {
 
 /** Isi template Moka dengan item PO. Seluruh baris template dipertahankan (urutan dan isi kolom "Do Not Edit" tidak berubah). */
 export function buildMokaPoCsv(templateText: string, supplierEmail: string, items: MokaPoItem[]): MokaPoResult {
-  const empty: MokaPoResult = { csv: "", filledRows: 0, filledQty: 0, notFound: [], noCost: [] };
+  const empty: MokaPoResult = { csv: "", filledRows: 0, filledQty: 0, filledItems: [], notFound: [], noCost: [] };
   const rows = parseCsv(templateText);
   if (rows.length < 2) return { ...empty, error: "File template kosong." };
   const head = rows[0].map((h) => h.trim());
@@ -148,7 +156,7 @@ export function buildMokaPoCsv(templateText: string, supplierEmail: string, item
 
   const notFound: MokaPoItem[] = [];
   const noCost: MokaPoItem[] = [];
-  const filled = new Map<number, { qty: number; nilai: number; qtyCost: number }>();
+  const filled = new Map<number, { qty: number; nilai: number; qtyCost: number; lengan?: string; size?: string }>();
   for (const it of items) {
     if (!(it.qty > 0)) continue;
     let r = byName.get(norm(it.itemMoka));
@@ -162,7 +170,7 @@ export function buildMokaPoCsv(templateText: string, supplierEmail: string, item
       notFound.push(it);
       continue;
     }
-    const cur = filled.get(r) ?? { qty: 0, nilai: 0, qtyCost: 0 };
+    const cur = filled.get(r) ?? { qty: 0, nilai: 0, qtyCost: 0, lengan: it.lengan, size: it.size };
     cur.qty += it.qty;
     if (it.hppPerItem != null && it.hppPerItem > 0) {
       cur.nilai += it.qty * it.hppPerItem;
@@ -172,7 +180,8 @@ export function buildMokaPoCsv(templateText: string, supplierEmail: string, item
   }
 
   let filledQty = 0;
-  for (const [r, f] of filled) {
+  const filledItems: MokaFilledItem[] = [];
+  for (const [r, f] of Array.from(filled.entries()).sort((a, b) => a[0] - b[0])) {
     const row = rows[r];
     while (row.length < head.length) row.push("");
     row[iSupplier] = supplierEmail;
@@ -180,6 +189,7 @@ export function buildMokaPoCsv(templateText: string, supplierEmail: string, item
     // Unit Cost = HPP rata-rata tertimbang, dibulatkan ke rupiah; kosong kalau tidak ada HPP sama sekali.
     row[iCost] = f.qtyCost > 0 ? String(Math.round(f.nilai / f.qtyCost)) : "";
     filledQty += f.qty;
+    filledItems.push({ name: (row[iName] ?? "").trim(), lengan: f.lengan, size: f.size, qty: f.qty, cost: f.qtyCost > 0 ? Math.round(f.nilai / f.qtyCost) : null });
   }
 
   return {
@@ -187,6 +197,7 @@ export function buildMokaPoCsv(templateText: string, supplierEmail: string, item
     csv: (templateText.charCodeAt(0) === 0xfeff ? "﻿" : "") + rows.map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n",
     filledRows: filled.size,
     filledQty,
+    filledItems,
     notFound,
     noCost,
   };

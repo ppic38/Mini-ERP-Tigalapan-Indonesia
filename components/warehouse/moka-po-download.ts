@@ -1,5 +1,6 @@
 import { alertDialog } from "@/components/ui/confirm-dialog";
 import { buildMokaPoCsv, downloadCsv, type MokaPoItem } from "@/lib/mrp/exportMokaPo";
+import { downloadMokaHppExcel } from "@/lib/mrp/exportMokaHppExcel";
 import { skuWarnaFor, warnaWithUsia, localDateString, type WarehouseReceivableGroup } from "@/lib/mrp/derive";
 import type { ItemSellingPriceRow } from "@/lib/mrp/masterData";
 
@@ -29,7 +30,7 @@ export async function runMokaPoDownload(
         const master = skuByKey.get(`${warna}|${it.lengan}|${it.size}`) ?? skuByKey.get(`${skuWarna}|${it.lengan}|${it.size}`);
         // Item RIB di Moka tidak memuat PDK/PJG ("BENHUR KID + RIB XS", "HITAM + RIB L"): cadangan pencocokan tanpa lengan.
         const alt = skuWarna.includes("+ RIB") ? [`${skuWarna} ${it.size}`] : undefined;
-        const cur = acc.get(itemMoka) ?? { itemMoka, itemName: master?.itemName ?? null, alt, sku: master?.sku ?? null, qty: 0, hppPerItem: null, nilai: 0, qtyCost: 0 };
+        const cur = acc.get(itemMoka) ?? { itemMoka, itemName: master?.itemName ?? null, alt, sku: master?.sku ?? null, qty: 0, hppPerItem: null, nilai: 0, qtyCost: 0, lengan: it.lengan, size: it.size };
         cur.qty += it.qty;
         if (it.hppPerItem > 0) {
           cur.nilai += it.qty * it.hppPerItem;
@@ -38,7 +39,7 @@ export async function runMokaPoDownload(
         acc.set(itemMoka, cur);
       }
     }
-    const items: MokaPoItem[] = Array.from(acc.values()).map((x) => ({ itemMoka: x.itemMoka, itemName: x.itemName, alt: x.alt, sku: x.sku, qty: x.qty, hppPerItem: x.qtyCost > 0 ? x.nilai / x.qtyCost : null }));
+    const items: MokaPoItem[] = Array.from(acc.values()).map((x) => ({ itemMoka: x.itemMoka, itemName: x.itemName, alt: x.alt, sku: x.sku, qty: x.qty, hppPerItem: x.qtyCost > 0 ? x.nilai / x.qtyCost : null, lengan: x.lengan, size: x.size }));
     const res = buildMokaPoCsv(templateText, supplierEmail, items);
     if (res.error) {
       await alertDialog({ title: "Template tidak bisa dipakai", message: res.error, tone: "danger" });
@@ -50,6 +51,12 @@ export async function runMokaPoDownload(
     }
     const tag = fileTag ? fileTag.replace(/[^A-Za-z0-9_-]+/g, "_") + "-" : "";
     downloadCsv(res.csv, `PO-Moka-${tag}${localDateString(new Date())}.csv`);
+    // File HPP (xlsx, format template "HPP BY41 REG"): hanya item yang terisi di CSV (punya Supplier Email). Gagal membuatnya tidak membatalkan CSV yang sudah terunduh.
+    try {
+      await downloadMokaHppExcel(res.filledItems, `HPP-Moka-${tag}${localDateString(new Date())}.xlsx`);
+    } catch (e) {
+      console.error("Gagal membuat file HPP xlsx", e);
+    }
     const list = (xs: MokaPoItem[]) => Array.from(new Set(xs.map((x) => x.itemMoka))).slice(0, 12).join(", ");
     const warnings: string[] = [];
     if (res.notFound.length > 0) warnings.push(`${res.notFound.length} item tidak ditemukan di template Moka dan TIDAK ikut file: ${list(res.notFound)}${res.notFound.length > 12 ? ", …" : ""}.`);
